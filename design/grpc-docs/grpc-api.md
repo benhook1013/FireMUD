@@ -31,29 +31,47 @@ for conventions on schema evolution and error handling. See each service's
     - [DeleteAccountResponse](#account-v1-DeleteAccountResponse)
     - [ExportAccountRequest](#account-v1-ExportAccountRequest)
     - [ExportAccountResponse](#account-v1-ExportAccountResponse)
+    - [ExportTenantDataRequest](#account-v1-ExportTenantDataRequest)
+    - [ExportTenantDataResponse](#account-v1-ExportTenantDataResponse)
     - [GetProfileRequest](#account-v1-GetProfileRequest)
     - [GetProfileResponse](#account-v1-GetProfileResponse)
+    - [GetRealmAccessGrantForRuntimeRequest](#account-v1-GetRealmAccessGrantForRuntimeRequest)
+    - [GetRealmAccessGrantForRuntimeResponse](#account-v1-GetRealmAccessGrantForRuntimeResponse)
+    - [GetTenantEntitlementsForRuntimeRequest](#account-v1-GetTenantEntitlementsForRuntimeRequest)
+    - [GetTenantEntitlementsForRuntimeResponse](#account-v1-GetTenantEntitlementsForRuntimeResponse)
+    - [GetTenantMembershipForRuntimeRequest](#account-v1-GetTenantMembershipForRuntimeRequest)
+    - [GetTenantMembershipForRuntimeResponse](#account-v1-GetTenantMembershipForRuntimeResponse)
+    - [IssueDirectTextConnectScopeRequest](#account-v1-IssueDirectTextConnectScopeRequest)
+    - [IssueDirectTextConnectScopeResponse](#account-v1-IssueDirectTextConnectScopeResponse)
+    - [JoinPublicProductionMembershipRequest](#account-v1-JoinPublicProductionMembershipRequest)
+    - [JoinPublicProductionMembershipResponse](#account-v1-JoinPublicProductionMembershipResponse)
     - [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest)
     - [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse)
+    - [ListPresenceVisibilityPoliciesRequest](#account-v1-ListPresenceVisibilityPoliciesRequest)
+    - [ListPresenceVisibilityPoliciesResponse](#account-v1-ListPresenceVisibilityPoliciesResponse)
     - [PingRequest](#account-v1-PingRequest)
     - [PingResponse](#account-v1-PingResponse)
+    - [PresenceVisibilityPolicyEntry](#account-v1-PresenceVisibilityPolicyEntry)
+    - [RequestEmailLoginOtpRequest](#account-v1-RequestEmailLoginOtpRequest)
+    - [RequestEmailLoginOtpResponse](#account-v1-RequestEmailLoginOtpResponse)
     - [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest)
     - [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse)
     - [RequestPasswordResetRequest](#account-v1-RequestPasswordResetRequest)
     - [RequestPasswordResetResponse](#account-v1-RequestPasswordResetResponse)
     - [UpdateProfileRequest](#account-v1-UpdateProfileRequest)
     - [UpdateProfileResponse](#account-v1-UpdateProfileResponse)
+    - [VerifyEmailLoginOtpRequest](#account-v1-VerifyEmailLoginOtpRequest)
     - [VerifyEmailRequest](#account-v1-VerifyEmailRequest)
     - [VerifyEmailResponse](#account-v1-VerifyEmailResponse)
-  
+
     - [AccountService](#account-v1-AccountService)
-  
+
 - [account/v1/notification_service.proto](#account_v1_notification_service-proto)
     - [SendNotificationRequest](#account-v1-SendNotificationRequest)
     - [SendNotificationResponse](#account-v1-SendNotificationResponse)
-  
+
     - [NotificationService](#account-v1-NotificationService)
-  
+
 - [account/v1/payment_service.proto](#account_v1_payment_service-proto)
     - [CreateDonationRequest](#account-v1-CreateDonationRequest)
     - [CreateDonationResponse](#account-v1-CreateDonationResponse)
@@ -63,9 +81,9 @@ for conventions on schema evolution and error handling. See each service's
     - [CreateSubscriptionResponse](#account-v1-CreateSubscriptionResponse)
     - [RefundPaymentRequest](#account-v1-RefundPaymentRequest)
     - [RefundPaymentResponse](#account-v1-RefundPaymentResponse)
-  
+
     - [PaymentService](#account-v1-PaymentService)
-  
+
 - [account/v1/virtual_currency_service.proto](#account_v1_virtual_currency_service-proto)
     - [AddCurrencyRequest](#account-v1-AddCurrencyRequest)
     - [AddCurrencyResponse](#account-v1-AddCurrencyResponse)
@@ -73,129 +91,377 @@ for conventions on schema evolution and error handling. See each service's
     - [GetBalanceResponse](#account-v1-GetBalanceResponse)
     - [SpendCurrencyRequest](#account-v1-SpendCurrencyRequest)
     - [SpendCurrencyResponse](#account-v1-SpendCurrencyResponse)
-  
+
     - [VirtualCurrencyService](#account-v1-VirtualCurrencyService)
-  
+
 - [automation-scripting/v1/automation_scripting_service.proto](#automation-scripting_v1_automation_scripting_service-proto)
     - [AddFormationMemberRequest](#automation_scripting-v1-AddFormationMemberRequest)
     - [AddFormationMemberResponse](#automation_scripting-v1-AddFormationMemberResponse)
     - [CancelPendingWorkItemsForPatchRequest](#automation_scripting-v1-CancelPendingWorkItemsForPatchRequest)
     - [CancelPendingWorkItemsForPatchResponse](#automation_scripting-v1-CancelPendingWorkItemsForPatchResponse)
+    - [CancelPendingWorkItemsForPluginVersionRequest](#automation_scripting-v1-CancelPendingWorkItemsForPluginVersionRequest)
+    - [CancelPendingWorkItemsForPluginVersionResponse](#automation_scripting-v1-CancelPendingWorkItemsForPluginVersionResponse)
     - [CreateFormationRequest](#automation_scripting-v1-CreateFormationRequest)
     - [CreateFormationResponse](#automation_scripting-v1-CreateFormationResponse)
     - [DisablePluginRequest](#automation_scripting-v1-DisablePluginRequest)
     - [DisablePluginResponse](#automation_scripting-v1-DisablePluginResponse)
     - [DrainPluginRequest](#automation_scripting-v1-DrainPluginRequest)
     - [DrainPluginResponse](#automation_scripting-v1-DrainPluginResponse)
+    - [GetAutomationDrainStatusRequest](#automation_scripting-v1-GetAutomationDrainStatusRequest)
+    - [GetAutomationDrainStatusResponse](#automation_scripting-v1-GetAutomationDrainStatusResponse)
+    - [GetAutomationPinConvergenceRequest](#automation_scripting-v1-GetAutomationPinConvergenceRequest)
+    - [GetAutomationPinConvergenceResponse](#automation_scripting-v1-GetAutomationPinConvergenceResponse)
+    - [GetDraftDesignDigestRequest](#automation_scripting-v1-GetDraftDesignDigestRequest)
+    - [GetDraftDesignDigestResponse](#automation_scripting-v1-GetDraftDesignDigestResponse)
+    - [GetPluginPolicyConvergenceRequest](#automation_scripting-v1-GetPluginPolicyConvergenceRequest)
+    - [GetPluginPolicyConvergenceResponse](#automation_scripting-v1-GetPluginPolicyConvergenceResponse)
     - [GetPluginStatusRequest](#automation_scripting-v1-GetPluginStatusRequest)
     - [GetPluginStatusResponse](#automation_scripting-v1-GetPluginStatusResponse)
+    - [GetScriptEventDefinitionRequest](#automation_scripting-v1-GetScriptEventDefinitionRequest)
+    - [GetScriptEventDefinitionResponse](#automation_scripting-v1-GetScriptEventDefinitionResponse)
+    - [GetScriptPatchInstanceRolloutStatusRequest](#automation_scripting-v1-GetScriptPatchInstanceRolloutStatusRequest)
+    - [GetScriptPatchInstanceRolloutStatusResponse](#automation_scripting-v1-GetScriptPatchInstanceRolloutStatusResponse)
     - [GetScriptPatchStatusRequest](#automation_scripting-v1-GetScriptPatchStatusRequest)
     - [GetScriptPatchStatusResponse](#automation_scripting-v1-GetScriptPatchStatusResponse)
     - [GetScriptStatusRequest](#automation_scripting-v1-GetScriptStatusRequest)
     - [GetScriptStatusResponse](#automation_scripting-v1-GetScriptStatusResponse)
     - [ListFormationMembersRequest](#automation_scripting-v1-ListFormationMembersRequest)
     - [ListFormationMembersResponse](#automation_scripting-v1-ListFormationMembersResponse)
+    - [ListPluginRuntimeEventsRequest](#automation_scripting-v1-ListPluginRuntimeEventsRequest)
+    - [ListPluginRuntimeEventsResponse](#automation_scripting-v1-ListPluginRuntimeEventsResponse)
+    - [ListScriptDeadLettersRequest](#automation_scripting-v1-ListScriptDeadLettersRequest)
+    - [ListScriptDeadLettersResponse](#automation_scripting-v1-ListScriptDeadLettersResponse)
+    - [ListScriptEventDefinitionsRequest](#automation_scripting-v1-ListScriptEventDefinitionsRequest)
+    - [ListScriptEventDefinitionsResponse](#automation_scripting-v1-ListScriptEventDefinitionsResponse)
+    - [ListScriptHandoffEventsRequest](#automation_scripting-v1-ListScriptHandoffEventsRequest)
+    - [ListScriptHandoffEventsResponse](#automation_scripting-v1-ListScriptHandoffEventsResponse)
+    - [ListScriptPatchInstanceRolloutEventsRequest](#automation_scripting-v1-ListScriptPatchInstanceRolloutEventsRequest)
+    - [ListScriptPatchInstanceRolloutEventsResponse](#automation_scripting-v1-ListScriptPatchInstanceRolloutEventsResponse)
+    - [ListScriptPatchInstanceRolloutsRequest](#automation_scripting-v1-ListScriptPatchInstanceRolloutsRequest)
+    - [ListScriptPatchInstanceRolloutsResponse](#automation_scripting-v1-ListScriptPatchInstanceRolloutsResponse)
     - [ListScriptPatchStatusesRequest](#automation_scripting-v1-ListScriptPatchStatusesRequest)
     - [ListScriptPatchStatusesResponse](#automation_scripting-v1-ListScriptPatchStatusesResponse)
+    - [ListScriptScheduleInstancesRequest](#automation_scripting-v1-ListScriptScheduleInstancesRequest)
+    - [ListScriptScheduleInstancesResponse](#automation_scripting-v1-ListScriptScheduleInstancesResponse)
+    - [ListScriptTimerAuditEventsRequest](#automation_scripting-v1-ListScriptTimerAuditEventsRequest)
+    - [ListScriptTimerAuditEventsResponse](#automation_scripting-v1-ListScriptTimerAuditEventsResponse)
     - [NotifyScriptVersionUpdateRequest](#automation_scripting-v1-NotifyScriptVersionUpdateRequest)
     - [NotifyScriptVersionUpdateResponse](#automation_scripting-v1-NotifyScriptVersionUpdateResponse)
+    - [ObserveRuntimeTickProgressRequest](#automation_scripting-v1-ObserveRuntimeTickProgressRequest)
+    - [ObserveRuntimeTickProgressResponse](#automation_scripting-v1-ObserveRuntimeTickProgressResponse)
     - [PingRequest](#automation_scripting-v1-PingRequest)
     - [PingResponse](#automation_scripting-v1-PingResponse)
+    - [PluginPolicyViolation](#automation_scripting-v1-PluginPolicyViolation)
+    - [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink)
+    - [PluginRuntimeEventEntry](#automation_scripting-v1-PluginRuntimeEventEntry)
+    - [ReplayDeadLetteredWorkItemResult](#automation_scripting-v1-ReplayDeadLetteredWorkItemResult)
+    - [ReplayDeadLetteredWorkItemsRequest](#automation_scripting-v1-ReplayDeadLetteredWorkItemsRequest)
+    - [ReplayDeadLetteredWorkItemsResponse](#automation_scripting-v1-ReplayDeadLetteredWorkItemsResponse)
+    - [ScriptDeadLetterEntry](#automation_scripting-v1-ScriptDeadLetterEntry)
+    - [ScriptEventBinding](#automation_scripting-v1-ScriptEventBinding)
+    - [ScriptEventDefinition](#automation_scripting-v1-ScriptEventDefinition)
+    - [ScriptHandoffEventEntry](#automation_scripting-v1-ScriptHandoffEventEntry)
+    - [ScriptPatchInstanceRolloutEntry](#automation_scripting-v1-ScriptPatchInstanceRolloutEntry)
+    - [ScriptPatchInstanceRolloutEventEntry](#automation_scripting-v1-ScriptPatchInstanceRolloutEventEntry)
+    - [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink)
     - [ScriptPatchStatusEntry](#automation_scripting-v1-ScriptPatchStatusEntry)
+    - [ScriptScheduleInstanceEntry](#automation_scripting-v1-ScriptScheduleInstanceEntry)
+    - [ScriptTimerAuditEventEntry](#automation_scripting-v1-ScriptTimerAuditEventEntry)
+    - [SetAutomationAdmissionModeRequest](#automation_scripting-v1-SetAutomationAdmissionModeRequest)
+    - [SetAutomationAdmissionModeResponse](#automation_scripting-v1-SetAutomationAdmissionModeResponse)
     - [SetPluginActiveVersionRequest](#automation_scripting-v1-SetPluginActiveVersionRequest)
     - [SetPluginActiveVersionResponse](#automation_scripting-v1-SetPluginActiveVersionResponse)
     - [TriggerScriptEventRequest](#automation_scripting-v1-TriggerScriptEventRequest)
     - [TriggerScriptEventResponse](#automation_scripting-v1-TriggerScriptEventResponse)
     - [UpdateScriptRequest](#automation_scripting-v1-UpdateScriptRequest)
     - [UpdateScriptResponse](#automation_scripting-v1-UpdateScriptResponse)
-  
+
+    - [AutomationAdmissionMode](#automation_scripting-v1-AutomationAdmissionMode)
     - [PluginState](#automation_scripting-v1-PluginState)
+    - [ScriptPatchInstanceRolloutStatus](#automation_scripting-v1-ScriptPatchInstanceRolloutStatus)
     - [ScriptPatchStatus](#automation_scripting-v1-ScriptPatchStatus)
     - [TriggerAdmissionOutcome](#automation_scripting-v1-TriggerAdmissionOutcome)
     - [TriggerMode](#automation_scripting-v1-TriggerMode)
-  
+
     - [AutomationScriptingControlPlaneService](#automation_scripting-v1-AutomationScriptingControlPlaneService)
     - [AutomationScriptingService](#automation_scripting-v1-AutomationScriptingService)
-  
+
 - [entity-management/v1/entity_management_service.proto](#entity-management_v1_entity_management_service-proto)
+    - [ActorConditionState](#entity_management-v1-ActorConditionState)
+    - [ActorResourceValue](#entity_management-v1-ActorResourceValue)
+    - [ApplyActorConditionRequest](#entity_management-v1-ApplyActorConditionRequest)
+    - [ApplyActorConditionResponse](#entity_management-v1-ApplyActorConditionResponse)
     - [Character](#entity_management-v1-Character)
+    - [CleanupRuntimeInstanceRequest](#entity_management-v1-CleanupRuntimeInstanceRequest)
+    - [CleanupRuntimeInstanceResponse](#entity_management-v1-CleanupRuntimeInstanceResponse)
+    - [ContainerItem](#entity_management-v1-ContainerItem)
     - [CreateCharacterRequest](#entity_management-v1-CreateCharacterRequest)
     - [CreateCharacterResponse](#entity_management-v1-CreateCharacterResponse)
+    - [DropItemToRoomRequest](#entity_management-v1-DropItemToRoomRequest)
+    - [DropItemToRoomResponse](#entity_management-v1-DropItemToRoomResponse)
+    - [EquipmentItem](#entity_management-v1-EquipmentItem)
+    - [FindCharacterByNameRequest](#entity_management-v1-FindCharacterByNameRequest)
+    - [FindCharacterByNameResponse](#entity_management-v1-FindCharacterByNameResponse)
     - [GetDraftDesignDigestRequest](#entity_management-v1-GetDraftDesignDigestRequest)
     - [GetDraftDesignDigestResponse](#entity_management-v1-GetDraftDesignDigestResponse)
+    - [InventoryItem](#entity_management-v1-InventoryItem)
     - [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest)
     - [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse)
+    - [ListContainerContentsRequest](#entity_management-v1-ListContainerContentsRequest)
+    - [ListContainerContentsResponse](#entity_management-v1-ListContainerContentsResponse)
+    - [ListEquipmentRequest](#entity_management-v1-ListEquipmentRequest)
+    - [ListEquipmentResponse](#entity_management-v1-ListEquipmentResponse)
     - [ListRoomEntitiesRequest](#entity_management-v1-ListRoomEntitiesRequest)
     - [ListRoomEntitiesResponse](#entity_management-v1-ListRoomEntitiesResponse)
+    - [ListRoomGroundInventoryRequest](#entity_management-v1-ListRoomGroundInventoryRequest)
+    - [ListRoomGroundInventoryResponse](#entity_management-v1-ListRoomGroundInventoryResponse)
+    - [PickupItemFromRoomRequest](#entity_management-v1-PickupItemFromRoomRequest)
+    - [PickupItemFromRoomResponse](#entity_management-v1-PickupItemFromRoomResponse)
     - [PingRequest](#entity_management-v1-PingRequest)
     - [PingResponse](#entity_management-v1-PingResponse)
+    - [PutItemIntoContainerRequest](#entity_management-v1-PutItemIntoContainerRequest)
+    - [PutItemIntoContainerResponse](#entity_management-v1-PutItemIntoContainerResponse)
+    - [QueryActorStateRequest](#entity_management-v1-QueryActorStateRequest)
+    - [QueryActorStateResponse](#entity_management-v1-QueryActorStateResponse)
     - [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest)
     - [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse)
+    - [RemoveEquipmentRequest](#entity_management-v1-RemoveEquipmentRequest)
+    - [RemoveEquipmentResponse](#entity_management-v1-RemoveEquipmentResponse)
     - [RoomEntity](#entity_management-v1-RoomEntity)
+    - [RoomGroundInventoryItem](#entity_management-v1-RoomGroundInventoryItem)
+    - [TakeItemFromContainerRequest](#entity_management-v1-TakeItemFromContainerRequest)
+    - [TakeItemFromContainerResponse](#entity_management-v1-TakeItemFromContainerResponse)
     - [UpdateEntityRequest](#entity_management-v1-UpdateEntityRequest)
     - [UpdateEntityResponse](#entity_management-v1-UpdateEntityResponse)
-  
+    - [ValidateEntityTemplateReferenceRequest](#entity_management-v1-ValidateEntityTemplateReferenceRequest)
+    - [ValidateEntityTemplateReferenceResponse](#entity_management-v1-ValidateEntityTemplateReferenceResponse)
+    - [ValidateEntityUpgradeMappingsRequest](#entity_management-v1-ValidateEntityUpgradeMappingsRequest)
+    - [ValidateEntityUpgradeMappingsResponse](#entity_management-v1-ValidateEntityUpgradeMappingsResponse)
+    - [WearEquipmentItemRequest](#entity_management-v1-WearEquipmentItemRequest)
+    - [WearEquipmentItemResponse](#entity_management-v1-WearEquipmentItemResponse)
+
+    - [EntityTemplateReferenceType](#entity_management-v1-EntityTemplateReferenceType)
     - [EntityType](#entity_management-v1-EntityType)
+    - [PlayableStateScope](#entity_management-v1-PlayableStateScope)
     - [ReloadHint](#entity_management-v1-ReloadHint)
-  
+    - [UpgradeValidationResult](#entity_management-v1-UpgradeValidationResult)
+
     - [EntityManagementService](#entity_management-v1-EntityManagementService)
-  
+
 - [game-design/v1/game_design_service.proto](#game-design_v1_game_design_service-proto)
+    - [AppliedWorldDesignMutation](#gamedesign-v1-AppliedWorldDesignMutation)
+    - [ApproveTemplateRemapSetRequest](#gamedesign-v1-ApproveTemplateRemapSetRequest)
+    - [ApproveTemplateRemapSetResponse](#gamedesign-v1-ApproveTemplateRemapSetResponse)
+    - [BeginPurgeVersionAssetsRequest](#gamedesign-v1-BeginPurgeVersionAssetsRequest)
+    - [BeginPurgeVersionAssetsResponse](#gamedesign-v1-BeginPurgeVersionAssetsResponse)
+    - [CanDeleteVersionAssetsRequest](#gamedesign-v1-CanDeleteVersionAssetsRequest)
+    - [CanDeleteVersionAssetsResponse](#gamedesign-v1-CanDeleteVersionAssetsResponse)
+    - [CommandCapabilitiesSettingsOverride](#gamedesign-v1-CommandCapabilitiesSettingsOverride)
+    - [CommandHistorySettingsOverride](#gamedesign-v1-CommandHistorySettingsOverride)
+    - [CommunicationSettingsOverride](#gamedesign-v1-CommunicationSettingsOverride)
+    - [CompareAndSetVersionStateRequest](#gamedesign-v1-CompareAndSetVersionStateRequest)
+    - [CompareAndSetVersionStateResponse](#gamedesign-v1-CompareAndSetVersionStateResponse)
+    - [CreateTemplateRemapSetRequest](#gamedesign-v1-CreateTemplateRemapSetRequest)
+    - [CreateTemplateRemapSetResponse](#gamedesign-v1-CreateTemplateRemapSetResponse)
+    - [DeleteHelpTopicRequest](#gamedesign-v1-DeleteHelpTopicRequest)
+    - [DeleteHelpTopicResponse](#gamedesign-v1-DeleteHelpTopicResponse)
+    - [DeleteSettingsDomainOverrideRequest](#gamedesign-v1-DeleteSettingsDomainOverrideRequest)
+    - [DeleteSettingsDomainOverrideResponse](#gamedesign-v1-DeleteSettingsDomainOverrideResponse)
+    - [DesignControlPlaneDigest](#gamedesign-v1-DesignControlPlaneDigest)
+    - [FinalizePurgeVersionAssetsRequest](#gamedesign-v1-FinalizePurgeVersionAssetsRequest)
+    - [FinalizePurgeVersionAssetsResponse](#gamedesign-v1-FinalizePurgeVersionAssetsResponse)
+    - [GetDesignControlPlaneDigestRequest](#gamedesign-v1-GetDesignControlPlaneDigestRequest)
+    - [GetDesignControlPlaneDigestResponse](#gamedesign-v1-GetDesignControlPlaneDigestResponse)
+    - [GetPublishedPluginVersionRequest](#gamedesign-v1-GetPublishedPluginVersionRequest)
+    - [GetPublishedPluginVersionResponse](#gamedesign-v1-GetPublishedPluginVersionResponse)
+    - [GetPublishedReleaseBundleRequest](#gamedesign-v1-GetPublishedReleaseBundleRequest)
+    - [GetPublishedReleaseBundleResponse](#gamedesign-v1-GetPublishedReleaseBundleResponse)
+    - [GetPublishedScriptPatchVersionRequest](#gamedesign-v1-GetPublishedScriptPatchVersionRequest)
+    - [GetPublishedScriptPatchVersionResponse](#gamedesign-v1-GetPublishedScriptPatchVersionResponse)
+    - [GetScopedSettingsOverridesRequest](#gamedesign-v1-GetScopedSettingsOverridesRequest)
+    - [GetScopedSettingsOverridesResponse](#gamedesign-v1-GetScopedSettingsOverridesResponse)
+    - [GetTemplateRemapSetRequest](#gamedesign-v1-GetTemplateRemapSetRequest)
+    - [GetTemplateRemapSetResponse](#gamedesign-v1-GetTemplateRemapSetResponse)
+    - [GetVersionAssetArtifactStateRequest](#gamedesign-v1-GetVersionAssetArtifactStateRequest)
+    - [GetVersionAssetArtifactStateResponse](#gamedesign-v1-GetVersionAssetArtifactStateResponse)
+    - [GetVersionAssetPurgeStatusRequest](#gamedesign-v1-GetVersionAssetPurgeStatusRequest)
+    - [GetVersionAssetPurgeStatusResponse](#gamedesign-v1-GetVersionAssetPurgeStatusResponse)
+    - [GetVersionStateRequest](#gamedesign-v1-GetVersionStateRequest)
+    - [GetVersionStateResponse](#gamedesign-v1-GetVersionStateResponse)
+    - [HelpTopic](#gamedesign-v1-HelpTopic)
+    - [HelpTopicScope](#gamedesign-v1-HelpTopicScope)
+    - [LaunchDescriptor](#gamedesign-v1-LaunchDescriptor)
+    - [ListHelpTopicsRequest](#gamedesign-v1-ListHelpTopicsRequest)
+    - [ListHelpTopicsResponse](#gamedesign-v1-ListHelpTopicsResponse)
+    - [ListPluginVersionStatusEventsRequest](#gamedesign-v1-ListPluginVersionStatusEventsRequest)
+    - [ListPluginVersionStatusEventsResponse](#gamedesign-v1-ListPluginVersionStatusEventsResponse)
+    - [ListPluginVersionStatusesRequest](#gamedesign-v1-ListPluginVersionStatusesRequest)
+    - [ListPluginVersionStatusesResponse](#gamedesign-v1-ListPluginVersionStatusesResponse)
     - [ListVersionsRequest](#gamedesign-v1-ListVersionsRequest)
     - [ListVersionsResponse](#gamedesign-v1-ListVersionsResponse)
+    - [MovementSettingsOverride](#gamedesign-v1-MovementSettingsOverride)
+    - [ParticipantDigest](#gamedesign-v1-ParticipantDigest)
     - [PingRequest](#gamedesign-v1-PingRequest)
     - [PingResponse](#gamedesign-v1-PingResponse)
+    - [PluginVersionStatusEventEntry](#gamedesign-v1-PluginVersionStatusEventEntry)
+    - [PresentationPromptOverride](#gamedesign-v1-PresentationPromptOverride)
+    - [PresentationSettingsOverride](#gamedesign-v1-PresentationSettingsOverride)
+    - [PublishPluginVersionRequest](#gamedesign-v1-PublishPluginVersionRequest)
+    - [PublishPluginVersionResponse](#gamedesign-v1-PublishPluginVersionResponse)
     - [PublishScriptPatchVersionRequest](#gamedesign-v1-PublishScriptPatchVersionRequest)
     - [PublishScriptPatchVersionResponse](#gamedesign-v1-PublishScriptPatchVersionResponse)
     - [PublishVersionRequest](#gamedesign-v1-PublishVersionRequest)
     - [PublishVersionResponse](#gamedesign-v1-PublishVersionResponse)
+    - [PublishedPluginVersion](#gamedesign-v1-PublishedPluginVersion)
+    - [PublishedReleaseBundle](#gamedesign-v1-PublishedReleaseBundle)
+    - [PublishedScriptPatchVersion](#gamedesign-v1-PublishedScriptPatchVersion)
+    - [PutHelpTopicRequest](#gamedesign-v1-PutHelpTopicRequest)
+    - [PutHelpTopicResponse](#gamedesign-v1-PutHelpTopicResponse)
+    - [PutSettingsDomainOverrideRequest](#gamedesign-v1-PutSettingsDomainOverrideRequest)
+    - [PutSettingsDomainOverrideResponse](#gamedesign-v1-PutSettingsDomainOverrideResponse)
+    - [ReconnectionBufferOverride](#gamedesign-v1-ReconnectionBufferOverride)
+    - [ReconnectionPolicyOverride](#gamedesign-v1-ReconnectionPolicyOverride)
+    - [ReconnectionSettingsOverride](#gamedesign-v1-ReconnectionSettingsOverride)
+    - [RepairPublishedVersionAssetsRequest](#gamedesign-v1-RepairPublishedVersionAssetsRequest)
+    - [RepairPublishedVersionAssetsResponse](#gamedesign-v1-RepairPublishedVersionAssetsResponse)
+    - [ResolveHelpTopicRequest](#gamedesign-v1-ResolveHelpTopicRequest)
+    - [ResolveHelpTopicResponse](#gamedesign-v1-ResolveHelpTopicResponse)
+    - [ResolveLaunchDescriptorRequest](#gamedesign-v1-ResolveLaunchDescriptorRequest)
+    - [ResolveLaunchDescriptorResponse](#gamedesign-v1-ResolveLaunchDescriptorResponse)
+    - [RevokePluginVersionRequest](#gamedesign-v1-RevokePluginVersionRequest)
+    - [RevokePluginVersionResponse](#gamedesign-v1-RevokePluginVersionResponse)
     - [SaveRevisionRequest](#gamedesign-v1-SaveRevisionRequest)
     - [SaveRevisionResponse](#gamedesign-v1-SaveRevisionResponse)
+    - [SettingsOverrides](#gamedesign-v1-SettingsOverrides)
+    - [TemplateRemapEntry](#gamedesign-v1-TemplateRemapEntry)
+    - [TemplateRemapSet](#gamedesign-v1-TemplateRemapSet)
+    - [TombstoneVersionAssetsRequest](#gamedesign-v1-TombstoneVersionAssetsRequest)
+    - [TombstoneVersionAssetsResponse](#gamedesign-v1-TombstoneVersionAssetsResponse)
+    - [UploadPluginBundleRequest](#gamedesign-v1-UploadPluginBundleRequest)
+    - [UploadPluginBundleResponse](#gamedesign-v1-UploadPluginBundleResponse)
     - [Version](#gamedesign-v1-Version)
-  
+    - [VersionAssetArtifactState](#gamedesign-v1-VersionAssetArtifactState)
+    - [VersionAssetDeletionEligibility](#gamedesign-v1-VersionAssetDeletionEligibility)
+    - [VersionAssetPurgeWorkflowStatus](#gamedesign-v1-VersionAssetPurgeWorkflowStatus)
+    - [VersionStateSnapshot](#gamedesign-v1-VersionStateSnapshot)
+    - [WorldDesignMutationRevision](#gamedesign-v1-WorldDesignMutationRevision)
+    - [WorldTopologySettingsOverride](#gamedesign-v1-WorldTopologySettingsOverride)
+
+    - [ArtifactState](#gamedesign-v1-ArtifactState)
+    - [PluginComponentPolicyDecision](#gamedesign-v1-PluginComponentPolicyDecision)
+    - [PresentationColorMode](#gamedesign-v1-PresentationColorMode)
+    - [SettingsDomain](#gamedesign-v1-SettingsDomain)
+    - [TemplateRemapSetStatus](#gamedesign-v1-TemplateRemapSetStatus)
+    - [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState)
+    - [WorldTopologyScopeModel](#gamedesign-v1-WorldTopologyScopeModel)
+
     - [GameDesignService](#gamedesign-v1-GameDesignService)
-  
+
 - [game-logic/v1/game_logic_service.proto](#game-logic_v1_game_logic_service-proto)
-    - [BroadcastSayRequest](#game_logic-v1-BroadcastSayRequest)
-    - [BroadcastSayResponse](#game_logic-v1-BroadcastSayResponse)
+    - [CommunicationRecipientView](#game_logic-v1-CommunicationRecipientView)
     - [DoorAmbientState](#game_logic-v1-DoorAmbientState)
+    - [DropCarriedItemRequest](#game_logic-v1-DropCarriedItemRequest)
     - [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest)
     - [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse)
+    - [GetDraftDesignDigestRequest](#game_logic-v1-GetDraftDesignDigestRequest)
+    - [GetDraftDesignDigestResponse](#game_logic-v1-GetDraftDesignDigestResponse)
     - [HazardAmbientState](#game_logic-v1-HazardAmbientState)
     - [LookExit](#game_logic-v1-LookExit)
     - [LookRequest](#game_logic-v1-LookRequest)
     - [LookResult](#game_logic-v1-LookResult)
+    - [MoveRequest](#game_logic-v1-MoveRequest)
+    - [MoveResult](#game_logic-v1-MoveResult)
+    - [PickupVisibleRoomItemRequest](#game_logic-v1-PickupVisibleRoomItemRequest)
     - [PingRequest](#game_logic-v1-PingRequest)
     - [PingResponse](#game_logic-v1-PingResponse)
     - [RoomAmbientState](#game_logic-v1-RoomAmbientState)
     - [RoomEntity](#game_logic-v1-RoomEntity)
-  
-    - [ChatAlias](#game_logic-v1-ChatAlias)
+    - [SendCommunicationRequest](#game_logic-v1-SendCommunicationRequest)
+    - [SendCommunicationResponse](#game_logic-v1-SendCommunicationResponse)
+
+    - [CommunicationPerception](#game_logic-v1-CommunicationPerception)
+    - [CommunicationRecipientRole](#game_logic-v1-CommunicationRecipientRole)
+    - [CommunicationTargetKind](#game_logic-v1-CommunicationTargetKind)
+    - [CommunicationType](#game_logic-v1-CommunicationType)
     - [DoorState](#game_logic-v1-DoorState)
     - [EntityType](#game_logic-v1-EntityType)
     - [HazardState](#game_logic-v1-HazardState)
-  
+
     - [GameLogicService](#game_logic-v1-GameLogicService)
-  
+
 - [game-session/v1/game_session_service.proto](#game-session_v1_game_session_service-proto)
+    - [AccountPresenceEntry](#game_session-v1-AccountPresenceEntry)
+    - [AdmissionPointerControlPlaneEntry](#game_session-v1-AdmissionPointerControlPlaneEntry)
+    - [CutoverParticipantResult](#game_session-v1-CutoverParticipantResult)
+    - [EnqueueAutomationCommandIfAbsentRequest](#game_session-v1-EnqueueAutomationCommandIfAbsentRequest)
+    - [EnqueueAutomationCommandIfAbsentResponse](#game_session-v1-EnqueueAutomationCommandIfAbsentResponse)
     - [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest)
     - [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse)
+    - [ExecutePreparedVersionCutoverRequest](#game_session-v1-ExecutePreparedVersionCutoverRequest)
+    - [ExecutePreparedVersionCutoverResponse](#game_session-v1-ExecutePreparedVersionCutoverResponse)
+    - [ExpectedCurrentPin](#game_session-v1-ExpectedCurrentPin)
+    - [GameInstanceRuntimeState](#game_session-v1-GameInstanceRuntimeState)
+    - [GameplayAdmissionPointer](#game_session-v1-GameplayAdmissionPointer)
+    - [GameplayCommandStatus](#game_session-v1-GameplayCommandStatus)
+    - [GameplayRealm](#game_session-v1-GameplayRealm)
+    - [GameplayWorld](#game_session-v1-GameplayWorld)
+    - [GetAdmissionPointerRequest](#game_session-v1-GetAdmissionPointerRequest)
+    - [GetAdmissionPointerResponse](#game_session-v1-GetAdmissionPointerResponse)
+    - [GetGameInstanceRuntimeStateRequest](#game_session-v1-GetGameInstanceRuntimeStateRequest)
+    - [GetGameInstanceRuntimeStateResponse](#game_session-v1-GetGameInstanceRuntimeStateResponse)
+    - [GetGameSessionPinConvergenceRequest](#game_session-v1-GetGameSessionPinConvergenceRequest)
+    - [GetGameSessionPinConvergenceResponse](#game_session-v1-GetGameSessionPinConvergenceResponse)
+    - [GetGameplayCommandStatusRequest](#game_session-v1-GetGameplayCommandStatusRequest)
+    - [GetGameplayCommandStatusResponse](#game_session-v1-GetGameplayCommandStatusResponse)
     - [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest)
     - [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse)
+    - [GetPreparedVersionUpgradeRequest](#game_session-v1-GetPreparedVersionUpgradeRequest)
+    - [GetPreparedVersionUpgradeResponse](#game_session-v1-GetPreparedVersionUpgradeResponse)
+    - [GetRemoteCommandCoordinatorRequest](#game_session-v1-GetRemoteCommandCoordinatorRequest)
+    - [GetRemoteCommandCoordinatorResponse](#game_session-v1-GetRemoteCommandCoordinatorResponse)
+    - [GetRemoteFollowupRequest](#game_session-v1-GetRemoteFollowupRequest)
+    - [GetRemoteFollowupResponse](#game_session-v1-GetRemoteFollowupResponse)
+    - [GetRemoteFollowupResultRequest](#game_session-v1-GetRemoteFollowupResultRequest)
+    - [GetRemoteFollowupResultResponse](#game_session-v1-GetRemoteFollowupResultResponse)
+    - [GetRuntimeOwnershipStatusRequest](#game_session-v1-GetRuntimeOwnershipStatusRequest)
+    - [GetRuntimeOwnershipStatusResponse](#game_session-v1-GetRuntimeOwnershipStatusResponse)
     - [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest)
     - [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse)
+    - [ListAdmissionPointerAuditRequest](#game_session-v1-ListAdmissionPointerAuditRequest)
+    - [ListAdmissionPointerAuditResponse](#game_session-v1-ListAdmissionPointerAuditResponse)
+    - [ListAdmissionPointersRequest](#game_session-v1-ListAdmissionPointersRequest)
+    - [ListAdmissionPointersResponse](#game_session-v1-ListAdmissionPointersResponse)
+    - [ListGameplayRealmsRequest](#game_session-v1-ListGameplayRealmsRequest)
+    - [ListGameplayRealmsResponse](#game_session-v1-ListGameplayRealmsResponse)
+    - [ListGameplayWorldsRequest](#game_session-v1-ListGameplayWorldsRequest)
+    - [ListGameplayWorldsResponse](#game_session-v1-ListGameplayWorldsResponse)
+    - [ListRemoteCommandCoordinatorsRequest](#game_session-v1-ListRemoteCommandCoordinatorsRequest)
+    - [ListRemoteCommandCoordinatorsResponse](#game_session-v1-ListRemoteCommandCoordinatorsResponse)
+    - [ListRemoteFollowupResultsRequest](#game_session-v1-ListRemoteFollowupResultsRequest)
+    - [ListRemoteFollowupResultsResponse](#game_session-v1-ListRemoteFollowupResultsResponse)
+    - [ListRemoteFollowupsRequest](#game_session-v1-ListRemoteFollowupsRequest)
+    - [ListRemoteFollowupsResponse](#game_session-v1-ListRemoteFollowupsResponse)
     - [PauseTicksForScopeRequest](#game_session-v1-PauseTicksForScopeRequest)
     - [PauseTicksForScopeResponse](#game_session-v1-PauseTicksForScopeResponse)
     - [PauseTicksRequest](#game_session-v1-PauseTicksRequest)
     - [PauseTicksResponse](#game_session-v1-PauseTicksResponse)
     - [PingRequest](#game_session-v1-PingRequest)
     - [PingResponse](#game_session-v1-PingResponse)
+    - [PluginPublicationLink](#game_session-v1-PluginPublicationLink)
+    - [PrepareVersionUpgradeRequest](#game_session-v1-PrepareVersionUpgradeRequest)
+    - [PrepareVersionUpgradeResponse](#game_session-v1-PrepareVersionUpgradeResponse)
+    - [PreparedVersionUpgrade](#game_session-v1-PreparedVersionUpgrade)
     - [PurgeQueuedTickCommandsForPluginVersionRequest](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionRequest)
     - [PurgeQueuedTickCommandsForPluginVersionResponse](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionResponse)
     - [PurgeQueuedTickCommandsForScriptPatchRequest](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchRequest)
     - [PurgeQueuedTickCommandsForScriptPatchResponse](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchResponse)
+    - [QueryAccountPresenceRequest](#game_session-v1-QueryAccountPresenceRequest)
+    - [QueryAccountPresenceResponse](#game_session-v1-QueryAccountPresenceResponse)
     - [QueryStateRequest](#game_session-v1-QueryStateRequest)
     - [QueryStateResponse](#game_session-v1-QueryStateResponse)
+    - [RemoteCommandCoordinatorEntry](#game_session-v1-RemoteCommandCoordinatorEntry)
+    - [RemoteFollowupEntry](#game_session-v1-RemoteFollowupEntry)
+    - [RemoteFollowupResultEntry](#game_session-v1-RemoteFollowupResultEntry)
     - [RestartSessionRequest](#game_session-v1-RestartSessionRequest)
     - [RestartSessionResponse](#game_session-v1-RestartSessionResponse)
     - [ResumeTicksForScopeRequest](#game_session-v1-ResumeTicksForScopeRequest)
@@ -204,6 +470,12 @@ for conventions on schema evolution and error handling. See each service's
     - [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse)
     - [RollbackScriptPatchVersionRequest](#game_session-v1-RollbackScriptPatchVersionRequest)
     - [RollbackScriptPatchVersionResponse](#game_session-v1-RollbackScriptPatchVersionResponse)
+    - [RuntimeOwnershipStatus](#game_session-v1-RuntimeOwnershipStatus)
+    - [ScheduleRemoteFollowupRequest](#game_session-v1-ScheduleRemoteFollowupRequest)
+    - [ScheduleRemoteFollowupResponse](#game_session-v1-ScheduleRemoteFollowupResponse)
+    - [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink)
+    - [SetAdmissionPointerRequest](#game_session-v1-SetAdmissionPointerRequest)
+    - [SetAdmissionPointerResponse](#game_session-v1-SetAdmissionPointerResponse)
     - [SetPinnedScriptPatchVersionRequest](#game_session-v1-SetPinnedScriptPatchVersionRequest)
     - [SetPinnedScriptPatchVersionResponse](#game_session-v1-SetPinnedScriptPatchVersionResponse)
     - [StartSessionRequest](#game_session-v1-StartSessionRequest)
@@ -212,55 +484,101 @@ for conventions on schema evolution and error handling. See each service's
     - [StopSessionResponse](#game_session-v1-StopSessionResponse)
     - [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest)
     - [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse)
-  
+    - [ValidateBuiltInCommandAliasRequest](#game_session-v1-ValidateBuiltInCommandAliasRequest)
+    - [ValidateBuiltInCommandAliasResponse](#game_session-v1-ValidateBuiltInCommandAliasResponse)
+    - [ValidateInstanceCutoverCompatibilityRequest](#game_session-v1-ValidateInstanceCutoverCompatibilityRequest)
+    - [ValidateInstanceCutoverCompatibilityResponse](#game_session-v1-ValidateInstanceCutoverCompatibilityResponse)
+
+    - [AccountPresenceActivityState](#game_session-v1-AccountPresenceActivityState)
+    - [AccountRecentPresenceDisposition](#game_session-v1-AccountRecentPresenceDisposition)
+    - [CutoverCompatibilityResult](#game_session-v1-CutoverCompatibilityResult)
+    - [ExpectedCurrentPin.Kind](#game_session-v1-ExpectedCurrentPin-Kind)
     - [TickStatus](#game_session-v1-TickStatus)
-  
+
     - [GameSessionControlPlaneService](#game_session-v1-GameSessionControlPlaneService)
     - [GameSessionService](#game_session-v1-GameSessionService)
-  
+
 - [logging-admin/v1/logging_admin_service.proto](#logging-admin_v1_logging_admin_service-proto)
     - [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest)
     - [ApplyModerationActionResponse](#logging_admin-v1-ApplyModerationActionResponse)
+    - [CreateLogEventRequest](#logging_admin-v1-CreateLogEventRequest)
+    - [CreateLogEventResponse](#logging_admin-v1-CreateLogEventResponse)
+    - [EvaluateModerationPolicyRequest](#logging_admin-v1-EvaluateModerationPolicyRequest)
+    - [EvaluateModerationPolicyResponse](#logging_admin-v1-EvaluateModerationPolicyResponse)
     - [PingRequest](#logging_admin-v1-PingRequest)
     - [PingResponse](#logging_admin-v1-PingResponse)
     - [QueryLogsRequest](#logging_admin-v1-QueryLogsRequest)
     - [QueryLogsResponse](#logging_admin-v1-QueryLogsResponse)
+    - [ReadLogEventReceiptRequest](#logging_admin-v1-ReadLogEventReceiptRequest)
+    - [ReadLogEventReceiptResponse](#logging_admin-v1-ReadLogEventReceiptResponse)
     - [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest)
     - [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse)
-  
+
+    - [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome)
+    - [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus)
+    - [AccountAuditScope](#logging_admin-v1-AccountAuditScope)
+
     - [LoggingAdminService](#logging_admin-v1-LoggingAdminService)
-  
+
 - [logging-admin/v1/report_service.proto](#logging-admin_v1_report_service-proto)
     - [CreateReportRequest](#logging_admin-v1-CreateReportRequest)
     - [CreateReportResponse](#logging_admin-v1-CreateReportResponse)
-  
+
     - [ReportService](#logging_admin-v1-ReportService)
-  
+
 - [shared/v1/errors.proto](#shared_v1_errors-proto)
     - [ErrorDetail](#shared-v1-ErrorDetail)
-  
+
 - [shared/v1/instance_refs.proto](#shared_v1_instance_refs-proto)
     - [RoomInstanceRef](#shared-v1-RoomInstanceRef)
-  
+
 - [shared/v1/paging.proto](#shared_v1_paging-proto)
     - [PagingRequest](#shared-v1-PagingRequest)
-  
+
+- [shared/v1/player_execution_context.proto](#shared_v1_player_execution_context-proto)
+    - [PlayerExecutionContext](#shared-v1-PlayerExecutionContext)
+
 - [social-groups/v1/social_groups_service.proto](#social-groups_v1_social_groups_service-proto)
     - [AddFriendRequest](#social_groups-v1-AddFriendRequest)
     - [AddFriendResponse](#social_groups-v1-AddFriendResponse)
     - [CreateGuildRequest](#social_groups-v1-CreateGuildRequest)
     - [CreateGuildResponse](#social_groups-v1-CreateGuildResponse)
+    - [FriendPresenceEntry](#social_groups-v1-FriendPresenceEntry)
+    - [FriendRosterEntry](#social_groups-v1-FriendRosterEntry)
+    - [FriendRosterSummary](#social_groups-v1-FriendRosterSummary)
+    - [GetFriendByOrdinalRequest](#social_groups-v1-GetFriendByOrdinalRequest)
+    - [GetFriendByOrdinalResponse](#social_groups-v1-GetFriendByOrdinalResponse)
+    - [GetFriendPresencePolicyRequest](#social_groups-v1-GetFriendPresencePolicyRequest)
+    - [GetFriendPresencePolicyResponse](#social_groups-v1-GetFriendPresencePolicyResponse)
+    - [GetFriendRequest](#social_groups-v1-GetFriendRequest)
+    - [GetFriendResponse](#social_groups-v1-GetFriendResponse)
+    - [GetFriendRosterSummaryRequest](#social_groups-v1-GetFriendRosterSummaryRequest)
+    - [GetFriendRosterSummaryResponse](#social_groups-v1-GetFriendRosterSummaryResponse)
+    - [ListFriendPresenceRequest](#social_groups-v1-ListFriendPresenceRequest)
+    - [ListFriendPresenceResponse](#social_groups-v1-ListFriendPresenceResponse)
+    - [ListFriendsRequest](#social_groups-v1-ListFriendsRequest)
+    - [ListFriendsResponse](#social_groups-v1-ListFriendsResponse)
     - [PingRequest](#social_groups-v1-PingRequest)
     - [PingResponse](#social_groups-v1-PingResponse)
+    - [RemoveFriendByOrdinalRequest](#social_groups-v1-RemoveFriendByOrdinalRequest)
+    - [RemoveFriendByOrdinalResponse](#social_groups-v1-RemoveFriendByOrdinalResponse)
+    - [RemoveFriendRequest](#social_groups-v1-RemoveFriendRequest)
+    - [RemoveFriendResponse](#social_groups-v1-RemoveFriendResponse)
     - [SendMailRequest](#social_groups-v1-SendMailRequest)
     - [SendMailResponse](#social_groups-v1-SendMailResponse)
     - [SendMessageRequest](#social_groups-v1-SendMessageRequest)
     - [SendMessageResponse](#social_groups-v1-SendMessageResponse)
-  
+    - [UpdateFriendPresencePolicyRequest](#social_groups-v1-UpdateFriendPresencePolicyRequest)
+    - [UpdateFriendPresencePolicyResponse](#social_groups-v1-UpdateFriendPresencePolicyResponse)
+
     - [ChatType](#social_groups-v1-ChatType)
-  
+    - [FriendPresenceActivityState](#social_groups-v1-FriendPresenceActivityState)
+    - [FriendPresenceVisibilityPolicy](#social_groups-v1-FriendPresenceVisibilityPolicy)
+    - [FriendRecentPresenceDisposition](#social_groups-v1-FriendRecentPresenceDisposition)
+    - [FriendRosterFilter](#social_groups-v1-FriendRosterFilter)
+
     - [SocialGroupsService](#social_groups-v1-SocialGroupsService)
-  
+
 - [spring-cloud-gateway/v1/gateway_management_service.proto](#spring-cloud-gateway_v1_gateway_management_service-proto)
     - [PingRequest](#gateway-v1-PingRequest)
     - [PingResponse](#gateway-v1-PingResponse)
@@ -268,45 +586,78 @@ for conventions on schema evolution and error handling. See each service's
     - [RemoveRouteResponse](#gateway-v1-RemoveRouteResponse)
     - [UpsertRouteRequest](#gateway-v1-UpsertRouteRequest)
     - [UpsertRouteResponse](#gateway-v1-UpsertRouteResponse)
-  
+
     - [GatewayManagementService](#gateway-v1-GatewayManagementService)
-  
+
 - [tcp-proxy/v1/tcp_proxy_service.proto](#tcp-proxy_v1_tcp_proxy_service-proto)
     - [NotifyDisconnectRequest](#tcp_proxy-v1-NotifyDisconnectRequest)
     - [NotifyDisconnectResponse](#tcp_proxy-v1-NotifyDisconnectResponse)
     - [PingRequest](#tcp_proxy-v1-PingRequest)
     - [PingResponse](#tcp_proxy-v1-PingResponse)
-  
+
     - [TcpProxyService](#tcp_proxy-v1-TcpProxyService)
-  
+
 - [world-management/v1/world_management_service.proto](#world-management_v1_world_management_service-proto)
+    - [ActivatePreparedWorldInstanceRequest](#world_management-v1-ActivatePreparedWorldInstanceRequest)
+    - [ActivatePreparedWorldInstanceResponse](#world_management-v1-ActivatePreparedWorldInstanceResponse)
     - [ApplyRoomAmbientStatePatchRequest](#world_management-v1-ApplyRoomAmbientStatePatchRequest)
     - [ApplyRoomAmbientStatePatchResponse](#world_management-v1-ApplyRoomAmbientStatePatchResponse)
+    - [ApplyWorldDesignMutationRequest](#world_management-v1-ApplyWorldDesignMutationRequest)
+    - [ApplyWorldDesignMutationResponse](#world_management-v1-ApplyWorldDesignMutationResponse)
     - [DoorAmbientState](#world_management-v1-DoorAmbientState)
+    - [FailPreparedWorldInstanceRequest](#world_management-v1-FailPreparedWorldInstanceRequest)
+    - [FailPreparedWorldInstanceResponse](#world_management-v1-FailPreparedWorldInstanceResponse)
+    - [GeneratedRoomDesignMutation](#world_management-v1-GeneratedRoomDesignMutation)
+    - [GeneratedRoomExitDesignMutation](#world_management-v1-GeneratedRoomExitDesignMutation)
+    - [GeneratedWorldEntitySpawnBindingDesignMutation](#world_management-v1-GeneratedWorldEntitySpawnBindingDesignMutation)
+    - [GenerationRuleDesignMutation](#world_management-v1-GenerationRuleDesignMutation)
     - [GetDraftDesignDigestRequest](#world_management-v1-GetDraftDesignDigestRequest)
     - [GetDraftDesignDigestResponse](#world_management-v1-GetDraftDesignDigestResponse)
     - [GetRoomRequest](#world_management-v1-GetRoomRequest)
     - [GetRoomResponse](#world_management-v1-GetRoomResponse)
-    - [RuntimeRoom](#world_management-v1-RuntimeRoom)
     - [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest)
     - [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse)
+    - [GetWorldInstanceLifecycleRequest](#world_management-v1-GetWorldInstanceLifecycleRequest)
+    - [GetWorldInstanceLifecycleResponse](#world_management-v1-GetWorldInstanceLifecycleResponse)
     - [HazardAmbientState](#world_management-v1-HazardAmbientState)
     - [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest)
     - [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse)
     - [PingRequest](#world_management-v1-PingRequest)
     - [PingResponse](#world_management-v1-PingResponse)
+    - [PrepareWorldInstanceRequest](#world_management-v1-PrepareWorldInstanceRequest)
+    - [PrepareWorldInstanceResponse](#world_management-v1-PrepareWorldInstanceResponse)
+    - [RegionDesignMutation](#world_management-v1-RegionDesignMutation)
     - [RoomAmbientState](#world_management-v1-RoomAmbientState)
     - [RoomAmbientStatePatch](#world_management-v1-RoomAmbientStatePatch)
+    - [RoomDesignMutation](#world_management-v1-RoomDesignMutation)
+    - [RoomExitDesignMutation](#world_management-v1-RoomExitDesignMutation)
     - [RoomExitSnapshot](#world_management-v1-RoomExitSnapshot)
     - [RoomOccupant](#world_management-v1-RoomOccupant)
     - [RoomSnapshot](#world_management-v1-RoomSnapshot)
-  
+    - [RuntimeRoom](#world_management-v1-RuntimeRoom)
+    - [TerminateWorldInstanceRequest](#world_management-v1-TerminateWorldInstanceRequest)
+    - [TerminateWorldInstanceResponse](#world_management-v1-TerminateWorldInstanceResponse)
+    - [ValidateWorldUpgradeMappingsRequest](#world_management-v1-ValidateWorldUpgradeMappingsRequest)
+    - [ValidateWorldUpgradeMappingsResponse](#world_management-v1-ValidateWorldUpgradeMappingsResponse)
+    - [WorldEntitySpawnBindingDesignMutation](#world_management-v1-WorldEntitySpawnBindingDesignMutation)
+    - [WorldGenerationSubtreeDesignMutation](#world_management-v1-WorldGenerationSubtreeDesignMutation)
+    - [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot)
+    - [ZoneDesignMutation](#world_management-v1-ZoneDesignMutation)
+
     - [DoorState](#world_management-v1-DoorState)
+    - [EntityTemplateReferenceType](#world_management-v1-EntityTemplateReferenceType)
     - [HazardState](#world_management-v1-HazardState)
     - [RoomOccupantType](#world_management-v1-RoomOccupantType)
-  
+    - [UpgradeValidationResult](#world_management-v1-UpgradeValidationResult)
+    - [WorldDesignAggregateType](#world_management-v1-WorldDesignAggregateType)
+    - [WorldDesignMutationOperation](#world_management-v1-WorldDesignMutationOperation)
+    - [WorldDesignMutationResult](#world_management-v1-WorldDesignMutationResult)
+    - [WorldDesignScopeMutationPolicy](#world_management-v1-WorldDesignScopeMutationPolicy)
+    - [WorldDesignScopeType](#world_management-v1-WorldDesignScopeType)
+    - [WorldInstanceLifecycleStatus](#world_management-v1-WorldInstanceLifecycleStatus)
+
     - [WorldManagementService](#world_management-v1-WorldManagementService)
-  
+
 - [Scalar Value Types](#scalar-value-types)
 
 
@@ -326,10 +677,8 @@ for conventions on schema evolution and error handling. See each service's
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
-| username | [string](#string) |  |  |
 | password | [string](#string) |  |  |
-| otp | [string](#string) |  |  |
+| email | [string](#string) |  |  |
 
 
 
@@ -361,7 +710,6 @@ for conventions on schema evolution and error handling. See each service's
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
 | token | [string](#string) |  |  |
 | new_password | [string](#string) |  |  |
 
@@ -427,7 +775,6 @@ Result of a CreateAccount call.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 
 
@@ -459,7 +806,6 @@ Result of a CreateAccount call.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 
 
@@ -475,6 +821,40 @@ Result of a CreateAccount call.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| account_json | [string](#string) |  |  |
+| profiles_json | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ExportTenantDataRequest"></a>
+
+### ExportTenantDataRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-ExportTenantDataResponse"></a>
+
+### ExportTenantDataResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
 | account_json | [string](#string) |  |  |
 | profile_json | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
@@ -516,6 +896,206 @@ Result of a CreateAccount call.
 
 
 
+<a name="account-v1-GetRealmAccessGrantForRuntimeRequest"></a>
+
+### GetRealmAccessGrantForRuntimeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetRealmAccessGrantForRuntimeResponse"></a>
+
+### GetRealmAccessGrantForRuntimeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| granted | [bool](#bool) |  |  |
+| grant_version | [uint64](#uint64) |  |  |
+| evaluated_at | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetTenantEntitlementsForRuntimeRequest"></a>
+
+### GetTenantEntitlementsForRuntimeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetTenantEntitlementsForRuntimeResponse"></a>
+
+### GetTenantEntitlementsForRuntimeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| gameplay_available | [bool](#bool) |  |  |
+| entitlement_version | [uint64](#uint64) |  |  |
+| tenant_billing_sequence | [uint64](#uint64) |  |  |
+| evaluated_at | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| allow_public_join | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetTenantMembershipForRuntimeRequest"></a>
+
+### GetTenantMembershipForRuntimeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-GetTenantMembershipForRuntimeResponse"></a>
+
+### GetTenantMembershipForRuntimeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| gameplay_admission_allowed | [bool](#bool) |  |  |
+| membership_version | [uint64](#uint64) |  |  |
+| evaluated_at | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| membership_exists | [bool](#bool) |  |  |
+| membership_lifecycle_state | [string](#string) |  |  |
+| membership_authority_generation | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-IssueDirectTextConnectScopeRequest"></a>
+
+### IssueDirectTextConnectScopeRequest
+Game Session supplies its authenticated, transport-local player context and
+exact catalog/pointer evidence. Account re-resolves the target before issuance.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| player_context | [shared.v1.PlayerExecutionContext](#shared-v1-PlayerExecutionContext) |  |  |
+| tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-IssueDirectTextConnectScopeResponse"></a>
+
+### IssueDirectTextConnectScopeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| connect_scope_id | [string](#string) |  |  |
+| connect_scope_expires_at | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="account-v1-JoinPublicProductionMembershipRequest"></a>
+
+### JoinPublicProductionMembershipRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| player_context | [shared.v1.PlayerExecutionContext](#shared-v1-PlayerExecutionContext) |  |  |
+| connect_scope_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-JoinPublicProductionMembershipResponse"></a>
+
+### JoinPublicProductionMembershipResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| outcome_code | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| membership_id | [string](#string) |  |  |
+| membership_version | [int64](#int64) |  |  |
+| membership_authority_generation | [int64](#int64) |  |  |
+| replayed | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="account-v1-LinkExternalAccountRequest"></a>
 
 ### LinkExternalAccountRequest
@@ -550,6 +1130,38 @@ Result of a CreateAccount call.
 
 
 
+<a name="account-v1-ListPresenceVisibilityPoliciesRequest"></a>
+
+### ListPresenceVisibilityPoliciesRequest
+Internal bounded bulk read used by Social Groups when projecting friend presence.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_ids | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="account-v1-ListPresenceVisibilityPoliciesResponse"></a>
+
+### ListPresenceVisibilityPoliciesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| policies | [PresenceVisibilityPolicyEntry](#account-v1-PresenceVisibilityPolicyEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="account-v1-PingRequest"></a>
 
 ### PingRequest
@@ -576,6 +1188,53 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="account-v1-PresenceVisibilityPolicyEntry"></a>
+
+### PresenceVisibilityPolicyEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| policy | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RequestEmailLoginOtpRequest"></a>
+
+### RequestEmailLoginOtpRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| email | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-RequestEmailLoginOtpResponse"></a>
+
+### RequestEmailLoginOtpResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| accepted | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="account-v1-RequestEmailVerificationRequest"></a>
 
 ### RequestEmailVerificationRequest
@@ -584,7 +1243,6 @@ Basic ping response containing a greeting and optional error details.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 
 
@@ -616,7 +1274,6 @@ Basic ping response containing a greeting and optional error details.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
 | email | [string](#string) |  |  |
 
 
@@ -673,6 +1330,22 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="account-v1-VerifyEmailLoginOtpRequest"></a>
+
+### VerifyEmailLoginOtpRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| email | [string](#string) |  |  |
+| code | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="account-v1-VerifyEmailRequest"></a>
 
 ### VerifyEmailRequest
@@ -681,7 +1354,6 @@ Basic ping response containing a greeting and optional error details.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
 | token | [string](#string) |  |  |
 
 
@@ -704,11 +1376,11 @@ Basic ping response containing a greeting and optional error details.
 
 
 
- 
 
- 
 
- 
+
+
+
 
 
 <a name="account-v1-AccountService"></a>
@@ -721,9 +1393,18 @@ Basic ping response containing a greeting and optional error details.
 | Ping | [PingRequest](#account-v1-PingRequest) | [PingResponse](#account-v1-PingResponse) |  |
 | CreateAccount | [CreateAccountRequest](#account-v1-CreateAccountRequest) | [CreateAccountResponse](#account-v1-CreateAccountResponse) |  |
 | Authenticate | [AuthenticateRequest](#account-v1-AuthenticateRequest) | [AuthenticateResponse](#account-v1-AuthenticateResponse) |  |
+| RequestEmailLoginOtp | [RequestEmailLoginOtpRequest](#account-v1-RequestEmailLoginOtpRequest) | [RequestEmailLoginOtpResponse](#account-v1-RequestEmailLoginOtpResponse) |  |
+| VerifyEmailLoginOtp | [VerifyEmailLoginOtpRequest](#account-v1-VerifyEmailLoginOtpRequest) | [AuthenticateResponse](#account-v1-AuthenticateResponse) |  |
+| GetTenantMembershipForRuntime | [GetTenantMembershipForRuntimeRequest](#account-v1-GetTenantMembershipForRuntimeRequest) | [GetTenantMembershipForRuntimeResponse](#account-v1-GetTenantMembershipForRuntimeResponse) |  |
+| GetRealmAccessGrantForRuntime | [GetRealmAccessGrantForRuntimeRequest](#account-v1-GetRealmAccessGrantForRuntimeRequest) | [GetRealmAccessGrantForRuntimeResponse](#account-v1-GetRealmAccessGrantForRuntimeResponse) |  |
+| GetTenantEntitlementsForRuntime | [GetTenantEntitlementsForRuntimeRequest](#account-v1-GetTenantEntitlementsForRuntimeRequest) | [GetTenantEntitlementsForRuntimeResponse](#account-v1-GetTenantEntitlementsForRuntimeResponse) |  |
+| IssueDirectTextConnectScope | [IssueDirectTextConnectScopeRequest](#account-v1-IssueDirectTextConnectScopeRequest) | [IssueDirectTextConnectScopeResponse](#account-v1-IssueDirectTextConnectScopeResponse) |  |
+| JoinPublicProductionMembership | [JoinPublicProductionMembershipRequest](#account-v1-JoinPublicProductionMembershipRequest) | [JoinPublicProductionMembershipResponse](#account-v1-JoinPublicProductionMembershipResponse) |  |
 | GetProfile | [GetProfileRequest](#account-v1-GetProfileRequest) | [GetProfileResponse](#account-v1-GetProfileResponse) |  |
+| ListPresenceVisibilityPolicies | [ListPresenceVisibilityPoliciesRequest](#account-v1-ListPresenceVisibilityPoliciesRequest) | [ListPresenceVisibilityPoliciesResponse](#account-v1-ListPresenceVisibilityPoliciesResponse) |  |
 | UpdateProfile | [UpdateProfileRequest](#account-v1-UpdateProfileRequest) | [UpdateProfileResponse](#account-v1-UpdateProfileResponse) |  |
 | ExportAccount | [ExportAccountRequest](#account-v1-ExportAccountRequest) | [ExportAccountResponse](#account-v1-ExportAccountResponse) |  |
+| ExportTenantData | [ExportTenantDataRequest](#account-v1-ExportTenantDataRequest) | [ExportTenantDataResponse](#account-v1-ExportTenantDataResponse) |  |
 | DeleteAccount | [DeleteAccountRequest](#account-v1-DeleteAccountRequest) | [DeleteAccountResponse](#account-v1-DeleteAccountResponse) |  |
 | RequestPasswordReset | [RequestPasswordResetRequest](#account-v1-RequestPasswordResetRequest) | [RequestPasswordResetResponse](#account-v1-RequestPasswordResetResponse) |  |
 | CompletePasswordReset | [CompletePasswordResetRequest](#account-v1-CompletePasswordResetRequest) | [CompletePasswordResetResponse](#account-v1-CompletePasswordResetResponse) |  |
@@ -731,7 +1412,7 @@ Basic ping response containing a greeting and optional error details.
 | RequestEmailVerification | [RequestEmailVerificationRequest](#account-v1-RequestEmailVerificationRequest) | [RequestEmailVerificationResponse](#account-v1-RequestEmailVerificationResponse) |  |
 | VerifyEmail | [VerifyEmailRequest](#account-v1-VerifyEmailRequest) | [VerifyEmailResponse](#account-v1-VerifyEmailResponse) |  |
 
- 
+
 
 
 
@@ -774,11 +1455,11 @@ Basic ping response containing a greeting and optional error details.
 
 
 
- 
 
- 
 
- 
+
+
+
 
 
 <a name="account-v1-NotificationService"></a>
@@ -790,7 +1471,7 @@ Basic ping response containing a greeting and optional error details.
 | ----------- | ------------ | ------------- | ------------|
 | SendNotification | [SendNotificationRequest](#account-v1-SendNotificationRequest) | [SendNotificationResponse](#account-v1-SendNotificationResponse) |  |
 
- 
+
 
 
 
@@ -933,11 +1614,11 @@ Basic ping response containing a greeting and optional error details.
 
 
 
- 
 
- 
 
- 
+
+
+
 
 
 <a name="account-v1-PaymentService"></a>
@@ -952,7 +1633,7 @@ Basic ping response containing a greeting and optional error details.
 | CreateDonation | [CreateDonationRequest](#account-v1-CreateDonationRequest) | [CreateDonationResponse](#account-v1-CreateDonationResponse) |  |
 | RefundPayment | [RefundPaymentRequest](#account-v1-RefundPaymentRequest) | [RefundPaymentResponse](#account-v1-RefundPaymentResponse) |  |
 
- 
+
 
 
 
@@ -1063,11 +1744,11 @@ Basic ping response containing a greeting and optional error details.
 
 
 
- 
 
- 
 
- 
+
+
+
 
 
 <a name="account-v1-VirtualCurrencyService"></a>
@@ -1081,7 +1762,7 @@ Basic ping response containing a greeting and optional error details.
 | AddCurrency | [AddCurrencyRequest](#account-v1-AddCurrencyRequest) | [AddCurrencyResponse](#account-v1-AddCurrencyResponse) |  |
 | SpendCurrency | [SpendCurrencyRequest](#account-v1-SpendCurrencyRequest) | [SpendCurrencyResponse](#account-v1-SpendCurrencyResponse) |  |
 
- 
+
 
 
 
@@ -1149,6 +1830,44 @@ Basic ping response containing a greeting and optional error details.
 <a name="automation_scripting-v1-CancelPendingWorkItemsForPatchResponse"></a>
 
 ### CancelPendingWorkItemsForPatchResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canceled_count | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-CancelPendingWorkItemsForPluginVersionRequest"></a>
+
+### CancelPendingWorkItemsForPluginVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-CancelPendingWorkItemsForPluginVersionResponse"></a>
+
+### CancelPendingWorkItemsForPluginVersionResponse
 
 
 
@@ -1268,6 +1987,181 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-GetAutomationDrainStatusRequest"></a>
+
+### GetAutomationDrainStatusRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetAutomationDrainStatusResponse"></a>
+
+### GetAutomationDrainStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| admission_mode | [AutomationAdmissionMode](#automation_scripting-v1-AutomationAdmissionMode) |  |  |
+| admission_epoch | [int64](#int64) |  |  |
+| active_execution_count | [int64](#int64) |  |  |
+| oldest_active_execution_started_at_ms | [int64](#int64) |  |  |
+| pending_cancelable_work_item_count | [int64](#int64) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+| is_stale | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| state_present | [bool](#bool) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| target_mode | [AutomationAdmissionMode](#automation_scripting-v1-AutomationAdmissionMode) |  |  |
+| outcome | [string](#string) |  |  |
+| request_fingerprint | [string](#string) |  |  |
+| acknowledged_at_ms | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetAutomationPinConvergenceRequest"></a>
+
+### GetAutomationPinConvergenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetAutomationPinConvergenceResponse"></a>
+
+### GetAutomationPinConvergenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| observed_pinned_script_patch_version | [string](#string) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| projection_as_of_ms | [int64](#int64) |  |  |
+| projection_lag_ms | [int64](#int64) |  |  |
+| is_projection_stale | [bool](#bool) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| observed_script_pin_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetDraftDesignDigestRequest"></a>
+
+### GetDraftDesignDigestRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
+| publish_request_id | [string](#string) |  |  |
+| derived_workflow_identity | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetDraftDesignDigestResponse"></a>
+
+### GetDraftDesignDigestResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetPluginPolicyConvergenceRequest"></a>
+
+### GetPluginPolicyConvergenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| max_results | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetPluginPolicyConvergenceResponse"></a>
+
+### GetPluginPolicyConvergenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| inspected_count | [int32](#int32) |  |  |
+| fail_closed_count | [int32](#int32) |  |  |
+| converged | [bool](#bool) |  |  |
+| evaluated_at_ms | [int64](#int64) |  |  |
+| violations | [PluginPolicyViolation](#automation_scripting-v1-PluginPolicyViolation) | repeated |  |
+| is_stale | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="automation_scripting-v1-GetPluginStatusRequest"></a>
 
 ### GetPluginStatusRequest
@@ -1295,10 +2189,96 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | active_plugin_version_id | [string](#string) |  |  |
 | pending_plugin_version_id | [string](#string) |  |  |
+| runtime_region_id | [string](#string) |  |  |
+| runtime_region_epoch | [int64](#int64) |  |  |
 | plugin_state | [PluginState](#automation_scripting-v1-PluginState) |  |  |
 | status_reason | [string](#string) |  |  |
 | last_changed_at_ms | [int64](#int64) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| last_policy_checked_at_ms | [int64](#int64) |  |  |
+| policy_check_stale | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| active_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+| pending_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetScriptEventDefinitionRequest"></a>
+
+### GetScriptEventDefinitionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_type | [string](#string) |  |  |
+| event_schema_version | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetScriptEventDefinitionResponse"></a>
+
+### GetScriptEventDefinitionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| definition | [ScriptEventDefinition](#automation_scripting-v1-ScriptEventDefinition) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetScriptPatchInstanceRolloutStatusRequest"></a>
+
+### GetScriptPatchInstanceRolloutStatusRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-GetScriptPatchInstanceRolloutStatusResponse"></a>
+
+### GetScriptPatchInstanceRolloutStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| rollout_status | [ScriptPatchInstanceRolloutStatus](#automation_scripting-v1-ScriptPatchInstanceRolloutStatus) |  |  |
+| status_reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| projection_as_of_ms | [int64](#int64) |  |  |
+| projection_lag_ms | [int64](#int64) |  |  |
+| is_projection_stale | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
 
 
 
@@ -1332,7 +2312,15 @@ Basic ping response containing a greeting and optional error details.
 | status | [ScriptPatchStatus](#automation_scripting-v1-ScriptPatchStatus) |  |  |
 | status_reason | [string](#string) |  |  |
 | last_changed_at_ms | [int64](#int64) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+| ability_schema_digest | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| superseded_by_script_patch_version | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| workflow_id | [string](#string) |  |  |
+| workflow_run_id | [string](#string) |  |  |
+| workflow_status | [string](#string) |  |  |
+| workflow_family | [string](#string) |  |  |
 
 
 
@@ -1404,6 +2392,240 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-ListPluginRuntimeEventsRequest"></a>
+
+### ListPluginRuntimeEventsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_state | [PluginState](#automation_scripting-v1-PluginState) |  |  |
+| active_plugin_version_id | [string](#string) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+| limit | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListPluginRuntimeEventsResponse"></a>
+
+### ListPluginRuntimeEventsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| events | [PluginRuntimeEventEntry](#automation_scripting-v1-PluginRuntimeEventEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptDeadLettersRequest"></a>
+
+### ListScriptDeadLettersRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| limit | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptDeadLettersResponse"></a>
+
+### ListScriptDeadLettersResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| dead_letters | [ScriptDeadLetterEntry](#automation_scripting-v1-ScriptDeadLetterEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptEventDefinitionsRequest"></a>
+
+### ListScriptEventDefinitionsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| owner_service | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptEventDefinitionsResponse"></a>
+
+### ListScriptEventDefinitionsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| definitions | [ScriptEventDefinition](#automation_scripting-v1-ScriptEventDefinition) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptHandoffEventsRequest"></a>
+
+### ListScriptHandoffEventsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| work_item_id | [string](#string) |  |  |
+| handoff_outcome | [string](#string) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+| limit | [int32](#int32) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| remote_coordinator_id | [string](#string) |  |  |
+| remote_followup_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| game_session_command_id | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| source_kind | [string](#string) |  |  |
+| source_state | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptHandoffEventsResponse"></a>
+
+### ListScriptHandoffEventsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| events | [ScriptHandoffEventEntry](#automation_scripting-v1-ScriptHandoffEventEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptPatchInstanceRolloutEventsRequest"></a>
+
+### ListScriptPatchInstanceRolloutEventsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| rollout_status | [ScriptPatchInstanceRolloutStatus](#automation_scripting-v1-ScriptPatchInstanceRolloutStatus) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+| limit | [int32](#int32) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptPatchInstanceRolloutEventsResponse"></a>
+
+### ListScriptPatchInstanceRolloutEventsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| events | [ScriptPatchInstanceRolloutEventEntry](#automation_scripting-v1-ScriptPatchInstanceRolloutEventEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptPatchInstanceRolloutsRequest"></a>
+
+### ListScriptPatchInstanceRolloutsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| rollout_status | [ScriptPatchInstanceRolloutStatus](#automation_scripting-v1-ScriptPatchInstanceRolloutStatus) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptPatchInstanceRolloutsResponse"></a>
+
+### ListScriptPatchInstanceRolloutsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| rollouts | [ScriptPatchInstanceRolloutEntry](#automation_scripting-v1-ScriptPatchInstanceRolloutEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="automation_scripting-v1-ListScriptPatchStatusesRequest"></a>
 
 ### ListScriptPatchStatusesRequest
@@ -1438,6 +2660,81 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-ListScriptScheduleInstancesRequest"></a>
+
+### ListScriptScheduleInstancesRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| limit | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptScheduleInstancesResponse"></a>
+
+### ListScriptScheduleInstancesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schedules | [ScriptScheduleInstanceEntry](#automation_scripting-v1-ScriptScheduleInstanceEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptTimerAuditEventsRequest"></a>
+
+### ListScriptTimerAuditEventsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| final_reason | [string](#string) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+| limit | [int32](#int32) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| script_pin_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ListScriptTimerAuditEventsResponse"></a>
+
+### ListScriptTimerAuditEventsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| events | [ScriptTimerAuditEventEntry](#automation_scripting-v1-ScriptTimerAuditEventEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="automation_scripting-v1-NotifyScriptVersionUpdateRequest"></a>
 
 ### NotifyScriptVersionUpdateRequest
@@ -1449,6 +2746,7 @@ Basic ping response containing a greeting and optional error details.
 | tenant_id | [string](#string) |  |  |
 | script_patch_version | [string](#string) |  |  |
 | affected_scripts | [string](#string) | repeated |  |
+| base_version_id | [int64](#int64) |  |  |
 
 
 
@@ -1465,6 +2763,44 @@ Basic ping response containing a greeting and optional error details.
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ObserveRuntimeTickProgressRequest"></a>
+
+### ObserveRuntimeTickProgressRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| tick_id | [int64](#int64) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ObserveRuntimeTickProgressResponse"></a>
+
+### ObserveRuntimeTickProgressResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| updated_schedule_count | [int32](#int32) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| fired_schedule_count | [int32](#int32) |  |  |
+| truncated_firing_count | [int32](#int32) |  |  |
 
 
 
@@ -1497,6 +2833,378 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-PluginPolicyViolation"></a>
+
+### PluginPolicyViolation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| game_instance_id | [string](#string) |  |  |
+| runtime_region_id | [string](#string) |  |  |
+| runtime_region_epoch | [int64](#int64) |  |  |
+| plugin_id | [string](#string) |  |  |
+| active_plugin_version_id | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| active_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-PluginPublicationLink"></a>
+
+### PluginPublicationLink
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| plugin_version_id | [string](#string) |  |  |
+| publication_id | [int64](#int64) |  |  |
+| publication_state | [gamedesign.v1.VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| status_reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| lookup_error_code | [string](#string) |  |  |
+| lookup_error_message | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-PluginRuntimeEventEntry"></a>
+
+### PluginRuntimeEventEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| runtime_region_id | [string](#string) |  |  |
+| runtime_region_epoch | [int64](#int64) |  |  |
+| plugin_id | [string](#string) |  |  |
+| previous_plugin_version_id | [string](#string) |  |  |
+| active_plugin_version_id | [string](#string) |  |  |
+| plugin_state | [PluginState](#automation_scripting-v1-PluginState) |  |  |
+| status_reason | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+| previous_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+| active_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ReplayDeadLetteredWorkItemResult"></a>
+
+### ReplayDeadLetteredWorkItemResult
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| work_item_id | [string](#string) |  |  |
+| outcome | [string](#string) |  |  |
+| rejection_reason | [string](#string) |  |  |
+| failure_reason | [string](#string) |  |  |
+| failure_generation | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ReplayDeadLetteredWorkItemsRequest"></a>
+
+### ReplayDeadLetteredWorkItemsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| work_item_ids | [string](#string) | repeated |  |
+| script_patch_version | [string](#string) |  |  |
+| created_after_ms | [int64](#int64) |  |  |
+| created_before_ms | [int64](#int64) |  |  |
+| limit | [int32](#int32) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ReplayDeadLetteredWorkItemsResponse"></a>
+
+### ReplayDeadLetteredWorkItemsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| replayed_count | [int64](#int64) |  |  |
+| rejected_count | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| results | [ReplayDeadLetteredWorkItemResult](#automation_scripting-v1-ReplayDeadLetteredWorkItemResult) | repeated | Durable per-item outcomes, in the same order as the selected work-item IDs. |
+| request_fingerprint | [string](#string) |  | The canonical request fingerprint used for idempotent replay readback. |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptDeadLetterEntry"></a>
+
+### ScriptDeadLetterEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| work_item_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| entity_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| status | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+| created_at_ms | [int64](#int64) |  |  |
+| updated_at_ms | [int64](#int64) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| source_kind | [string](#string) |  |  |
+| source_state | [string](#string) |  |  |
+| source_ordinal | [int64](#int64) |  |  |
+| source_due_tick_id | [int64](#int64) |  |  |
+| source_due_at_ms | [int64](#int64) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| plugin_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+| current_runtime_game_instance_id | [string](#string) |  |  |
+| current_runtime_region_id | [string](#string) |  |  |
+| current_runtime_region_epoch | [int64](#int64) |  |  |
+| is_runtime_scope_stale | [bool](#bool) |  |  |
+| current_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_runtime_world_slug | [string](#string) |  |  |
+| current_runtime_realm_slug | [string](#string) |  |  |
+| current_runtime_pointer_version | [string](#string) |  |  |
+| is_routing_bundle_stale | [bool](#bool) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| script_pin_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptEventBinding"></a>
+
+### ScriptEventBinding
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_type | [string](#string) |  |  |
+| event_schema_version | [string](#string) |  |  |
+| target_scope_type | [string](#string) |  |  |
+| target_scope_id | [string](#string) |  |  |
+| priority | [int32](#int32) |  |  |
+| requires_exclusive_event | [bool](#bool) |  |  |
+| priority_tag | [string](#string) |  |  |
+| binding_id | [string](#string) |  | Stable signed-bundle binding identity. |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptEventDefinition"></a>
+
+### ScriptEventDefinition
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_type | [string](#string) |  |  |
+| event_schema_version | [string](#string) |  |  |
+| owner_service | [string](#string) |  |  |
+| allowed_producer_principals | [string](#string) | repeated |  |
+| required_trigger_identity_fields | [string](#string) | repeated |  |
+| snapshot_authority | [string](#string) |  |  |
+| consistency_class | [string](#string) |  |  |
+| quota_class | [string](#string) |  |  |
+| replay_semantics | [string](#string) |  |  |
+| allowed_binding_scopes | [string](#string) | repeated |  |
+| dry_run_support | [bool](#bool) |  |  |
+| deprecation_status | [string](#string) |  |  |
+| payload_schema_ref | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptHandoffEventEntry"></a>
+
+### ScriptHandoffEventEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| work_item_id | [string](#string) |  |  |
+| command_ordinal | [int32](#int32) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| game_session_command_id | [string](#string) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| remote_coordinator_id | [string](#string) |  |  |
+| remote_followup_id | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| emitted_command_text | [string](#string) |  |  |
+| handoff_outcome | [string](#string) |  |  |
+| handoff_reason | [string](#string) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| source_kind | [string](#string) |  |  |
+| source_state | [string](#string) |  |  |
+| source_ordinal | [int64](#int64) |  |  |
+| source_due_tick_id | [int64](#int64) |  |  |
+| source_due_at_ms | [int64](#int64) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| plugin_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+| current_target_runtime_game_instance_id | [string](#string) |  |  |
+| current_target_runtime_region_id | [string](#string) |  |  |
+| current_target_runtime_region_epoch | [int64](#int64) |  |  |
+| is_target_runtime_scope_stale | [bool](#bool) |  |  |
+| gameplay_command_execution_outcome | [string](#string) |  |  |
+| gameplay_command_gameplay_result | [string](#string) |  |  |
+| gameplay_command_failure_code | [string](#string) |  |  |
+| gameplay_command_failure_message | [string](#string) |  |  |
+| gameplay_remote_state | [string](#string) |  |  |
+| gameplay_remote_target_command_execution_outcome | [string](#string) |  |  |
+| gameplay_remote_target_command_gameplay_result | [string](#string) |  |  |
+| current_target_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_target_runtime_world_slug | [string](#string) |  |  |
+| current_target_runtime_realm_slug | [string](#string) |  |  |
+| current_target_runtime_pointer_version | [string](#string) |  |  |
+| is_target_routing_bundle_stale | [bool](#bool) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| script_pin_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptPatchInstanceRolloutEntry"></a>
+
+### ScriptPatchInstanceRolloutEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| rollout_status | [ScriptPatchInstanceRolloutStatus](#automation_scripting-v1-ScriptPatchInstanceRolloutStatus) |  |  |
+| status_reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| projection_as_of_ms | [int64](#int64) |  |  |
+| projection_lag_ms | [int64](#int64) |  |  |
+| is_projection_stale | [bool](#bool) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptPatchInstanceRolloutEventEntry"></a>
+
+### ScriptPatchInstanceRolloutEventEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| rollout_status | [ScriptPatchInstanceRolloutStatus](#automation_scripting-v1-ScriptPatchInstanceRolloutStatus) |  |  |
+| status_reason | [string](#string) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+| projection_as_of_ms | [int64](#int64) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptPatchPublicationLink"></a>
+
+### ScriptPatchPublicationLink
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| script_patch_version | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+| publication_state | [gamedesign.v1.VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| lookup_error_code | [string](#string) |  |  |
+| lookup_error_message | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="automation_scripting-v1-ScriptPatchStatusEntry"></a>
 
 ### ScriptPatchStatusEntry
@@ -1509,6 +3217,176 @@ Basic ping response containing a greeting and optional error details.
 | status | [ScriptPatchStatus](#automation_scripting-v1-ScriptPatchStatus) |  |  |
 | status_reason | [string](#string) |  |  |
 | last_changed_at_ms | [int64](#int64) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+| ability_schema_digest | [string](#string) |  |  |
+| superseded_by_script_patch_version | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| workflow_id | [string](#string) |  |  |
+| workflow_run_id | [string](#string) |  |  |
+| workflow_status | [string](#string) |  |  |
+| workflow_family | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptScheduleInstanceEntry"></a>
+
+### ScriptScheduleInstanceEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| schedule_definition_id | [string](#string) |  |  |
+| schedule_kind | [string](#string) |  |  |
+| cadence_value | [int64](#int64) |  |  |
+| cadence_unit | [string](#string) |  |  |
+| priority_tag | [string](#string) |  |  |
+| target_scope_type | [string](#string) |  |  |
+| target_scope_id | [string](#string) |  |  |
+| binding_priority | [int32](#int32) |  |  |
+| requires_exclusive_event | [bool](#bool) |  |  |
+| materialization_status | [string](#string) |  |  |
+| next_due_at_ms | [int64](#int64) |  |  |
+| next_due_tick_id | [int64](#int64) |  |  |
+| observed_runtime_version_id | [string](#string) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+| pin_observed_at_ms | [int64](#int64) |  |  |
+| materialized_at_ms | [int64](#int64) |  |  |
+| updated_at_ms | [int64](#int64) |  |  |
+| runtime_region_id | [string](#string) |  |  |
+| runtime_region_epoch | [int64](#int64) |  |  |
+| last_observed_tick_id | [int64](#int64) |  |  |
+| last_runtime_progress_observed_at_ms | [int64](#int64) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| is_pin_stale | [bool](#bool) |  |  |
+| is_runtime_progress_stale | [bool](#bool) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| plugin_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+| current_runtime_game_instance_id | [string](#string) |  |  |
+| current_runtime_region_id | [string](#string) |  |  |
+| current_runtime_region_epoch | [int64](#int64) |  |  |
+| is_runtime_scope_stale | [bool](#bool) |  |  |
+| current_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_runtime_world_slug | [string](#string) |  |  |
+| current_runtime_realm_slug | [string](#string) |  |  |
+| current_runtime_pointer_version | [string](#string) |  |  |
+| is_routing_bundle_stale | [bool](#bool) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| binding_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-ScriptTimerAuditEventEntry"></a>
+
+### ScriptTimerAuditEventEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| entity_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| trigger_mode | [TriggerMode](#automation_scripting-v1-TriggerMode) |  |  |
+| source_state | [string](#string) |  |  |
+| source_ordinal | [int64](#int64) |  |  |
+| source_due_tick_id | [int64](#int64) |  |  |
+| source_due_at_ms | [int64](#int64) |  |  |
+| final_stage | [string](#string) |  |  |
+| final_outcome | [string](#string) |  |  |
+| final_reason | [string](#string) |  |  |
+| created_at_ms | [int64](#int64) |  |  |
+| updated_at_ms | [int64](#int64) |  |  |
+| work_item_id | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#automation_scripting-v1-ScriptPatchPublicationLink) |  |  |
+| plugin_publication | [PluginPublicationLink](#automation_scripting-v1-PluginPublicationLink) |  |  |
+| current_runtime_game_instance_id | [string](#string) |  |  |
+| current_runtime_region_id | [string](#string) |  |  |
+| current_runtime_region_epoch | [int64](#int64) |  |  |
+| is_runtime_scope_stale | [bool](#bool) |  |  |
+| current_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_runtime_world_slug | [string](#string) |  |  |
+| current_runtime_realm_slug | [string](#string) |  |  |
+| current_runtime_pointer_version | [string](#string) |  |  |
+| is_routing_bundle_stale | [bool](#bool) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+| script_pin_control_plane_request_id | [string](#string) |  |  |
+| binding_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-SetAutomationAdmissionModeRequest"></a>
+
+### SetAutomationAdmissionModeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| mode | [AutomationAdmissionMode](#automation_scripting-v1-AutomationAdmissionMode) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="automation_scripting-v1-SetAutomationAdmissionModeResponse"></a>
+
+### SetAutomationAdmissionModeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| mode | [AutomationAdmissionMode](#automation_scripting-v1-AutomationAdmissionMode) |  |  |
+| admission_epoch | [int64](#int64) |  |  |
+| updated_at_ms | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| target_mode | [AutomationAdmissionMode](#automation_scripting-v1-AutomationAdmissionMode) |  |  |
+| outcome | [string](#string) |  |  |
+| request_fingerprint | [string](#string) |  |  |
+| acknowledged_at_ms | [int64](#int64) |  |  |
 
 
 
@@ -1565,7 +3443,7 @@ Basic ping response containing a greeting and optional error details.
 | tenant_id | [string](#string) |  |  |
 | game_instance_id | [string](#string) |  |  |
 | region_id | [string](#string) |  |  |
-| region_epoch | [int64](#int64) |  | Required for gameplay/runtime triggers and scheduler triggers so triggers are fenced across scoped coordination resets. External/out-of-band triggers that omit region_epoch must define their own consistency model explicitly. |
+| region_epoch | [int64](#int64) |  | Required as a positive value for every gameplay/runtime and scheduler trigger so triggers are fenced across scoped coordination resets. Explicit out-of-band non-runtime triggers may omit region_epoch only when their owner contract documents the consistency model; the tenant-readiness onLoad branch is pre-instance and omits runtime region identity. |
 | entity_id | [string](#string) |  |  |
 | script_id | [string](#string) |  |  |
 | plugin_id | [string](#string) |  | Plugin identity (required for plugin triggers). For core script triggers, these fields must be absent. |
@@ -1578,6 +3456,15 @@ Basic ping response containing a greeting and optional error details.
 | due_tick_id | [int64](#int64) |  | Scheduling context (when applicable). |
 | due_at_ms | [int64](#int64) |  |  |
 | payload_json | [string](#string) |  | Event payload envelope (implementation-specific). |
+| event_schema_version | [string](#string) |  | Registry-controlled schema selector for custom and service-specific events. Built-in events may default to &#34;v1&#34; when omitted. |
+| read_snapshot_token | [string](#string) |  | Required when the event registry marks the event as producer-supplied authoritative snapshot. The token format is registry/event-specific. |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  | Gameplay-originated triggers should carry the resolved playable-state namespace explicitly so downstream scripting work does not infer shared-vs-isolated roster policy from instance ids alone. Non-gameplay/global triggers may leave this unspecified. |
+| world_slug | [string](#string) |  | Gameplay-originated triggers should also preserve the admitted routing bundle minted during login/bootstrap/PLAY so later scripting retries, dead letters, and handoffs do not collapse back to runtime-id-only identity. |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| script_pin_epoch | [int64](#int64) |  | Exact Game Session source pin generation captured when this trigger was created. Required as a positive value for every instance-scoped gameplay/runtime or scheduler trigger, and paired with a nonblank script_pin_control_plane_request_id; omitted with the entire tuple only for pre-instance ingress such as tenant-readiness onLoad. Epoch zero never admits an instance-scoped gameplay/runtime or scheduler trigger. |
+| script_pin_control_plane_request_id | [string](#string) |  | Canonical control-plane request identity paired with script_pin_epoch. Required and nonblank for every instance-scoped gameplay/runtime or scheduler trigger; omitted with the entire tuple only for pre-instance ingress such as tenant-readiness onLoad. |
+| script_patch_base_version_id | [int64](#int64) |  | Immutable base context paired with the script patch. Required and positive for every script-patch trigger, including pre-instance readiness work; it is provenance, not part of Trigger Identity or the Game Session pin epoch fence. |
 
 
 
@@ -1596,6 +3483,7 @@ Basic ping response containing a greeting and optional error details.
 | admission_outcome | [TriggerAdmissionOutcome](#automation_scripting-v1-TriggerAdmissionOutcome) |  |  |
 | admission_reason | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| resolved_handler_count | [int32](#int32) |  |  |
 
 
 
@@ -1614,6 +3502,8 @@ Basic ping response containing a greeting and optional error details.
 | name | [string](#string) |  |  |
 | version | [string](#string) |  |  |
 | definition | [string](#string) |  |  |
+| event_bindings | [ScriptEventBinding](#automation_scripting-v1-ScriptEventBinding) | repeated |  |
+| base_version_id | [int64](#int64) |  |  |
 
 
 
@@ -1635,7 +3525,20 @@ Basic ping response containing a greeting and optional error details.
 
 
 
- 
+
+
+
+<a name="automation_scripting-v1-AutomationAdmissionMode"></a>
+
+### AutomationAdmissionMode
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| AUTOMATION_ADMISSION_MODE_UNSPECIFIED | 0 |  |
+| AUTOMATION_ADMISSION_MODE_NORMAL | 1 |  |
+| AUTOMATION_ADMISSION_MODE_PAUSED_FOR_ROLLBACK | 2 |  |
+
 
 
 <a name="automation_scripting-v1-PluginState"></a>
@@ -1654,6 +3557,20 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="automation_scripting-v1-ScriptPatchInstanceRolloutStatus"></a>
+
+### ScriptPatchInstanceRolloutStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_UNSPECIFIED | 0 |  |
+| SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_PINNED | 1 |  |
+| SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_ROLLED_BACK | 2 |  |
+| SCRIPT_PATCH_INSTANCE_ROLLOUT_STATUS_REPINNED | 3 |  |
+
+
+
 <a name="automation_scripting-v1-ScriptPatchStatus"></a>
 
 ### ScriptPatchStatus
@@ -1667,6 +3584,7 @@ Basic ping response containing a greeting and optional error details.
 | SCRIPT_PATCH_STATUS_ROLLED_BACK | 3 |  |
 | SCRIPT_PATCH_STATUS_PENDING_VALIDATION | 4 |  |
 | SCRIPT_PATCH_STATUS_ONLOAD_RUNNING | 5 |  |
+| SCRIPT_PATCH_STATUS_SUPERSEDED | 6 |  |
 
 
 
@@ -1680,12 +3598,14 @@ Basic ping response containing a greeting and optional error details.
 | TRIGGER_ADMISSION_OUTCOME_UNSPECIFIED | 0 |  |
 | TRIGGER_ADMISSION_OUTCOME_ADMITTED | 1 |  |
 | TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_RELOADING | 2 |  |
-| TRIGGER_ADMISSION_OUTCOME_DENIED_QUOTA | 3 |  |
-| TRIGGER_ADMISSION_OUTCOME_DENIED_TENANT_BUDGET | 4 |  |
-| TRIGGER_ADMISSION_OUTCOME_DENIED_DISABLED | 5 |  |
-| TRIGGER_ADMISSION_OUTCOME_DENIED_VERSION_UNAVAILABLE | 6 |  |
-| TRIGGER_ADMISSION_OUTCOME_DENIED_POLICY | 7 |  |
+| TRIGGER_ADMISSION_OUTCOME_BACKPRESSURE_ROLLBACK | 11 |  |
 | TRIGGER_ADMISSION_OUTCOME_INFRASTRUCTURE_ERROR | 8 |  |
+| TRIGGER_ADMISSION_OUTCOME_EVENT_REGISTRY_REJECTED | 9 |  |
+| TRIGGER_ADMISSION_OUTCOME_OUTPUT_BUDGET_EXCEEDED | 10 |  |
+| TRIGGER_ADMISSION_OUTCOME_VERSION_UNAVAILABLE | 12 |  |
+| TRIGGER_ADMISSION_OUTCOME_PIN_STATE_UNAVAILABLE | 13 |  |
+| TRIGGER_ADMISSION_OUTCOME_SIGNER_POLICY_UNAVAILABLE | 14 |  |
+| TRIGGER_ADMISSION_OUTCOME_QUOTA_DENIED | 15 |  |
 
 
 
@@ -1701,9 +3621,9 @@ Basic ping response containing a greeting and optional error details.
 | TRIGGER_MODE_CATCH_UP | 2 |  |
 
 
- 
 
- 
+
+
 
 
 <a name="automation_scripting-v1-AutomationScriptingControlPlaneService"></a>
@@ -1715,8 +3635,24 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----------- | ------------ | ------------- | ------------|
 | GetScriptPatchStatus | [GetScriptPatchStatusRequest](#automation_scripting-v1-GetScriptPatchStatusRequest) | [GetScriptPatchStatusResponse](#automation_scripting-v1-GetScriptPatchStatusResponse) |  |
 | ListScriptPatchStatuses | [ListScriptPatchStatusesRequest](#automation_scripting-v1-ListScriptPatchStatusesRequest) | [ListScriptPatchStatusesResponse](#automation_scripting-v1-ListScriptPatchStatusesResponse) |  |
+| SetAutomationAdmissionMode | [SetAutomationAdmissionModeRequest](#automation_scripting-v1-SetAutomationAdmissionModeRequest) | [SetAutomationAdmissionModeResponse](#automation_scripting-v1-SetAutomationAdmissionModeResponse) |  |
+| GetAutomationDrainStatus | [GetAutomationDrainStatusRequest](#automation_scripting-v1-GetAutomationDrainStatusRequest) | [GetAutomationDrainStatusResponse](#automation_scripting-v1-GetAutomationDrainStatusResponse) |  |
+| GetAutomationPinConvergence | [GetAutomationPinConvergenceRequest](#automation_scripting-v1-GetAutomationPinConvergenceRequest) | [GetAutomationPinConvergenceResponse](#automation_scripting-v1-GetAutomationPinConvergenceResponse) |  |
+| GetScriptPatchInstanceRolloutStatus | [GetScriptPatchInstanceRolloutStatusRequest](#automation_scripting-v1-GetScriptPatchInstanceRolloutStatusRequest) | [GetScriptPatchInstanceRolloutStatusResponse](#automation_scripting-v1-GetScriptPatchInstanceRolloutStatusResponse) |  |
+| ListScriptScheduleInstances | [ListScriptScheduleInstancesRequest](#automation_scripting-v1-ListScriptScheduleInstancesRequest) | [ListScriptScheduleInstancesResponse](#automation_scripting-v1-ListScriptScheduleInstancesResponse) |  |
+| ListScriptTimerAuditEvents | [ListScriptTimerAuditEventsRequest](#automation_scripting-v1-ListScriptTimerAuditEventsRequest) | [ListScriptTimerAuditEventsResponse](#automation_scripting-v1-ListScriptTimerAuditEventsResponse) |  |
+| ListScriptPatchInstanceRollouts | [ListScriptPatchInstanceRolloutsRequest](#automation_scripting-v1-ListScriptPatchInstanceRolloutsRequest) | [ListScriptPatchInstanceRolloutsResponse](#automation_scripting-v1-ListScriptPatchInstanceRolloutsResponse) |  |
+| ListScriptPatchInstanceRolloutEvents | [ListScriptPatchInstanceRolloutEventsRequest](#automation_scripting-v1-ListScriptPatchInstanceRolloutEventsRequest) | [ListScriptPatchInstanceRolloutEventsResponse](#automation_scripting-v1-ListScriptPatchInstanceRolloutEventsResponse) |  |
+| ListScriptHandoffEvents | [ListScriptHandoffEventsRequest](#automation_scripting-v1-ListScriptHandoffEventsRequest) | [ListScriptHandoffEventsResponse](#automation_scripting-v1-ListScriptHandoffEventsResponse) |  |
+| ListScriptDeadLetters | [ListScriptDeadLettersRequest](#automation_scripting-v1-ListScriptDeadLettersRequest) | [ListScriptDeadLettersResponse](#automation_scripting-v1-ListScriptDeadLettersResponse) |  |
+| ReplayDeadLetteredWorkItems | [ReplayDeadLetteredWorkItemsRequest](#automation_scripting-v1-ReplayDeadLetteredWorkItemsRequest) | [ReplayDeadLetteredWorkItemsResponse](#automation_scripting-v1-ReplayDeadLetteredWorkItemsResponse) |  |
 | CancelPendingWorkItemsForPatch | [CancelPendingWorkItemsForPatchRequest](#automation_scripting-v1-CancelPendingWorkItemsForPatchRequest) | [CancelPendingWorkItemsForPatchResponse](#automation_scripting-v1-CancelPendingWorkItemsForPatchResponse) | Cancel pending durable work items for a patch so they are never handed off again. |
+| CancelPendingWorkItemsForPluginVersion | [CancelPendingWorkItemsForPluginVersionRequest](#automation_scripting-v1-CancelPendingWorkItemsForPluginVersionRequest) | [CancelPendingWorkItemsForPluginVersionResponse](#automation_scripting-v1-CancelPendingWorkItemsForPluginVersionResponse) |  |
+| GetScriptEventDefinition | [GetScriptEventDefinitionRequest](#automation_scripting-v1-GetScriptEventDefinitionRequest) | [GetScriptEventDefinitionResponse](#automation_scripting-v1-GetScriptEventDefinitionResponse) |  |
+| ListScriptEventDefinitions | [ListScriptEventDefinitionsRequest](#automation_scripting-v1-ListScriptEventDefinitionsRequest) | [ListScriptEventDefinitionsResponse](#automation_scripting-v1-ListScriptEventDefinitionsResponse) |  |
 | GetPluginStatus | [GetPluginStatusRequest](#automation_scripting-v1-GetPluginStatusRequest) | [GetPluginStatusResponse](#automation_scripting-v1-GetPluginStatusResponse) | Plugin lifecycle/control-plane APIs. |
+| ListPluginRuntimeEvents | [ListPluginRuntimeEventsRequest](#automation_scripting-v1-ListPluginRuntimeEventsRequest) | [ListPluginRuntimeEventsResponse](#automation_scripting-v1-ListPluginRuntimeEventsResponse) |  |
+| GetPluginPolicyConvergence | [GetPluginPolicyConvergenceRequest](#automation_scripting-v1-GetPluginPolicyConvergenceRequest) | [GetPluginPolicyConvergenceResponse](#automation_scripting-v1-GetPluginPolicyConvergenceResponse) |  |
 | SetPluginActiveVersion | [SetPluginActiveVersionRequest](#automation_scripting-v1-SetPluginActiveVersionRequest) | [SetPluginActiveVersionResponse](#automation_scripting-v1-SetPluginActiveVersionResponse) |  |
 | DisablePlugin | [DisablePluginRequest](#automation_scripting-v1-DisablePluginRequest) | [DisablePluginResponse](#automation_scripting-v1-DisablePluginResponse) |  |
 | DrainPlugin | [DrainPluginRequest](#automation_scripting-v1-DrainPluginRequest) | [DrainPluginResponse](#automation_scripting-v1-DrainPluginResponse) |  |
@@ -1737,8 +3673,10 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | UpdateScript | [UpdateScriptRequest](#automation_scripting-v1-UpdateScriptRequest) | [UpdateScriptResponse](#automation_scripting-v1-UpdateScriptResponse) | Uploads or replaces a script definition |
 | GetScriptStatus | [GetScriptStatusRequest](#automation_scripting-v1-GetScriptStatusRequest) | [GetScriptStatusResponse](#automation_scripting-v1-GetScriptStatusResponse) | Checks if a script is queued or currently running |
 | NotifyScriptVersionUpdate | [NotifyScriptVersionUpdateRequest](#automation_scripting-v1-NotifyScriptVersionUpdateRequest) | [NotifyScriptVersionUpdateResponse](#automation_scripting-v1-NotifyScriptVersionUpdateResponse) | Signals that a new script patch version is available |
+| ObserveRuntimeTickProgress | [ObserveRuntimeTickProgressRequest](#automation_scripting-v1-ObserveRuntimeTickProgressRequest) | [ObserveRuntimeTickProgressResponse](#automation_scripting-v1-ObserveRuntimeTickProgressResponse) | Internal Game Session heartbeat/progress feed for tick-aligned script schedules. |
+| GetDraftDesignDigest | [GetDraftDesignDigestRequest](#automation_scripting-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#automation_scripting-v1-GetDraftDesignDigestResponse) | Returns the canonical design-time digest for script definitions that participate in one script-patch version. |
 
- 
+
 
 
 
@@ -1746,6 +3684,89 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 <p align="right"><a href="#top">Top</a></p>
 
 ## entity-management/v1/entity_management_service.proto
+
+
+
+<a name="entity_management-v1-ActorConditionState"></a>
+
+### ActorConditionState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| condition_key | [string](#string) |  |  |
+| stack_count | [int32](#int32) |  |  |
+| source_type | [string](#string) |  |  |
+| source_id | [string](#string) |  |  |
+| started_at | [string](#string) |  |  |
+| expires_at | [string](#string) |  |  |
+| effect_payload_json | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ActorResourceValue"></a>
+
+### ActorResourceValue
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| stat_key | [string](#string) |  |  |
+| current_value | [int64](#int64) |  |  |
+| max_value | [int64](#int64) | optional |  |
+| base_value | [int64](#int64) | optional |  |
+| primitive_kind | [string](#string) |  |  |
+| source_type | [string](#string) |  |  |
+| source_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ApplyActorConditionRequest"></a>
+
+### ApplyActorConditionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| session_attestation | [string](#string) |  |  |
+| condition_key | [string](#string) |  |  |
+| stack_count | [int32](#int32) |  |  |
+| source_type | [string](#string) |  |  |
+| source_id | [string](#string) |  |  |
+| expires_at | [string](#string) |  |  |
+| effect_payload_json | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ApplyActorConditionResponse"></a>
+
+### ApplyActorConditionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| active_condition | [ActorConditionState](#entity_management-v1-ActorConditionState) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
 
 
 
@@ -1769,6 +3790,66 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | stamina | [int32](#int32) |  |  |
 | health | [int32](#int32) |  |  |
 | mana | [int32](#int32) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-CleanupRuntimeInstanceRequest"></a>
+
+### CleanupRuntimeInstanceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| termination_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-CleanupRuntimeInstanceResponse"></a>
+
+### CleanupRuntimeInstanceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| deleted_room_ground_entries | [int64](#int64) |  |  |
+| deleted_item_stacks | [int64](#int64) |  |  |
+| deleted_item_instances | [int64](#int64) |  |  |
+| deleted_container_instances | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ContainerItem"></a>
+
+### ContainerItem
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| item_name | [string](#string) |  |  |
+| item_description | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| visible_ref | [string](#string) |  |  |
 
 
 
@@ -1786,6 +3867,8 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 | name | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 
 
 
@@ -1808,6 +3891,107 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="entity_management-v1-DropItemToRoomRequest"></a>
+
+### DropItemToRoomRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| stack_family_key | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-DropItemToRoomResponse"></a>
+
+### DropItemToRoomResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| inventory_item | [InventoryItem](#entity_management-v1-InventoryItem) |  |  |
+| room_ground_item | [RoomGroundInventoryItem](#entity_management-v1-RoomGroundInventoryItem) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-EquipmentItem"></a>
+
+### EquipmentItem
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| slot | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| item_name | [string](#string) |  |  |
+| item_description | [string](#string) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| visible_ref | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-FindCharacterByNameRequest"></a>
+
+### FindCharacterByNameRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| session_attestation | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-FindCharacterByNameResponse"></a>
+
+### FindCharacterByNameResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| character | [Character](#entity_management-v1-Character) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-GetDraftDesignDigestRequest"></a>
 
 ### GetDraftDesignDigestRequest
@@ -1818,6 +4002,11 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
+| publish_request_id | [string](#string) |  |  |
+| derived_workflow_identity | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
 
 
 
@@ -1833,11 +4022,34 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| version_id | [string](#string) |  |  |
 | applied_commit_id | [string](#string) |  |  |
 | content_digest | [string](#string) |  |  |
 | digest_schema_version | [int32](#int32) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-InventoryItem"></a>
+
+### InventoryItem
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| item_id | [string](#string) |  |  |
+| item_name | [string](#string) |  |  |
+| item_description | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| visible_ref | [string](#string) |  |  |
 
 
 
@@ -1852,7 +4064,10 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 
 
 
@@ -1875,6 +4090,77 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="entity_management-v1-ListContainerContentsRequest"></a>
+
+### ListContainerContentsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ListContainerContentsResponse"></a>
+
+### ListContainerContentsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| items | [ContainerItem](#entity_management-v1-ContainerItem) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ListEquipmentRequest"></a>
+
+### ListEquipmentRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ListEquipmentResponse"></a>
+
+### ListEquipmentResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| items | [EquipmentItem](#entity_management-v1-EquipmentItem) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-ListRoomEntitiesRequest"></a>
 
 ### ListRoomEntitiesRequest
@@ -1885,6 +4171,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| session_attestation | [string](#string) |  |  |
 
 
 
@@ -1905,6 +4192,83 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | tenant_id | [string](#string) |  |  |
 | game_instance_id | [string](#string) |  |  |
 | room_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ListRoomGroundInventoryRequest"></a>
+
+### ListRoomGroundInventoryRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ListRoomGroundInventoryResponse"></a>
+
+### ListRoomGroundInventoryResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| items | [RoomGroundInventoryItem](#entity_management-v1-RoomGroundInventoryItem) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-PickupItemFromRoomRequest"></a>
+
+### PickupItemFromRoomRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| stack_family_key | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-PickupItemFromRoomResponse"></a>
+
+### PickupItemFromRoomResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| inventory_item | [InventoryItem](#entity_management-v1-InventoryItem) |  |  |
+| room_ground_item | [RoomGroundInventoryItem](#entity_management-v1-RoomGroundInventoryItem) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
 
@@ -1937,6 +4301,86 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="entity_management-v1-PutItemIntoContainerRequest"></a>
+
+### PutItemIntoContainerRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| stack_family_key | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-PutItemIntoContainerResponse"></a>
+
+### PutItemIntoContainerResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| container_item | [ContainerItem](#entity_management-v1-ContainerItem) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-QueryActorStateRequest"></a>
+
+### QueryActorStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| session_attestation | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-QueryActorStateResponse"></a>
+
+### QueryActorStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| resources | [ActorResourceValue](#entity_management-v1-ActorResourceValue) | repeated |  |
+| active_conditions | [ActorConditionState](#entity_management-v1-ActorConditionState) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="entity_management-v1-QueryInventoryRequest"></a>
 
 ### QueryInventoryRequest
@@ -1945,7 +4389,11 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| entity_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 
 
 
@@ -1960,7 +4408,44 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| item_ids | [string](#string) | repeated |  |
+| items | [InventoryItem](#entity_management-v1-InventoryItem) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-RemoveEquipmentRequest"></a>
+
+### RemoveEquipmentRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| slot | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-RemoveEquipmentResponse"></a>
+
+### RemoveEquipmentResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| equipment_item | [EquipmentItem](#entity_management-v1-EquipmentItem) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -1984,6 +4469,72 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | vision_priority | [int32](#int32) |  |  |
 | reload_hint | [ReloadHint](#entity_management-v1-ReloadHint) |  |  |
 | visible | [bool](#bool) |  |  |
+| visible_ref | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-RoomGroundInventoryItem"></a>
+
+### RoomGroundInventoryItem
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| item_name | [string](#string) |  |  |
+| item_description | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| visible_ref | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-TakeItemFromContainerRequest"></a>
+
+### TakeItemFromContainerRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| container_instance_id | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| stack_family_key | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-TakeItemFromContainerResponse"></a>
+
+### TakeItemFromContainerResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| inventory_item | [InventoryItem](#entity_management-v1-InventoryItem) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
 
@@ -1999,6 +4550,9 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | entity_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 
 
 
@@ -2020,7 +4574,132 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
- 
+
+<a name="entity_management-v1-ValidateEntityTemplateReferenceRequest"></a>
+
+### ValidateEntityTemplateReferenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| template_type | [EntityTemplateReferenceType](#entity_management-v1-EntityTemplateReferenceType) |  |  |
+| template_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ValidateEntityTemplateReferenceResponse"></a>
+
+### ValidateEntityTemplateReferenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| exists | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ValidateEntityUpgradeMappingsRequest"></a>
+
+### ValidateEntityUpgradeMappingsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| source_game_instance_id | [string](#string) |  |  |
+| target_version_id | [string](#string) |  |  |
+| remap_set_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-ValidateEntityUpgradeMappingsResponse"></a>
+
+### ValidateEntityUpgradeMappingsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| state_classes_checked | [string](#string) | repeated |  |
+| checked_families | [string](#string) | repeated |  |
+| has_s2_rows | [bool](#bool) |  |  |
+| result | [UpgradeValidationResult](#entity_management-v1-UpgradeValidationResult) |  |  |
+| remap_set_required | [bool](#bool) |  |  |
+| reasons | [string](#string) | repeated |  |
+| remap_set_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-WearEquipmentItemRequest"></a>
+
+### WearEquipmentItemRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| item_id | [string](#string) |  |  |
+| item_instance_id | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| playable_state_scope | [PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="entity_management-v1-WearEquipmentItemResponse"></a>
+
+### WearEquipmentItemResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| equipment_item | [EquipmentItem](#entity_management-v1-EquipmentItem) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+
+
+<a name="entity_management-v1-EntityTemplateReferenceType"></a>
+
+### EntityTemplateReferenceType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ENTITY_TEMPLATE_REFERENCE_TYPE_UNSPECIFIED | 0 |  |
+| ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM | 1 |  |
+| ENTITY_TEMPLATE_REFERENCE_TYPE_NPC | 2 |  |
+
 
 
 <a name="entity_management-v1-EntityType"></a>
@@ -2037,6 +4716,19 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="entity_management-v1-PlayableStateScope"></a>
+
+### PlayableStateScope
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PLAYABLE_STATE_SCOPE_UNSPECIFIED | 0 |  |
+| PLAYABLE_STATE_SCOPE_SHARED | 1 |  |
+| PLAYABLE_STATE_SCOPE_ISOLATED | 2 |  |
+
+
+
 <a name="entity_management-v1-ReloadHint"></a>
 
 ### ReloadHint
@@ -2050,9 +4742,24 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | PLAYER_LEFT | 3 |  |
 
 
- 
 
- 
+<a name="entity_management-v1-UpgradeValidationResult"></a>
+
+### UpgradeValidationResult
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| UPGRADE_VALIDATION_RESULT_UNSPECIFIED | 0 |  |
+| UPGRADE_VALIDATION_RESULT_COMPATIBLE | 1 |  |
+| UPGRADE_VALIDATION_RESULT_REQUIRES_MAPPING | 2 |  |
+| UPGRADE_VALIDATION_RESULT_INCOMPATIBLE | 3 |  |
+| UPGRADE_VALIDATION_RESULT_UNAVAILABLE | 4 |  |
+
+
+
+
+
 
 
 <a name="entity_management-v1-EntityManagementService"></a>
@@ -2066,11 +4773,26 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | CreateCharacter | [CreateCharacterRequest](#entity_management-v1-CreateCharacterRequest) | [CreateCharacterResponse](#entity_management-v1-CreateCharacterResponse) |  |
 | UpdateEntity | [UpdateEntityRequest](#entity_management-v1-UpdateEntityRequest) | [UpdateEntityResponse](#entity_management-v1-UpdateEntityResponse) |  |
 | QueryInventory | [QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest) | [QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse) |  |
+| ListEquipment | [ListEquipmentRequest](#entity_management-v1-ListEquipmentRequest) | [ListEquipmentResponse](#entity_management-v1-ListEquipmentResponse) |  |
+| WearEquipment | [WearEquipmentItemRequest](#entity_management-v1-WearEquipmentItemRequest) | [WearEquipmentItemResponse](#entity_management-v1-WearEquipmentItemResponse) |  |
+| RemoveEquipment | [RemoveEquipmentRequest](#entity_management-v1-RemoveEquipmentRequest) | [RemoveEquipmentResponse](#entity_management-v1-RemoveEquipmentResponse) |  |
+| ListContainerContents | [ListContainerContentsRequest](#entity_management-v1-ListContainerContentsRequest) | [ListContainerContentsResponse](#entity_management-v1-ListContainerContentsResponse) |  |
+| PutItemIntoContainer | [PutItemIntoContainerRequest](#entity_management-v1-PutItemIntoContainerRequest) | [PutItemIntoContainerResponse](#entity_management-v1-PutItemIntoContainerResponse) |  |
+| TakeItemFromContainer | [TakeItemFromContainerRequest](#entity_management-v1-TakeItemFromContainerRequest) | [TakeItemFromContainerResponse](#entity_management-v1-TakeItemFromContainerResponse) |  |
+| ListRoomGroundInventory | [ListRoomGroundInventoryRequest](#entity_management-v1-ListRoomGroundInventoryRequest) | [ListRoomGroundInventoryResponse](#entity_management-v1-ListRoomGroundInventoryResponse) |  |
+| PickupItemFromRoom | [PickupItemFromRoomRequest](#entity_management-v1-PickupItemFromRoomRequest) | [PickupItemFromRoomResponse](#entity_management-v1-PickupItemFromRoomResponse) |  |
+| DropItemToRoom | [DropItemToRoomRequest](#entity_management-v1-DropItemToRoomRequest) | [DropItemToRoomResponse](#entity_management-v1-DropItemToRoomResponse) |  |
 | ListCharactersByAccount | [ListCharactersByAccountRequest](#entity_management-v1-ListCharactersByAccountRequest) | [ListCharactersByAccountResponse](#entity_management-v1-ListCharactersByAccountResponse) |  |
+| FindCharacterByName | [FindCharacterByNameRequest](#entity_management-v1-FindCharacterByNameRequest) | [FindCharacterByNameResponse](#entity_management-v1-FindCharacterByNameResponse) |  |
+| QueryActorState | [QueryActorStateRequest](#entity_management-v1-QueryActorStateRequest) | [QueryActorStateResponse](#entity_management-v1-QueryActorStateResponse) |  |
+| ApplyActorCondition | [ApplyActorConditionRequest](#entity_management-v1-ApplyActorConditionRequest) | [ApplyActorConditionResponse](#entity_management-v1-ApplyActorConditionResponse) |  |
 | ListRoomEntities | [ListRoomEntitiesRequest](#entity_management-v1-ListRoomEntitiesRequest) | [ListRoomEntitiesResponse](#entity_management-v1-ListRoomEntitiesResponse) |  |
+| CleanupRuntimeInstance | [CleanupRuntimeInstanceRequest](#entity_management-v1-CleanupRuntimeInstanceRequest) | [CleanupRuntimeInstanceResponse](#entity_management-v1-CleanupRuntimeInstanceResponse) |  |
 | GetDraftDesignDigest | [GetDraftDesignDigestRequest](#entity_management-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#entity_management-v1-GetDraftDesignDigestResponse) |  |
+| ValidateEntityTemplateReference | [ValidateEntityTemplateReferenceRequest](#entity_management-v1-ValidateEntityTemplateReferenceRequest) | [ValidateEntityTemplateReferenceResponse](#entity_management-v1-ValidateEntityTemplateReferenceResponse) |  |
+| ValidateEntityUpgradeMappings | [ValidateEntityUpgradeMappingsRequest](#entity_management-v1-ValidateEntityUpgradeMappingsRequest) | [ValidateEntityUpgradeMappingsResponse](#entity_management-v1-ValidateEntityUpgradeMappingsResponse) |  |
 
- 
+
 
 
 
@@ -2078,6 +4800,820 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 <p align="right"><a href="#top">Top</a></p>
 
 ## game-design/v1/game_design_service.proto
+
+
+
+<a name="gamedesign-v1-AppliedWorldDesignMutation"></a>
+
+### AppliedWorldDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| result | [world_management.v1.WorldDesignMutationResult](#world_management-v1-WorldDesignMutationResult) |  |  |
+| aggregate_id | [string](#string) |  |  |
+| draft_revision_epoch | [int64](#int64) |  |  |
+| draft_scope_revision_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ApproveTemplateRemapSetRequest"></a>
+
+### ApproveTemplateRemapSetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| remap_set_id | [string](#string) |  |  |
+| approval_reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ApproveTemplateRemapSetResponse"></a>
+
+### ApproveTemplateRemapSetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| remap_set | [TemplateRemapSet](#gamedesign-v1-TemplateRemapSet) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-BeginPurgeVersionAssetsRequest"></a>
+
+### BeginPurgeVersionAssetsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| expected_artifact_state_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-BeginPurgeVersionAssetsResponse"></a>
+
+### BeginPurgeVersionAssetsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| artifact_state | [VersionAssetArtifactState](#gamedesign-v1-VersionAssetArtifactState) |  |  |
+| purge_status | [VersionAssetPurgeWorkflowStatus](#gamedesign-v1-VersionAssetPurgeWorkflowStatus) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CanDeleteVersionAssetsRequest"></a>
+
+### CanDeleteVersionAssetsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CanDeleteVersionAssetsResponse"></a>
+
+### CanDeleteVersionAssetsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| eligibility | [VersionAssetDeletionEligibility](#gamedesign-v1-VersionAssetDeletionEligibility) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CommandCapabilitiesSettingsOverride"></a>
+
+### CommandCapabilitiesSettingsOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| social_enabled | [bool](#bool) | optional |  |
+| presence_enabled | [bool](#bool) | optional |  |
+| inventory_enabled | [bool](#bool) | optional |  |
+| command_history_enabled | [bool](#bool) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CommandHistorySettingsOverride"></a>
+
+### CommandHistorySettingsOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| max_entries | [int32](#int32) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CommunicationSettingsOverride"></a>
+
+### CommunicationSettingsOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| max_message_length | [int32](#int32) | optional |  |
+| whisper_observer_metadata_enabled | [bool](#bool) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CompareAndSetVersionStateRequest"></a>
+
+### CompareAndSetVersionStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| expected_version_state_epoch | [int64](#int64) |  |  |
+| new_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CompareAndSetVersionStateResponse"></a>
+
+### CompareAndSetVersionStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version_state | [VersionStateSnapshot](#gamedesign-v1-VersionStateSnapshot) |  |  |
+| updated | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CreateTemplateRemapSetRequest"></a>
+
+### CreateTemplateRemapSetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| source_version_id | [int64](#int64) |  |  |
+| target_version_id | [int64](#int64) |  |  |
+| created_reason | [string](#string) |  |  |
+| remap_entries | [TemplateRemapEntry](#gamedesign-v1-TemplateRemapEntry) | repeated |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-CreateTemplateRemapSetResponse"></a>
+
+### CreateTemplateRemapSetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| remap_set | [TemplateRemapSet](#gamedesign-v1-TemplateRemapSet) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-DeleteHelpTopicRequest"></a>
+
+### DeleteHelpTopicRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [HelpTopicScope](#gamedesign-v1-HelpTopicScope) |  |  |
+| canonical_topic_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-DeleteHelpTopicResponse"></a>
+
+### DeleteHelpTopicResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-DeleteSettingsDomainOverrideRequest"></a>
+
+### DeleteSettingsDomainOverrideRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [int64](#int64) | optional |  |
+| domain | [SettingsDomain](#gamedesign-v1-SettingsDomain) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-DeleteSettingsDomainOverrideResponse"></a>
+
+### DeleteSettingsDomainOverrideResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-DesignControlPlaneDigest"></a>
+
+### DesignControlPlaneDigest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| scope_value | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-FinalizePurgeVersionAssetsRequest"></a>
+
+### FinalizePurgeVersionAssetsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| purge_workflow_id | [string](#string) |  |  |
+| expected_artifact_state_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-FinalizePurgeVersionAssetsResponse"></a>
+
+### FinalizePurgeVersionAssetsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| artifact_state | [VersionAssetArtifactState](#gamedesign-v1-VersionAssetArtifactState) |  |  |
+| purge_status | [VersionAssetPurgeWorkflowStatus](#gamedesign-v1-VersionAssetPurgeWorkflowStatus) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetDesignControlPlaneDigestRequest"></a>
+
+### GetDesignControlPlaneDigestRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetDesignControlPlaneDigestResponse"></a>
+
+### GetDesignControlPlaneDigestResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| digest | [DesignControlPlaneDigest](#gamedesign-v1-DesignControlPlaneDigest) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetPublishedPluginVersionRequest"></a>
+
+### GetPublishedPluginVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetPublishedPluginVersionResponse"></a>
+
+### GetPublishedPluginVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| plugin_version | [PublishedPluginVersion](#gamedesign-v1-PublishedPluginVersion) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetPublishedReleaseBundleRequest"></a>
+
+### GetPublishedReleaseBundleRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetPublishedReleaseBundleResponse"></a>
+
+### GetPublishedReleaseBundleResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| bundle | [PublishedReleaseBundle](#gamedesign-v1-PublishedReleaseBundle) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetPublishedScriptPatchVersionRequest"></a>
+
+### GetPublishedScriptPatchVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [int64](#int64) |  | The immutable publication identity is the complete tenant/base/patch tuple. |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetPublishedScriptPatchVersionResponse"></a>
+
+### GetPublishedScriptPatchVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| script_patch | [PublishedScriptPatchVersion](#gamedesign-v1-PublishedScriptPatchVersion) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetScopedSettingsOverridesRequest"></a>
+
+### GetScopedSettingsOverridesRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [int64](#int64) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetScopedSettingsOverridesResponse"></a>
+
+### GetScopedSettingsOverridesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_overrides | [SettingsOverrides](#gamedesign-v1-SettingsOverrides) |  |  |
+| game_instance_overrides | [SettingsOverrides](#gamedesign-v1-SettingsOverrides) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetTemplateRemapSetRequest"></a>
+
+### GetTemplateRemapSetRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| remap_set_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetTemplateRemapSetResponse"></a>
+
+### GetTemplateRemapSetResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| remap_set | [TemplateRemapSet](#gamedesign-v1-TemplateRemapSet) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetVersionAssetArtifactStateRequest"></a>
+
+### GetVersionAssetArtifactStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetVersionAssetArtifactStateResponse"></a>
+
+### GetVersionAssetArtifactStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| artifact_state | [VersionAssetArtifactState](#gamedesign-v1-VersionAssetArtifactState) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetVersionAssetPurgeStatusRequest"></a>
+
+### GetVersionAssetPurgeStatusRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| purge_workflow_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetVersionAssetPurgeStatusResponse"></a>
+
+### GetVersionAssetPurgeStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| artifact_state | [VersionAssetArtifactState](#gamedesign-v1-VersionAssetArtifactState) |  |  |
+| purge_status | [VersionAssetPurgeWorkflowStatus](#gamedesign-v1-VersionAssetPurgeWorkflowStatus) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetVersionStateRequest"></a>
+
+### GetVersionStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetVersionStateResponse"></a>
+
+### GetVersionStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| version_state | [VersionStateSnapshot](#gamedesign-v1-VersionStateSnapshot) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-HelpTopic"></a>
+
+### HelpTopic
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| canonical_topic_id | [string](#string) |  |  |
+| title | [string](#string) |  |  |
+| body | [string](#string) |  |  |
+| aliases | [string](#string) | repeated |  |
+| published | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-HelpTopicScope"></a>
+
+### HelpTopicScope
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_template_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-LaunchDescriptor"></a>
+
+### LaunchDescriptor
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| launch_descriptor_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_template_id | [int64](#int64) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| runtime_flags_json | [string](#string) |  |  |
+| generation_config_revision | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| release_bundle_id | [int64](#int64) |  |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| remap_set_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ListHelpTopicsRequest"></a>
+
+### ListHelpTopicsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [HelpTopicScope](#gamedesign-v1-HelpTopicScope) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ListHelpTopicsResponse"></a>
+
+### ListHelpTopicsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| help_topics | [HelpTopic](#gamedesign-v1-HelpTopic) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ListPluginVersionStatusEventsRequest"></a>
+
+### ListPluginVersionStatusEventsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| publication_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+| limit | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ListPluginVersionStatusEventsResponse"></a>
+
+### ListPluginVersionStatusEventsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| events | [PluginVersionStatusEventEntry](#gamedesign-v1-PluginVersionStatusEventEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ListPluginVersionStatusesRequest"></a>
+
+### ListPluginVersionStatusesRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| publication_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| changed_after_ms | [int64](#int64) |  |  |
+| changed_before_ms | [int64](#int64) |  |  |
+| limit | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ListPluginVersionStatusesResponse"></a>
+
+### ListPluginVersionStatusesResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| plugin_versions | [PublishedPluginVersion](#gamedesign-v1-PublishedPluginVersion) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
 
 
 
@@ -2112,6 +5648,40 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="gamedesign-v1-MovementSettingsOverride"></a>
+
+### MovementSettingsOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| post_move_look_enabled | [bool](#bool) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ParticipantDigest"></a>
+
+### ParticipantDigest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| participant_key | [string](#string) |  |  |
+| scope_value | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-PingRequest"></a>
 
 ### PingRequest
@@ -2138,6 +5708,106 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="gamedesign-v1-PluginVersionStatusEventEntry"></a>
+
+### PluginVersionStatusEventEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| event_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| previous_publication_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| new_publication_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| status_reason | [string](#string) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PresentationPromptOverride"></a>
+
+### PresentationPromptOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| enabled | [bool](#bool) | optional |  |
+| emit_after_reconnect_restore | [bool](#bool) | optional |  |
+| coalesce_window_ms | [int64](#int64) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PresentationSettingsOverride"></a>
+
+### PresentationSettingsOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| default_locale_tag | [string](#string) | optional |  |
+| default_color_mode | [PresentationColorMode](#gamedesign-v1-PresentationColorMode) | optional |  |
+| brief_enabled_by_default | [bool](#bool) | optional |  |
+| prompt | [PresentationPromptOverride](#gamedesign-v1-PresentationPromptOverride) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PublishPluginVersionRequest"></a>
+
+### PublishPluginVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+| ability_schema_digest | [string](#string) |  |  |
+| bundle_digest | [string](#string) |  |  |
+| manifest_schema_version | [int32](#int32) |  |  |
+| distribution_manifest_hash | [string](#string) |  |  |
+| distribution_manifest_path | [string](#string) |  |  |
+| notes | [string](#string) |  |  |
+| signer_key_id | [string](#string) |  |  |
+| signer_revoked | [bool](#bool) |  |  |
+| component_policy_decision | [PluginComponentPolicyDecision](#gamedesign-v1-PluginComponentPolicyDecision) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PublishPluginVersionResponse"></a>
+
+### PublishPluginVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| publication_id | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-PublishScriptPatchVersionRequest"></a>
 
 ### PublishScriptPatchVersionRequest
@@ -2150,6 +5820,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | base_version_id | [int64](#int64) |  |  |
 | script_patch_version | [string](#string) |  |  |
 | notes | [string](#string) |  |  |
+| publish_request_id | [string](#string) |  |  |
 
 
 
@@ -2182,6 +5853,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | notes | [string](#string) |  |  |
+| publish_request_id | [string](#string) |  |  |
 
 
 
@@ -2204,6 +5876,342 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="gamedesign-v1-PublishedPluginVersion"></a>
+
+### PublishedPluginVersion
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| publication_id | [int64](#int64) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+| publication_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| ability_schema_digest | [string](#string) |  |  |
+| bundle_digest | [string](#string) |  |  |
+| manifest_schema_version | [int32](#int32) |  |  |
+| distribution_manifest_hash | [string](#string) |  |  |
+| distribution_manifest_path | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| signer_key_id | [string](#string) |  |  |
+| signer_revoked | [bool](#bool) |  |  |
+| component_policy_decision | [PluginComponentPolicyDecision](#gamedesign-v1-PluginComponentPolicyDecision) |  |  |
+| status_reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PublishedReleaseBundle"></a>
+
+### PublishedReleaseBundle
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [int64](#int64) |  |  |
+| version_id | [int64](#int64) |  |  |
+| version_number | [int32](#int32) |  |  |
+| attestation_schema_version | [string](#string) |  |  |
+| publish_workflow_id | [string](#string) |  |  |
+| manifest_hash | [string](#string) |  |  |
+| required_manifest_asset_keys | [string](#string) | repeated |  |
+| is_script_only | [bool](#bool) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| published_at | [string](#string) |  |  |
+| participant_digests | [ParticipantDigest](#gamedesign-v1-ParticipantDigest) | repeated |  |
+| generation_config_revision | [string](#string) |  |  |
+| workflow_run_id | [string](#string) |  |  |
+| workflow_status | [string](#string) |  |  |
+| workflow_family | [string](#string) |  |  |
+| command_definitions | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PublishedScriptPatchVersion"></a>
+
+### PublishedScriptPatchVersion
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+| publication_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| control_plane_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PutHelpTopicRequest"></a>
+
+### PutHelpTopicRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [HelpTopicScope](#gamedesign-v1-HelpTopicScope) |  |  |
+| help_topic | [HelpTopic](#gamedesign-v1-HelpTopic) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PutHelpTopicResponse"></a>
+
+### PutHelpTopicResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| help_topic | [HelpTopic](#gamedesign-v1-HelpTopic) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PutSettingsDomainOverrideRequest"></a>
+
+### PutSettingsDomainOverrideRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [int64](#int64) | optional |  |
+| domain | [SettingsDomain](#gamedesign-v1-SettingsDomain) |  |  |
+| overrides | [SettingsOverrides](#gamedesign-v1-SettingsOverrides) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-PutSettingsDomainOverrideResponse"></a>
+
+### PutSettingsDomainOverrideResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ReconnectionBufferOverride"></a>
+
+### ReconnectionBufferOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ttl_ms | [int64](#int64) | optional |  |
+| min_messages | [int32](#int32) | optional |  |
+| min_lines | [int32](#int32) | optional |  |
+| soft_max_bytes | [int32](#int32) | optional |  |
+| hard_max_bytes | [int32](#int32) | optional |  |
+| max_entries | [int32](#int32) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ReconnectionPolicyOverride"></a>
+
+### ReconnectionPolicyOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| resume_window_ms | [int64](#int64) | optional |  |
+| stale_resume_falls_through_to_fresh_entry | [bool](#bool) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ReconnectionSettingsOverride"></a>
+
+### ReconnectionSettingsOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| policy | [ReconnectionPolicyOverride](#gamedesign-v1-ReconnectionPolicyOverride) |  |  |
+| buffer | [ReconnectionBufferOverride](#gamedesign-v1-ReconnectionBufferOverride) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-RepairPublishedVersionAssetsRequest"></a>
+
+### RepairPublishedVersionAssetsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| expected_artifact_state_epoch | [int64](#int64) |  |  |
+| repair_workflow_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-RepairPublishedVersionAssetsResponse"></a>
+
+### RepairPublishedVersionAssetsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| artifact_state | [VersionAssetArtifactState](#gamedesign-v1-VersionAssetArtifactState) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveHelpTopicRequest"></a>
+
+### ResolveHelpTopicRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [HelpTopicScope](#gamedesign-v1-HelpTopicScope) |  |  |
+| topic | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveHelpTopicResponse"></a>
+
+### ResolveHelpTopicResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| help_topic | [HelpTopic](#gamedesign-v1-HelpTopic) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLaunchDescriptorRequest"></a>
+
+### ResolveLaunchDescriptorRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_template_id | [int64](#int64) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| requested_script_patch_version | [string](#string) | optional |  |
+| source_version_id | [int64](#int64) | optional |  |
+| target_version_id | [int64](#int64) | optional |  |
+| requested_runtime_flags_json | [string](#string) | optional |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-ResolveLaunchDescriptorResponse"></a>
+
+### ResolveLaunchDescriptorResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| launch_descriptor | [LaunchDescriptor](#gamedesign-v1-LaunchDescriptor) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-RevokePluginVersionRequest"></a>
+
+### RevokePluginVersionRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-RevokePluginVersionResponse"></a>
+
+### RevokePluginVersionResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| publication_id | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-SaveRevisionRequest"></a>
 
 ### SaveRevisionRequest
@@ -2215,6 +6223,9 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | data | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
 | author_account_id | [int64](#int64) |  |  |
+| version_id | [int64](#int64) |  |  |
+| revision_kind | [string](#string) |  |  |
+| world_design_mutation | [WorldDesignMutationRevision](#gamedesign-v1-WorldDesignMutationRevision) |  |  |
 
 
 
@@ -2230,6 +6241,137 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | revision_id | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| applied_world_design_mutation | [AppliedWorldDesignMutation](#gamedesign-v1-AppliedWorldDesignMutation) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-SettingsOverrides"></a>
+
+### SettingsOverrides
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| reconnection | [ReconnectionSettingsOverride](#gamedesign-v1-ReconnectionSettingsOverride) |  |  |
+| communication | [CommunicationSettingsOverride](#gamedesign-v1-CommunicationSettingsOverride) |  |  |
+| presentation | [PresentationSettingsOverride](#gamedesign-v1-PresentationSettingsOverride) |  |  |
+| movement | [MovementSettingsOverride](#gamedesign-v1-MovementSettingsOverride) |  |  |
+| world_topology | [WorldTopologySettingsOverride](#gamedesign-v1-WorldTopologySettingsOverride) |  |  |
+| command_history | [CommandHistorySettingsOverride](#gamedesign-v1-CommandHistorySettingsOverride) |  |  |
+| command_capabilities | [CommandCapabilitiesSettingsOverride](#gamedesign-v1-CommandCapabilitiesSettingsOverride) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-TemplateRemapEntry"></a>
+
+### TemplateRemapEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| mapping_domain | [string](#string) |  |  |
+| mapping_type | [string](#string) |  |  |
+| source_template_key | [string](#string) |  |  |
+| target_template_key | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-TemplateRemapSet"></a>
+
+### TemplateRemapSet
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| remap_set_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| source_version_id | [int64](#int64) |  |  |
+| target_version_id | [int64](#int64) |  |  |
+| status | [TemplateRemapSetStatus](#gamedesign-v1-TemplateRemapSetStatus) |  |  |
+| created_reason | [string](#string) |  |  |
+| approval_reason | [string](#string) |  |  |
+| created_at | [string](#string) |  |  |
+| approved_at | [string](#string) |  |  |
+| remap_entries | [TemplateRemapEntry](#gamedesign-v1-TemplateRemapEntry) | repeated |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-TombstoneVersionAssetsRequest"></a>
+
+### TombstoneVersionAssetsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| expected_artifact_state_epoch | [int64](#int64) |  |  |
+| tombstone_workflow_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-TombstoneVersionAssetsResponse"></a>
+
+### TombstoneVersionAssetsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| artifact_state | [VersionAssetArtifactState](#gamedesign-v1-VersionAssetArtifactState) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-UploadPluginBundleRequest"></a>
+
+### UploadPluginBundleRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| bundle_bytes | [bytes](#bytes) |  |  |
+| notes | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-UploadPluginBundleResponse"></a>
+
+### UploadPluginBundleResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| publication_id | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -2255,11 +6397,260 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
- 
 
- 
+<a name="gamedesign-v1-VersionAssetArtifactState"></a>
 
- 
+### VersionAssetArtifactState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| artifact_state | [ArtifactState](#gamedesign-v1-ArtifactState) |  |  |
+| state_epoch | [int64](#int64) |  |  |
+| manifest_hash | [string](#string) |  |  |
+| last_workflow_id | [string](#string) |  |  |
+| last_error_code | [string](#string) |  |  |
+| last_error_message | [string](#string) |  |  |
+| updated_at | [string](#string) |  |  |
+| exported_manifest_asset_keys | [string](#string) | repeated |  |
+| exported_version_number | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-VersionAssetDeletionEligibility"></a>
+
+### VersionAssetDeletionEligibility
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| deletable | [bool](#bool) |  |  |
+| current_artifact_state | [ArtifactState](#gamedesign-v1-ArtifactState) |  |  |
+| current_state_epoch | [int64](#int64) |  |  |
+| failure_code | [string](#string) |  |  |
+| failure_message | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-VersionAssetPurgeWorkflowStatus"></a>
+
+### VersionAssetPurgeWorkflowStatus
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| purge_workflow_id | [string](#string) |  |  |
+| workflow_status | [string](#string) |  |  |
+| started_from_state_epoch | [int64](#int64) |  |  |
+| requested_at | [string](#string) |  |  |
+| updated_at | [string](#string) |  |  |
+| completed_at | [string](#string) |  |  |
+| last_error_code | [string](#string) |  |  |
+| last_error_message | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-VersionStateSnapshot"></a>
+
+### VersionStateSnapshot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| version_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| updated_at | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-WorldDesignMutationRevision"></a>
+
+### WorldDesignMutationRevision
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| logical_revision_id | [string](#string) |  |  |
+| commit_id | [string](#string) |  |  |
+| operation | [world_management.v1.WorldDesignMutationOperation](#world_management-v1-WorldDesignMutationOperation) |  |  |
+| aggregate_type | [world_management.v1.WorldDesignAggregateType](#world_management-v1-WorldDesignAggregateType) |  |  |
+| aggregate_id | [string](#string) |  |  |
+| expected_draft_revision_epoch | [int64](#int64) |  |  |
+| scope_type | [world_management.v1.WorldDesignScopeType](#world_management-v1-WorldDesignScopeType) |  |  |
+| scope_id | [string](#string) |  |  |
+| expected_draft_scope_revision_epoch | [int64](#int64) |  |  |
+| scope_mutation_policy | [world_management.v1.WorldDesignScopeMutationPolicy](#world_management-v1-WorldDesignScopeMutationPolicy) |  |  |
+| region | [world_management.v1.RegionDesignMutation](#world_management-v1-RegionDesignMutation) |  |  |
+| zone | [world_management.v1.ZoneDesignMutation](#world_management-v1-ZoneDesignMutation) |  |  |
+| room | [world_management.v1.RoomDesignMutation](#world_management-v1-RoomDesignMutation) |  |  |
+| room_exit | [world_management.v1.RoomExitDesignMutation](#world_management-v1-RoomExitDesignMutation) |  |  |
+| generation_rule | [world_management.v1.GenerationRuleDesignMutation](#world_management-v1-GenerationRuleDesignMutation) |  |  |
+| world_entity_spawn_binding | [world_management.v1.WorldEntitySpawnBindingDesignMutation](#world_management-v1-WorldEntitySpawnBindingDesignMutation) |  |  |
+| world_generation_subtree | [world_management.v1.WorldGenerationSubtreeDesignMutation](#world_management-v1-WorldGenerationSubtreeDesignMutation) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-WorldTopologySettingsOverride"></a>
+
+### WorldTopologySettingsOverride
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope_model | [WorldTopologyScopeModel](#gamedesign-v1-WorldTopologyScopeModel) | optional |  |
+| regions_enabled | [bool](#bool) | optional |  |
+
+
+
+
+
+
+
+
+<a name="gamedesign-v1-ArtifactState"></a>
+
+### ArtifactState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ARTIFACT_STATE_UNSPECIFIED | 0 |  |
+| ARTIFACT_STATE_STAGED | 1 |  |
+| ARTIFACT_STATE_EXPORTED_UNATTESTED | 2 |  |
+| ARTIFACT_STATE_PUBLISHED | 3 |  |
+| ARTIFACT_STATE_FAILED | 4 |  |
+| ARTIFACT_STATE_TOMBSTONED | 5 |  |
+| ARTIFACT_STATE_PURGE_IN_PROGRESS | 6 |  |
+| ARTIFACT_STATE_PURGE_FAILED | 7 |  |
+| ARTIFACT_STATE_PURGED | 8 |  |
+
+
+
+<a name="gamedesign-v1-PluginComponentPolicyDecision"></a>
+
+### PluginComponentPolicyDecision
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PLUGIN_COMPONENT_POLICY_DECISION_UNSPECIFIED | 0 |  |
+| PLUGIN_COMPONENT_POLICY_DECISION_ALLOWED | 1 |  |
+| PLUGIN_COMPONENT_POLICY_DECISION_REPORT_ONLY | 2 |  |
+| PLUGIN_COMPONENT_POLICY_DECISION_BLOCKED | 3 |  |
+
+
+
+<a name="gamedesign-v1-PresentationColorMode"></a>
+
+### PresentationColorMode
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| PRESENTATION_COLOR_MODE_UNSPECIFIED | 0 |  |
+| PRESENTATION_COLOR_MODE_NONE | 1 |  |
+| PRESENTATION_COLOR_MODE_BASIC | 2 |  |
+| PRESENTATION_COLOR_MODE_RICH | 3 |  |
+
+
+
+<a name="gamedesign-v1-SettingsDomain"></a>
+
+### SettingsDomain
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| SETTINGS_DOMAIN_UNSPECIFIED | 0 |  |
+| SETTINGS_DOMAIN_RECONNECTION | 1 |  |
+| SETTINGS_DOMAIN_COMMUNICATION | 2 |  |
+| SETTINGS_DOMAIN_PRESENTATION | 3 |  |
+| SETTINGS_DOMAIN_MOVEMENT | 4 |  |
+| SETTINGS_DOMAIN_WORLD_TOPOLOGY | 5 |  |
+| SETTINGS_DOMAIN_COMMAND_HISTORY | 6 |  |
+| SETTINGS_DOMAIN_COMMAND_CAPABILITIES | 7 |  |
+
+
+
+<a name="gamedesign-v1-TemplateRemapSetStatus"></a>
+
+### TemplateRemapSetStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| TEMPLATE_REMAP_SET_STATUS_UNSPECIFIED | 0 |  |
+| TEMPLATE_REMAP_SET_STATUS_DRAFT | 1 |  |
+| TEMPLATE_REMAP_SET_STATUS_APPROVED | 2 |  |
+
+
+
+<a name="gamedesign-v1-VersionLifecycleState"></a>
+
+### VersionLifecycleState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| VERSION_LIFECYCLE_STATE_UNSPECIFIED | 0 |  |
+| VERSION_LIFECYCLE_STATE_DRAFT | 1 |  |
+| VERSION_LIFECYCLE_STATE_PUBLISHED | 2 |  |
+| VERSION_LIFECYCLE_STATE_ACTIVE | 3 |  |
+| VERSION_LIFECYCLE_STATE_FAILED | 4 |  |
+| VERSION_LIFECYCLE_STATE_RETIRED | 5 |  |
+| VERSION_LIFECYCLE_STATE_UPLOAD_REJECTED | 6 |  |
+| VERSION_LIFECYCLE_STATE_SIGNATURE_VERIFIED | 7 |  |
+| VERSION_LIFECYCLE_STATE_VALIDATION_FAILED_DESIGN | 8 |  |
+| VERSION_LIFECYCLE_STATE_SUPERSEDED | 9 |  |
+| VERSION_LIFECYCLE_STATE_REVOKED_DESIGN | 10 |  |
+
+
+
+<a name="gamedesign-v1-WorldTopologyScopeModel"></a>
+
+### WorldTopologyScopeModel
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_TOPOLOGY_SCOPE_MODEL_UNSPECIFIED | 0 |  |
+| WORLD_TOPOLOGY_SCOPE_MODEL_MAP_ONLY | 1 |  |
+| WORLD_TOPOLOGY_SCOPE_MODEL_AREA_AND_MAP | 2 |  |
+| WORLD_TOPOLOGY_SCOPE_MODEL_REGION_AREA_AND_MAP | 3 |  |
+
+
+
+
+
 
 
 <a name="gamedesign-v1-GameDesignService"></a>
@@ -2273,9 +6664,38 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | SaveRevision | [SaveRevisionRequest](#gamedesign-v1-SaveRevisionRequest) | [SaveRevisionResponse](#gamedesign-v1-SaveRevisionResponse) |  |
 | PublishVersion | [PublishVersionRequest](#gamedesign-v1-PublishVersionRequest) | [PublishVersionResponse](#gamedesign-v1-PublishVersionResponse) |  |
 | PublishScriptPatchVersion | [PublishScriptPatchVersionRequest](#gamedesign-v1-PublishScriptPatchVersionRequest) | [PublishScriptPatchVersionResponse](#gamedesign-v1-PublishScriptPatchVersionResponse) |  |
+| GetPublishedScriptPatchVersion | [GetPublishedScriptPatchVersionRequest](#gamedesign-v1-GetPublishedScriptPatchVersionRequest) | [GetPublishedScriptPatchVersionResponse](#gamedesign-v1-GetPublishedScriptPatchVersionResponse) |  |
+| UploadPluginBundle | [UploadPluginBundleRequest](#gamedesign-v1-UploadPluginBundleRequest) | [UploadPluginBundleResponse](#gamedesign-v1-UploadPluginBundleResponse) |  |
+| PublishPluginVersion | [PublishPluginVersionRequest](#gamedesign-v1-PublishPluginVersionRequest) | [PublishPluginVersionResponse](#gamedesign-v1-PublishPluginVersionResponse) |  |
+| GetPublishedPluginVersion | [GetPublishedPluginVersionRequest](#gamedesign-v1-GetPublishedPluginVersionRequest) | [GetPublishedPluginVersionResponse](#gamedesign-v1-GetPublishedPluginVersionResponse) |  |
+| RevokePluginVersion | [RevokePluginVersionRequest](#gamedesign-v1-RevokePluginVersionRequest) | [RevokePluginVersionResponse](#gamedesign-v1-RevokePluginVersionResponse) |  |
+| ListPluginVersionStatuses | [ListPluginVersionStatusesRequest](#gamedesign-v1-ListPluginVersionStatusesRequest) | [ListPluginVersionStatusesResponse](#gamedesign-v1-ListPluginVersionStatusesResponse) |  |
+| ListPluginVersionStatusEvents | [ListPluginVersionStatusEventsRequest](#gamedesign-v1-ListPluginVersionStatusEventsRequest) | [ListPluginVersionStatusEventsResponse](#gamedesign-v1-ListPluginVersionStatusEventsResponse) |  |
 | ListVersions | [ListVersionsRequest](#gamedesign-v1-ListVersionsRequest) | [ListVersionsResponse](#gamedesign-v1-ListVersionsResponse) |  |
+| GetDesignControlPlaneDigest | [GetDesignControlPlaneDigestRequest](#gamedesign-v1-GetDesignControlPlaneDigestRequest) | [GetDesignControlPlaneDigestResponse](#gamedesign-v1-GetDesignControlPlaneDigestResponse) |  |
+| GetPublishedReleaseBundle | [GetPublishedReleaseBundleRequest](#gamedesign-v1-GetPublishedReleaseBundleRequest) | [GetPublishedReleaseBundleResponse](#gamedesign-v1-GetPublishedReleaseBundleResponse) |  |
+| GetVersionState | [GetVersionStateRequest](#gamedesign-v1-GetVersionStateRequest) | [GetVersionStateResponse](#gamedesign-v1-GetVersionStateResponse) |  |
+| CompareAndSetVersionState | [CompareAndSetVersionStateRequest](#gamedesign-v1-CompareAndSetVersionStateRequest) | [CompareAndSetVersionStateResponse](#gamedesign-v1-CompareAndSetVersionStateResponse) |  |
+| ResolveLaunchDescriptor | [ResolveLaunchDescriptorRequest](#gamedesign-v1-ResolveLaunchDescriptorRequest) | [ResolveLaunchDescriptorResponse](#gamedesign-v1-ResolveLaunchDescriptorResponse) |  |
+| CreateTemplateRemapSet | [CreateTemplateRemapSetRequest](#gamedesign-v1-CreateTemplateRemapSetRequest) | [CreateTemplateRemapSetResponse](#gamedesign-v1-CreateTemplateRemapSetResponse) |  |
+| ApproveTemplateRemapSet | [ApproveTemplateRemapSetRequest](#gamedesign-v1-ApproveTemplateRemapSetRequest) | [ApproveTemplateRemapSetResponse](#gamedesign-v1-ApproveTemplateRemapSetResponse) |  |
+| GetTemplateRemapSet | [GetTemplateRemapSetRequest](#gamedesign-v1-GetTemplateRemapSetRequest) | [GetTemplateRemapSetResponse](#gamedesign-v1-GetTemplateRemapSetResponse) |  |
+| GetVersionAssetArtifactState | [GetVersionAssetArtifactStateRequest](#gamedesign-v1-GetVersionAssetArtifactStateRequest) | [GetVersionAssetArtifactStateResponse](#gamedesign-v1-GetVersionAssetArtifactStateResponse) |  |
+| TombstoneVersionAssets | [TombstoneVersionAssetsRequest](#gamedesign-v1-TombstoneVersionAssetsRequest) | [TombstoneVersionAssetsResponse](#gamedesign-v1-TombstoneVersionAssetsResponse) |  |
+| CanDeleteVersionAssets | [CanDeleteVersionAssetsRequest](#gamedesign-v1-CanDeleteVersionAssetsRequest) | [CanDeleteVersionAssetsResponse](#gamedesign-v1-CanDeleteVersionAssetsResponse) |  |
+| BeginPurgeVersionAssets | [BeginPurgeVersionAssetsRequest](#gamedesign-v1-BeginPurgeVersionAssetsRequest) | [BeginPurgeVersionAssetsResponse](#gamedesign-v1-BeginPurgeVersionAssetsResponse) |  |
+| FinalizePurgeVersionAssets | [FinalizePurgeVersionAssetsRequest](#gamedesign-v1-FinalizePurgeVersionAssetsRequest) | [FinalizePurgeVersionAssetsResponse](#gamedesign-v1-FinalizePurgeVersionAssetsResponse) |  |
+| GetVersionAssetPurgeStatus | [GetVersionAssetPurgeStatusRequest](#gamedesign-v1-GetVersionAssetPurgeStatusRequest) | [GetVersionAssetPurgeStatusResponse](#gamedesign-v1-GetVersionAssetPurgeStatusResponse) |  |
+| RepairPublishedVersionAssets | [RepairPublishedVersionAssetsRequest](#gamedesign-v1-RepairPublishedVersionAssetsRequest) | [RepairPublishedVersionAssetsResponse](#gamedesign-v1-RepairPublishedVersionAssetsResponse) |  |
+| GetScopedSettingsOverrides | [GetScopedSettingsOverridesRequest](#gamedesign-v1-GetScopedSettingsOverridesRequest) | [GetScopedSettingsOverridesResponse](#gamedesign-v1-GetScopedSettingsOverridesResponse) |  |
+| PutSettingsDomainOverride | [PutSettingsDomainOverrideRequest](#gamedesign-v1-PutSettingsDomainOverrideRequest) | [PutSettingsDomainOverrideResponse](#gamedesign-v1-PutSettingsDomainOverrideResponse) |  |
+| DeleteSettingsDomainOverride | [DeleteSettingsDomainOverrideRequest](#gamedesign-v1-DeleteSettingsDomainOverrideRequest) | [DeleteSettingsDomainOverrideResponse](#gamedesign-v1-DeleteSettingsDomainOverrideResponse) |  |
+| ResolveHelpTopic | [ResolveHelpTopicRequest](#gamedesign-v1-ResolveHelpTopicRequest) | [ResolveHelpTopicResponse](#gamedesign-v1-ResolveHelpTopicResponse) |  |
+| PutHelpTopic | [PutHelpTopicRequest](#gamedesign-v1-PutHelpTopicRequest) | [PutHelpTopicResponse](#gamedesign-v1-PutHelpTopicResponse) |  |
+| ListHelpTopics | [ListHelpTopicsRequest](#gamedesign-v1-ListHelpTopicsRequest) | [ListHelpTopicsResponse](#gamedesign-v1-ListHelpTopicsResponse) |  |
+| DeleteHelpTopic | [DeleteHelpTopicRequest](#gamedesign-v1-DeleteHelpTopicRequest) | [DeleteHelpTopicResponse](#gamedesign-v1-DeleteHelpTopicResponse) |  |
 
- 
+
 
 
 
@@ -2286,39 +6706,20 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
-<a name="game_logic-v1-BroadcastSayRequest"></a>
+<a name="game_logic-v1-CommunicationRecipientView"></a>
 
-### BroadcastSayRequest
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
-| session_id | [string](#string) |  |  |
-| character_id | [string](#string) |  |  |
-| alias | [ChatAlias](#game_logic-v1-ChatAlias) |  |  |
-| text | [string](#string) |  |  |
-| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
-
-
-
-
-
-
-<a name="game_logic-v1-BroadcastSayResponse"></a>
-
-### BroadcastSayResponse
+### CommunicationRecipientView
 
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| success | [bool](#bool) |  |  |
-| message | [string](#string) |  |  |
-| delivered_to | [string](#string) | repeated |  |
-| npc_echoes | [string](#string) | repeated |  |
-| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| recipient_id | [string](#string) |  |  |
+| recipient_name | [string](#string) |  |  |
+| role | [CommunicationRecipientRole](#game_logic-v1-CommunicationRecipientRole) |  |  |
+| perception | [CommunicationPerception](#game_logic-v1-CommunicationPerception) |  |  |
+| speaker_name | [string](#string) |  |  |
+| target_name | [string](#string) |  |  |
 
 
 
@@ -2335,6 +6736,31 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | door_id | [string](#string) |  |  |
 | state | [DoorState](#game_logic-v1-DoorState) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-DropCarriedItemRequest"></a>
+
+### DropCarriedItemRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| item_reference | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 
 
 
@@ -2368,6 +6794,49 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | ----- | ---- | ----- | ----------- |
 | result | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-GetDraftDesignDigestRequest"></a>
+
+### GetDraftDesignDigestRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
+| publish_request_id | [string](#string) |  |  |
+| derived_workflow_identity | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-GetDraftDesignDigestResponse"></a>
+
+### GetDraftDesignDigestResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| applied_commit_id | [string](#string) |  |  |
+| content_digest | [string](#string) |  |  |
+| digest_schema_version | [int32](#int32) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
 
 
 
@@ -2419,6 +6888,8 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | session_id | [string](#string) |  |  |
 | character_id | [string](#string) |  |  |
 | room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| preferred_locale | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
 
 
 
@@ -2444,6 +6915,70 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | entity_snapshot_id | [string](#string) |  |  |
 | look_snapshot_id | [string](#string) |  |  |
 | ambient_state | [RoomAmbientState](#game_logic-v1-RoomAmbientState) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-MoveRequest"></a>
+
+### MoveRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| direction | [string](#string) |  |  |
+| preferred_locale | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-MoveResult"></a>
+
+### MoveResult
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| destination_room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-PickupVisibleRoomItemRequest"></a>
+
+### PickupVisibleRoomItemRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| item_reference | [string](#string) |  |  |
+| quantity | [int32](#int32) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
 
 
 
@@ -2512,20 +7047,111 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
- 
+
+<a name="game_logic-v1-SendCommunicationRequest"></a>
+
+### SendCommunicationRequest
 
 
-<a name="game_logic-v1-ChatAlias"></a>
 
-### ChatAlias
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| type | [CommunicationType](#game_logic-v1-CommunicationType) |  |  |
+| text | [string](#string) |  |  |
+| room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| target_kind | [CommunicationTargetKind](#game_logic-v1-CommunicationTargetKind) |  |  |
+| target_character_id | [string](#string) |  |  |
+| target_character_name | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| speaker_name | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_logic-v1-SendCommunicationResponse"></a>
+
+### SendCommunicationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| type | [CommunicationType](#game_logic-v1-CommunicationType) |  |  |
+| message | [string](#string) |  |  |
+| speaker_name | [string](#string) |  |  |
+| delivered_to | [string](#string) | repeated |  |
+| npc_echoes | [string](#string) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| recipient_views | [CommunicationRecipientView](#game_logic-v1-CommunicationRecipientView) | repeated |  |
+
+
+
+
+
+
+
+
+<a name="game_logic-v1-CommunicationPerception"></a>
+
+### CommunicationPerception
 
 
 | Name | Number | Description |
 | ---- | ------ | ----------- |
-| CHAT_ALIAS_UNSPECIFIED | 0 |  |
+| COMMUNICATION_PERCEPTION_UNSPECIFIED | 0 |  |
+| COMMUNICATION_PERCEPTION_FULL_CONTENT | 1 |  |
+| COMMUNICATION_PERCEPTION_METADATA_ONLY | 2 |  |
+
+
+
+<a name="game_logic-v1-CommunicationRecipientRole"></a>
+
+### CommunicationRecipientRole
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| COMMUNICATION_RECIPIENT_ROLE_UNSPECIFIED | 0 |  |
+| COMMUNICATION_RECIPIENT_ROLE_ACTOR | 1 |  |
+| COMMUNICATION_RECIPIENT_ROLE_TARGET | 2 |  |
+| COMMUNICATION_RECIPIENT_ROLE_OBSERVER | 3 |  |
+
+
+
+<a name="game_logic-v1-CommunicationTargetKind"></a>
+
+### CommunicationTargetKind
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| COMMUNICATION_TARGET_KIND_UNSPECIFIED | 0 |  |
+| COMMUNICATION_TARGET_KIND_ROOM | 1 |  |
+| COMMUNICATION_TARGET_KIND_DIRECT_CHARACTER_IN_ROOM | 2 |  |
+| COMMUNICATION_TARGET_KIND_DIRECT_CHARACTER | 3 |  |
+
+
+
+<a name="game_logic-v1-CommunicationType"></a>
+
+### CommunicationType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| COMMUNICATION_TYPE_UNSPECIFIED | 0 |  |
 | SAY | 1 |  |
-| YELL | 2 |  |
-| WHISPER | 3 |  |
+| WHISPER | 2 |  |
+| TELL | 3 |  |
 
 
 
@@ -2569,9 +7195,9 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | INACTIVE | 2 |  |
 
 
- 
 
- 
+
+
 
 
 <a name="game_logic-v1-GameLogicService"></a>
@@ -2584,9 +7210,25 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Ping | [PingRequest](#game_logic-v1-PingRequest) | [PingResponse](#game_logic-v1-PingResponse) |  |
 | ExecuteCommand | [ExecuteCommandRequest](#game_logic-v1-ExecuteCommandRequest) | [ExecuteCommandResponse](#game_logic-v1-ExecuteCommandResponse) |  |
 | ResolveLook | [LookRequest](#game_logic-v1-LookRequest) | [LookResult](#game_logic-v1-LookResult) |  |
-| BroadcastSay | [BroadcastSayRequest](#game_logic-v1-BroadcastSayRequest) | [BroadcastSayResponse](#game_logic-v1-BroadcastSayResponse) |  |
+| SendCommunication | [SendCommunicationRequest](#game_logic-v1-SendCommunicationRequest) | [SendCommunicationResponse](#game_logic-v1-SendCommunicationResponse) |  |
+| ResolveMove | [MoveRequest](#game_logic-v1-MoveRequest) | [MoveResult](#game_logic-v1-MoveResult) |  |
+| QueryInventory | [.entity_management.v1.QueryInventoryRequest](#entity_management-v1-QueryInventoryRequest) | [.entity_management.v1.QueryInventoryResponse](#entity_management-v1-QueryInventoryResponse) |  |
+| QueryActorState | [.entity_management.v1.QueryActorStateRequest](#entity_management-v1-QueryActorStateRequest) | [.entity_management.v1.QueryActorStateResponse](#entity_management-v1-QueryActorStateResponse) |  |
+| ListEquipment | [.entity_management.v1.ListEquipmentRequest](#entity_management-v1-ListEquipmentRequest) | [.entity_management.v1.ListEquipmentResponse](#entity_management-v1-ListEquipmentResponse) |  |
+| WearEquipment | [.entity_management.v1.WearEquipmentItemRequest](#entity_management-v1-WearEquipmentItemRequest) | [.entity_management.v1.WearEquipmentItemResponse](#entity_management-v1-WearEquipmentItemResponse) |  |
+| RemoveEquipment | [.entity_management.v1.RemoveEquipmentRequest](#entity_management-v1-RemoveEquipmentRequest) | [.entity_management.v1.RemoveEquipmentResponse](#entity_management-v1-RemoveEquipmentResponse) |  |
+| ListContainerContents | [.entity_management.v1.ListContainerContentsRequest](#entity_management-v1-ListContainerContentsRequest) | [.entity_management.v1.ListContainerContentsResponse](#entity_management-v1-ListContainerContentsResponse) |  |
+| PutItemIntoContainer | [.entity_management.v1.PutItemIntoContainerRequest](#entity_management-v1-PutItemIntoContainerRequest) | [.entity_management.v1.PutItemIntoContainerResponse](#entity_management-v1-PutItemIntoContainerResponse) |  |
+| TakeItemFromContainer | [.entity_management.v1.TakeItemFromContainerRequest](#entity_management-v1-TakeItemFromContainerRequest) | [.entity_management.v1.TakeItemFromContainerResponse](#entity_management-v1-TakeItemFromContainerResponse) |  |
+| ListRoomGroundInventory | [.entity_management.v1.ListRoomGroundInventoryRequest](#entity_management-v1-ListRoomGroundInventoryRequest) | [.entity_management.v1.ListRoomGroundInventoryResponse](#entity_management-v1-ListRoomGroundInventoryResponse) |  |
+| PickupItemFromRoom | [.entity_management.v1.PickupItemFromRoomRequest](#entity_management-v1-PickupItemFromRoomRequest) | [.entity_management.v1.PickupItemFromRoomResponse](#entity_management-v1-PickupItemFromRoomResponse) |  |
+| DropItemToRoom | [.entity_management.v1.DropItemToRoomRequest](#entity_management-v1-DropItemToRoomRequest) | [.entity_management.v1.DropItemToRoomResponse](#entity_management-v1-DropItemToRoomResponse) |  |
+| ApplyActorCondition | [.entity_management.v1.ApplyActorConditionRequest](#entity_management-v1-ApplyActorConditionRequest) | [.entity_management.v1.ApplyActorConditionResponse](#entity_management-v1-ApplyActorConditionResponse) |  |
+| PickupVisibleRoomItem | [PickupVisibleRoomItemRequest](#game_logic-v1-PickupVisibleRoomItemRequest) | [.entity_management.v1.PickupItemFromRoomResponse](#entity_management-v1-PickupItemFromRoomResponse) |  |
+| DropCarriedItem | [DropCarriedItemRequest](#game_logic-v1-DropCarriedItemRequest) | [.entity_management.v1.DropItemToRoomResponse](#entity_management-v1-DropItemToRoomResponse) |  |
+| GetDraftDesignDigest | [GetDraftDesignDigestRequest](#game_logic-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#game_logic-v1-GetDraftDesignDigestResponse) |  |
 
- 
+
 
 
 
@@ -2594,6 +7236,147 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 <p align="right"><a href="#top">Top</a></p>
 
 ## game-session/v1/game_session_service.proto
+
+
+
+<a name="game_session-v1-AccountPresenceEntry"></a>
+
+### AccountPresenceEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| online | [bool](#bool) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| character_name | [string](#string) |  |  |
+| activity_state | [AccountPresenceActivityState](#game_session-v1-AccountPresenceActivityState) |  |  |
+| last_seen_at_ms | [int64](#int64) |  |  |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| realm_display_name | [string](#string) |  |  |
+| recent_disposition | [AccountRecentPresenceDisposition](#game_session-v1-AccountRecentPresenceDisposition) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-AdmissionPointerControlPlaneEntry"></a>
+
+### AdmissionPointerControlPlaneEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| realm_display_name | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| visible | [bool](#bool) |  |  |
+| requires_character_selection | [bool](#bool) |  |  |
+| state_scope | [string](#string) |  |  |
+| character_creation_policy | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| occurred_at_ms | [int64](#int64) |  |  |
+| prepared_version_upgrade_id | [string](#string) |  |  |
+| public_production_realm | [bool](#bool) |  |  |
+| catalog_revision | [int64](#int64) | optional |  |
+| realm_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
+| playable_state_namespace_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
+
+
+
+
+
+
+<a name="game_session-v1-CutoverParticipantResult"></a>
+
+### CutoverParticipantResult
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| participant | [string](#string) |  |  |
+| state_classes_checked | [string](#string) | repeated |  |
+| checked_families | [string](#string) | repeated |  |
+| has_s2_rows | [bool](#bool) |  |  |
+| result | [CutoverCompatibilityResult](#game_session-v1-CutoverCompatibilityResult) |  |  |
+| reasons | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="game_session-v1-EnqueueAutomationCommandIfAbsentRequest"></a>
+
+### EnqueueAutomationCommandIfAbsentRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| due_tick_id | [int64](#int64) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| command | [string](#string) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [string](#string) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| origin_source_state | [string](#string) |  |  |
+| origin_source_ordinal | [int64](#int64) |  |  |
+| origin_source_due_tick_id | [int64](#int64) |  |  |
+| origin_source_due_at_ms | [int64](#int64) |  |  |
+| binding_id | [string](#string) |  | Stable handler binding identity assigned by the cross-service contract. |
+| script_pin_epoch | [int64](#int64) |  | Exact script pin evidence captured by Automation. The Game Session owner/admission boundary compares the complete three-field tuple (script_patch_version, script_pin_epoch, and script_pin_control_plane_request_id) with its authoritative current tuple before staging or replaying; a mismatched request ID is rejected owner evidence, not a distinct claim. |
+| script_pin_control_plane_request_id | [string](#string) |  |  |
+| script_patch_base_version_id | [int64](#int64) |  | Exact source artifact base captured with the admitted script work item. |
+
+
+
+
+
+
+<a name="game_session-v1-EnqueueAutomationCommandIfAbsentResponse"></a>
+
+### EnqueueAutomationCommandIfAbsentResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| accepted | [bool](#bool) |  |  |
+| admission_outcome | [string](#string) |  |  |
+| command_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
 
 
 
@@ -2623,6 +7406,420 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | accepted | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| command_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ExecutePreparedVersionCutoverRequest"></a>
+
+### ExecutePreparedVersionCutoverRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| prepared_version_upgrade_id | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| expected_pointer_version | [int64](#int64) | optional |  |
+| expected_catalog_revision | [int64](#int64) | optional |  |
+
+
+
+
+
+
+<a name="game_session-v1-ExecutePreparedVersionCutoverResponse"></a>
+
+### ExecutePreparedVersionCutoverResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| pointer | [AdmissionPointerControlPlaneEntry](#game_session-v1-AdmissionPointerControlPlaneEntry) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ExpectedCurrentPin"></a>
+
+### ExpectedCurrentPin
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| kind | [ExpectedCurrentPin.Kind](#game_session-v1-ExpectedCurrentPin-Kind) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GameInstanceRuntimeState"></a>
+
+### GameInstanceRuntimeState
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| runtime_version_id | [string](#string) |  |  |
+| pinned_script_patch_version | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| status | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| release_bundle_id | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| script_patch_pinned_at_ms | [int64](#int64) |  |  |
+| script_patch_pinned_by | [string](#string) |  |  |
+| script_patch_pinned_reason | [string](#string) |  |  |
+| script_patch_pinned_control_plane_request_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| publication | [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| current_admission_pointers | [AdmissionPointerControlPlaneEntry](#game_session-v1-AdmissionPointerControlPlaneEntry) | repeated |  |
+| script_pin_epoch | [int64](#int64) |  | Monotonic script-pin generation. It fences same-version repins. |
+| pinned_script_patch_base_version_id | [int64](#int64) |  | Base version captured and stored when this script patch was admitted. Zero means legacy or otherwise unknown provenance; readers must not substitute the current runtime version. |
+
+
+
+
+
+
+<a name="game_session-v1-GameplayAdmissionPointer"></a>
+
+### GameplayAdmissionPointer
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| realm_display_name | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| requires_character_selection | [bool](#bool) |  |  |
+| visible | [bool](#bool) |  |  |
+| state_scope | [string](#string) |  |  |
+| character_creation_policy | [string](#string) |  |  |
+| public_production_realm | [bool](#bool) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GameplayCommandStatus"></a>
+
+### GameplayCommandStatus
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| command_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| command_name | [string](#string) |  |  |
+| sanitized_command_text | [string](#string) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
+| execution_outcome | [string](#string) |  |  |
+| gameplay_result | [string](#string) |  |  |
+| accepted_at_ms | [int64](#int64) |  |  |
+| staged_at_ms | [int64](#int64) |  |  |
+| completed_at_ms | [int64](#int64) |  |  |
+| last_attempt_at_ms | [int64](#int64) |  |  |
+| attempt_count | [int32](#int32) |  |  |
+| failure_code | [string](#string) |  | Canonical structured terminal-reason code. For rollback purge this is ROLLBACK_PURGED and must be returned with failure_message. |
+| failure_message | [string](#string) |  | Canonical structured terminal-reason message. Required with failure_code when a terminal reason applies, including rollback purge. |
+| source_type | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| due_tick_id | [int64](#int64) |  |  |
+| enqueue_seq | [int64](#int64) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| origin_source_state | [string](#string) |  |  |
+| origin_source_ordinal | [int64](#int64) |  |  |
+| origin_source_due_tick_id | [int64](#int64) |  |  |
+| origin_source_due_at_ms | [int64](#int64) |  |  |
+| queue_source_kind | [string](#string) |  |  |
+| queue_source_state | [string](#string) |  |  |
+| queue_source_ordinal | [int64](#int64) |  |  |
+| queue_source_due_tick_id | [int64](#int64) |  |  |
+| queue_source_due_at_ms | [int64](#int64) |  |  |
+| remote_coordinator_id | [string](#string) |  |  |
+| remote_followup_id | [string](#string) |  |  |
+| remote_state | [string](#string) |  |  |
+| remote_result_outcome | [string](#string) |  |  |
+| remote_result_payload_json | [string](#string) |  |  |
+| remote_result_observed_at_ms | [int64](#int64) |  |  |
+| publication | [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink) |  |  |
+| remote_result_command_id | [string](#string) |  |  |
+| remote_result_error_code | [string](#string) |  |  |
+| remote_result_message | [string](#string) |  |  |
+| plugin_publication | [PluginPublicationLink](#game_session-v1-PluginPublicationLink) |  |  |
+| remote_origin_game_instance_id | [string](#string) |  |  |
+| remote_origin_region_id | [string](#string) |  |  |
+| remote_origin_region_epoch | [int64](#int64) |  |  |
+| remote_target_game_instance_id | [string](#string) |  |  |
+| remote_target_region_id | [string](#string) |  |  |
+| remote_target_region_epoch | [int64](#int64) |  |  |
+| remote_origin_deadline_region_epoch | [int64](#int64) |  |  |
+| remote_origin_deadline_tick_id | [int64](#int64) |  |  |
+| remote_late_result_policy | [string](#string) |  |  |
+| remote_target_command_execution_outcome | [string](#string) |  |  |
+| remote_target_command_gameplay_result | [string](#string) |  |  |
+| remote_followup_status | [string](#string) |  |  |
+| remote_followup_payload_kind | [string](#string) |  |  |
+| remote_followup_requested_command | [string](#string) |  |  |
+| remote_followup_requires_solo_tick | [bool](#bool) |  |  |
+| remote_followup_origin_source_kind | [string](#string) |  |  |
+| remote_followup_origin_source_state | [string](#string) |  |  |
+| remote_followup_origin_source_ordinal | [int64](#int64) |  |  |
+| remote_followup_origin_source_due_tick_id | [int64](#int64) |  |  |
+| remote_followup_origin_source_due_at_ms | [int64](#int64) |  |  |
+| remote_target_entity_id | [string](#string) |  |  |
+| remote_followup_effect_key | [string](#string) |  |  |
+| remote_followup_failure_code | [string](#string) |  |  |
+| remote_followup_failure_message | [string](#string) |  |  |
+| remote_followup_event_type | [string](#string) |  |  |
+| remote_followup_event_schema_version | [string](#string) |  |  |
+| remote_followup_script_event_id | [string](#string) |  |  |
+| remote_followup_trigger_mode | [string](#string) |  |  |
+| remote_followup_claim_target_aggregate | [string](#string) |  |  |
+| current_runtime_region_id | [string](#string) |  |  |
+| current_runtime_region_epoch | [int64](#int64) |  |  |
+| current_runtime_game_instance_id | [string](#string) |  |  |
+| current_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_runtime_world_slug | [string](#string) |  |  |
+| current_runtime_realm_slug | [string](#string) |  |  |
+| current_runtime_pointer_version | [int64](#int64) |  |  |
+| is_current_runtime_routing_bundle_stale | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GameplayRealm"></a>
+
+### GameplayRealm
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| requires_character_selection | [bool](#bool) |  |  |
+| visible | [bool](#bool) |  |  |
+| state_scope | [string](#string) |  |  |
+| character_creation_policy | [string](#string) |  |  |
+| public_production_realm | [bool](#bool) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GameplayWorld"></a>
+
+### GameplayWorld
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_slug | [string](#string) |  |  |
+| display_name | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetAdmissionPointerRequest"></a>
+
+### GetAdmissionPointerRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetAdmissionPointerResponse"></a>
+
+### GetAdmissionPointerResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| admission_pointer | [GameplayAdmissionPointer](#game_session-v1-GameplayAdmissionPointer) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetGameInstanceRuntimeStateRequest"></a>
+
+### GetGameInstanceRuntimeStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetGameInstanceRuntimeStateResponse"></a>
+
+### GetGameInstanceRuntimeStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| runtime_state | [GameInstanceRuntimeState](#game_session-v1-GameInstanceRuntimeState) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetGameSessionPinConvergenceRequest"></a>
+
+### GetGameSessionPinConvergenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetGameSessionPinConvergenceResponse"></a>
+
+### GetGameSessionPinConvergenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| observed_pinned_script_patch_version | [string](#string) |  |  |
+| last_observed_control_plane_request_id | [string](#string) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+| is_stale | [bool](#bool) |  |  |
+| publication | [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| observed_script_pin_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetGameplayCommandStatusRequest"></a>
+
+### GetGameplayCommandStatusRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| command_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetGameplayCommandStatusResponse"></a>
+
+### GetGameplayCommandStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| command | [GameplayCommandStatus](#game_session-v1-GameplayCommandStatus) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -2657,6 +7854,170 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | pinned_script_patch_version | [string](#string) |  |  |
 | pinned_at_ms | [int64](#int64) |  |  |
 | pinned_by | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetPreparedVersionUpgradeRequest"></a>
+
+### GetPreparedVersionUpgradeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| preparation_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetPreparedVersionUpgradeResponse"></a>
+
+### GetPreparedVersionUpgradeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| preparation | [PreparedVersionUpgrade](#game_session-v1-PreparedVersionUpgrade) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRemoteCommandCoordinatorRequest"></a>
+
+### GetRemoteCommandCoordinatorRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| coordinator_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRemoteCommandCoordinatorResponse"></a>
+
+### GetRemoteCommandCoordinatorResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| coordinator | [RemoteCommandCoordinatorEntry](#game_session-v1-RemoteCommandCoordinatorEntry) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRemoteFollowupRequest"></a>
+
+### GetRemoteFollowupRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| followup_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRemoteFollowupResponse"></a>
+
+### GetRemoteFollowupResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| followup | [RemoteFollowupEntry](#game_session-v1-RemoteFollowupEntry) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRemoteFollowupResultRequest"></a>
+
+### GetRemoteFollowupResultRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| result_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRemoteFollowupResultResponse"></a>
+
+### GetRemoteFollowupResultResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| result | [RemoteFollowupResultEntry](#game_session-v1-RemoteFollowupResultEntry) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRuntimeOwnershipStatusRequest"></a>
+
+### GetRuntimeOwnershipStatusRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetRuntimeOwnershipStatusResponse"></a>
+
+### GetRuntimeOwnershipStatusResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ownership | [RuntimeOwnershipStatus](#game_session-v1-RuntimeOwnershipStatus) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -2683,6 +8044,368 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | status | [TickStatus](#game_session-v1-TickStatus) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListAdmissionPointerAuditRequest"></a>
+
+### ListAdmissionPointerAuditRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListAdmissionPointerAuditResponse"></a>
+
+### ListAdmissionPointerAuditResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| audit | [AdmissionPointerControlPlaneEntry](#game_session-v1-AdmissionPointerControlPlaneEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListAdmissionPointersRequest"></a>
+
+### ListAdmissionPointersRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_ids | [int64](#int64) | repeated | Empty requires a global privileged caller for the all-tenant read. Non-empty IDs must be positive and individually authorized by the forwarded caller context. |
+
+
+
+
+
+
+<a name="game_session-v1-ListAdmissionPointersResponse"></a>
+
+### ListAdmissionPointersResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| pointers | [AdmissionPointerControlPlaneEntry](#game_session-v1-AdmissionPointerControlPlaneEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListGameplayRealmsRequest"></a>
+
+### ListGameplayRealmsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_slug | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListGameplayRealmsResponse"></a>
+
+### ListGameplayRealmsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| realms | [GameplayRealm](#game_session-v1-GameplayRealm) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListGameplayWorldsRequest"></a>
+
+### ListGameplayWorldsRequest
+
+
+
+
+
+
+
+<a name="game_session-v1-ListGameplayWorldsResponse"></a>
+
+### ListGameplayWorldsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| worlds | [GameplayWorld](#game_session-v1-GameplayWorld) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListRemoteCommandCoordinatorsRequest"></a>
+
+### ListRemoteCommandCoordinatorsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| origin_region_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| state | [string](#string) |  |  |
+| followup_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| command_id | [string](#string) |  |  |
+| limit | [int32](#int32) |  |  |
+| origin_game_instance_id | [string](#string) |  |  |
+| origin_region_epoch | [int64](#int64) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) | optional |  |
+| target_entity_id | [string](#string) |  |  |
+| effect_key | [string](#string) |  |  |
+| payload_kind | [string](#string) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| target_command_id | [string](#string) |  |  |
+| target_command_execution_outcome | [string](#string) |  |  |
+| target_command_gameplay_result | [string](#string) |  |  |
+| late_result_policy | [string](#string) |  |  |
+| execution_outcome | [string](#string) |  |  |
+| gameplay_result | [string](#string) |  |  |
+| followup_status | [string](#string) |  |  |
+| followup_claimed_tick_batch_id | [string](#string) |  |  |
+| followup_requires_solo_tick | [bool](#bool) |  |  |
+| followup_origin_source_state | [string](#string) |  |  |
+| latest_result_outcome | [string](#string) |  |  |
+| latest_result_error_code | [string](#string) |  |  |
+| claim_target_aggregate | [string](#string) |  |  |
+| current_origin_runtime_region_id | [string](#string) |  |  |
+| current_origin_runtime_region_epoch | [int64](#int64) |  |  |
+| current_target_runtime_region_id | [string](#string) |  |  |
+| current_target_runtime_region_epoch | [int64](#int64) |  |  |
+| followup_queue_source_kind | [string](#string) |  |  |
+| followup_queue_source_state | [string](#string) |  |  |
+| followup_queue_source_ordinal | [int64](#int64) |  |  |
+| followup_queue_source_due_tick_id | [int64](#int64) |  |  |
+| followup_queue_source_due_at_ms | [int64](#int64) |  |  |
+| current_origin_runtime_game_instance_id | [string](#string) |  |  |
+| current_target_runtime_game_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListRemoteCommandCoordinatorsResponse"></a>
+
+### ListRemoteCommandCoordinatorsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| coordinators | [RemoteCommandCoordinatorEntry](#game_session-v1-RemoteCommandCoordinatorEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListRemoteFollowupResultsRequest"></a>
+
+### ListRemoteFollowupResultsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| coordinator_id | [string](#string) |  |  |
+| followup_id | [string](#string) |  |  |
+| origin_region_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| outcome | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| command_id | [string](#string) |  |  |
+| limit | [int32](#int32) |  |  |
+| origin_game_instance_id | [string](#string) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| origin_region_epoch | [int64](#int64) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) | optional |  |
+| result_error_code | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| result_command_id | [string](#string) |  |  |
+| result_command_execution_outcome | [string](#string) |  |  |
+| result_command_gameplay_result | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| effect_key | [string](#string) |  |  |
+| failure_code | [string](#string) |  |  |
+| payload_kind | [string](#string) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| result_message | [string](#string) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
+| origin_source_state | [string](#string) |  |  |
+| late_result_policy | [string](#string) |  |  |
+| claimed_tick_batch_id | [string](#string) |  |  |
+| claim_target_aggregate | [string](#string) |  |  |
+| current_origin_runtime_region_id | [string](#string) |  |  |
+| current_origin_runtime_region_epoch | [int64](#int64) |  |  |
+| current_target_runtime_region_id | [string](#string) |  |  |
+| current_target_runtime_region_epoch | [int64](#int64) |  |  |
+| queue_source_kind | [string](#string) |  |  |
+| queue_source_state | [string](#string) |  |  |
+| queue_source_ordinal | [int64](#int64) |  |  |
+| queue_source_due_tick_id | [int64](#int64) |  |  |
+| queue_source_due_at_ms | [int64](#int64) |  |  |
+| current_origin_runtime_game_instance_id | [string](#string) |  |  |
+| current_target_runtime_game_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListRemoteFollowupResultsResponse"></a>
+
+### ListRemoteFollowupResultsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| results | [RemoteFollowupResultEntry](#game_session-v1-RemoteFollowupResultEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListRemoteFollowupsRequest"></a>
+
+### ListRemoteFollowupsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| status | [string](#string) |  |  |
+| origin_game_instance_id | [string](#string) |  |  |
+| origin_region_id | [string](#string) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| followup_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| command_id | [string](#string) |  |  |
+| limit | [int32](#int32) |  |  |
+| origin_region_epoch | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) | optional |  |
+| payload_kind | [string](#string) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| effect_key | [string](#string) |  |  |
+| failure_code | [string](#string) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
+| event_type | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| target_command_id | [string](#string) |  |  |
+| target_command_execution_outcome | [string](#string) |  |  |
+| target_command_gameplay_result | [string](#string) |  |  |
+| claimed_tick_batch_id | [string](#string) |  |  |
+| requested_command | [string](#string) |  |  |
+| origin_source_state | [string](#string) |  |  |
+| origin_deadline_region_epoch | [int64](#int64) |  |  |
+| origin_deadline_tick_id | [int64](#int64) |  |  |
+| late_result_policy | [string](#string) |  |  |
+| claim_target_aggregate | [string](#string) |  |  |
+| current_origin_runtime_region_id | [string](#string) |  |  |
+| current_origin_runtime_region_epoch | [int64](#int64) |  |  |
+| current_target_runtime_region_id | [string](#string) |  |  |
+| current_target_runtime_region_epoch | [int64](#int64) |  |  |
+| queue_source_kind | [string](#string) |  |  |
+| queue_source_state | [string](#string) |  |  |
+| queue_source_ordinal | [int64](#int64) |  |  |
+| queue_source_due_tick_id | [int64](#int64) |  |  |
+| queue_source_due_at_ms | [int64](#int64) |  |  |
+| current_origin_runtime_game_instance_id | [string](#string) |  |  |
+| current_target_runtime_game_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ListRemoteFollowupsResponse"></a>
+
+### ListRemoteFollowupsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| followups | [RemoteFollowupEntry](#game_session-v1-RemoteFollowupEntry) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -2783,6 +8506,92 @@ Administrative request to pause tick execution.
 
 
 
+<a name="game_session-v1-PluginPublicationLink"></a>
+
+### PluginPublicationLink
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| plugin_version_id | [string](#string) |  |  |
+| publication_id | [int64](#int64) |  |  |
+| publication_state | [gamedesign.v1.VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| status_reason | [string](#string) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| lookup_error_code | [string](#string) |  |  |
+| lookup_error_message | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PrepareVersionUpgradeRequest"></a>
+
+### PrepareVersionUpgradeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| source_game_instance_id | [string](#string) |  |  |
+| target_version_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PrepareVersionUpgradeResponse"></a>
+
+### PrepareVersionUpgradeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| preparation | [PreparedVersionUpgrade](#game_session-v1-PreparedVersionUpgrade) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-PreparedVersionUpgrade"></a>
+
+### PreparedVersionUpgrade
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| preparation_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| source_game_instance_id | [string](#string) |  |  |
+| source_version_id | [string](#string) |  |  |
+| target_version_id | [string](#string) |  |  |
+| target_launch_descriptor_id | [string](#string) |  |  |
+| remap_set_id | [string](#string) |  |  |
+| result | [CutoverCompatibilityResult](#game_session-v1-CutoverCompatibilityResult) |  |  |
+| reasons | [string](#string) | repeated |  |
+| checked_participants | [string](#string) | repeated |  |
+| checked_at_ms | [int64](#int64) |  |  |
+| participant_results | [CutoverParticipantResult](#game_session-v1-CutoverParticipantResult) | repeated |  |
+| control_plane_request_id | [string](#string) |  |  |
+| executed_target_game_instance_id | [string](#string) |  |  |
+| executed_pointer_version | [int64](#int64) |  |  |
+| executed_at_ms | [int64](#int64) |  |  |
+| execution_control_plane_request_id | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="game_session-v1-PurgeQueuedTickCommandsForPluginVersionRequest"></a>
 
 ### PurgeQueuedTickCommandsForPluginVersionRequest
@@ -2798,7 +8607,7 @@ Administrative request to pause tick execution.
 | plugin_version_id | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
 | actor_principal | [string](#string) |  |  |
-| reason | [string](#string) |  |  |
+| reason | [string](#string) |  | Required non-blank operator reason. It is persisted and returned as the terminal failure_message with failure_code ROLLBACK_PURGED. |
 
 
 
@@ -2835,7 +8644,7 @@ Administrative request to pause tick execution.
 | script_patch_version | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
 | actor_principal | [string](#string) |  |  |
-| reason | [string](#string) |  |  |
+| reason | [string](#string) |  | Required non-blank operator reason. It is persisted and returned as the terminal failure_message with failure_code ROLLBACK_PURGED. |
 
 
 
@@ -2851,6 +8660,39 @@ Administrative request to pause tick execution.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | purged_count | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-QueryAccountPresenceRequest"></a>
+
+### QueryAccountPresenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| viewer_account_id | [string](#string) |  |  |
+| account_ids | [string](#string) | repeated |  |
+
+
+
+
+
+
+<a name="game_session-v1-QueryAccountPresenceResponse"></a>
+
+### QueryAccountPresenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| presences | [AccountPresenceEntry](#game_session-v1-AccountPresenceEntry) | repeated |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -2883,6 +8725,277 @@ Administrative request to pause tick execution.
 | ----- | ---- | ----- | ----------- |
 | state_json | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-RemoteCommandCoordinatorEntry"></a>
+
+### RemoteCommandCoordinatorEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| coordinator_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| command_id | [string](#string) |  |  |
+| followup_id | [string](#string) |  |  |
+| origin_game_instance_id | [string](#string) |  |  |
+| origin_region_id | [string](#string) |  |  |
+| origin_region_epoch | [int64](#int64) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| target_due_tick_id | [int64](#int64) |  |  |
+| origin_deadline_region_epoch | [int64](#int64) |  |  |
+| origin_deadline_tick_id | [int64](#int64) |  |  |
+| state | [string](#string) |  |  |
+| late_result_policy | [string](#string) |  |  |
+| execution_outcome | [string](#string) |  |  |
+| gameplay_result | [string](#string) |  |  |
+| updated_at_ms | [int64](#int64) |  |  |
+| followup_status | [string](#string) |  |  |
+| followup_claimed_tick_batch_id | [string](#string) |  |  |
+| latest_result_outcome | [string](#string) |  |  |
+| latest_result_payload_json | [string](#string) |  |  |
+| latest_result_observed_at_ms | [int64](#int64) |  |  |
+| followup_claim_ordinal | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| followup_payload_kind | [string](#string) |  |  |
+| followup_requested_command | [string](#string) |  |  |
+| latest_result_command_id | [string](#string) |  |  |
+| latest_result_error_code | [string](#string) |  |  |
+| target_command_id | [string](#string) |  |  |
+| target_command_execution_outcome | [string](#string) |  |  |
+| target_command_gameplay_result | [string](#string) |  |  |
+| latest_result_message | [string](#string) |  |  |
+| plugin_publication | [PluginPublicationLink](#game_session-v1-PluginPublicationLink) |  |  |
+| followup_requires_solo_tick | [bool](#bool) |  |  |
+| followup_origin_source_kind | [string](#string) |  |  |
+| followup_origin_source_state | [string](#string) |  |  |
+| followup_origin_source_ordinal | [int64](#int64) |  |  |
+| followup_origin_source_due_tick_id | [int64](#int64) |  |  |
+| followup_origin_source_due_at_ms | [int64](#int64) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| followup_effect_key | [string](#string) |  |  |
+| followup_failure_code | [string](#string) |  |  |
+| followup_failure_message | [string](#string) |  |  |
+| followup_event_type | [string](#string) |  |  |
+| followup_event_schema_version | [string](#string) |  |  |
+| followup_script_event_id | [string](#string) |  |  |
+| followup_trigger_mode | [string](#string) |  |  |
+| followup_read_snapshot_token | [string](#string) |  |  |
+| followup_event_payload_json | [string](#string) |  |  |
+| followup_claim_target_aggregate | [string](#string) |  |  |
+| current_origin_runtime_region_id | [string](#string) |  |  |
+| current_origin_runtime_region_epoch | [int64](#int64) |  |  |
+| current_target_runtime_region_id | [string](#string) |  |  |
+| current_target_runtime_region_epoch | [int64](#int64) |  |  |
+| followup_queue_source_kind | [string](#string) |  |  |
+| followup_queue_source_state | [string](#string) |  |  |
+| followup_queue_source_ordinal | [int64](#int64) |  |  |
+| followup_queue_source_due_tick_id | [int64](#int64) |  |  |
+| followup_queue_source_due_at_ms | [int64](#int64) |  |  |
+| current_origin_runtime_game_instance_id | [string](#string) |  |  |
+| current_target_runtime_game_instance_id | [string](#string) |  |  |
+| current_origin_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_origin_runtime_world_slug | [string](#string) |  |  |
+| current_origin_runtime_realm_slug | [string](#string) |  |  |
+| current_origin_runtime_pointer_version | [int64](#int64) |  |  |
+| current_target_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_target_runtime_world_slug | [string](#string) |  |  |
+| current_target_runtime_realm_slug | [string](#string) |  |  |
+| current_target_runtime_pointer_version | [int64](#int64) |  |  |
+| is_origin_routing_bundle_stale | [bool](#bool) |  |  |
+| is_target_routing_bundle_stale | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-RemoteFollowupEntry"></a>
+
+### RemoteFollowupEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| followup_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| origin_game_instance_id | [string](#string) |  |  |
+| origin_region_id | [string](#string) |  |  |
+| origin_region_epoch | [int64](#int64) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| due_tick_id | [int64](#int64) |  |  |
+| effect_key | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| status | [string](#string) |  |  |
+| claimed_tick_batch_id | [string](#string) |  |  |
+| payload_json | [string](#string) |  |  |
+| failure_code | [string](#string) |  |  |
+| failure_message | [string](#string) |  |  |
+| created_at_ms | [int64](#int64) |  |  |
+| updated_at_ms | [int64](#int64) |  |  |
+| claim_ordinal | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| command_id | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| payload_kind | [string](#string) |  |  |
+| requested_command | [string](#string) |  |  |
+| target_command_id | [string](#string) |  |  |
+| target_command_execution_outcome | [string](#string) |  |  |
+| target_command_gameplay_result | [string](#string) |  |  |
+| plugin_publication | [PluginPublicationLink](#game_session-v1-PluginPublicationLink) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| origin_source_state | [string](#string) |  |  |
+| origin_source_ordinal | [int64](#int64) |  |  |
+| origin_source_due_tick_id | [int64](#int64) |  |  |
+| origin_source_due_at_ms | [int64](#int64) |  |  |
+| origin_deadline_region_epoch | [int64](#int64) |  |  |
+| origin_deadline_tick_id | [int64](#int64) |  |  |
+| late_result_policy | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| event_schema_version | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| trigger_mode | [string](#string) |  |  |
+| read_snapshot_token | [string](#string) |  |  |
+| event_payload_json | [string](#string) |  |  |
+| claim_target_aggregate | [string](#string) |  |  |
+| current_origin_runtime_region_id | [string](#string) |  |  |
+| current_origin_runtime_region_epoch | [int64](#int64) |  |  |
+| current_target_runtime_region_id | [string](#string) |  |  |
+| current_target_runtime_region_epoch | [int64](#int64) |  |  |
+| queue_source_kind | [string](#string) |  |  |
+| queue_source_state | [string](#string) |  |  |
+| queue_source_ordinal | [int64](#int64) |  |  |
+| queue_source_due_tick_id | [int64](#int64) |  |  |
+| queue_source_due_at_ms | [int64](#int64) |  |  |
+| current_origin_runtime_game_instance_id | [string](#string) |  |  |
+| current_target_runtime_game_instance_id | [string](#string) |  |  |
+| current_origin_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_origin_runtime_world_slug | [string](#string) |  |  |
+| current_origin_runtime_realm_slug | [string](#string) |  |  |
+| current_origin_runtime_pointer_version | [int64](#int64) |  |  |
+| current_target_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_target_runtime_world_slug | [string](#string) |  |  |
+| current_target_runtime_realm_slug | [string](#string) |  |  |
+| current_target_runtime_pointer_version | [int64](#int64) |  |  |
+| is_origin_routing_bundle_stale | [bool](#bool) |  |  |
+| is_target_routing_bundle_stale | [bool](#bool) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-RemoteFollowupResultEntry"></a>
+
+### RemoteFollowupResultEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| result_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| coordinator_id | [string](#string) |  |  |
+| followup_id | [string](#string) |  |  |
+| origin_region_id | [string](#string) |  |  |
+| origin_region_epoch | [int64](#int64) |  |  |
+| target_region_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| outcome | [string](#string) |  |  |
+| result_payload_json | [string](#string) |  |  |
+| observed_at_ms | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| publication | [ScriptPatchPublicationLink](#game_session-v1-ScriptPatchPublicationLink) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| command_id | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| result_command_id | [string](#string) |  |  |
+| result_error_code | [string](#string) |  |  |
+| result_command_execution_outcome | [string](#string) |  |  |
+| result_command_gameplay_result | [string](#string) |  |  |
+| result_message | [string](#string) |  |  |
+| plugin_publication | [PluginPublicationLink](#game_session-v1-PluginPublicationLink) |  |  |
+| origin_deadline_region_epoch | [int64](#int64) |  |  |
+| origin_deadline_tick_id | [int64](#int64) |  |  |
+| late_result_policy | [string](#string) |  |  |
+| origin_game_instance_id | [string](#string) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| effect_key | [string](#string) |  |  |
+| payload_kind | [string](#string) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| origin_source_state | [string](#string) |  |  |
+| origin_source_ordinal | [int64](#int64) |  |  |
+| origin_source_due_tick_id | [int64](#int64) |  |  |
+| origin_source_due_at_ms | [int64](#int64) |  |  |
+| failure_code | [string](#string) |  |  |
+| failure_message | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| event_schema_version | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| trigger_mode | [string](#string) |  |  |
+| read_snapshot_token | [string](#string) |  |  |
+| event_payload_json | [string](#string) |  |  |
+| claim_target_aggregate | [string](#string) |  |  |
+| current_origin_runtime_region_id | [string](#string) |  |  |
+| current_origin_runtime_region_epoch | [int64](#int64) |  |  |
+| current_target_runtime_region_id | [string](#string) |  |  |
+| current_target_runtime_region_epoch | [int64](#int64) |  |  |
+| queue_source_kind | [string](#string) |  |  |
+| queue_source_state | [string](#string) |  |  |
+| queue_source_ordinal | [int64](#int64) |  |  |
+| queue_source_due_tick_id | [int64](#int64) |  |  |
+| queue_source_due_at_ms | [int64](#int64) |  |  |
+| current_origin_runtime_game_instance_id | [string](#string) |  |  |
+| current_target_runtime_game_instance_id | [string](#string) |  |  |
+| current_origin_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_origin_runtime_world_slug | [string](#string) |  |  |
+| current_origin_runtime_realm_slug | [string](#string) |  |  |
+| current_origin_runtime_pointer_version | [int64](#int64) |  |  |
+| current_target_runtime_playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| current_target_runtime_world_slug | [string](#string) |  |  |
+| current_target_runtime_realm_slug | [string](#string) |  |  |
+| current_target_runtime_pointer_version | [int64](#int64) |  |  |
+| is_origin_routing_bundle_stale | [bool](#bool) |  |  |
+| is_target_routing_bundle_stale | [bool](#bool) |  |  |
 
 
 
@@ -2959,7 +9072,7 @@ Administrative request to pause tick execution.
 <a name="game_session-v1-ResumeTicksRequest"></a>
 
 ### ResumeTicksRequest
-Resume ticks after the authorized maintenance workflow completes.
+Resume ticks after an authorized maintenance workflow completes.
 
 
 | Field | Type | Label | Description |
@@ -3001,6 +9114,7 @@ Resume ticks after the authorized maintenance workflow completes.
 | control_plane_request_id | [string](#string) |  |  |
 | actor_principal | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
+| expected_current_pin | [ExpectedCurrentPin](#game_session-v1-ExpectedCurrentPin) |  |  |
 
 
 
@@ -3018,6 +9132,182 @@ Resume ticks after the authorized maintenance workflow completes.
 | previous_script_patch_version | [string](#string) |  |  |
 | pinned_script_patch_version | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| previous_script_pin_epoch | [int64](#int64) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-RuntimeOwnershipStatus"></a>
+
+### RuntimeOwnershipStatus
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| region_epoch | [int64](#int64) |  |  |
+| executor_fence | [string](#string) |  |  |
+| owner_service | [string](#string) |  |  |
+| owner_instance_id | [string](#string) |  |  |
+| paused | [bool](#bool) |  |  |
+| last_committed_tick_batch_id | [string](#string) |  |  |
+| updated_at_ms | [int64](#int64) |  |  |
+| last_committed_tick_id | [int64](#int64) |  |  |
+| region_id | [string](#string) |  |  |
+| pending_gameplay_command_count | [int64](#int64) |  |  |
+| due_remote_followup_count | [int64](#int64) |  |  |
+| oldest_due_remote_followup_tick_id | [int64](#int64) |  |  |
+| remote_followup_drain_lag_ms | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ScheduleRemoteFollowupRequest"></a>
+
+### ScheduleRemoteFollowupRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| command_id | [string](#string) |  |  |
+| coordinator_id | [string](#string) |  |  |
+| origin_game_instance_id | [string](#string) |  |  |
+| origin_region_id | [string](#string) |  |  |
+| origin_region_epoch | [int64](#int64) |  |  |
+| target_game_instance_id | [string](#string) |  |  |
+| target_region_id | [string](#string) |  |  |
+| target_region_epoch | [int64](#int64) |  |  |
+| target_due_tick_id | [int64](#int64) |  |  |
+| origin_deadline_region_epoch | [int64](#int64) |  |  |
+| origin_deadline_tick_id | [int64](#int64) |  |  |
+| late_result_policy | [string](#string) |  |  |
+| followup_id | [string](#string) |  |  |
+| effect_key | [string](#string) |  |  |
+| target_entity_id | [string](#string) |  |  |
+| payload_json | [string](#string) |  |  |
+| payload_kind | [string](#string) |  |  |
+| requested_command | [string](#string) |  |  |
+| requires_solo_tick | [bool](#bool) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| pointer_version | [int64](#int64) | optional |  |
+| script_patch_version | [string](#string) |  |  |
+| plugin_id | [string](#string) |  |  |
+| plugin_version_id | [string](#string) |  |  |
+| automation_dispatch_id | [string](#string) |  |  |
+| automation_work_item_id | [string](#string) |  |  |
+| script_id | [string](#string) |  |  |
+| origin_source_kind | [string](#string) |  |  |
+| origin_source_state | [string](#string) |  |  |
+| origin_source_ordinal | [int64](#int64) |  |  |
+| origin_source_due_tick_id | [int64](#int64) |  |  |
+| origin_source_due_at_ms | [int64](#int64) |  |  |
+| event_type | [string](#string) |  |  |
+| event_schema_version | [string](#string) |  |  |
+| script_event_id | [string](#string) |  |  |
+| trigger_mode | [string](#string) |  |  |
+| read_snapshot_token | [string](#string) |  |  |
+| event_payload_json | [string](#string) |  |  |
+| script_pin_epoch | [int64](#int64) |  | Exact source script pin evidence captured by Automation. Game Session must compare this tuple with the authoritative source owner state before accepting the follow-up; the request ID is owner evidence/correlation, not a third pin-identity component. |
+| script_pin_control_plane_request_id | [string](#string) |  |  |
+| script_patch_base_version_id | [int64](#int64) |  | Exact source artifact base captured with the admitted script work item. |
+
+
+
+
+
+
+<a name="game_session-v1-ScheduleRemoteFollowupResponse"></a>
+
+### ScheduleRemoteFollowupResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| coordinator_id | [string](#string) |  |  |
+| followup_id | [string](#string) |  |  |
+| coordinator_created | [bool](#bool) |  |  |
+| followup_created | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ScriptPatchPublicationLink"></a>
+
+### ScriptPatchPublicationLink
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| script_patch_version | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| base_version_id | [int64](#int64) |  |  |
+| publication_state | [gamedesign.v1.VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| last_changed_at_ms | [int64](#int64) |  |  |
+| lookup_error_code | [string](#string) |  |  |
+| lookup_error_message | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-SetAdmissionPointerRequest"></a>
+
+### SetAdmissionPointerRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| realm_display_name | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| visible | [bool](#bool) |  |  |
+| requires_character_selection | [bool](#bool) |  |  |
+| state_scope | [string](#string) |  |  |
+| character_creation_policy | [string](#string) |  |  |
+| actor_principal | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| expected_pointer_version | [int64](#int64) | optional |  |
+| prepared_version_upgrade_id | [string](#string) |  |  |
+| public_production_realm | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) | optional |  |
+
+
+
+
+
+
+<a name="game_session-v1-SetAdmissionPointerResponse"></a>
+
+### SetAdmissionPointerResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| pointer | [AdmissionPointerControlPlaneEntry](#game_session-v1-AdmissionPointerControlPlaneEntry) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -3039,6 +9329,7 @@ Resume ticks after the authorized maintenance workflow completes.
 | control_plane_request_id | [string](#string) |  |  |
 | actor_principal | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
+| expected_current_pin | [ExpectedCurrentPin](#game_session-v1-ExpectedCurrentPin) |  |  |
 
 
 
@@ -3057,6 +9348,8 @@ Resume ticks after the authorized maintenance workflow completes.
 | pinned_script_patch_version | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| previous_script_pin_epoch | [int64](#int64) |  |  |
+| script_pin_epoch | [int64](#int64) |  |  |
 
 
 
@@ -3072,10 +9365,10 @@ Resume ticks after the authorized maintenance workflow completes.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| runtime_version | [string](#string) |  |  |
-| script_patch_version | [string](#string) |  |  |
+| game_template_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
 | client_ip | [string](#string) |  |  |
-| game_instance_id | [string](#string) |  |  |
+| owner_account_id | [string](#string) |  |  |
 
 
 
@@ -3161,7 +9454,133 @@ Resume ticks after the authorized maintenance workflow completes.
 
 
 
- 
+
+<a name="game_session-v1-ValidateBuiltInCommandAliasRequest"></a>
+
+### ValidateBuiltInCommandAliasRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| alias | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ValidateBuiltInCommandAliasResponse"></a>
+
+### ValidateBuiltInCommandAliasResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| supported | [bool](#bool) |  |  |
+| normalized_alias | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ValidateInstanceCutoverCompatibilityRequest"></a>
+
+### ValidateInstanceCutoverCompatibilityRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| source_game_instance_id | [string](#string) |  |  |
+| target_version_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-ValidateInstanceCutoverCompatibilityResponse"></a>
+
+### ValidateInstanceCutoverCompatibilityResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| result | [CutoverCompatibilityResult](#game_session-v1-CutoverCompatibilityResult) |  |  |
+| reasons | [string](#string) | repeated |  |
+| checked_participants | [string](#string) | repeated |  |
+| checked_at_ms | [int64](#int64) |  |  |
+| remap_set_id | [string](#string) |  |  |
+| participant_results | [CutoverParticipantResult](#game_session-v1-CutoverParticipantResult) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+
+
+<a name="game_session-v1-AccountPresenceActivityState"></a>
+
+### AccountPresenceActivityState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_PRESENCE_ACTIVITY_STATE_UNSPECIFIED | 0 |  |
+| ACCOUNT_PRESENCE_ACTIVITY_STATE_ACTIVE | 1 |  |
+| ACCOUNT_PRESENCE_ACTIVITY_STATE_AUTO_AFK | 2 |  |
+| ACCOUNT_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK | 3 |  |
+
+
+
+<a name="game_session-v1-AccountRecentPresenceDisposition"></a>
+
+### AccountRecentPresenceDisposition
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED | 0 |  |
+| ACCOUNT_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS | 1 |  |
+| ACCOUNT_RECENT_PRESENCE_DISPOSITION_LOGOUT | 2 |  |
+| ACCOUNT_RECENT_PRESENCE_DISPOSITION_TAKEOVER | 3 |  |
+
+
+
+<a name="game_session-v1-CutoverCompatibilityResult"></a>
+
+### CutoverCompatibilityResult
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| CUTOVER_COMPATIBILITY_RESULT_UNSPECIFIED | 0 |  |
+| CUTOVER_COMPATIBILITY_RESULT_COMPATIBLE | 1 |  |
+| CUTOVER_COMPATIBILITY_RESULT_INCOMPATIBLE | 2 |  |
+| CUTOVER_COMPATIBILITY_RESULT_UNAVAILABLE | 3 |  |
+
+
+
+<a name="game_session-v1-ExpectedCurrentPin-Kind"></a>
+
+### ExpectedCurrentPin.Kind
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| EXPECTED_CURRENT_PIN_KIND_UNSPECIFIED | 0 |  |
+| EXPECTED_CURRENT_PIN_KIND_UNCONDITIONAL | 1 |  |
+| EXPECTED_CURRENT_PIN_KIND_EXPECT_UNPINNED | 2 |  |
+| EXPECTED_CURRENT_PIN_KIND_EXPECT_EPOCH | 3 |  |
+
 
 
 <a name="game_session-v1-TickStatus"></a>
@@ -3176,9 +9595,9 @@ Resume ticks after the authorized maintenance workflow completes.
 | TICK_STATUS_PAUSED | 2 |  |
 
 
- 
 
- 
+
+
 
 
 <a name="game_session-v1-GameSessionControlPlaneService"></a>
@@ -3190,10 +9609,30 @@ plus scoped tick pause/resume used for rollback safety.
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | GetPinnedScriptPatchVersion | [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest) | [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse) |  |
+| GetGameSessionPinConvergence | [GetGameSessionPinConvergenceRequest](#game_session-v1-GetGameSessionPinConvergenceRequest) | [GetGameSessionPinConvergenceResponse](#game_session-v1-GetGameSessionPinConvergenceResponse) |  |
+| GetGameInstanceRuntimeState | [GetGameInstanceRuntimeStateRequest](#game_session-v1-GetGameInstanceRuntimeStateRequest) | [GetGameInstanceRuntimeStateResponse](#game_session-v1-GetGameInstanceRuntimeStateResponse) |  |
+| ValidateBuiltInCommandAlias | [ValidateBuiltInCommandAliasRequest](#game_session-v1-ValidateBuiltInCommandAliasRequest) | [ValidateBuiltInCommandAliasResponse](#game_session-v1-ValidateBuiltInCommandAliasResponse) |  |
+| ListAdmissionPointers | [ListAdmissionPointersRequest](#game_session-v1-ListAdmissionPointersRequest) | [ListAdmissionPointersResponse](#game_session-v1-ListAdmissionPointersResponse) |  |
+| ListAdmissionPointerAudit | [ListAdmissionPointerAuditRequest](#game_session-v1-ListAdmissionPointerAuditRequest) | [ListAdmissionPointerAuditResponse](#game_session-v1-ListAdmissionPointerAuditResponse) |  |
+| GetGameplayCommandStatus | [GetGameplayCommandStatusRequest](#game_session-v1-GetGameplayCommandStatusRequest) | [GetGameplayCommandStatusResponse](#game_session-v1-GetGameplayCommandStatusResponse) |  |
+| GetRuntimeOwnershipStatus | [GetRuntimeOwnershipStatusRequest](#game_session-v1-GetRuntimeOwnershipStatusRequest) | [GetRuntimeOwnershipStatusResponse](#game_session-v1-GetRuntimeOwnershipStatusResponse) |  |
+| GetRemoteCommandCoordinator | [GetRemoteCommandCoordinatorRequest](#game_session-v1-GetRemoteCommandCoordinatorRequest) | [GetRemoteCommandCoordinatorResponse](#game_session-v1-GetRemoteCommandCoordinatorResponse) |  |
+| GetRemoteFollowup | [GetRemoteFollowupRequest](#game_session-v1-GetRemoteFollowupRequest) | [GetRemoteFollowupResponse](#game_session-v1-GetRemoteFollowupResponse) |  |
+| GetRemoteFollowupResult | [GetRemoteFollowupResultRequest](#game_session-v1-GetRemoteFollowupResultRequest) | [GetRemoteFollowupResultResponse](#game_session-v1-GetRemoteFollowupResultResponse) |  |
+| ListRemoteCommandCoordinators | [ListRemoteCommandCoordinatorsRequest](#game_session-v1-ListRemoteCommandCoordinatorsRequest) | [ListRemoteCommandCoordinatorsResponse](#game_session-v1-ListRemoteCommandCoordinatorsResponse) |  |
+| ScheduleRemoteFollowup | [ScheduleRemoteFollowupRequest](#game_session-v1-ScheduleRemoteFollowupRequest) | [ScheduleRemoteFollowupResponse](#game_session-v1-ScheduleRemoteFollowupResponse) |  |
+| ListRemoteFollowups | [ListRemoteFollowupsRequest](#game_session-v1-ListRemoteFollowupsRequest) | [ListRemoteFollowupsResponse](#game_session-v1-ListRemoteFollowupsResponse) |  |
+| ListRemoteFollowupResults | [ListRemoteFollowupResultsRequest](#game_session-v1-ListRemoteFollowupResultsRequest) | [ListRemoteFollowupResultsResponse](#game_session-v1-ListRemoteFollowupResultsResponse) |  |
+| SetAdmissionPointer | [SetAdmissionPointerRequest](#game_session-v1-SetAdmissionPointerRequest) | [SetAdmissionPointerResponse](#game_session-v1-SetAdmissionPointerResponse) |  |
+| ExecutePreparedVersionCutover | [ExecutePreparedVersionCutoverRequest](#game_session-v1-ExecutePreparedVersionCutoverRequest) | [ExecutePreparedVersionCutoverResponse](#game_session-v1-ExecutePreparedVersionCutoverResponse) |  |
 | SetPinnedScriptPatchVersion | [SetPinnedScriptPatchVersionRequest](#game_session-v1-SetPinnedScriptPatchVersionRequest) | [SetPinnedScriptPatchVersionResponse](#game_session-v1-SetPinnedScriptPatchVersionResponse) |  |
 | RollbackScriptPatchVersion | [RollbackScriptPatchVersionRequest](#game_session-v1-RollbackScriptPatchVersionRequest) | [RollbackScriptPatchVersionResponse](#game_session-v1-RollbackScriptPatchVersionResponse) |  |
 | PauseTicksForScope | [PauseTicksForScopeRequest](#game_session-v1-PauseTicksForScopeRequest) | [PauseTicksForScopeResponse](#game_session-v1-PauseTicksForScopeResponse) |  |
 | ResumeTicksForScope | [ResumeTicksForScopeRequest](#game_session-v1-ResumeTicksForScopeRequest) | [ResumeTicksForScopeResponse](#game_session-v1-ResumeTicksForScopeResponse) |  |
+| ValidateInstanceCutoverCompatibility | [ValidateInstanceCutoverCompatibilityRequest](#game_session-v1-ValidateInstanceCutoverCompatibilityRequest) | [ValidateInstanceCutoverCompatibilityResponse](#game_session-v1-ValidateInstanceCutoverCompatibilityResponse) |  |
+| PrepareVersionUpgrade | [PrepareVersionUpgradeRequest](#game_session-v1-PrepareVersionUpgradeRequest) | [PrepareVersionUpgradeResponse](#game_session-v1-PrepareVersionUpgradeResponse) |  |
+| GetPreparedVersionUpgrade | [GetPreparedVersionUpgradeRequest](#game_session-v1-GetPreparedVersionUpgradeRequest) | [GetPreparedVersionUpgradeResponse](#game_session-v1-GetPreparedVersionUpgradeResponse) |  |
+| EnqueueAutomationCommandIfAbsent | [EnqueueAutomationCommandIfAbsentRequest](#game_session-v1-EnqueueAutomationCommandIfAbsentRequest) | [EnqueueAutomationCommandIfAbsentResponse](#game_session-v1-EnqueueAutomationCommandIfAbsentResponse) |  |
 | PurgeQueuedTickCommandsForScriptPatch | [PurgeQueuedTickCommandsForScriptPatchRequest](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchRequest) | [PurgeQueuedTickCommandsForScriptPatchResponse](#game_session-v1-PurgeQueuedTickCommandsForScriptPatchResponse) |  |
 | PurgeQueuedTickCommandsForPluginVersion | [PurgeQueuedTickCommandsForPluginVersionRequest](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionRequest) | [PurgeQueuedTickCommandsForPluginVersionResponse](#game_session-v1-PurgeQueuedTickCommandsForPluginVersionResponse) |  |
 
@@ -3211,12 +9650,16 @@ plus scoped tick pause/resume used for rollback safety.
 | RestartSession | [RestartSessionRequest](#game_session-v1-RestartSessionRequest) | [RestartSessionResponse](#game_session-v1-RestartSessionResponse) |  |
 | EnqueueCommand | [EnqueueCommandRequest](#game_session-v1-EnqueueCommandRequest) | [EnqueueCommandResponse](#game_session-v1-EnqueueCommandResponse) |  |
 | QueryState | [QueryStateRequest](#game_session-v1-QueryStateRequest) | [QueryStateResponse](#game_session-v1-QueryStateResponse) |  |
+| QueryAccountPresence | [QueryAccountPresenceRequest](#game_session-v1-QueryAccountPresenceRequest) | [QueryAccountPresenceResponse](#game_session-v1-QueryAccountPresenceResponse) |  |
+| ListGameplayWorlds | [ListGameplayWorldsRequest](#game_session-v1-ListGameplayWorldsRequest) | [ListGameplayWorldsResponse](#game_session-v1-ListGameplayWorldsResponse) |  |
+| ListGameplayRealms | [ListGameplayRealmsRequest](#game_session-v1-ListGameplayRealmsRequest) | [ListGameplayRealmsResponse](#game_session-v1-ListGameplayRealmsResponse) |  |
+| GetAdmissionPointer | [GetAdmissionPointerRequest](#game_session-v1-GetAdmissionPointerRequest) | [GetAdmissionPointerResponse](#game_session-v1-GetAdmissionPointerResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#game_session-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#game_session-v1-ToggleFeatureFlagResponse) |  |
 | PauseTicks | [PauseTicksRequest](#game_session-v1-PauseTicksRequest) | [PauseTicksResponse](#game_session-v1-PauseTicksResponse) | Pause tick execution for an authorized maintenance workflow. |
 | ResumeTicks | [ResumeTicksRequest](#game_session-v1-ResumeTicksRequest) | [ResumeTicksResponse](#game_session-v1-ResumeTicksResponse) | Resume tick execution after the authorized maintenance workflow completes. |
 | GetTickStatus | [GetTickStatusRequest](#game_session-v1-GetTickStatusRequest) | [GetTickStatusResponse](#game_session-v1-GetTickStatusResponse) | Report whether ticks are currently paused. |
 
- 
+
 
 
 
@@ -3237,6 +9680,7 @@ plus scoped tick pause/resume used for rollback safety.
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
 | action | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
 
@@ -3254,6 +9698,90 @@ plus scoped tick pause/resume used for rollback safety.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | success | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="logging_admin-v1-CreateLogEventRequest"></a>
+
+### CreateLogEventRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
+| tenant_id | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| producer_service | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| occurred_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload | [bytes](#bytes) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="logging_admin-v1-CreateLogEventResponse"></a>
+
+### CreateLogEventResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
+| tenant_id | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| receipt_id | [string](#string) |  |  |
+| log_event_id | [string](#string) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
+| status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
+| outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+
+
+
+
+
+
+<a name="logging_admin-v1-EvaluateModerationPolicyRequest"></a>
+
+### EvaluateModerationPolicyRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| scope | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="logging_admin-v1-EvaluateModerationPolicyResponse"></a>
+
+### EvaluateModerationPolicyResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| allowed | [bool](#bool) |  |  |
+| action | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+| expires_at_epoch_seconds | [int64](#int64) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -3319,6 +9847,54 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
+<a name="logging_admin-v1-ReadLogEventReceiptRequest"></a>
+
+### ReadLogEventReceiptRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
+| tenant_id | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| producer_service | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| occurred_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload | [bytes](#bytes) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="logging_admin-v1-ReadLogEventReceiptResponse"></a>
+
+### ReadLogEventReceiptResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
+| tenant_id | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| receipt_id | [string](#string) |  |  |
+| log_event_id | [string](#string) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
+| status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
+| outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+
+
+
+
+
+
 <a name="logging_admin-v1-ToggleFeatureFlagRequest"></a>
 
 ### ToggleFeatureFlagRequest
@@ -3351,11 +9927,53 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
- 
 
- 
 
- 
+
+<a name="logging_admin-v1-AccountAuditReceiptOutcome"></a>
+
+### AccountAuditReceiptOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_UNSPECIFIED | 0 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED | 1 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE | 2 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE | 3 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_IDEMPOTENCY_CONFLICT | 4 |  |
+
+
+
+<a name="logging_admin-v1-AccountAuditReceiptStatus"></a>
+
+### AccountAuditReceiptStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_UNSPECIFIED | 0 |  |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED | 1 |  |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_MINIMIZED | 2 |  |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_CONFLICT | 3 |  |
+
+
+
+<a name="logging_admin-v1-AccountAuditScope"></a>
+
+### AccountAuditScope
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_AUDIT_SCOPE_UNSPECIFIED | 0 |  |
+| ACCOUNT_AUDIT_SCOPE_PLATFORM | 1 |  |
+| ACCOUNT_AUDIT_SCOPE_TENANT | 2 |  |
+
+
+
+
+
 
 
 <a name="logging_admin-v1-LoggingAdminService"></a>
@@ -3367,10 +9985,13 @@ plus scoped tick pause/resume used for rollback safety.
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#logging_admin-v1-PingRequest) | [PingResponse](#logging_admin-v1-PingResponse) |  |
 | QueryLogs | [QueryLogsRequest](#logging_admin-v1-QueryLogsRequest) | [QueryLogsResponse](#logging_admin-v1-QueryLogsResponse) |  |
+| CreateLogEvent | [CreateLogEventRequest](#logging_admin-v1-CreateLogEventRequest) | [CreateLogEventResponse](#logging_admin-v1-CreateLogEventResponse) |  |
+| ReadLogEventReceipt | [ReadLogEventReceiptRequest](#logging_admin-v1-ReadLogEventReceiptRequest) | [ReadLogEventReceiptResponse](#logging_admin-v1-ReadLogEventReceiptResponse) |  |
 | ApplyModerationAction | [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest) | [ApplyModerationActionResponse](#logging_admin-v1-ApplyModerationActionResponse) |  |
+| EvaluateModerationPolicy | [EvaluateModerationPolicyRequest](#logging_admin-v1-EvaluateModerationPolicyRequest) | [EvaluateModerationPolicyResponse](#logging_admin-v1-EvaluateModerationPolicyResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse) |  |
 
- 
+
 
 
 
@@ -3415,11 +10036,11 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
- 
 
- 
 
- 
+
+
+
 
 
 <a name="logging_admin-v1-ReportService"></a>
@@ -3431,7 +10052,7 @@ plus scoped tick pause/resume used for rollback safety.
 | ----------- | ------------ | ------------- | ------------|
 | CreateReport | [CreateReportRequest](#logging_admin-v1-CreateReportRequest) | [CreateReportResponse](#logging_admin-v1-CreateReportResponse) |  |
 
- 
+
 
 
 
@@ -3457,13 +10078,13 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
- 
 
- 
 
- 
 
- 
+
+
+
+
 
 
 
@@ -3490,13 +10111,13 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
- 
 
- 
 
- 
 
- 
+
+
+
+
 
 
 
@@ -3522,13 +10143,53 @@ Standard paging request for list RPCs.
 
 
 
- 
 
- 
 
- 
 
- 
+
+
+
+
+
+
+
+<a name="shared_v1_player_execution_context-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## shared/v1/player_execution_context.proto
+
+
+
+<a name="shared-v1-PlayerExecutionContext"></a>
+
+### PlayerExecutionContext
+Unsigned player scope carried only by an authenticated, allowlisted gameplay workload.
+Receivers validate the required subset and equality with their own authoritative target.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| realm_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -3550,7 +10211,6 @@ Standard paging request for list RPCs.
 | tenant_id | [string](#string) |  |  |
 | account_id | [string](#string) |  |  |
 | friend_account_id | [string](#string) |  |  |
-| account_level | [bool](#bool) |  |  |
 
 
 
@@ -3606,6 +10266,285 @@ Standard paging request for list RPCs.
 
 
 
+<a name="social_groups-v1-FriendPresenceEntry"></a>
+
+### FriendPresenceEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| friend_account_id | [string](#string) |  |  |
+| online | [bool](#bool) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| character_name | [string](#string) |  |  |
+| activity_state | [FriendPresenceActivityState](#social_groups-v1-FriendPresenceActivityState) |  |  |
+| last_seen_at_ms | [int64](#int64) |  |  |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| realm_display_name | [string](#string) |  |  |
+| recent_disposition | [FriendRecentPresenceDisposition](#social_groups-v1-FriendRecentPresenceDisposition) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| visibility_policy | [FriendPresenceVisibilityPolicy](#social_groups-v1-FriendPresenceVisibilityPolicy) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-FriendRosterEntry"></a>
+
+### FriendRosterEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ordinal | [int32](#int32) |  |  |
+| friend_link_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| friend_account_id | [string](#string) |  |  |
+| status | [string](#string) |  |  |
+| created_at_ms | [int64](#int64) |  |  |
+| presence | [FriendPresenceEntry](#social_groups-v1-FriendPresenceEntry) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-FriendRosterSummary"></a>
+
+### FriendRosterSummary
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| total_count | [int32](#int32) |  |  |
+| online_count | [int32](#int32) |  |  |
+| offline_count | [int32](#int32) |  |  |
+| recent_count | [int32](#int32) |  |  |
+| public_count | [int32](#int32) |  |  |
+| friends_only_count | [int32](#int32) |  |  |
+| private_count | [int32](#int32) |  |  |
+| hidden_staff_count | [int32](#int32) |  |  |
+| unspecified_visibility_count | [int32](#int32) |  |  |
+| shared_count | [int32](#int32) |  |  |
+| isolated_count | [int32](#int32) |  |  |
+| unspecified_scope_count | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendByOrdinalRequest"></a>
+
+### GetFriendByOrdinalRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| ordinal | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendByOrdinalResponse"></a>
+
+### GetFriendByOrdinalResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| friend | [FriendRosterEntry](#social_groups-v1-FriendRosterEntry) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendPresencePolicyRequest"></a>
+
+### GetFriendPresencePolicyRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendPresencePolicyResponse"></a>
+
+### GetFriendPresencePolicyResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| current_policy | [FriendPresenceVisibilityPolicy](#social_groups-v1-FriendPresenceVisibilityPolicy) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendRequest"></a>
+
+### GetFriendRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| friend_account_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendResponse"></a>
+
+### GetFriendResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| friend | [FriendRosterEntry](#social_groups-v1-FriendRosterEntry) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendRosterSummaryRequest"></a>
+
+### GetFriendRosterSummaryRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-GetFriendRosterSummaryResponse"></a>
+
+### GetFriendRosterSummaryResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| summary | [FriendRosterSummary](#social_groups-v1-FriendRosterSummary) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-ListFriendPresenceRequest"></a>
+
+### ListFriendPresenceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| filter | [FriendRosterFilter](#social_groups-v1-FriendRosterFilter) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-ListFriendPresenceResponse"></a>
+
+### ListFriendPresenceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| presences | [FriendPresenceEntry](#social_groups-v1-FriendPresenceEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| filter | [FriendRosterFilter](#social_groups-v1-FriendRosterFilter) |  |  |
+| total_count | [int32](#int32) |  |  |
+| match_count | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-ListFriendsRequest"></a>
+
+### ListFriendsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| filter | [FriendRosterFilter](#social_groups-v1-FriendRosterFilter) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-ListFriendsResponse"></a>
+
+### ListFriendsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| friends | [FriendRosterEntry](#social_groups-v1-FriendRosterEntry) | repeated |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| filter | [FriendRosterFilter](#social_groups-v1-FriendRosterFilter) |  |  |
+| total_count | [int32](#int32) |  |  |
+| match_count | [int32](#int32) |  |  |
+
+
+
+
+
+
 <a name="social_groups-v1-PingRequest"></a>
 
 ### PingRequest
@@ -3625,6 +10564,73 @@ Standard paging request for list RPCs.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | message | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-RemoveFriendByOrdinalRequest"></a>
+
+### RemoveFriendByOrdinalRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| ordinal | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-RemoveFriendByOrdinalResponse"></a>
+
+### RemoveFriendByOrdinalResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| removed_friend | [FriendRosterEntry](#social_groups-v1-FriendRosterEntry) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-RemoveFriendRequest"></a>
+
+### RemoveFriendRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| friend_account_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-RemoveFriendResponse"></a>
+
+### RemoveFriendResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -3683,6 +10689,7 @@ Standard paging request for list RPCs.
 | recipient_id | [string](#string) |  |  |
 | guild_id | [string](#string) |  |  |
 | city_id | [string](#string) |  |  |
+| effect_id | [string](#string) |  |  |
 
 
 
@@ -3704,7 +10711,41 @@ Standard paging request for list RPCs.
 
 
 
- 
+
+<a name="social_groups-v1-UpdateFriendPresencePolicyRequest"></a>
+
+### UpdateFriendPresencePolicyRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| visibility_policy | [FriendPresenceVisibilityPolicy](#social_groups-v1-FriendPresenceVisibilityPolicy) |  |  |
+
+
+
+
+
+
+<a name="social_groups-v1-UpdateFriendPresencePolicyResponse"></a>
+
+### UpdateFriendPresencePolicyResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| current_policy | [FriendPresenceVisibilityPolicy](#social_groups-v1-FriendPresenceVisibilityPolicy) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 
 
 <a name="social_groups-v1-ChatType"></a>
@@ -3717,14 +10758,81 @@ Standard paging request for list RPCs.
 | CHAT_TYPE_UNSPECIFIED | 0 |  |
 | CHAT_TYPE_SAY | 1 |  |
 | CHAT_TYPE_TELL | 2 |  |
-| CHAT_TYPE_GUILD | 3 |  |
-| CHAT_TYPE_CITY | 4 |  |
-| CHAT_TYPE_ACCOUNT | 5 |  |
+| CHAT_TYPE_WHISPER | 3 |  |
+| CHAT_TYPE_GUILD | 4 |  |
+| CHAT_TYPE_CITY | 5 |  |
+| CHAT_TYPE_ACCOUNT | 6 |  |
 
 
- 
 
- 
+<a name="social_groups-v1-FriendPresenceActivityState"></a>
+
+### FriendPresenceActivityState
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| FRIEND_PRESENCE_ACTIVITY_STATE_UNSPECIFIED | 0 |  |
+| FRIEND_PRESENCE_ACTIVITY_STATE_ACTIVE | 1 |  |
+| FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK | 2 |  |
+| FRIEND_PRESENCE_ACTIVITY_STATE_EXPLICIT_AFK | 3 |  |
+
+
+
+<a name="social_groups-v1-FriendPresenceVisibilityPolicy"></a>
+
+### FriendPresenceVisibilityPolicy
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| FRIEND_PRESENCE_VISIBILITY_POLICY_UNSPECIFIED | 0 |  |
+| FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC | 1 |  |
+| FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY | 2 |  |
+| FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE | 3 |  |
+| FRIEND_PRESENCE_VISIBILITY_POLICY_HIDDEN_STAFF | 4 |  |
+
+
+
+<a name="social_groups-v1-FriendRecentPresenceDisposition"></a>
+
+### FriendRecentPresenceDisposition
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| FRIEND_RECENT_PRESENCE_DISPOSITION_UNSPECIFIED | 0 |  |
+| FRIEND_RECENT_PRESENCE_DISPOSITION_TRANSPORT_LOSS | 1 |  |
+| FRIEND_RECENT_PRESENCE_DISPOSITION_LOGOUT | 2 |  |
+| FRIEND_RECENT_PRESENCE_DISPOSITION_TAKEOVER | 3 |  |
+
+
+
+<a name="social_groups-v1-FriendRosterFilter"></a>
+
+### FriendRosterFilter
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| FRIEND_ROSTER_FILTER_UNSPECIFIED | 0 |  |
+| FRIEND_ROSTER_FILTER_ALL | 1 |  |
+| FRIEND_ROSTER_FILTER_ONLINE | 2 |  |
+| FRIEND_ROSTER_FILTER_OFFLINE | 3 |  |
+| FRIEND_ROSTER_FILTER_RECENT | 4 |  |
+| FRIEND_ROSTER_FILTER_PUBLIC | 5 |  |
+| FRIEND_ROSTER_FILTER_FRIENDS_ONLY | 6 |  |
+| FRIEND_ROSTER_FILTER_PRIVATE | 7 |  |
+| FRIEND_ROSTER_FILTER_HIDDEN_STAFF | 8 |  |
+| FRIEND_ROSTER_FILTER_UNSPECIFIED_VISIBILITY | 9 |  |
+| FRIEND_ROSTER_FILTER_SHARED | 10 |  |
+| FRIEND_ROSTER_FILTER_ISOLATED | 11 |  |
+| FRIEND_ROSTER_FILTER_UNSPECIFIED_SCOPE | 12 |  |
+
+
+
+
+
 
 
 <a name="social_groups-v1-SocialGroupsService"></a>
@@ -3738,9 +10846,18 @@ Standard paging request for list RPCs.
 | SendMessage | [SendMessageRequest](#social_groups-v1-SendMessageRequest) | [SendMessageResponse](#social_groups-v1-SendMessageResponse) |  |
 | CreateGuild | [CreateGuildRequest](#social_groups-v1-CreateGuildRequest) | [CreateGuildResponse](#social_groups-v1-CreateGuildResponse) |  |
 | AddFriend | [AddFriendRequest](#social_groups-v1-AddFriendRequest) | [AddFriendResponse](#social_groups-v1-AddFriendResponse) |  |
+| RemoveFriend | [RemoveFriendRequest](#social_groups-v1-RemoveFriendRequest) | [RemoveFriendResponse](#social_groups-v1-RemoveFriendResponse) |  |
+| GetFriend | [GetFriendRequest](#social_groups-v1-GetFriendRequest) | [GetFriendResponse](#social_groups-v1-GetFriendResponse) |  |
+| GetFriendByOrdinal | [GetFriendByOrdinalRequest](#social_groups-v1-GetFriendByOrdinalRequest) | [GetFriendByOrdinalResponse](#social_groups-v1-GetFriendByOrdinalResponse) |  |
+| RemoveFriendByOrdinal | [RemoveFriendByOrdinalRequest](#social_groups-v1-RemoveFriendByOrdinalRequest) | [RemoveFriendByOrdinalResponse](#social_groups-v1-RemoveFriendByOrdinalResponse) |  |
+| ListFriends | [ListFriendsRequest](#social_groups-v1-ListFriendsRequest) | [ListFriendsResponse](#social_groups-v1-ListFriendsResponse) |  |
+| GetFriendRosterSummary | [GetFriendRosterSummaryRequest](#social_groups-v1-GetFriendRosterSummaryRequest) | [GetFriendRosterSummaryResponse](#social_groups-v1-GetFriendRosterSummaryResponse) |  |
+| ListFriendPresence | [ListFriendPresenceRequest](#social_groups-v1-ListFriendPresenceRequest) | [ListFriendPresenceResponse](#social_groups-v1-ListFriendPresenceResponse) |  |
+| GetFriendPresencePolicy | [GetFriendPresencePolicyRequest](#social_groups-v1-GetFriendPresencePolicyRequest) | [GetFriendPresencePolicyResponse](#social_groups-v1-GetFriendPresencePolicyResponse) |  |
+| UpdateFriendPresencePolicy | [UpdateFriendPresencePolicyRequest](#social_groups-v1-UpdateFriendPresencePolicyRequest) | [UpdateFriendPresencePolicyResponse](#social_groups-v1-UpdateFriendPresencePolicyResponse) |  |
 | SendMail | [SendMailRequest](#social_groups-v1-SendMailRequest) | [SendMailResponse](#social_groups-v1-SendMailResponse) |  |
 
- 
+
 
 
 
@@ -3840,11 +10957,11 @@ Standard response wrapper.
 
 
 
- 
 
- 
 
- 
+
+
+
 
 
 <a name="gateway-v1-GatewayManagementService"></a>
@@ -3858,7 +10975,7 @@ GatewayManagementService allows remote configuration of Spring Cloud Gateway rou
 | UpsertRoute | [UpsertRouteRequest](#gateway-v1-UpsertRouteRequest) | [UpsertRouteResponse](#gateway-v1-UpsertRouteResponse) | Adds or updates a custom route for the gateway. |
 | RemoveRoute | [RemoveRouteRequest](#gateway-v1-RemoveRouteRequest) | [RemoveRouteResponse](#gateway-v1-RemoveRouteResponse) | Removes a route by ID. |
 
- 
+
 
 
 
@@ -3931,11 +11048,11 @@ Error is empty on success. When populated, it contains a logical failure
 
 
 
- 
 
- 
 
- 
+
+
+
 
 
 <a name="tcp_proxy-v1-TcpProxyService"></a>
@@ -3961,7 +11078,7 @@ These RPCs are not exposed through Spring Cloud Gateway and are intended for use
 
 Semantics and failure expectations: - Events may be delivered more than once; the Game Session Service must treat them as idempotent. - The primary idempotency key is {proxy_connection_id, disconnect_sequence}. - session_id and tenant_id may be omitted when a client does not provide a SESSION envelope. - The proxy does not buffer or replay gameplay commands; it only signals disconnects. Command queues remain owned by Game Session and Redis. - Transport-level failures surface as standard gRPC statuses; logical failures are reported via the ErrorDetail in NotifyDisconnectResponse. - Lost or delayed events must not cause stuck or &#34;ghost&#34; sessions: Game Session is responsible for independently detecting liveness via its own mechanisms (for example, WebSocket/TCP close and Redis timeouts). In the worst case, losing a NotifyDisconnect should only slow down cleanup, not leave players incorrectly logged in or unable to resume. |
 
- 
+
 
 
 
@@ -3969,6 +11086,39 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 <p align="right"><a href="#top">Top</a></p>
 
 ## world-management/v1/world_management_service.proto
+
+
+
+<a name="world_management-v1-ActivatePreparedWorldInstanceRequest"></a>
+
+### ActivatePreparedWorldInstanceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| expected_lifecycle_epoch | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ActivatePreparedWorldInstanceResponse"></a>
+
+### ActivatePreparedWorldInstanceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_instance | [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
 
 
 
@@ -3983,6 +11133,7 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
 | effect_id | [string](#string) |  |  |
 | ambient_state_patch | [RoomAmbientStatePatch](#world_management-v1-RoomAmbientStatePatch) |  |  |
+| session_attestation | [string](#string) |  |  |
 
 
 
@@ -4007,6 +11158,60 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-ApplyWorldDesignMutationRequest"></a>
+
+### ApplyWorldDesignMutationRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| commit_id | [string](#string) |  |  |
+| revision_id | [string](#string) |  |  |
+| operation | [WorldDesignMutationOperation](#world_management-v1-WorldDesignMutationOperation) |  |  |
+| aggregate_type | [WorldDesignAggregateType](#world_management-v1-WorldDesignAggregateType) |  |  |
+| aggregate_id | [string](#string) |  |  |
+| expected_draft_revision_epoch | [int64](#int64) |  |  |
+| scope_type | [WorldDesignScopeType](#world_management-v1-WorldDesignScopeType) |  |  |
+| scope_id | [string](#string) |  |  |
+| expected_draft_scope_revision_epoch | [int64](#int64) |  |  |
+| scope_mutation_policy | [WorldDesignScopeMutationPolicy](#world_management-v1-WorldDesignScopeMutationPolicy) |  |  |
+| region | [RegionDesignMutation](#world_management-v1-RegionDesignMutation) |  |  |
+| zone | [ZoneDesignMutation](#world_management-v1-ZoneDesignMutation) |  |  |
+| room | [RoomDesignMutation](#world_management-v1-RoomDesignMutation) |  |  |
+| room_exit | [RoomExitDesignMutation](#world_management-v1-RoomExitDesignMutation) |  |  |
+| generation_rule | [GenerationRuleDesignMutation](#world_management-v1-GenerationRuleDesignMutation) |  |  |
+| world_entity_spawn_binding | [WorldEntitySpawnBindingDesignMutation](#world_management-v1-WorldEntitySpawnBindingDesignMutation) |  |  |
+| world_generation_subtree | [WorldGenerationSubtreeDesignMutation](#world_management-v1-WorldGenerationSubtreeDesignMutation) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ApplyWorldDesignMutationResponse"></a>
+
+### ApplyWorldDesignMutationResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| result | [WorldDesignMutationResult](#world_management-v1-WorldDesignMutationResult) |  |  |
+| tenant_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| aggregate_id | [string](#string) |  |  |
+| draft_revision_epoch | [int64](#int64) |  |  |
+| draft_scope_revision_epoch | [int64](#int64) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-DoorAmbientState"></a>
 
 ### DoorAmbientState
@@ -4023,6 +11228,113 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-FailPreparedWorldInstanceRequest"></a>
+
+### FailPreparedWorldInstanceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| expected_lifecycle_epoch | [int64](#int64) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-FailPreparedWorldInstanceResponse"></a>
+
+### FailPreparedWorldInstanceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_instance | [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GeneratedRoomDesignMutation"></a>
+
+### GeneratedRoomDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| client_ref | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+| description | [string](#string) |  |  |
+| zone_id | [string](#string) |  |  |
+| name_localized_variants_json | [string](#string) |  |  |
+| description_localized_variants_json | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GeneratedRoomExitDesignMutation"></a>
+
+### GeneratedRoomExitDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| from_room_ref | [string](#string) |  |  |
+| to_room_ref | [string](#string) |  |  |
+| direction | [string](#string) |  |  |
+| cost | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GeneratedWorldEntitySpawnBindingDesignMutation"></a>
+
+### GeneratedWorldEntitySpawnBindingDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_ref | [string](#string) |  |  |
+| entity_template_type | [EntityTemplateReferenceType](#world_management-v1-EntityTemplateReferenceType) |  |  |
+| entity_template_id | [string](#string) |  |  |
+| spawn_count | [int32](#int32) |  |  |
+| respawn_delay_seconds | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GenerationRuleDesignMutation"></a>
+
+### GenerationRuleDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| value | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-GetDraftDesignDigestRequest"></a>
 
 ### GetDraftDesignDigestRequest
@@ -4033,6 +11345,11 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
+| publish_request_id | [string](#string) |  |  |
+| derived_workflow_identity | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
 
 
 
@@ -4048,11 +11365,13 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
-| version_id | [string](#string) |  |  |
 | applied_commit_id | [string](#string) |  |  |
 | content_digest | [string](#string) |  |  |
 | digest_schema_version | [int32](#int32) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| base_version_id | [string](#string) |  |  |
 
 
 
@@ -4069,6 +11388,7 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| session_attestation | [string](#string) |  |  |
 
 
 
@@ -4091,25 +11411,6 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
-<a name="world_management-v1-RuntimeRoom"></a>
-
-### RuntimeRoom
-
-
-
-| Field | Type | Label | Description |
-| ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
-| game_instance_id | [string](#string) |  |  |
-| room_instance_id | [string](#string) |  |  |
-| region_id | [string](#string) |  |  |
-| name | [string](#string) |  |  |
-| description | [string](#string) |  |  |
-
-
-
-
-
 <a name="world_management-v1-GetRoomSnapshotRequest"></a>
 
 ### GetRoomSnapshotRequest
@@ -4120,6 +11421,8 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ----- | ---- | ----- | ----------- |
 | tenant_id | [string](#string) |  |  |
 | room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| preferred_locale | [string](#string) |  |  |
+| session_attestation | [string](#string) |  |  |
 
 
 
@@ -4135,6 +11438,38 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | snapshot | [RoomSnapshot](#world_management-v1-RoomSnapshot) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GetWorldInstanceLifecycleRequest"></a>
+
+### GetWorldInstanceLifecycleRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-GetWorldInstanceLifecycleResponse"></a>
+
+### GetWorldInstanceLifecycleResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_instance | [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -4167,6 +11502,7 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | room_instance | [shared.v1.RoomInstanceRef](#shared-v1-RoomInstanceRef) |  |  |
+| session_attestation | [string](#string) |  |  |
 
 
 
@@ -4217,6 +11553,70 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-PrepareWorldInstanceRequest"></a>
+
+### PrepareWorldInstanceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| game_template_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| script_patch_version | [string](#string) |  |  |
+| runtime_flags_json | [string](#string) |  |  |
+| generation_config_revision | [string](#string) |  |  |
+| release_bundle_id | [string](#string) |  |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| remap_set_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-PrepareWorldInstanceResponse"></a>
+
+### PrepareWorldInstanceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_instance | [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-RegionDesignMutation"></a>
+
+### RegionDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| weather | [string](#string) |  |  |
+| shard_id | [int32](#int32) |  |  |
+| generation_seed | [int64](#int64) |  |  |
+| generator_type | [string](#string) |  |  |
+| generator_params | [string](#string) |  |  |
+| spacing_multiplier | [double](#double) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-RoomAmbientState"></a>
 
 ### RoomAmbientState
@@ -4253,6 +11653,43 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-RoomDesignMutation"></a>
+
+### RoomDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| description | [string](#string) |  |  |
+| zone_id | [string](#string) |  |  |
+| name_localized_variants_json | [string](#string) |  |  |
+| description_localized_variants_json | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-RoomExitDesignMutation"></a>
+
+### RoomExitDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| from_room_id | [string](#string) |  |  |
+| to_room_id | [string](#string) |  |  |
+| direction | [string](#string) |  |  |
+| cost | [int32](#int32) |  |  |
+
+
+
+
+
+
 <a name="world_management-v1-RoomExitSnapshot"></a>
 
 ### RoomExitSnapshot
@@ -4263,6 +11700,7 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ----- | ---- | ----- | ----------- |
 | exit_id | [string](#string) |  |  |
 | target_room_name | [string](#string) |  |  |
+| direction | [string](#string) |  |  |
 | label | [string](#string) |  |  |
 | description | [string](#string) |  |  |
 | cost | [int32](#int32) |  |  |
@@ -4312,7 +11750,186 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
- 
+
+<a name="world_management-v1-RuntimeRoom"></a>
+
+### RuntimeRoom
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| room_instance_id | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+| name | [string](#string) |  |  |
+| description | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-TerminateWorldInstanceRequest"></a>
+
+### TerminateWorldInstanceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| expected_lifecycle_epoch | [int64](#int64) |  |  |
+| termination_request_id | [string](#string) |  |  |
+| reason | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-TerminateWorldInstanceResponse"></a>
+
+### TerminateWorldInstanceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| world_instance | [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ValidateWorldUpgradeMappingsRequest"></a>
+
+### ValidateWorldUpgradeMappingsRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| source_game_instance_id | [string](#string) |  |  |
+| target_version_id | [string](#string) |  |  |
+| remap_set_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ValidateWorldUpgradeMappingsResponse"></a>
+
+### ValidateWorldUpgradeMappingsResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| state_classes_checked | [string](#string) | repeated |  |
+| checked_families | [string](#string) | repeated |  |
+| has_s2_rows | [bool](#bool) |  |  |
+| result | [UpgradeValidationResult](#world_management-v1-UpgradeValidationResult) |  |  |
+| remap_set_required | [bool](#bool) |  |  |
+| reasons | [string](#string) | repeated |  |
+| remap_set_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-WorldEntitySpawnBindingDesignMutation"></a>
+
+### WorldEntitySpawnBindingDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| room_id | [string](#string) |  |  |
+| entity_template_type | [EntityTemplateReferenceType](#world_management-v1-EntityTemplateReferenceType) |  |  |
+| entity_template_id | [string](#string) |  |  |
+| spawn_count | [int32](#int32) |  |  |
+| respawn_delay_seconds | [int32](#int32) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-WorldGenerationSubtreeDesignMutation"></a>
+
+### WorldGenerationSubtreeDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| generation_rules | [GenerationRuleDesignMutation](#world_management-v1-GenerationRuleDesignMutation) | repeated |  |
+| rooms | [GeneratedRoomDesignMutation](#world_management-v1-GeneratedRoomDesignMutation) | repeated |  |
+| room_exits | [GeneratedRoomExitDesignMutation](#world_management-v1-GeneratedRoomExitDesignMutation) | repeated |  |
+| world_entity_spawn_bindings | [GeneratedWorldEntitySpawnBindingDesignMutation](#world_management-v1-GeneratedWorldEntitySpawnBindingDesignMutation) | repeated |  |
+
+
+
+
+
+
+<a name="world_management-v1-WorldInstanceLifecycleSnapshot"></a>
+
+### WorldInstanceLifecycleSnapshot
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| game_template_id | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| release_bundle_id | [string](#string) |  |  |
+| generation_config_revision | [string](#string) |  |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| lifecycle_epoch | [int64](#int64) |  |  |
+| status | [WorldInstanceLifecycleStatus](#world_management-v1-WorldInstanceLifecycleStatus) |  |  |
+| remap_set_id | [string](#string) |  |  |
+| workflow_id | [string](#string) |  |  |
+| workflow_run_id | [string](#string) |  |  |
+| workflow_status | [string](#string) |  |  |
+| workflow_family | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ZoneDesignMutation"></a>
+
+### ZoneDesignMutation
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  |  |
+| region_id | [string](#string) |  |  |
+
+
+
+
+
+
 
 
 <a name="world_management-v1-DoorState"></a>
@@ -4326,6 +11943,19 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | OPEN | 1 |  |
 | CLOSED | 2 |  |
 | LOCKED | 3 |  |
+
+
+
+<a name="world_management-v1-EntityTemplateReferenceType"></a>
+
+### EntityTemplateReferenceType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ENTITY_TEMPLATE_REFERENCE_TYPE_UNSPECIFIED | 0 |  |
+| ENTITY_TEMPLATE_REFERENCE_TYPE_ITEM | 1 |  |
+| ENTITY_TEMPLATE_REFERENCE_TYPE_NPC | 2 |  |
 
 
 
@@ -4354,9 +11984,111 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | NPC | 2 |  |
 
 
- 
 
- 
+<a name="world_management-v1-UpgradeValidationResult"></a>
+
+### UpgradeValidationResult
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| UPGRADE_VALIDATION_RESULT_UNSPECIFIED | 0 |  |
+| UPGRADE_VALIDATION_RESULT_COMPATIBLE | 1 |  |
+| UPGRADE_VALIDATION_RESULT_REQUIRES_MAPPING | 2 |  |
+| UPGRADE_VALIDATION_RESULT_INCOMPATIBLE | 3 |  |
+| UPGRADE_VALIDATION_RESULT_UNAVAILABLE | 4 |  |
+
+
+
+<a name="world_management-v1-WorldDesignAggregateType"></a>
+
+### WorldDesignAggregateType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_DESIGN_AGGREGATE_TYPE_UNSPECIFIED | 0 |  |
+| WORLD_DESIGN_AGGREGATE_TYPE_REGION | 1 |  |
+| WORLD_DESIGN_AGGREGATE_TYPE_ZONE | 2 |  |
+| WORLD_DESIGN_AGGREGATE_TYPE_ROOM | 3 |  |
+| WORLD_DESIGN_AGGREGATE_TYPE_ROOM_EXIT | 4 |  |
+| WORLD_DESIGN_AGGREGATE_TYPE_GENERATION_RULE | 5 |  |
+| WORLD_DESIGN_AGGREGATE_TYPE_WORLD_ENTITY_SPAWN_BINDING | 6 |  |
+| WORLD_DESIGN_AGGREGATE_TYPE_WORLD_GENERATION_SUBTREE | 7 |  |
+
+
+
+<a name="world_management-v1-WorldDesignMutationOperation"></a>
+
+### WorldDesignMutationOperation
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_DESIGN_MUTATION_OPERATION_UNSPECIFIED | 0 |  |
+| WORLD_DESIGN_MUTATION_OPERATION_UPSERT | 1 |  |
+| WORLD_DESIGN_MUTATION_OPERATION_DELETE | 2 |  |
+
+
+
+<a name="world_management-v1-WorldDesignMutationResult"></a>
+
+### WorldDesignMutationResult
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_DESIGN_MUTATION_RESULT_UNSPECIFIED | 0 |  |
+| WORLD_DESIGN_MUTATION_RESULT_APPLIED | 1 |  |
+| WORLD_DESIGN_MUTATION_RESULT_NO_OP_ALREADY_APPLIED | 2 |  |
+
+
+
+<a name="world_management-v1-WorldDesignScopeMutationPolicy"></a>
+
+### WorldDesignScopeMutationPolicy
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_DESIGN_SCOPE_MUTATION_POLICY_UNSPECIFIED | 0 |  |
+| WORLD_DESIGN_SCOPE_MUTATION_POLICY_REPLACE_SCOPE | 1 |  |
+| WORLD_DESIGN_SCOPE_MUTATION_POLICY_SEED_APPEND_ONLY | 2 |  |
+
+
+
+<a name="world_management-v1-WorldDesignScopeType"></a>
+
+### WorldDesignScopeType
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_DESIGN_SCOPE_TYPE_UNSPECIFIED | 0 |  |
+| WORLD_DESIGN_SCOPE_TYPE_REGION_SUBTREE | 1 |  |
+| WORLD_DESIGN_SCOPE_TYPE_ZONE_SUBTREE | 2 |  |
+| WORLD_DESIGN_SCOPE_TYPE_NEW_EMPTY_REGION | 3 |  |
+
+
+
+<a name="world_management-v1-WorldInstanceLifecycleStatus"></a>
+
+### WorldInstanceLifecycleStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| WORLD_INSTANCE_LIFECYCLE_STATUS_UNSPECIFIED | 0 |  |
+| WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING | 1 |  |
+| WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE | 2 |  |
+| WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION | 3 |  |
+| WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING | 4 |  |
+| WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED | 5 |  |
+
+
+
+
+
 
 
 <a name="world_management-v1-WorldManagementService"></a>
@@ -4367,13 +12099,20 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Ping | [PingRequest](#world_management-v1-PingRequest) | [PingResponse](#world_management-v1-PingResponse) |  |
+| PrepareWorldInstance | [PrepareWorldInstanceRequest](#world_management-v1-PrepareWorldInstanceRequest) | [PrepareWorldInstanceResponse](#world_management-v1-PrepareWorldInstanceResponse) |  |
+| ActivatePreparedWorldInstance | [ActivatePreparedWorldInstanceRequest](#world_management-v1-ActivatePreparedWorldInstanceRequest) | [ActivatePreparedWorldInstanceResponse](#world_management-v1-ActivatePreparedWorldInstanceResponse) |  |
+| FailPreparedWorldInstance | [FailPreparedWorldInstanceRequest](#world_management-v1-FailPreparedWorldInstanceRequest) | [FailPreparedWorldInstanceResponse](#world_management-v1-FailPreparedWorldInstanceResponse) |  |
+| GetWorldInstanceLifecycle | [GetWorldInstanceLifecycleRequest](#world_management-v1-GetWorldInstanceLifecycleRequest) | [GetWorldInstanceLifecycleResponse](#world_management-v1-GetWorldInstanceLifecycleResponse) |  |
+| TerminateWorldInstance | [TerminateWorldInstanceRequest](#world_management-v1-TerminateWorldInstanceRequest) | [TerminateWorldInstanceResponse](#world_management-v1-TerminateWorldInstanceResponse) |  |
 | GetRoom | [GetRoomRequest](#world_management-v1-GetRoomRequest) | [GetRoomResponse](#world_management-v1-GetRoomResponse) |  |
 | GetRoomSnapshot | [GetRoomSnapshotRequest](#world_management-v1-GetRoomSnapshotRequest) | [GetRoomSnapshotResponse](#world_management-v1-GetRoomSnapshotResponse) |  |
 | GetDraftDesignDigest | [GetDraftDesignDigestRequest](#world_management-v1-GetDraftDesignDigestRequest) | [GetDraftDesignDigestResponse](#world_management-v1-GetDraftDesignDigestResponse) |  |
+| ApplyWorldDesignMutation | [ApplyWorldDesignMutationRequest](#world_management-v1-ApplyWorldDesignMutationRequest) | [ApplyWorldDesignMutationResponse](#world_management-v1-ApplyWorldDesignMutationResponse) |  |
+| ValidateWorldUpgradeMappings | [ValidateWorldUpgradeMappingsRequest](#world_management-v1-ValidateWorldUpgradeMappingsRequest) | [ValidateWorldUpgradeMappingsResponse](#world_management-v1-ValidateWorldUpgradeMappingsResponse) |  |
 | ListRoomOccupants | [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest) | [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse) |  |
 | ApplyRoomAmbientStatePatch | [ApplyRoomAmbientStatePatchRequest](#world_management-v1-ApplyRoomAmbientStatePatchRequest) | [ApplyRoomAmbientStatePatchResponse](#world_management-v1-ApplyRoomAmbientStatePatchResponse) |  |
 
- 
+
 
 
 

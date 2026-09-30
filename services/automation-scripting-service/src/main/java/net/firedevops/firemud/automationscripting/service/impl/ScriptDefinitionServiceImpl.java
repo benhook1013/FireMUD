@@ -20,7 +20,6 @@ import net.firedevops.firemud.automationscripting.service.ScriptEventRegistrySer
 import net.firedevops.firemud.common.saga.SagaBuilder;
 import net.firedevops.firemud.common.saga.SagaException;
 import net.firedevops.firemud.common.saga.SagaRunner;
-import net.firedevops.firemud.common.security.RequestIdValidation;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,17 +52,10 @@ public class ScriptDefinitionServiceImpl implements ScriptDefinitionService {
     validateBindings(dto);
     repository.requireExistingScriptPatchRowsMatchBase(
         dto.tenantId().toString(), dto.version(), dto.baseVersionId());
-    bindingRepository
-        .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-            RequestIdValidation.requirePositiveLong(dto.tenantId().toString(), "tenantId"),
-            dto.version())
-        .forEach(
-            binding -> {
-              if (binding.getBaseVersionId() == null
-                  || binding.getBaseVersionId().longValue() != dto.baseVersionId()) {
-                throw new IllegalArgumentException("script_patch_base_version_conflict");
-              }
-            });
+    if (bindingRepository.existsByTenantIdAndScriptPatchVersionWithNullOrMismatchedBaseVersionId(
+        dto.tenantId(), dto.version(), dto.baseVersionId())) {
+      throw new IllegalArgumentException("script_patch_base_version_conflict");
+    }
     repository.bindScriptPatchBaseVersionId(
         dto.tenantId().toString(), dto.version(), dto.baseVersionId());
     ScriptDefinition entity = mapper.toEntity(dto);

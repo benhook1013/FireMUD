@@ -46,11 +46,13 @@ import net.firedevops.firemud.gamedesign.service.ParsedPluginBundle;
 import net.firedevops.firemud.gamedesign.service.PluginBundleIntakeService;
 import net.firedevops.firemud.gamedesign.service.PluginBundleStorageService;
 import net.firedevops.firemud.gamedesign.service.PluginDistributionManifest;
+import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptService;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.PublishGateService;
 import net.firedevops.firemud.gamedesign.service.PublishedReleaseBundleService;
 import net.firedevops.firemud.gamedesign.service.RecordedParticipantDigestService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -135,7 +137,7 @@ class VersionServiceImplTest {
   }
 
   @Test
-  void publishScriptPatchVersionNotifiesAfterPersistingVersion() throws Exception {
+  void publishScriptPatchFinalizationFollowsAutomationNotification() throws Exception {
     Game game = new Game();
     game.setId(1L);
     game.setTenantId("tenant-1");
@@ -179,6 +181,8 @@ class VersionServiceImplTest {
     when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
         .thenReturn(Optional.of(savedDraft));
     when(versionRepository.save(any(Version.class))).thenReturn(savedDraft, savedPublished);
+    // These mocked collaborators prove local ordering and transaction wiring, not remote readiness
+    // or owner-attested digest correctness.
     when(publishGateService.collectScriptPatchParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class)))
         .thenReturn(
@@ -216,8 +220,14 @@ class VersionServiceImplTest {
                 PublicationDigestRequestBinding.patch(
                         "tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID)
                     .requestDigest()));
-    verify(scriptingClient)
+    org.mockito.InOrder publicationOrder =
+        org.mockito.Mockito.inOrder(scriptingClient, publishAttemptService);
+    publicationOrder
+        .verify(scriptingClient)
         .notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", java.util.List.of());
+    publicationOrder
+        .verify(publishAttemptService)
+        .markScriptPatchSucceeded(binding.derivedWorkflowIdentity());
     verify(recordedParticipantDigestService)
         .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
   }
@@ -486,6 +496,43 @@ class VersionServiceImplTest {
   }
 
   @Test
+  void pendingReconciliationFailureDoesNotFailOrDeleteScriptPatchAttempt() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    Version concurrentlyPublished =
+        scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
+        .thenReturn(Optional.of(draft), Optional.of(concurrentlyPublished));
+    when(publishGateService.collectScriptPatchParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(List.of());
+
+    IllegalStateException thrown =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
+
+    assertTrue(thrown.getMessage().startsWith("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED:"));
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    assertEquals(VersionLifecycleState.DRAFT, draft.getVersionState());
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).delete(any(Version.class));
+    verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", List.of());
+  }
+
+  @Test
   void ambiguousFinalizationRetainsPendingAfterBaseBoundNotification() {
     Game game = new Game();
     game.setId(1L);
@@ -515,19 +562,24 @@ class VersionServiceImplTest {
         .when(publishAttemptService)
         .executeScriptPatchTransaction(any());
 
-    IllegalStateException thrown =
+    ScriptPatchPublishFailureException thrown =
         assertThrows(
-            IllegalStateException.class,
+            ScriptPatchPublishFailureException.class,
             () ->
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
 
-    assertTrue(thrown.getMessage().contains("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED"));
+    assertEquals(PublishAttemptPendingReconciliationException.ERROR_CODE, thrown.failureCode());
+    assertTrue(
+        thrown
+            .getMessage()
+            .startsWith(PublishAttemptPendingReconciliationException.ERROR_CODE + ":"));
     assertEquals("transaction completion outcome is ambiguous", thrown.getCause().getMessage());
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", List.of());
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).delete(any(Version.class));
   }
 
   @Test
@@ -613,6 +665,54 @@ class VersionServiceImplTest {
     verify(publishAttemptService, org.mockito.Mockito.never())
         .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
     verify(versionRepository, org.mockito.Mockito.never()).delete(any(Version.class));
+  }
+
+  @Test
+  void automationNonSuccessAfterPossibleEffectRetainsPending() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(draft));
+    when(publishGateService.collectScriptPatchParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(List.of());
+    AtomicBoolean automationMayHaveApplied = new AtomicBoolean();
+    doAnswer(
+            invocation -> {
+              automationMayHaveApplied.set(true);
+              throw new IllegalStateException(
+                  "SCRIPT_PATCH_NOTIFICATION_REJECTED: readiness was not accepted");
+            })
+        .when(scriptingClient)
+        .notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", List.of());
+
+    ScriptPatchPublishFailureException thrown =
+        assertThrows(
+            ScriptPatchPublishFailureException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
+
+    assertTrue(automationMayHaveApplied.get());
+    assertEquals(PublishAttemptPendingReconciliationException.ERROR_CODE, thrown.failureCode());
+    assertEquals(
+        "SCRIPT_PATCH_NOTIFICATION_REJECTED: readiness was not accepted",
+        thrown.getCause().getMessage());
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    assertEquals(VersionLifecycleState.DRAFT, draft.getVersionState());
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchSucceeded(any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).delete(any(Version.class));
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
   }
 
   @Test
@@ -764,6 +864,63 @@ class VersionServiceImplTest {
                     "tenant-1", 3L, "patch-2", "different notes", PUBLISH_REQUEST_ID));
 
     assertEquals(PublishGateFailureCode.PARTICIPANT_SCOPE_MISMATCH, thrown.failureCode());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .createScriptPatchAttempt(any(), any(), any(), any());
+  }
+
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"PUBLISH_FAILED", "LEGACY_REQUEST_IDENTITY_UNAVAILABLE"})
+  void sameStableScriptPatchIdPreservesNonGateFailureCodeAndMessage(String failureCode) {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.FAILED, 11L, 8, 3L);
+    attempt.setFailureCode(failureCode);
+    attempt.setFailureMessage("stored terminal failure");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+
+    ScriptPatchPublishFailureException thrown =
+        assertThrows(
+            ScriptPatchPublishFailureException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "different notes", PUBLISH_REQUEST_ID));
+
+    assertEquals(failureCode, thrown.failureCode());
+    assertEquals("stored terminal failure", thrown.getMessage());
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .createScriptPatchAttempt(any(), any(), any(), any());
+  }
+
+  @Test
+  void retainedDraftScriptPatchTupleRejectsFreshPublicationWithoutAllocation() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    Version retainedDraft =
+        scriptPatchVersion(12L, 9, 3L, VersionLifecycleState.DRAFT, "retained draft");
+    when(versionRepository.findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndScriptOnly(
+            "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(retainedDraft));
+
+    IllegalArgumentException thrown =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "new notes", "publish-request-2"));
+
+    assertTrue(thrown.getMessage().contains("PUBLISH_SCRIPT_PATCH_IDENTITY_CONFLICT"));
     verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
     verify(publishAttemptService, org.mockito.Mockito.never())
         .createScriptPatchAttempt(any(), any(), any(), any());
@@ -1160,6 +1317,23 @@ class VersionServiceImplTest {
         () -> service.getPublishedScriptPatchVersion("tenant-1", 3L, "patch-2"));
   }
 
+  @ParameterizedTest
+  @EnumSource(
+      value = VersionLifecycleState.class,
+      names = {"PUBLISHED", "ACTIVE", "RETIRED"})
+  void getPublishedScriptPatchVersionReadsRetainedPublicationStates(VersionLifecycleState state) {
+    Version retained = scriptPatchVersion(11L, 8, 3L, state, "notes");
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(retained));
+
+    VersionDto result = service.getPublishedScriptPatchVersion("tenant-1", 3L, "patch-2");
+
+    assertEquals(state, result.versionState());
+    assertEquals(11L, result.id());
+  }
+
   @Test
   void getPublishedScriptPatchVersionRejectsAmbiguousBaseScope() {
     Version first = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.PUBLISHED, "notes");
@@ -1227,6 +1401,31 @@ class VersionServiceImplTest {
         () -> service.getDesignControlPlaneDigestForScriptPatch("tenant-1", 3L, "patch-2"));
     verify(controlPlaneDigestService, org.mockito.Mockito.never())
         .getDigestForScriptPatch(any(VersionDto.class));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = VersionLifecycleState.class,
+      names = {"PUBLISHED", "ACTIVE", "RETIRED"})
+  void getDesignControlPlaneDigestForScriptPatchReadsRetainedPublicationStates(
+      VersionLifecycleState state) {
+    Version retained = scriptPatchVersion(11L, 8, 3L, state, "notes");
+    when(versionRepository
+            .findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
+                "tenant-1", 3L, "patch-2"))
+        .thenReturn(List.of(retained));
+    when(controlPlaneDigestService.getDigestForScriptPatch(any(VersionDto.class)))
+        .thenReturn(
+            new DesignControlPlaneDigestDto(
+                "tenant-1", "patch-2", "script-patch:patch-2", "digest-1", 1));
+
+    DesignControlPlaneDigestDto result =
+        service.getDesignControlPlaneDigestForScriptPatch("tenant-1", 3L, "patch-2");
+
+    assertEquals("digest-1", result.contentDigest());
+    ArgumentCaptor<VersionDto> versionCaptor = ArgumentCaptor.forClass(VersionDto.class);
+    verify(controlPlaneDigestService).getDigestForScriptPatch(versionCaptor.capture());
+    assertEquals(state, versionCaptor.getValue().versionState());
   }
 
   @Test

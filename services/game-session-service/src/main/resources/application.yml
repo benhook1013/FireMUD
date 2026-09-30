@@ -78,7 +78,7 @@ firemud:
           tenant-id: ${FIREMUD_BOOTSTRAP_SANDBOX_TENANT_ID:1}
           game-instance-id: ${FIREMUD_BOOTSTRAP_SANDBOX_GAME_INSTANCE_ID:2}
           visible: true
-          public-production-realm: true
+          public-production-realm: false
           requires-character-selection: true
           state-scope: SHARED
           character-creation-policy: ALLOW_NEW

@@ -1002,7 +1002,7 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           envFrom:
             - secretRef:
                 name: postgres-credentials
@@ -1011,6 +1011,9 @@ spec:
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
@@ -1022,6 +1025,17 @@ spec:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-account-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
@@ -1045,15 +1059,29 @@ spec:
             - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
               value: /tls/tls.key
             - name: FIREMUD_GRPC_CA_CERT_PATH
-              value: /tls/ca.crt
+              value: /grpc-trust/ca.crt
           volumeMounts:
             - name: grpc-tls
               mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
               readOnly: true
       volumes:
         - name: grpc-tls
           secret:
             secretName: firemud-grpc-game-session-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1252,6 +1280,7 @@ spec:
 YAML
 
 python3 - <<'PY' "$RENDERED_MANIFEST"
+import copy
 import pathlib
 import sys
 
@@ -1265,6 +1294,18 @@ documents = [
 ]
 for document in documents:
     document.setdefault("metadata", {})["namespace"] = "firemud"
+game_design = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "game-design-service"
+)
+social_groups = copy.deepcopy(game_design)
+social_groups["metadata"]["name"] = "social-groups-service"
+social_spec = social_groups["spec"]["template"]["spec"]
+social_spec["containers"][0]["name"] = "social-groups-service"
+social_spec["volumes"][0]["secret"]["secretName"] = "firemud-grpc-social-groups-service"
+documents.append(social_groups)
 path.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
 PY
 
@@ -9928,55 +9969,8 @@ publication_documents = [
             }
         },
     }
-    for workload in module.PUBLICATION_GRPC_WORKLOADS
+    for workload in module.GRPC_WORKLOAD_SECRET_CONSUMERS
 ]
-for workload in module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS:
-    publication_documents.append(
-        {
-            "kind": "Deployment",
-            "metadata": {"name": workload, "namespace": "firemud"},
-            "spec": {
-                "template": {
-                    "spec": {
-                        "volumes": [
-                            {
-                                "name": "grpc-tls",
-                                "secret": {
-                                    "secretName": f"firemud-grpc-{workload}",
-                                },
-                            },
-                        ],
-                        "containers": [
-                            {
-                                "name": workload,
-                                "env": [
-                                    {
-                                        "name": path_name,
-                                        "value": path,
-                                    }
-                                    for path_name, path in zip(
-                                        module.GRPC_TLS_PATH_NAMES,
-                                        (
-                                            "/tls/tls.crt",
-                                            "/tls/tls.key",
-                                            "/tls/ca.crt",
-                                        ),
-                                    )
-                                ],
-                                "volumeMounts": [
-                                    {
-                                        "name": "grpc-tls",
-                                        "mountPath": "/tls",
-                                        "readOnly": True,
-                                    },
-                                ],
-                            }
-                        ],
-                    }
-                }
-            },
-        }
-    )
 if module.PUBLICATION_GRPC_WORKLOADS != (
     "game-design-service",
     "world-management-service",
@@ -9985,6 +9979,12 @@ if module.PUBLICATION_GRPC_WORKLOADS != (
     "automation-scripting-service",
 ):
     raise SystemExit("Account and Game Session changed the five publication-only workload set")
+if module.SHARED_TRUST_GRPC_WORKLOADS != (
+    *module.PUBLICATION_GRPC_WORKLOADS,
+    "social-groups-service",
+    *module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS,
+):
+    raise SystemExit("all eight distinct workloads must use the shared CA-only trust projection")
 publication_requirements = module.publication_workload_secret_requirements(
     publication_expected, publication_documents
 )
@@ -9996,7 +9996,7 @@ if {name for name, _, _ in publication_requirements} != (
     expected_workload_secret_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):
     raise SystemExit(
-        "workload Secret requirements do not follow the seven leaf bindings and shared trust binding"
+        "workload Secret requirements do not follow the eight leaf bindings and shared trust binding"
     )
 publication_keys = {name: keys for name, _, keys in publication_requirements}
 if any(namespace != "firemud" for _, namespace, _ in publication_requirements):
@@ -10029,10 +10029,36 @@ def expect_publication_static_failure(description, documents, expected_fragment=
         )
 
 
+social_groups_index = module.SHARED_TRUST_GRPC_WORKLOADS.index("social-groups-service")
+missing_social_groups_documents = copy.deepcopy(publication_documents)
+missing_social_groups_documents.pop(social_groups_index)
+expect_publication_static_failure(
+    "a missing Social Groups workload identity",
+    missing_social_groups_documents,
+    "Expected exactly one rendered Deployment for gRPC workload social-groups-service",
+)
+wrong_social_groups_leaf_documents = copy.deepcopy(publication_documents)
+wrong_social_groups_leaf_documents[social_groups_index]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = "firemud-grpc-game-session-service"
+expect_publication_static_failure(
+    "a reused Social Groups leaf Secret",
+    wrong_social_groups_leaf_documents,
+    "grpc-tls Secret must be firemud-grpc-social-groups-service",
+)
+missing_social_groups_trust_documents = copy.deepcopy(publication_documents)
+missing_social_groups_trust_documents[social_groups_index]["spec"]["template"]["spec"][
+    "volumes"
+].pop()
+expect_publication_static_failure(
+    "a missing Social Groups shared trust projection",
+    missing_social_groups_trust_documents,
+    "Expected exactly one grpc-trust volume",
+)
+
+
 for workload in module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS:
-    workload_index = len(module.PUBLICATION_GRPC_WORKLOADS) + (
-        module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS.index(workload)
-    )
+    workload_index = module.SHARED_TRUST_GRPC_WORKLOADS.index(workload)
     wrong_leaf_documents = copy.deepcopy(publication_documents)
     wrong_leaf_documents[workload_index]["spec"]["template"]["spec"]["volumes"][0][
         "secret"
@@ -10043,18 +10069,64 @@ for workload in module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS:
         f"grpc-tls Secret must be firemud-grpc-{workload}",
     )
 
-    missing_ca_projection_documents = copy.deepcopy(publication_documents)
-    missing_ca_projection_documents[workload_index]["spec"]["template"]["spec"][
-        "volumes"
-    ][0]["secret"]["items"] = [
-        {"key": "tls.crt", "path": "tls.crt"},
-        {"key": "tls.key", "path": "tls.key"},
+    old_leaf_trust_documents = copy.deepcopy(publication_documents)
+    old_leaf_trust_spec = old_leaf_trust_documents[workload_index]["spec"]["template"][
+        "spec"
     ]
+    old_leaf_trust_spec["volumes"] = [
+        volume for volume in old_leaf_trust_spec["volumes"] if volume["name"] != "grpc-trust"
+    ]
+    old_leaf_trust_spec["containers"][0]["volumeMounts"] = [
+        mount
+        for mount in old_leaf_trust_spec["containers"][0]["volumeMounts"]
+        if mount["name"] != "grpc-trust"
+    ]
+    old_leaf_trust_spec["volumes"][0]["secret"].pop("items")
+    next(
+        entry
+        for entry in old_leaf_trust_spec["containers"][0]["env"]
+        if entry["name"] == "FIREMUD_GRPC_CA_CERT_PATH"
+    )["value"] = "/tls/ca.crt"
     expect_publication_static_failure(
-        f"a {workload} leaf volume that omits ca.crt",
-        missing_ca_projection_documents,
-        "malformed grpc-tls Secret volume",
+        f"the obsolete {workload} leaf-CA-only trust layout",
+        old_leaf_trust_documents,
+        "Expected exactly one grpc-trust volume",
     )
+
+    wrong_shared_trust_documents = copy.deepcopy(publication_documents)
+    wrong_shared_trust_spec = wrong_shared_trust_documents[workload_index]["spec"][
+        "template"
+    ]["spec"]
+    wrong_shared_trust = next(
+        volume
+        for volume in wrong_shared_trust_spec["volumes"]
+        if volume["name"] == "grpc-trust"
+    )
+    wrong_shared_trust["secret"]["secretName"] = f"firemud-grpc-{workload}"
+    expect_publication_static_failure(
+        f"a wrong {workload} shared trust Secret",
+        wrong_shared_trust_documents,
+        "requires the shared CA-only Secret firemud-grpc-tls",
+    )
+
+    for shared_private_key in ("client.key", "client.crt"):
+        private_shared_material_documents = copy.deepcopy(publication_documents)
+        private_shared_spec = private_shared_material_documents[workload_index]["spec"][
+            "template"
+        ]["spec"]
+        private_shared_trust = next(
+            volume
+            for volume in private_shared_spec["volumes"]
+            if volume["name"] == "grpc-trust"
+        )
+        private_shared_trust["secret"]["items"].append(
+            {"key": shared_private_key, "path": shared_private_key}
+        )
+        expect_publication_static_failure(
+            f"a {workload} shared trust projection containing {shared_private_key}",
+            private_shared_material_documents,
+            "requires the shared CA-only Secret firemud-grpc-tls",
+        )
 
 
 swapped_leaf_documents = copy.deepcopy(publication_documents)

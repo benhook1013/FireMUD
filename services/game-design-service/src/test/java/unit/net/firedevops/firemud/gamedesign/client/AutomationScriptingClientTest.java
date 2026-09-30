@@ -128,6 +128,70 @@ class AutomationScriptingClientTest {
   }
 
   @Test
+  void fullDigestReadRejectsLegacyResponseWithoutTypedScope() throws Exception {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub =
+        mock(AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub.class);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.full("tenant-1", "7", "req-1");
+    when(stub.getDraftDesignDigest(any(GetDraftDesignDigestRequest.class)))
+        .thenReturn(
+            GetDraftDesignDigestResponse.newBuilder()
+                .setTenantId(binding.tenantId())
+                .setAppliedCommitId("commit-7")
+                .setContentDigest("digest-7")
+                .setDigestSchemaVersion(4)
+                .build());
+    TestAutomationScriptingClient client =
+        new TestAutomationScriptingClient(
+            endpoints,
+            grpc,
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            stub);
+    client.initialize();
+
+    var digest = client.getDraftDesignDigestForVersion(binding);
+
+    assertThat(digest.succeeded()).isFalse();
+    assertThat(digest.errorCode()).isEqualTo("RESPONSE_BINDING_MISMATCH");
+  }
+
+  @Test
+  void patchDigestReadRejectsLegacyResponseWithoutTypedScope() throws Exception {
+    ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
+    CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();
+    grpc.setPlaintext(true);
+    AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub stub =
+        mock(AutomationScriptingServiceGrpc.AutomationScriptingServiceBlockingStub.class);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "7", "patch-1", "req-1");
+    when(stub.getDraftDesignDigest(any(GetDraftDesignDigestRequest.class)))
+        .thenReturn(
+            GetDraftDesignDigestResponse.newBuilder()
+                .setTenantId(binding.tenantId())
+                .setAppliedCommitId("commit-7")
+                .setContentDigest("digest-7")
+                .setDigestSchemaVersion(4)
+                .build());
+    TestAutomationScriptingClient client =
+        new TestAutomationScriptingClient(
+            endpoints,
+            grpc,
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            stub);
+    client.initialize();
+
+    var digest = client.getDraftDesignDigestForScriptPatch(binding);
+
+    assertThat(digest.succeeded()).isFalse();
+    assertThat(digest.errorCode()).isEqualTo("RESPONSE_BINDING_MISMATCH");
+  }
+
+  @Test
   void scriptPatchNotificationCarriesExactBaseVersion() throws Exception {
     ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
     CommonGrpcClientProperties grpc = new CommonGrpcClientProperties();

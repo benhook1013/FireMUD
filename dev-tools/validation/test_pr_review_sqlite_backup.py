@@ -67,11 +67,51 @@ class SqliteBackupTest(unittest.TestCase):
                 )
             ],
         )
+        records.start_attempt(
+            attempt_id="run.backupfixture", source_pr=123, channel="cli",
+            candidate_sha="a" * 40, started_at="2026-09-29T01:00:00Z",
+        )
+        records.finish_attempt(
+            "run.backupfixture", state="completed", finished_at="2026-09-29T01:01:00Z",
+            artifacts={"cli_events": '{"type":"complete","status":"review_completed"}\n'},
+        )
+        records.import_completed_run(
+            run_id="backup-provider-run", source_pr=123, channel="cli",
+            findings=(), source_decisions=(), reviewer="CodeRabbit CLI",
+            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+        )
+        records.link_provider_origin(
+            repository="benhook1013/firemud", source_pr=123, channel="cli",
+            provider_id="run.backupfixture", checkpoint_id=123456,
+            checkpoint_fingerprint="a" * 64, run_id="backup-provider-run",
+        )
+        records.archive_imported_artifacts(
+            "backup-provider-run", {"cli_events": '{"type":"complete","status":"review_completed"}\n'}
+        )
+        records.record_historical_gap(
+            repository="benhook1013/firemud", source_pr=124, channel="hosted",
+            checkpoint_id=123457, checkpoint_fingerprint="b" * 64,
+            checkpoint={"comment_id": 123457, "body": "Historical checkpoint"},
+            artifacts={"hosted_comments": json.dumps({"body": "Public review summary"})},
+            missing_reason="Private decision capture never existed",
+        )
 
     def _assert_fixture_records(self, path: Path) -> None:
         history = SqliteReviewRecords(path).history(123)
-        self.assertEqual([run["run_id"] for run in history["runs"]], ["backup-fixture-run"])
+        self.assertEqual(sorted(run["run_id"] for run in history["runs"]),
+                         ["backup-fixture-run", "backup-provider-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
+        self.assertEqual([attempt["state"] for attempt in history["attempts"]], ["completed"])
+        self.assertEqual(history["provider_origins"][0]["checkpoint_id"], 123456)
+        self.assertEqual(history["imported_artifacts"][0]["kind"], "cli_events")
+        gap_history = SqliteReviewRecords(path).history(124)
+        self.assertEqual(gap_history["runs"], [])
+        self.assertEqual(gap_history["historical_gaps"][0]["checkpoint_id"], 123457)
+        self.assertEqual(gap_history["historical_gap_artifacts"][0]["kind"], "hosted_comments")
+        with sqlite3.connect(path) as connection:
+            self.assertEqual(connection.execute(
+                "SELECT COUNT(*) FROM review_artifacts WHERE attempt_id = 'run.backupfixture'"
+            ).fetchone()[0], 1)
 
     def _fake_sftp(self, remote: object, binary: str, batch: str) -> str:
         self.assertEqual(binary, "sftp")
@@ -186,6 +226,28 @@ class SqliteBackupTest(unittest.TestCase):
         commands = {line.split(maxsplit=1)[0].lstrip("-") for batch in self.sftp_batches for line in batch.splitlines()}
         self.assertLessEqual(commands, {"cd", "pwd", "put", "chmod", "ls", "get", "rename", "rm"})
 
+    def test_final_remote_verification_failure_removes_new_final_artifact(self) -> None:
+        original_verify = sqlite_backup._verify_remote_file
+        verifications = 0
+
+        def fail_final_verification(remote: object, binary: str, path: str) -> None:
+            nonlocal verifications
+            verifications += 1
+            if verifications == 2:
+                raise BackupError("synthetic final verification failure")
+            original_verify(remote, binary, path)
+
+        (sftp_patch,) = self._transport_patches()
+        with (
+            sftp_patch,
+            patch("pr_review.sqlite_backup._verify_remote_file", side_effect=fail_final_verification),
+            self.assertRaisesRegex(BackupError, "synthetic final verification failure"),
+        ):
+            backup_database(self.database, **self._backup_arguments())
+
+        self.assertEqual(verifications, 2)
+        self.assertEqual(self.remote_files, {})
+
     def test_arbitrary_sqlite_schema_is_rejected_before_sftp(self) -> None:
         arbitrary = self.root / "arbitrary.sqlite3"
         with sqlite3.connect(arbitrary) as connection:
@@ -208,6 +270,107 @@ class SqliteBackupTest(unittest.TestCase):
         with sftp_patch, self.assertRaisesRegex(BackupError, "credential- or raw-secret"):
             backup_database(self.database, **self._backup_arguments())
         self.assertEqual(self.sftp_batches, [])
+
+    def test_long_review_identifiers_survive_backup_and_restore(self) -> None:
+        key = "bearer-private-key-evidence-review-finding"
+        SqliteReviewRecords(self.database).record_run(
+            run_id="backup-identifier-regression-run",
+            source_pr=124,
+            channel="subagent",
+            reviewer="fixture reviewer",
+            findings=[FindingObservation(source_finding_key=key, title="Bounded finding")],
+        )
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch:
+            receipt = backup_database(self.database, **self._backup_arguments())
+            restored_path = self.root / "identifier-restored.sqlite3"
+            restore_remote_backup(receipt.filename, restored_path, **self._backup_arguments())
+
+        restored = SqliteReviewRecords(restored_path).history(124)
+        self.assertEqual(restored["findings"][0]["source_finding_key"], key)
+
+    def test_screen_preserves_review_identifiers_and_detects_explicit_credentials(self) -> None:
+        key = "bearer-private-key-evidence-review-finding"
+        self.assertFalse(sqlite_backup._looks_secret(key, identifier=True))
+        self.assertFalse(sqlite_backup._looks_secret("decision-2026-identifier-for-route-proof-12345", identifier=True))
+        self.assertFalse(sqlite_backup._looks_secret(key))
+        self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-secret-value", identifier=True))
+        self.assertFalse(sqlite_backup._looks_secret("Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA", identifier=True))
+
+    def test_import_payload_explicit_credentials_are_rejected(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_runs SET import_payload_json = ?",
+                (json.dumps({"findings": [{"detail": "Bearer synthetic-secret-value"}]}),),
+            )
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch, self.assertRaisesRegex(BackupError, "credential- or raw-secret"):
+            backup_database(self.database, **self._backup_arguments())
+        self.assertEqual(self.sftp_batches, [])
+
+    def test_secret_named_json_artifact_fields_are_rejected_before_sftp(self) -> None:
+        cases = (
+            (
+                "review_artifacts", "attempt_id = ? AND kind = ?",
+                ("run.backupfixture", "cli_events"),
+            ),
+            (
+                "imported_artifacts", "run_id = ? AND kind = ?",
+                ("backup-provider-run", "cli_events"),
+            ),
+            (
+                "historical_gap_artifacts",
+                "repository = ? AND source_pr = ? AND checkpoint_id = ? AND kind = ?",
+                ("benhook1013/firemud", 124, 123457, "hosted_comments"),
+            ),
+        )
+        unredacted = json.dumps({"password": "short", "api_key": "tiny"})
+        for table, where, parameters in cases:
+            with self.subTest(table=table):
+                with sqlite3.connect(self.database) as connection:
+                    original = connection.execute(
+                        f'SELECT content FROM "{table}" WHERE {where}', parameters
+                    ).fetchone()[0]
+                    connection.execute(
+                        f'UPDATE "{table}" SET content = ? WHERE {where}',
+                        (unredacted, *parameters),
+                    )
+                (sftp_patch,) = self._transport_patches()
+                try:
+                    with sftp_patch, self.assertRaisesRegex(BackupError, "unredacted semantic secret field"):
+                        backup_database(self.database, **self._backup_arguments())
+                    self.assertEqual(self.sftp_batches, [])
+                finally:
+                    with sqlite3.connect(self.database) as connection:
+                        connection.execute(
+                            f'UPDATE "{table}" SET content = ? WHERE {where}',
+                            (original, *parameters),
+                        )
+
+    def test_non_text_artifact_content_is_rejected_before_sftp(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = ?",
+                (sqlite3.Binary(b"Bearer synthetic-secret-value"), "run.backupfixture", "cli_events"),
+            )
+
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch, self.assertRaisesRegex(BackupError, "artifact kind and content must be text"):
+            backup_database(self.database, **self._backup_arguments())
+        self.assertEqual(self.sftp_batches, [])
+
+    def test_cli_event_with_unicode_line_separator_is_screened_and_backed_up(self) -> None:
+        content = json.dumps({"message": "before\u2028after"}, ensure_ascii=False) + "\n"
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = ?",
+                (content, "run.backupfixture", "cli_events"),
+            )
+
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch:
+            receipt = backup_database(self.database, **self._backup_arguments())
+        self.assertIn(receipt.remote_path, self.remote_files)
 
     def test_snapshot_is_revalidated_before_sftp_after_concurrent_secret_write(self) -> None:
         original_create_snapshot = sqlite_backup.create_snapshot
@@ -240,14 +403,23 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertFalse(sqlite_backup._looks_secret(f"reconciliation head {sha1} was checked"))
         self.assertFalse(sqlite_backup._looks_secret(f"review target {sha256} matched"))
         self.assertFalse(sqlite_backup._looks_secret(f"route proof names {code_identifier}"))
+        self.assertFalse(sqlite_backup._looks_secret("GameSessionOperatorControlPlaneServiceTest fallback fixture"))
 
-    def test_secret_screen_still_rejects_unknown_tokens_and_credentials(self) -> None:
+    def test_secret_screen_matches_write_valid_segmented_identifiers(self) -> None:
+        long_identifier = "review_v2_route-reconciliation_source-proof_identifier_with-many-segments"
+        very_long_identifier = "_".join(["review"] + [f"segment{index}" for index in range(1, 18)])
+
+        self.assertFalse(sqlite_backup._looks_secret(f"identifier {long_identifier}"))
+        self.assertFalse(sqlite_backup._looks_secret(f"identifier {very_long_identifier}"))
+
+    def test_secret_screen_preserves_opaque_review_text_and_detects_credentials(self) -> None:
         high_entropy_token = "Q2hhbmdlTWVOb3RGb3JUaGlzVmFsdWVfS2VlcFNlY3JldA"
 
-        self.assertTrue(sqlite_backup._looks_secret(f"opaque value {high_entropy_token}"))
+        self.assertFalse(sqlite_backup._looks_secret(f"opaque value {high_entropy_token}"))
+        self.assertFalse(sqlite_backup._looks_secret("opaque value QrTzPabLmNuvWxyZabcDefGhiJklMnoPqrStuVwxYzTest"))
         self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-token-value"))
         self.assertTrue(sqlite_backup._looks_secret("-----BEGIN OPENSSH PRIVATE KEY-----"))
-        self.assertTrue(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
+        self.assertFalse(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
 
     def test_restore_rejects_integral_database_with_invalid_controller_state(self) -> None:
         malformed = self.root / "malformed-state.sqlite3"
@@ -312,16 +484,22 @@ class SqliteBackupTest(unittest.TestCase):
         with sftp_patch, patch("sys.stdout.write"):
             self.assertEqual(sqlite_backup.main(arguments), 0)
         self.assertEqual(report.stat().st_mode & 0o777, 0o600)
-        success = json.loads(report.read_text(encoding="utf-8"))
+        report_text = report.read_text(encoding="utf-8")
+        success = json.loads(report_text)
         self.assertEqual(success["lastAttempt"]["status"], "success")
         self.assertEqual(len(success["lastSuccess"]["sha256"]), 64)
         self.assertTrue(success["lastSuccess"]["filename"].endswith(".sqlite3"))
-        self.assertNotIn("identity", report.read_text(encoding="utf-8"))
-        self.assertNotIn("synthetic review state", report.read_text(encoding="utf-8"))
+        self.assertNotIn("identity", report_text)
+        self.assertNotIn("synthetic review state", report_text)
+        self.assertNotIn("Synthetic backup finding", report_text)
+        self.assertNotIn("Synthetic bounded review detail.", report_text)
+        self.assertNotIn("fixture reviewer", report_text)
 
         arguments[0] = str(self.root / "missing.sqlite3")
-        with patch("sys.stderr.write"):
+        batches_before_failure = len(self.sftp_batches)
+        with sftp_patch, patch("sys.stderr.write"):
             self.assertEqual(sqlite_backup.main(arguments), 1)
+        self.assertEqual(len(self.sftp_batches), batches_before_failure)
         failure = json.loads(report.read_text(encoding="utf-8"))
         self.assertEqual(failure["lastAttempt"]["status"], "failure")
         self.assertEqual(failure["lastSuccess"], success["lastSuccess"])

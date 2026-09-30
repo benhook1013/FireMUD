@@ -194,6 +194,12 @@ spec:
             - name: SERVICE_SCHEMA
               value: {{ default (replace "-" "_" $service.name) $service.schema | quote }}
             {{- if $service.mountGrpcTls }}
+            {{- if eq $service.name "logging-admin-service" }}
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- end }}
             {{- if $usesGrpcWorkloadIdentity }}
             - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
               valueFrom:

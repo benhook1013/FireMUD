@@ -402,7 +402,7 @@ public class AutomationScriptingGrpcService
                       meterRegistry,
                       logger,
                       "GetDraftDesignDigest",
-                      "INVALID_ARGUMENT",
+                      draftDesignDigestArgumentErrorCode(ex),
                       ex.getMessage()))
               .build());
       responseObserver.onCompleted();
@@ -442,6 +442,18 @@ public class AutomationScriptingGrpcService
               request.getPublishRequestId());
       case SCOPE_NOT_SET -> throw new IllegalArgumentException("publication scope is required");
     };
+  }
+
+  private static String draftDesignDigestArgumentErrorCode(IllegalArgumentException exception) {
+    String message = exception.getMessage();
+    if ("script_patch_base_version_unavailable".equals(message)
+        || "script_patch_base_version_unavailable:script".equals(message)
+        || "script_patch_base_version_unavailable:binding".equals(message)
+        || "script_patch_base_version_mismatch:script".equals(message)
+        || "script_patch_base_version_mismatch:binding".equals(message)) {
+      return "FAILED_PRECONDITION";
+    }
+    return "INVALID_ARGUMENT";
   }
 
   private void requirePublicationRead() {
@@ -520,8 +532,27 @@ public class AutomationScriptingGrpcService
                   meterRegistry,
                   logger,
                   "NotifyScriptVersionUpdate",
-                  "INVALID_ARGUMENT",
+                  "script_patch_base_version_unavailable".equals(ex.getMessage())
+                      ? "FAILED_PRECONDITION"
+                      : "INVALID_ARGUMENT",
                   ex.getMessage()));
+    } catch (IllegalStateException ex) {
+      if ("script_patch_base_version_unavailable".equals(ex.getMessage())) {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.error(
+                    meterRegistry,
+                    logger,
+                    "NotifyScriptVersionUpdate",
+                    "FAILED_PRECONDITION",
+                    ex.getMessage()));
+      } else {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.internal(meterRegistry, logger, "NotifyScriptVersionUpdate", ex));
+      }
     } catch (ScriptIngressInProgressException ex) {
       responseObserver.onError(
           Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());

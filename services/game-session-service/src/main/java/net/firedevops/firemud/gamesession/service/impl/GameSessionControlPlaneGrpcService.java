@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.List;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -80,6 +81,8 @@ import org.springframework.grpc.server.service.GrpcService;
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
   private static final String AUTOMATION_SCRIPTING_SERVICE = "automation-scripting-service";
+  private static final String AUTOMATION_ADMISSION_RECEIVER_FENCE_UNAVAILABLE =
+      "automation_admission_receiver_fence_unavailable";
   private static final Logger logger =
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
   private final GameSessionCommandControlPlaneService commandControlPlaneService;
@@ -145,19 +148,35 @@ public final class GameSessionControlPlaneGrpcService
     return GrpcAppErrors.error(meterRegistry, logger, operation, "NOT_FOUND", ex.getMessage());
   }
 
+  private ErrorDetail automationAdmissionReceiverFenceUnavailable(String operation) {
+    return GrpcAppErrors.error(
+        meterRegistry,
+        logger,
+        operation,
+        "FAILED_PRECONDITION",
+        AUTOMATION_ADMISSION_RECEIVER_FENCE_UNAVAILABLE);
+  }
+
   @Override
   @Timed(value = "gamesessionGrpc.controlPlane.listAdmissionPointers")
   public void listAdmissionPointers(
       ListAdmissionPointersRequest request,
       StreamObserver<ListAdmissionPointersResponse> responseObserver) {
     try {
-      requireAdminRole();
-      responseObserver.onNext(admissionPointerControlPlaneService.listAdmissionPointers());
+      List<Long> tenantIds = validateAdmissionPointerListScope(request.getTenantIdsList());
+      responseObserver.onNext(admissionPointerControlPlaneService.listAdmissionPointers(tenantIds));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ListAdmissionPointersResponse response =
           ListAdmissionPointersResponse.newBuilder()
               .setError(authorizationError("ListAdmissionPointers", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListAdmissionPointersResponse response =
+          ListAdmissionPointersResponse.newBuilder()
+              .setError(invalidArgumentError("ListAdmissionPointers", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -184,6 +203,24 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     }
+  }
+
+  private List<Long> validateAdmissionPointerListScope(List<Long> tenantIds) {
+    if (tenantIds.isEmpty()) {
+      requireAdminRole();
+      return List.of();
+    }
+
+    List<Long> validatedTenantIds =
+        tenantIds.stream()
+            .map(tenantId -> ControlPlaneRequestParser.requirePositive(tenantId, "tenant_ids"))
+            .toList();
+    for (long tenantId : validatedTenantIds) {
+      if (!SessionContext.hasTenantAccess(tenantId)) {
+        throw new AdminAuthorizationException("Tenant access required for admission pointer list");
+      }
+    }
+    return validatedTenantIds;
   }
 
   @Override
@@ -461,8 +498,9 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAutomationScriptingInternalService("ScheduleRemoteFollowup");
       responseObserver.onNext(
-          remoteControlPlaneService.scheduleRemoteFollowup(
-              parseTenantId(request.getTenantId()), request));
+          ScheduleRemoteFollowupResponse.newBuilder()
+              .setError(automationAdmissionReceiverFenceUnavailable("ScheduleRemoteFollowup"))
+              .build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -1048,7 +1086,12 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAutomationScriptingInternalService("EnqueueAutomationCommandIfAbsent");
       EnqueueAutomationCommandIfAbsentResponse response =
-          commandControlPlaneService.enqueueAutomationCommandIfAbsent(request);
+          EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+              .setAccepted(false)
+              .setAdmissionOutcome("REJECTED")
+              .setError(
+                  automationAdmissionReceiverFenceUnavailable("EnqueueAutomationCommandIfAbsent"))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {

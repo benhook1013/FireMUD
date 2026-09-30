@@ -1,8 +1,12 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -33,9 +37,12 @@ final class GameSessionAdmissionPointerControlPlaneService {
     this.versionUpgradePreparationService = versionUpgradePreparationService;
   }
 
-  ListAdmissionPointersResponse listAdmissionPointers() {
-    java.util.List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot>
-        pointers = gameplayAdmissionPointerAuthorityService.listPointers();
+  ListAdmissionPointersResponse listAdmissionPointers(List<Long> requestedTenantIds) {
+    Set<Long> tenantScope = Set.copyOf(requestedTenantIds);
+    List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService.listPointers().stream()
+            .filter(pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
+            .toList();
     java.util.List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
             .map(
@@ -52,7 +59,17 @@ final class GameSessionAdmissionPointerControlPlaneService {
                             + "/"
                             + pointer.realmSlug());
                   }
-                  return toEntry(audit.getFirst());
+                  GameplayAdmissionPointerAuditEntry latestAudit = audit.getFirst();
+                  if (!matchesCurrentPointer(pointer, latestAudit)) {
+                    throw new AdmissionPointerAuditUnavailableException(
+                        "Admission pointer audit does not match current pointer "
+                            + pointer.tenantId()
+                            + ":"
+                            + pointer.worldSlug()
+                            + "/"
+                            + pointer.realmSlug());
+                  }
+                  return toEntry(latestAudit);
                 })
             .toList();
     return ListAdmissionPointersResponse.newBuilder().addAllPointers(entries).build();
@@ -76,28 +93,18 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   SetAdmissionPointerResponse setAdmissionPointer(
       long tenantId, long targetGameInstanceId, SetAdmissionPointerRequest request) {
-    validatePreparedUpgradeForPointerChange(request, tenantId, targetGameInstanceId);
-    gameplayAdmissionPointerAuthorityService.upsertPointer(
-        new GameplayAdmissionPointerMutation(
-            request.getWorldSlug(),
-            request.getWorldDisplayName(),
-            request.getRealmSlug(),
-            request.getRealmDisplayName(),
-            tenantId,
-            targetGameInstanceId,
-            request.getVisible(),
-            request.getPublicProductionRealm(),
-            request.getRequiresCharacterSelection(),
-            request.getStateScope(),
-            request.getCharacterCreationPolicy(),
-            request.getActorPrincipal(),
-            request.getReason(),
-            request.getControlPlaneRequestId(),
-            request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
-            normalizeBlank(request.getPreparedVersionUpgradeId())));
-    return SetAdmissionPointerResponse.newBuilder()
-        .setPointer(latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug()))
-        .build();
+    GameplayAdmissionPointerSnapshot currentPointer =
+        gameplayAdmissionPointerAuthorityService
+            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
+            .orElse(null);
+    if (currentPointer != null) {
+      throw new AdmissionPointerVersionMismatchException(
+          "admission-pointer updates are temporarily disabled until catalog revision "
+              + "preconditions are supported");
+    }
+    throw new AdmissionPointerVersionMismatchException(
+        "admission-pointer creation is temporarily disabled until catalog revision and "
+            + "stable realm/namespace identity preconditions are supported");
   }
 
   ExecutePreparedVersionCutoverResponse executePreparedVersionCutover(
@@ -107,6 +114,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
     requireText(request.getPreparedVersionUpgradeId(), "prepared_version_upgrade_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
+    rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported();
     GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService
             .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
@@ -150,6 +158,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
             request.getReason(),
             request.getControlPlaneRequestId(),
             request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
+            request.hasExpectedCatalogRevision() ? request.getExpectedCatalogRevision() : null,
             request.getPreparedVersionUpgradeId()));
     AdmissionPointerControlPlaneEntry entry =
         latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug());
@@ -191,25 +200,44 @@ final class GameSessionAdmissionPointerControlPlaneService {
             .setReason(entry.reason())
             .setControlPlaneRequestId(entry.controlPlaneRequestId())
             .setOccurredAtMs(entry.occurredAt().toEpochMilli());
+    if (entry.catalogRevision() != null && entry.catalogRevision() > 0L) {
+      builder.setCatalogRevision(entry.catalogRevision());
+    }
+    if (entry.realmId() != null) {
+      builder.setRealmId(entry.realmId().toString());
+    }
+    if (entry.playableStateNamespaceId() != null) {
+      builder.setPlayableStateNamespaceId(entry.playableStateNamespaceId().toString());
+    }
     if (!normalizeBlank(entry.preparedVersionUpgradeId()).isEmpty()) {
       builder.setPreparedVersionUpgradeId(entry.preparedVersionUpgradeId());
     }
     return builder.build();
   }
 
-  private void validatePreparedUpgradeForPointerChange(
-      SetAdmissionPointerRequest request, long tenantId, long targetGameInstanceId) {
-    GameplayAdmissionPointerSnapshot currentPointer =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
-            .orElse(null);
-    validatePreparedUpgradeForPointerChange(
-        request.getWorldSlug(),
-        request.getRealmSlug(),
-        tenantId,
-        targetGameInstanceId,
-        request.getPreparedVersionUpgradeId(),
-        currentPointer);
+  private static boolean matchesCurrentPointer(
+      GameplayAdmissionPointerSnapshot pointer, GameplayAdmissionPointerAuditEntry audit) {
+    return audit != null
+        && Objects.equals(pointer.worldSlug(), audit.worldSlug())
+        && Objects.equals(pointer.worldDisplayName(), audit.worldDisplayName())
+        && Objects.equals(pointer.realmSlug(), audit.realmSlug())
+        && Objects.equals(pointer.realmDisplayName(), audit.realmDisplayName())
+        && pointer.tenantId() == audit.tenantId()
+        && pointer.gameInstanceId() == audit.gameInstanceId()
+        && pointer.pointerVersion() == audit.pointerVersion()
+        && pointer.catalogRevision() > 0L
+        && audit.catalogRevision() != null
+        && audit.catalogRevision() > 0L
+        && pointer.catalogRevision() == audit.catalogRevision()
+        && pointer.realmId() != null
+        && pointer.realmId().equals(audit.realmId())
+        && pointer.playableStateNamespaceId() != null
+        && pointer.playableStateNamespaceId().equals(audit.playableStateNamespaceId())
+        && pointer.visible() == audit.visible()
+        && pointer.publicProductionRealm() == audit.publicProductionRealm()
+        && pointer.requiresCharacterSelection() == audit.requiresCharacterSelection()
+        && Objects.equals(pointer.stateScope(), audit.stateScope())
+        && Objects.equals(pointer.characterCreationPolicy(), audit.characterCreationPolicy());
   }
 
   private void validatePreparedUpgradeForPointerChange(
@@ -285,6 +313,12 @@ final class GameSessionAdmissionPointerControlPlaneService {
           "prepared_version_upgrade_id execution state does not match current admission pointer");
     }
     return entry;
+  }
+
+  private void rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported() {
+    throw new AdmissionPointerVersionMismatchException(
+        "admission-pointer mutations are temporarily disabled until owner hold, drain, and "
+            + "durable execution contracts are supported");
   }
 
   private GameInstance getInstanceOrThrow(long gameInstanceId) {
