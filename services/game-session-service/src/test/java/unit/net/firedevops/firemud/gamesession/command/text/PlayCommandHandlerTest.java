@@ -2523,8 +2523,7 @@ class PlayCommandHandlerTest {
         .isEqualTo(1.0);
     Mockito.verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 1L, 7001L);
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount(
-            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             new SessionContext(
