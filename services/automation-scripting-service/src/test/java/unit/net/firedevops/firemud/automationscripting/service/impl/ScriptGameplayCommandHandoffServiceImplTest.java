@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
@@ -268,16 +269,13 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         Mockito.mock(ScriptHandoffEventRepository.class);
     AtomicReference<ScriptHandoffEvent> persisted = new AtomicReference<>();
     AtomicReference<ScriptHandoffEvent> attemptedResponseWrite = new AtomicReference<>();
-    AtomicInteger findCount = new AtomicInteger();
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean concurrentWinnerInjected = new AtomicBoolean();
     AtomicInteger saveCount = new AtomicInteger();
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
         .thenAnswer(
             invocation -> {
-              int call = findCount.incrementAndGet();
-              if (call <= 4) {
-                return Optional.empty();
-              }
-              if (call == 5) {
+              if (intentSaved.get() && concurrentWinnerInjected.compareAndSet(false, true)) {
                 ScriptHandoffEvent intent = persisted.get();
                 ScriptHandoffEvent checkedIntent =
                     handoffRow(intent.getId(), intent.getRowVersion(), "handoff_in_flight", "");
@@ -291,7 +289,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                         "winner-command"));
                 return Optional.of(checkedIntent);
               }
-              return Optional.of(persisted.get());
+              return Optional.ofNullable(persisted.get());
             });
     when(handoffEventRepository.save(Mockito.any()))
         .thenAnswer(
@@ -303,6 +301,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 event.setId(44L);
                 event.setRowVersion(5);
                 persisted.set(event);
+                intentSaved.set(true);
                 return event;
               }
               attemptedResponseWrite.set(event);
@@ -340,8 +339,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
       assertThat(persisted.get().getRowVersion()).isEqualTo(6);
       assertThat(attemptedResponseWrite.get().getId()).isEqualTo(44L);
       assertThat(attemptedResponseWrite.get().getRowVersion()).isEqualTo(5);
-      assertThat(findCount.get()).isEqualTo(5);
       assertThat(saveCount.get()).isEqualTo(2);
+      assertThat(concurrentWinnerInjected.get()).isTrue();
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
@@ -581,12 +580,25 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.EmittedCommand command =
         emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
     ScriptHandoffEvent mismatchedIntent = acceptedHandoffEvent(item, command, "handoff_in_flight");
+    mismatchedIntent.setId(44L);
+    mismatchedIntent.setRowVersion(5);
     mismatchedIntent.setEmittedCommandText("different command identity");
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean mismatchedReadReturned = new AtomicBoolean();
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
-        .thenReturn(
-            Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(mismatchedIntent));
+        .thenAnswer(
+            invocation -> {
+              if (intentSaved.get() && mismatchedReadReturned.compareAndSet(false, true)) {
+                return Optional.of(mismatchedIntent);
+              }
+              return Optional.empty();
+            });
     when(handoffEventRepository.save(Mockito.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              intentSaved.set(true);
+              return invocation.getArgument(0);
+            });
     ScriptGameplayCommandHandoffServiceImpl service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -607,6 +619,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
       assertThat(result.errorMessage())
           .contains("persisted handoff intent identity does not match request");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
+      assertThat(mismatchedReadReturned.get()).isTrue();
+      assertThat(mismatchedIntent.getId()).isEqualTo(44L);
+      assertThat(mismatchedIntent.getRowVersion()).isEqualTo(5);
       verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
       verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
     } finally {
