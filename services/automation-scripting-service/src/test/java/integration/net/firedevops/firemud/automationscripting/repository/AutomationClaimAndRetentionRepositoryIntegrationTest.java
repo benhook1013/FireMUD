@@ -139,7 +139,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEqualTo("3.2");
     Long deadLetteredWorkItemId =
         upgradeDsl
-            .fetchOne(
+            .fetchSingle(
                 "INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, "
                     + "entity_id, script_id, event_type, event_schema_version, script_patch_version, "
                     + "script_event_id, source_service, trigger_mode, status, cancel_reason, "
@@ -152,7 +152,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
             .get(0, Long.class);
     Long pendingWorkItemId =
         upgradeDsl
-            .fetchOne(
+            .fetchSingle(
                 "INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, "
                     + "entity_id, script_id, event_type, event_schema_version, script_patch_version, "
                     + "script_event_id, source_service, trigger_mode, status, created_at, updated_at, "
@@ -177,7 +177,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     assertThat(
             upgradeDsl
-                .fetchOne(
+                .fetchSingle(
                     "SELECT is_nullable FROM information_schema.columns"
                         + " WHERE table_schema = ? AND table_name = 'script_work_items'"
                         + " AND column_name = 'next_eligible_at'",
@@ -186,7 +186,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEqualTo("YES");
     String eligibilityIndex =
         upgradeDsl
-            .fetchOne(
+            .fetchSingle(
                 "SELECT indexdef FROM pg_indexes WHERE schemaname = '"
                     + upgradeSchema
                     + "'"
@@ -201,14 +201,14 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEqualTo(retainedRowsBeforeV4);
     assertThat(
             upgradeDsl
-                .fetchOne(
+                .fetchSingle(
                     "SELECT failure_generation FROM script_work_items WHERE id = ?",
                     deadLetteredWorkItemId)
                 .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
             upgradeDsl
-                .fetchOne(
+                .fetchSingle(
                     "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
                     pendingWorkItemId)
                 .get(0, java.time.LocalDateTime.class))
@@ -217,7 +217,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         "UPDATE script_work_items SET next_eligible_at = NULL WHERE id = ?", pendingWorkItemId);
     assertThat(
             upgradeDsl
-                .fetchOne(
+                .fetchSingle(
                     "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
                     pendingWorkItemId)
                 .get(0, java.time.LocalDateTime.class))
@@ -225,7 +225,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     Long replayRequestId =
         upgradeDsl
-            .fetchOne(
+            .fetchSingle(
                 "INSERT INTO script_dead_letter_replay_requests (tenant_id, control_plane_request_id, "
                     + "request_fingerprint, status, replayed_count, rejected_count) "
                     + "VALUES ('tenant-v3-retained', 'request-44', ?, 'COMPLETED', 1, 0) RETURNING id",
@@ -243,7 +243,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
 
     assertThat(
             upgradeDsl
-                .fetchOne(
+                .fetchSingle(
                     "SELECT control_plane_request_id FROM script_dead_letter_replay_requests "
                         + "WHERE tenant_id = 'tenant-v3-retained' AND id = ?",
                     replayRequestId)
@@ -251,7 +251,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEqualTo("request-44");
     assertThat(
             upgradeDsl
-                .fetchOne(
+                .fetchSingle(
                     "SELECT original_failure_reason FROM script_dead_letter_replay_results "
                         + "WHERE replay_request_id = ? AND requested_work_item_id = ?",
                     replayRequestId,
@@ -260,7 +260,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEqualTo("retained_failure");
     assertThat(
             upgradeDsl
-                .fetchOne(
+                .fetchSingle(
                     "SELECT count(*) FROM information_schema.tables WHERE table_schema = ? "
                         + "AND table_name IN ('script_dead_letter_replay_requests', "
                         + "'script_dead_letter_replay_results')",

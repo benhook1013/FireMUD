@@ -101,6 +101,14 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             with self.subTest(note=note), self.assertRaises(ReviewRecordsError):
                 sqlite_review_records._coverage_limits([note], retained=[note])
 
+    def test_retained_coverage_is_string_validated_and_capped_at_1000(self) -> None:
+        note = "n" * 1000
+        self.assertEqual(sqlite_review_records._coverage_limits([note], retained=[note]), (note,))
+        with self.assertRaisesRegex(ReviewRecordsError, "at most 1000"):
+            sqlite_review_records._coverage_limits([note + "n"], retained=[note + "n"])
+        with self.assertRaisesRegex(ReviewRecordsError, "must be text"):
+            sqlite_review_records._coverage_limits([123], retained=[123])
+
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)

@@ -134,3 +134,8 @@ Entry format:
   - Context: #2893's records migration raised SQLite's minimum writer build, leaving the original cutover marker at its earlier build; the state selector refused the valid database, and the backup service still used a separate older checkout.
   - Observation: the cutover marker records the original selection, while SQLite metadata owns the current writer floor. Requiring those values to stay equal and checking only the interactive entrypoint missed both failures.
   - Expected pattern: keep the marker's writer floor no greater than SQLite's, let SQLite reject old writers, and prove a schema upgrade through the shared controller, status site, and scheduled backup with exact readback before calling the promotion complete.
+
+- `2026-09-30`: Completed-gate step ambiguity remains separate from substantive CI proof
+  - Context: #2909's metadata-only Security Gate exhausted eight preservation-step snapshot refreshes and failed with ambiguous prior-run metadata, although the same-head substantive Security Gate passed. Later readback showed the substantive preservation step skipped and a separate metadata preservation run successful.
+  - Observation: the failing preservation snapshot and later completed-step API readback disagreed; the precise cause remains unproven. A red preservation gate is not evidence that the underlying product or security checks failed, but it remains a required-check obligation.
+  - Expected pattern: inspect the exact run, job, step, base, and head before choosing a bounded rerun; retain fail-closed preservation and do not substitute historical success for current-head merge readiness.

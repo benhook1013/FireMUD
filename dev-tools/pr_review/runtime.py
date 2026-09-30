@@ -1457,7 +1457,11 @@ class LiveEvidence:
             owner_run_id = self._cli_lock_owner_run_id(cli_lock_path)
             owner_terminal_error_for_pr = False
             active_capture_for_other_pr = False
-            for metadata_path in (cli_root / "runs").glob("*/metadata.json"):
+            owner_metadata = cli_root / "runs" / owner_run_id / "metadata.json" if owner_run_id is not None else None
+            metadata_paths = (
+                (owner_metadata,) if owner_metadata is not None else (cli_root / "runs").glob("*/metadata.json")
+            )
+            for metadata_path in metadata_paths:
                 try:
                     active_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
