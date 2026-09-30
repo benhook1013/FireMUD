@@ -697,7 +697,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       if (priorRequest.isPresent()) {
         ScriptDeadLetterReplayRepository.ReplayRequest request = priorRequest.orElseThrow();
         priorResults =
-            replayRepository.findResults(request.id()).stream()
+            replayRepository.findResults(normalizedTenantId, request.id()).stream()
                 .collect(
                     Collectors.toMap(
                         ScriptDeadLetterReplayRepository.ReplayItem::requestedWorkItemId,
@@ -786,7 +786,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             "control_plane_request_id already records a different replay request");
       }
       priorResults =
-          replayRepository.findResults(durableRequest.id()).stream()
+          replayRepository.findResults(normalizedTenantId, durableRequest.id()).stream()
               .collect(
                   Collectors.toMap(
                       ScriptDeadLetterReplayRepository.ReplayItem::requestedWorkItemId,
@@ -953,7 +953,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
               replayResultFromDurable(
                   command,
                   completedRequest.orElseThrow(),
-                  replayRepository.findResults(durableRequest.id()).stream()
+                  replayRepository.findResults(normalizedTenantId, durableRequest.id()).stream()
                       .collect(
                           Collectors.toMap(
                               ScriptDeadLetterReplayRepository.ReplayItem::requestedWorkItemId,

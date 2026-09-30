@@ -175,9 +175,13 @@ public class ScriptDeadLetterReplayRepository {
         .execute();
   }
 
-  public List<ReplayItem> findResults(long requestId) {
+  public List<ReplayItem> findResults(String tenantId, long requestId) {
     return dsl.selectFrom(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
-        .where(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(requestId))
+        .where(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(requestId)))
         .orderBy(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID.asc())
         .fetch(this::toItem);
   }

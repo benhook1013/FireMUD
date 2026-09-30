@@ -12,7 +12,6 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toOffsetDateTime;
 import static org.jooq.impl.DSL.field;
 import static org.jooq.impl.DSL.notExists;
-import static org.jooq.impl.DSL.row;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -22,6 +21,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
+import net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptHandoffEventsRecord;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -29,6 +29,7 @@ import org.jooq.Field;
 import org.jooq.Record;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -48,11 +49,95 @@ public class ScriptHandoffEventRepository {
    * Disposes one ordered batch of eligible terminal handoff evidence independently of parent
    * cleanup. A caller can repeat the sweep for remaining eligible rows.
    */
+  @Transactional
   public long deleteExpiredRetentionEvidence(Instant safeWatermark, Instant now) {
     LocalDateTime cutoff = toLocalDateTime(safeWatermark);
     OffsetDateTime current = toOffsetDateTime(now);
     var candidates = SCRIPT_HANDOFF_EVENTS.as("retention_candidates");
     var siblings = SCRIPT_HANDOFF_EVENTS.as("retention_siblings");
+    Condition candidateEligibility =
+        retentionEligibility(candidates, siblings, cutoff, current, false);
+    List<RetentionCandidate> selected =
+        dsl.select(candidates.ID, candidates.TENANT_ID, candidates.WORK_ITEM_ID)
+            .from(candidates)
+            .where(candidateEligibility)
+            .orderBy(candidates.EVENT_ID.asc())
+            .limit(RETENTION_DELETE_BATCH_SIZE)
+            .fetch(
+                record ->
+                    new RetentionCandidate(
+                        record.get(candidates.ID),
+                        record.get(candidates.TENANT_ID),
+                        record.get(candidates.WORK_ITEM_ID)));
+    if (selected.isEmpty()) {
+      return 0L;
+    }
+
+    // Lock all existing siblings before locking their parents. This mirrors parent cleanup's
+    // child-first order and fences a concurrent hold or sibling disposition update.
+    dsl.select(SCRIPT_HANDOFF_EVENTS.ID)
+        .from(SCRIPT_HANDOFF_EVENTS)
+        .where(selectedHandoffBundleCondition(selected))
+        .orderBy(
+            SCRIPT_HANDOFF_EVENTS.TENANT_ID.asc(),
+            SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.asc(),
+            SCRIPT_HANDOFF_EVENTS.ID.asc())
+        .forUpdate()
+        .fetch();
+
+    // A parent row is the FK lock that fences new siblings and replay receipts. Missing parents
+    // are deliberately excluded below so an orphaned child cannot be treated as disposable.
+    List<RetentionBundle> existingParents =
+        dsl.select(SCRIPT_WORK_ITEMS.TENANT_ID, SCRIPT_WORK_ITEMS.ID)
+            .from(SCRIPT_WORK_ITEMS)
+            .where(selectedParentBundleCondition(selected))
+            .orderBy(SCRIPT_WORK_ITEMS.TENANT_ID.asc(), SCRIPT_WORK_ITEMS.ID.asc())
+            .forUpdate()
+            .fetch(
+                record ->
+                    new RetentionBundle(
+                        record.get(SCRIPT_WORK_ITEMS.TENANT_ID), record.get(SCRIPT_WORK_ITEMS.ID)));
+    if (existingParents.isEmpty()) {
+      return 0L;
+    }
+
+    // Re-evaluate every selected child only after sibling and parent locks are held. The fresh
+    // statement snapshot sees a sibling hold, replay receipt, or parent status that committed
+    // while the initial candidate snapshot was being prepared.
+    var recheckCandidates = SCRIPT_HANDOFF_EVENTS.as("retention_recheck_candidates");
+    var recheckSiblings = SCRIPT_HANDOFF_EVENTS.as("retention_recheck_siblings");
+    List<RetentionCandidate> eligible =
+        dsl.select(
+                recheckCandidates.ID, recheckCandidates.TENANT_ID, recheckCandidates.WORK_ITEM_ID)
+            .from(recheckCandidates)
+            .where(
+                selectedCandidateCondition(recheckCandidates, selected)
+                    .and(
+                        retentionEligibility(
+                            recheckCandidates, recheckSiblings, cutoff, current, true)))
+            .fetch(
+                record ->
+                    new RetentionCandidate(
+                        record.get(recheckCandidates.ID),
+                        record.get(recheckCandidates.TENANT_ID),
+                        record.get(recheckCandidates.WORK_ITEM_ID)));
+    if (eligible.isEmpty()) {
+      return 0L;
+    }
+
+    // The child locks and parent FK locks make the rechecked decision stable through this delete;
+    // the ID/tenant predicate keeps the delete bounded to the original selected batch.
+    return dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
+        .where(selectedCandidateCondition(SCRIPT_HANDOFF_EVENTS, eligible))
+        .execute();
+  }
+
+  private static Condition retentionEligibility(
+      ScriptHandoffEvents candidates,
+      ScriptHandoffEvents siblings,
+      LocalDateTime cutoff,
+      OffsetDateTime current,
+      boolean requireParent) {
     Condition noIneligibleSibling =
         notExists(
             org.jooq
@@ -70,6 +155,18 @@ public class ScriptHandoffEventRepository {
                                 .or(siblings.OBSERVED_AT.isNull())
                                 .or(siblings.OBSERVED_AT.ge(cutoff))
                                 .or(siblings.RETENTION_HOLD_UNTIL.gt(current)))));
+    Condition parentMatches =
+        org.jooq.impl.DSL.exists(
+            org.jooq
+                .impl
+                .DSL
+                .selectOne()
+                .from(SCRIPT_WORK_ITEMS)
+                .where(
+                    SCRIPT_WORK_ITEMS
+                        .TENANT_ID
+                        .eq(candidates.TENANT_ID)
+                        .and(SCRIPT_WORK_ITEMS.ID.eq(candidates.WORK_ITEM_ID))));
     Condition noIneligibleParent =
         notExists(
             org.jooq
@@ -103,7 +200,7 @@ public class ScriptHandoffEventRepository {
                         .and(
                             SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(
                                 candidates.WORK_ITEM_ID))));
-    Condition candidateEligibility =
+    Condition eligibility =
         candidates
             .TENANT_ID
             .isNotNull()
@@ -117,20 +214,48 @@ public class ScriptHandoffEventRepository {
             .and(noIneligibleSibling)
             .and(noIneligibleParent)
             .and(noRetainedReplayReceipt);
-    return dsl.deleteFrom(SCRIPT_HANDOFF_EVENTS)
-        .where(
-            row(SCRIPT_HANDOFF_EVENTS.ID, SCRIPT_HANDOFF_EVENTS.TENANT_ID)
-                .in(
-                    dsl.select(candidates.ID, candidates.TENANT_ID)
-                        .from(candidates)
-                        .where(candidateEligibility)
-                        .orderBy(candidates.EVENT_ID.asc())
-                        .limit(RETENTION_DELETE_BATCH_SIZE))
-                .and(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT.lt(cutoff))
-                .and(RETENTION_HOLD_UNTIL.isNull().or(RETENTION_HOLD_UNTIL.le(current)))
-                .and(nonBlankHandoffOutcome(SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME)))
-        .execute();
+    return requireParent ? eligibility.and(parentMatches) : eligibility;
   }
+
+  private static Condition selectedHandoffBundleCondition(List<RetentionCandidate> selected) {
+    Condition condition = org.jooq.impl.DSL.falseCondition();
+    for (RetentionCandidate candidate : selected) {
+      condition =
+          condition.or(
+              SCRIPT_HANDOFF_EVENTS
+                  .TENANT_ID
+                  .eq(candidate.tenantId())
+                  .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(candidate.workItemId())));
+    }
+    return condition;
+  }
+
+  private static Condition selectedParentBundleCondition(List<RetentionCandidate> selected) {
+    Condition condition = org.jooq.impl.DSL.falseCondition();
+    for (RetentionCandidate candidate : selected) {
+      condition =
+          condition.or(
+              SCRIPT_WORK_ITEMS
+                  .TENANT_ID
+                  .eq(candidate.tenantId())
+                  .and(SCRIPT_WORK_ITEMS.ID.eq(candidate.workItemId())));
+    }
+    return condition;
+  }
+
+  private static Condition selectedCandidateCondition(
+      ScriptHandoffEvents table, List<RetentionCandidate> selected) {
+    Condition condition = org.jooq.impl.DSL.falseCondition();
+    for (RetentionCandidate candidate : selected) {
+      condition =
+          condition.or(table.ID.eq(candidate.id()).and(table.TENANT_ID.eq(candidate.tenantId())));
+    }
+    return condition;
+  }
+
+  private record RetentionCandidate(Long id, String tenantId, Long workItemId) {}
+
+  private record RetentionBundle(String tenantId, Long workItemId) {}
 
   /** Retention only disposes a handoff after its durable outcome has meaningful content. */
   private static Condition nonBlankHandoffOutcome(Field<String> outcome) {

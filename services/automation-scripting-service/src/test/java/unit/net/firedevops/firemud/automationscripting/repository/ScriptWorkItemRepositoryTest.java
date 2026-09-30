@@ -538,7 +538,7 @@ class ScriptWorkItemRepositoryTest {
                                 .contains("cancel_reason")));
     assertThat(bindings.get())
         .containsSubsequence("PENDING_EVALUATION", null, null, 0, 0, null)
-        .contains("DEAD_LETTERED", 4, 3L);
+        .containsSubsequence(11L, "tenant-1", "DEAD_LETTERED", 4, 3L);
   }
 
   @Test

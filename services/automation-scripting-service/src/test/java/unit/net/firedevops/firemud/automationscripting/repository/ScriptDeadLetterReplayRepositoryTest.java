@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
@@ -94,6 +95,29 @@ class ScriptDeadLetterReplayRepositoryTest {
     String whereClause = sql.substring(sql.indexOf(" where "));
     assertThat(whereClause.replaceAll("\\s+", " ")).contains("\"status\" = ?");
     assertThat(bindingsRef.get()).contains("RUNNING");
+  }
+
+  @Test
+  void findResultsScopesByTenantAndRequestId() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    var emptyResults =
+        DSL.using(SQLDialect.POSTGRES).newResult(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.fields());
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {new MockResult(0, emptyResults)};
+        };
+    ScriptDeadLetterReplayRepository repository =
+        new ScriptDeadLetterReplayRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findResults("tenant-1", 41L)).isEmpty();
+
+    String sql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    assertThat(sql.substring(sql.indexOf(" where "))).contains("tenant_id", "replay_request_id");
+    assertThat(bindingsRef.get()).contains("tenant-1", 41L);
   }
 
   @Test

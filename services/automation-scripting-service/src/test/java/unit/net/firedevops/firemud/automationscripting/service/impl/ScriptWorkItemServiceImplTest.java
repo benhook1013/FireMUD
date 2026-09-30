@@ -234,7 +234,7 @@ class ScriptWorkItemServiceImplTest {
             Optional.of(
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     41L, fingerprint, "COMPLETED", 1L, 0L)));
-    when(replayRepository.findResults(41L))
+    when(replayRepository.findResults("1", 41L))
         .thenReturn(
             List.of(
                 new ScriptDeadLetterReplayRepository.ReplayItem(
@@ -356,7 +356,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(
             new ScriptDeadLetterReplayRepository.ReplayRequest(
                 42L, fingerprint, "RUNNING", 0L, 0L));
-    when(replayRepository.findResults(42L)).thenReturn(List.of(), List.of(durableOutcome));
+    when(replayRepository.findResults("1", 42L)).thenReturn(List.of(), List.of(durableOutcome));
 
     AtomicBoolean durableCompletionCommitted = new AtomicBoolean();
     when(replayRepository.complete(
@@ -771,7 +771,7 @@ class ScriptWorkItemServiceImplTest {
             invocation ->
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
-    when(replayRepository.findResults(1L))
+    when(replayRepository.findResults("1", 1L))
         .thenReturn(
             List.of(
                 new ScriptDeadLetterReplayRepository.ReplayItem(
@@ -841,7 +841,7 @@ class ScriptWorkItemServiceImplTest {
             invocation ->
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     7L, invocation.getArgument(2), "RUNNING", 0L, 0L));
-    when(replayRepository.findResults(7L)).thenReturn(List.of());
+    when(replayRepository.findResults("1", 7L)).thenReturn(List.of());
     when(replayRepository.complete(
             Mockito.eq(7L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class)))
         .thenReturn(true);
@@ -975,7 +975,7 @@ class ScriptWorkItemServiceImplTest {
             invocation ->
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     8L, invocation.getArgument(2), "RUNNING", 0L, 0L));
-    when(replayRepository.findResults(8L)).thenReturn(List.of());
+    when(replayRepository.findResults("1", 8L)).thenReturn(List.of());
     when(replayRepository.complete(
             Mockito.eq(8L), Mockito.eq(0L), Mockito.eq(2L), Mockito.any(Instant.class)))
         .thenReturn(true);
@@ -1111,7 +1111,7 @@ class ScriptWorkItemServiceImplTest {
             invocation ->
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
-    when(replayRepository.findResults(1L)).thenReturn(List.of());
+    when(replayRepository.findResults("1", 1L)).thenReturn(List.of());
     when(replayRepository.complete(
             Mockito.eq(1L), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class)))
         .thenReturn(true);
@@ -1154,7 +1154,7 @@ class ScriptWorkItemServiceImplTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(Instant.class));
-    preflightOrder.verify(replayRepository).findResults(1L);
+    preflightOrder.verify(replayRepository).findResults("1", 1L);
     preflightOrder.verify(workItemRepository).findByTenantIdAndIdForUpdate("1", workItemId);
   }
 
@@ -1244,7 +1244,7 @@ class ScriptWorkItemServiceImplTest {
             invocation ->
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     1L, invocation.getArgument(2), "COMPLETED", 1L, 4L));
-    when(replayRepository.findResults(1L))
+    when(replayRepository.findResults("1", 1L))
         .thenReturn(
             List.of(
                 new ScriptDeadLetterReplayRepository.ReplayItem(
@@ -3870,7 +3870,7 @@ class ScriptWorkItemServiceImplTest {
             invocation ->
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
-    when(replayRepository.findResults(1L)).thenReturn(List.of());
+    when(replayRepository.findResults("1", 1L)).thenReturn(List.of());
     GameSessionControlPlaneClient gameSessionControlPlaneClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     IllegalStateException unavailable = new IllegalStateException("runtime authority unavailable");
@@ -3958,7 +3958,8 @@ class ScriptWorkItemServiceImplTest {
     ScriptDeadLetterReplayRepository.ReplayItem durableResult =
         new ScriptDeadLetterReplayRepository.ReplayItem(
             workItemId, "rejected", "recovery_in_progress", 9L, 8L, 7L, 6L);
-    when(fixture.replayRepository().findResults(1L)).thenReturn(List.of(), List.of(durableResult));
+    when(fixture.replayRepository().findResults("1", 1L))
+        .thenReturn(List.of(), List.of(durableResult));
     when(fixture.replayRepository().findRequest("1", "req-replay-" + workItemId))
         .thenReturn(
             Optional.of(
@@ -4002,7 +4003,7 @@ class ScriptWorkItemServiceImplTest {
     verify(fixture.replayRepository(), Mockito.never())
         .complete(
             Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong(), Mockito.any(Instant.class));
-    verify(fixture.replayRepository(), times(2)).findResults(1L);
+    verify(fixture.replayRepository(), times(2)).findResults("1", 1L);
   }
 
   @Test
@@ -4579,7 +4580,7 @@ class ScriptWorkItemServiceImplTest {
                       1L, storedFingerprint.get(), "RUNNING", 0L, 0L));
               return storedRequest.get();
             });
-    when(replayRepository.findResults(1L)).thenReturn(List.of());
+    when(replayRepository.findResults("1", 1L)).thenReturn(List.of());
     ScriptWorkItemService service =
         scriptWorkItemService(
             workItemRepository,
@@ -5055,7 +5056,7 @@ class ScriptWorkItemServiceImplTest {
             invocation ->
                 new ScriptDeadLetterReplayRepository.ReplayRequest(
                     1L, invocation.getArgument(2), "RUNNING", 0L, 0L));
-    when(replayRepository.findResults(1L)).thenReturn(List.of());
+    when(replayRepository.findResults("1", 1L)).thenReturn(List.of());
     when(replayRepository.complete(
             Mockito.eq(1L), Mockito.eq(0L), Mockito.eq(1L), Mockito.any(Instant.class)))
         .thenReturn(true);
