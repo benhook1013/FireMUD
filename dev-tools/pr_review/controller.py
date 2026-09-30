@@ -1644,6 +1644,8 @@ class ReviewController:
         return tree
 
     def _accepted_findings_pending(self, value: Any, current_head: str) -> bool:
+        if any(_field(value, name) is True for name in ("correction", "non_counting", "provisional")):
+            return False
         accepted = _field(value, "accepted")
         if not (
             _field(value, "completed") is True

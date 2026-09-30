@@ -3200,6 +3200,22 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(controller._accepted_findings_pending(older, HEAD_2))
         self.assertEqual(controller.store.load().allocations["1:hosted"].stop_basis, "direct_human")
 
+    def test_accepted_findings_pending_ignores_correction_non_counting_and_provisional_records(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"feature-1": HEAD_1})
+        accepted = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "accepted-current",
+            "completed": True,
+            "attributable": True,
+            "accepted": 1,
+        }
+        self.assertTrue(controller._accepted_findings_pending(accepted, HEAD_1))
+
+        for flag in ("correction", "non_counting", "provisional"):
+            with self.subTest(flag=flag):
+                self.assertFalse(controller._accepted_findings_pending({**accepted, flag: True}, HEAD_1))
+
     def test_hosted_stop_allows_older_cli_findings_on_corrected_descendant(self):
         values = {1: pr(1, HEAD_2)}
         controller = self.make(

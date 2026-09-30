@@ -85,6 +85,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String SERVICE_NAME = "automation-scripting-service";
   private static final String PROCESSING_FAILURE_AFTER_CLAIM_METRIC =
       "script_outbox_processing_failure_after_claim_total";
+  private static final String POST_EVALUATION_RECONCILIATION_METRIC =
+      "automation_script_post_evaluation_reconciliation_required_total";
   private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
   // Only authority-unavailable plugin-fence reads get three durable retries, spaced 15, 30, and
   // 60 seconds apart. This keeps a missing authority from cycling with the five-second poll.
@@ -598,7 +600,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (isTerminalFenceFailure(fenceFailure)) {
       cancel(workItem, STAGE_DSL_EVAL, "canceled", fenceFailure, now);
     } else {
-      markPostEvaluationReconciliationRequired(workItem, fenceFailure, now);
+      markPostEvaluationReconciliationRequired(workItem, fenceFailure, now, STAGE_DSL_EVAL);
     }
     // Evaluation has already emitted output, but there is no durable descriptor/child ledger
     // from which to resume handoff. Keep retryable fence failures unresolved for reconciliation;
@@ -606,14 +608,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void markPostEvaluationReconciliationRequired(
-      ScriptWorkItem workItem, String reason, Instant now) {
+      ScriptWorkItem workItem, String reason, Instant now, String stage) {
     if (!"EVALUATING".equals(workItem.getStatus())
         && !STATUS_HANDOFF_IN_FLIGHT.equals(workItem.getStatus())) {
       return;
     }
     workItem.setCancelReason("post_evaluation_reconciliation_required:" + reason);
     workItem.setUpdatedAt(now);
-    workItemRepository.save(workItem);
+    ScriptWorkItem persistedWorkItem = workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(persistedWorkItem);
+    recordPostEvaluationReconciliationRequired(persistedWorkItem, stage);
   }
 
   private HandoffExecutionResult executeHandoffLoop(
@@ -1067,7 +1071,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       // from which to resume all commands. Keep the parent unresolved for explicit reconciliation;
       // retrying it would re-enter the DSL after an uncertain partial fanout.
       markPostEvaluationReconciliationRequired(
-          workItem, handoffResult.retryableFence().reason(), now);
+          workItem,
+          handoffResult.retryableFence().reason(),
+          now,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     if (firstRejectedHandoff != null
@@ -1077,7 +1084,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       markPostEvaluationReconciliationRequired(
           workItem,
           ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(firstRejectedHandoff),
-          now);
+          now,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     markTerminalSuccess(
@@ -1825,6 +1833,39 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
                     stage,
                     "outcome",
                     outcome,
+                    "priority",
+                    priority,
+                    "source_class",
+                    sourceClass)
+                .increment();
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      increment.run();
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            increment.run();
+          }
+        });
+  }
+
+  private void recordPostEvaluationReconciliationRequired(ScriptWorkItem workItem, String stage) {
+    if (workItem.isDryRun()) {
+      return;
+    }
+    String priority = normalizePriorityTag(workItem.getPriorityTag());
+    String sourceClass = normalizeSourceClass(workItem.getEventType());
+    Runnable increment =
+        () ->
+            meterRegistry
+                .counter(
+                    POST_EVALUATION_RECONCILIATION_METRIC,
+                    "service",
+                    SERVICE_NAME,
+                    "stage",
+                    stage,
                     "priority",
                     priority,
                     "source_class",

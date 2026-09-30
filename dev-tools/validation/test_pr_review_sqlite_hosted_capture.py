@@ -506,7 +506,8 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "The second section has different detail.\n\n"
             "<!-- fingerprinting:phantom:medusa:pangolin -->\n"
             "<!-- cr-indicator-types:potential_issue -->\n"
-            f"<!-- cr-comment:v1:{second_fingerprint} -->\n"
+            f"<!-- cr-comment:v1:{second_fingerprint} -->\n\n"
+            "_Source: Path instructions_\n"
             "<!-- This is an auto-generated comment by CodeRabbit -->"
         )
         review = {
@@ -569,6 +570,35 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertNotIn("---", second_detail)
         self.assertNotIn("fingerprinting:", first_detail + second_detail)
         self.assertNotIn("cr-indicator-types:", first_detail + second_detail)
+
+    def test_final_fingerprint_accepts_only_empty_or_known_auxiliary_tail(self) -> None:
+        fingerprint = "a1e39b83f15845dc073e0b8b"
+        prefix = f"**One finding.**\nDetails.\n<!-- cr-comment:v1:{fingerprint} -->"
+        valid_tails = (
+            "",
+            " \n\n",
+            "\n\n---\n\n",
+            "\n<!-- fingerprinting:phantom:medusa:pangolin -->\n<!-- cr-indicator-types:potential_issue -->",
+            "\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Source: Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+        )
+        for tail in valid_tails:
+            with self.subTest(tail=tail):
+                findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, prefix + tail)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["key"], "hosted-comment:202")
+
+        invalid_tails = (
+            "\nAn unmarked substantive finding.",
+            "\n```text\nFenced substantive detail.\n```",
+            "\n<!-- unknown auxiliary: preserve this finding -->",
+        )
+        for tail in invalid_tails:
+            with (
+                self.subTest(tail=tail),
+                self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "unmarked content after its final"),
+            ):
+                sqlite_hosted_capture._hosted_comment_finding_segments(202, prefix + tail)
 
     def test_single_fingerprint_keeps_legacy_key_and_malformed_markers_fail_closed(self) -> None:
         fingerprint = "a1e39b83f15845dc073e0b8b"

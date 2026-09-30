@@ -102,6 +102,26 @@ class RuntimeTest(unittest.TestCase):
                 ):
                     runner._assert_no_other_active_reservations(42, Path(directory))
 
+    def test_closed_pr_retired_reservation_skips_live_pull_request_lookup(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 99, common)
+            path.parent.mkdir(parents=True)
+            record = self._trigger_record(status="retired")
+            record["pr_number"] = 99
+            record["anchor"]["pr"] = 99
+            path.write_text(json.dumps(record), encoding="utf-8")
+
+            with (
+                patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
+                patch.object(github, "fetch_api_endpoint", return_value=[]),
+                patch.object(github, "fetch_pull_request") as fetch_pull_request,
+            ):
+                runner._assert_no_other_active_reservations(42, common)
+
+            fetch_pull_request.assert_not_called()
+
     def test_stopped_request_projection_never_reads_idle_historical_evidence(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
         with (
