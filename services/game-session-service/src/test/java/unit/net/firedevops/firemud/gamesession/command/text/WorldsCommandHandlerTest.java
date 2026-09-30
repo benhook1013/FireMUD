@@ -320,7 +320,12 @@ class WorldsCommandHandlerTest {
   @Test
   void browseCharactersFailsClosedForPublicRealmBeforeRosterPolicyProof() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
-    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(true);
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
@@ -351,7 +356,12 @@ class WorldsCommandHandlerTest {
         .getFirst()
         .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setGameInstanceId(41L);
-    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(true);
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
@@ -1761,6 +1771,7 @@ class WorldsCommandHandlerTest {
   @Test
   void browseCharactersFailsClosedForValidSelectorBeforeEntityRosterRead() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(true);
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
@@ -1772,22 +1783,4 @@ class WorldsCommandHandlerTest {
     Mockito.verifyNoInteractions(entityManagementClient);
   }
 
-  private static GameplayCatalogProperties.World world(
-      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
-    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
-    world.setSlug(slug);
-    world.setDisplayName(slug);
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug("production");
-    realm.setDisplayName("Live Realm");
-    realm.setTenantId(tenantId);
-    realm.setGameInstanceId(gameInstanceId);
-    realm.setVisible(true);
-    realm.setPublicProductionRealm(true);
-    realm.setRequiresCharacterSelection(requiresCharacterSelection);
-    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
-    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
-    world.setRealms(List.of(realm));
-    return world;
-  }
 }
