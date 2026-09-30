@@ -145,6 +145,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome())
+        .isEqualTo(ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE);
     assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
     assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
     verify(admissionService).getState("1", "7", "region-1");
@@ -666,7 +668,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
       assertThat(result.accepted()).isFalse();
-      assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
+      assertThat(result.outcome())
+          .isEqualTo(ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE);
       assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
       assertThat(item.getStatus()).isEqualTo(capturedStatus);
@@ -767,7 +770,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
       assertThat(result.accepted()).isFalse();
-      assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
+      assertThat(result.outcome())
+          .isEqualTo(ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE);
       assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
       assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
@@ -2314,8 +2318,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("plugin_disabled");
   }
 
-  @Test
-  void fanoutRejectionRecordsChildButDefersAggregateTerminalizationToExecutor() {
+  @ParameterizedTest
+  @CsvSource({"AUTHORITY_UNAVAILABLE, authority_unavailable", "UNAVAILABLE, authority_unavailable"})
+  void fanoutRejectionRecordsChildButDefersAggregateTerminalizationToExecutor(
+      String unavailableCode, String expectedReason) {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
@@ -2323,7 +2329,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             EnqueueAutomationCommandIfAbsentResponse.newBuilder()
                 .setAccepted(false)
                 .setAdmissionOutcome("REJECTED")
-                .setError(ErrorDetail.newBuilder().setCode("AUTHORITY_UNAVAILABLE").build())
+                .setError(ErrorDetail.newBuilder().setCode(unavailableCode).build())
                 .build());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(
@@ -2362,12 +2368,20 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               item, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
 
       assertThat(result.accepted()).isFalse();
+      assertThat(result.outcome()).isEqualTo("REJECTED");
+      assertThat(result.errorCode()).isEqualTo(unavailableCode);
+      assertThat(result.errorMessage()).isEmpty();
       assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
       assertThat(item.getCancelReason()).isNull();
       assertThat(audit.getFinalStage()).isNull();
       assertThat(audit.getFinalOutcome()).isNull();
       verify(workItemRepository).save(Mockito.any(ScriptWorkItem.class));
-      verify(handoffEventRepository, Mockito.times(2)).save(Mockito.any(ScriptHandoffEvent.class));
+      ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+          ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+      verify(handoffEventRepository, Mockito.times(2)).save(handoffCaptor.capture());
+      assertThat(handoffCaptor.getAllValues().getLast().getHandoffOutcome()).isEqualTo("rejected");
+      assertThat(handoffCaptor.getAllValues().getLast().getHandoffReason())
+          .isEqualTo(expectedReason);
       verify(auditRepository, never()).save(Mockito.any(ScriptEventAudit.class));
 
       service.handoff(

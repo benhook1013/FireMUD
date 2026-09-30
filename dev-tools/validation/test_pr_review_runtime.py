@@ -3171,6 +3171,8 @@ class RuntimeTest(unittest.TestCase):
             self.assertIn("now", kwargs)
             audit_time = kwargs["now"]
             self.assertEqual(audit_time, now)
+            history = observer.history(42, "hosted", now=audit_time)
+            self.assertTrue(any(item.get("rate_limited") for item in history))
             active = ["rate_limited"] if hosted.parse_timestamp(cooldown_until) > audit_time else []
             return {**generic_audit, "active_reservations": [*active, "review active"]}
 
@@ -3179,13 +3181,19 @@ class RuntimeTest(unittest.TestCase):
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(observer, "legacy_transition_reauthorization_audit", side_effect=legacy_audit_at_sample),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
             patch.object(hosted, "load_trigger_record", return_value=record),
             patch.object(hosted, "trigger_state", return_value=state),
-            patch.object(observer, "history", return_value=[]),
+            patch.object(observer, "_global_blockers", return_value=[]),
             patch("pr_review.runtime.datetime", SteppedDateTime),
         ):
             audit = observer.review_stop_audit(42, anchor)
             self.assertEqual(SteppedDateTime.calls, 1)
+            SteppedDateTime.samples = iter((audit_after,))
+            ordinary_history = observer.history(42, "hosted")
+            self.assertEqual(SteppedDateTime.calls, 2)
+            self.assertFalse(any(item.get("rate_limited") for item in ordinary_history))
 
         self.assertEqual(audit["active_reservations"], ["review active"])
         self.assertEqual(
@@ -3211,9 +3219,11 @@ class RuntimeTest(unittest.TestCase):
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(observer, "legacy_transition_reauthorization_audit", return_value=expired_audit),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
             patch.object(hosted, "load_trigger_record", return_value=record),
             patch.object(hosted, "trigger_state", return_value=expired_state),
-            patch.object(observer, "history", return_value=[]),
+            patch.object(observer, "_global_blockers", return_value=[]),
         ):
             expired_result = observer.review_stop_audit(42, anchor)
 
@@ -3235,9 +3245,11 @@ class RuntimeTest(unittest.TestCase):
             patch.object(live, "pull_request", return_value=snapshot),
             patch.object(observer, "legacy_transition_reauthorization_audit", return_value=mismatched_audit),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
             patch.object(hosted, "load_trigger_record", return_value=record),
             patch.object(hosted, "trigger_state", return_value=mismatched_state),
-            patch.object(observer, "history", return_value=[]),
+            patch.object(observer, "_global_blockers", return_value=[]),
             self.assertRaisesRegex(ControllerError, "cannot be isolated from other reservations"),
         ):
             observer.review_stop_audit(42, anchor)
@@ -3290,7 +3302,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(
                     observer,
                     "history",
-                    side_effect=lambda _pr, channel: cli_history if channel == "cli" else [],
+                    side_effect=lambda _pr, channel, **_kwargs: cli_history if channel == "cli" else [],
                 ),
             ):
                 return observer.review_stop_audit(42, anchor)

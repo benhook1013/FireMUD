@@ -134,6 +134,8 @@ Entry format:
   - Context: #2893's records migration raised SQLite's minimum writer build, leaving the original cutover marker at its earlier build; the state selector refused the valid database, and the backup service still used a separate older checkout.
   - Observation: the cutover marker records the original selection, while SQLite metadata owns the current writer floor. Requiring those values to stay equal and checking only the interactive entrypoint missed both failures.
   - Expected pattern: keep the marker's writer floor no greater than SQLite's, let SQLite reject old writers, and prove a schema upgrade through the shared controller, status site, and scheduled backup with exact readback before calling the promotion complete.
+  - Outcome: the cutover-marker compatibility repair is implemented and retained in #2909 with focused SQLite readback proof. This entry does not establish whether the scheduled backup checkout was subsequently updated; its compatibility remains unverified here rather than being claimed resolved.
+  - Reconsideration trigger: verify the scheduled backup's selected writer and exact database readback before the next schema promotion, or immediately if a backup reports a compatibility failure.
 
 - `2026-09-30`: Completed-gate step ambiguity remains separate from substantive CI proof
   - Context: #2909's metadata-only Security Gate exhausted eight preservation-step snapshot refreshes and failed with ambiguous prior-run metadata, although the same-head substantive Security Gate passed. Later readback showed the substantive preservation step skipped and a separate metadata preservation run successful.

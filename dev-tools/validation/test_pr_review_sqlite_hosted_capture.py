@@ -580,7 +580,8 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             f"<!-- cr-comment:v1:{first_fingerprint} -->\n\n---\n\n"
             "**Bearer second-unsafe-value**\n\n"
             "The second section has separate public detail.\n\n"
-            f"<!-- cr-comment:v1:{second_fingerprint} -->"
+            f"<!-- cr-comment:v1:{second_fingerprint} -->\n\n"
+            "_Source: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n"
         )
         review = {
             "databaseId": 201,
@@ -654,6 +655,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Source: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
         )
         for tail in valid_tails:
             with self.subTest(tail=tail):

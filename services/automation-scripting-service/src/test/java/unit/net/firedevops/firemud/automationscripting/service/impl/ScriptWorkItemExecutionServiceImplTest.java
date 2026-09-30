@@ -3142,6 +3142,144 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(workItemRepository).save(item);
   }
 
+  @ParameterizedTest
+  @CsvSource({"''", "preparation details changed", "'handoff preparation unavailable'"})
+  void preparationUnavailableRecordsCurrentAndRemainingCommandsWithoutSiblingHandoffs(
+      String errorMessage) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItem item = workItem();
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"},"
+            + "{\"commandText\":\"SAY\"}]}");
+    List<Integer> attemptedOrdinals = new ArrayList<>();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptGameplayCommandHandoffService.EmittedCommand command =
+                  invocation.getArgument(1);
+              attemptedOrdinals.add(command.ordinal());
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  false,
+                  ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE,
+                  "",
+                  "",
+                  "",
+                  "UNAVAILABLE",
+                  errorMessage);
+            });
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:unavailable");
+    assertThat(attemptedOrdinals).containsExactly(0);
+    verify(handoffService).handoff(Mockito.eq(item), Mockito.any());
+    ArgumentCaptor<ScriptGameplayCommandHandoffService.EmittedCommand> unattemptedCaptor =
+        ArgumentCaptor.forClass(ScriptGameplayCommandHandoffService.EmittedCommand.class);
+    verify(handoffService, Mockito.times(3))
+        .recordUnattempted(
+            Mockito.eq(item),
+            unattemptedCaptor.capture(),
+            Mockito.eq("handoff_preparation_unavailable"));
+    assertThat(unattemptedCaptor.getAllValues())
+        .extracting(ScriptGameplayCommandHandoffService.EmittedCommand::ordinal)
+        .containsExactly(0, 1, 2);
+    verify(definitionRepository).findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
+    verify(workItemRepository).save(item);
+  }
+
+  @Test
+  void persistedDownstreamUnavailableRejectionContinuesSiblingFanout() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItem item = workItem();
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition(
+        "{\"emitCommands\":[{\"commandText\":\"LOOK\"},{\"commandText\":\"WAIT\"},"
+            + "{\"commandText\":\"SAY\"}]}");
+    List<Integer> attemptedOrdinals = new ArrayList<>();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptGameplayCommandHandoffService.EmittedCommand command =
+                  invocation.getArgument(1);
+              attemptedOrdinals.add(command.ordinal());
+              if (command.ordinal() == 0) {
+                return new ScriptGameplayCommandHandoffService.HandoffResult(
+                    false,
+                    "REMOTE_REJECTED",
+                    "",
+                    "",
+                    "",
+                    "UNAVAILABLE",
+                    "handoff preparation unavailable");
+              }
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  true, "ENQUEUED", "auto-" + command.ordinal(), "", "", "");
+            });
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:unavailable");
+    assertThat(attemptedOrdinals).containsExactly(0, 1, 2);
+    verify(handoffService, Mockito.times(3)).handoff(Mockito.eq(item), Mockito.any());
+    verify(handoffService, Mockito.never())
+        .recordUnattempted(Mockito.eq(item), Mockito.any(), Mockito.anyString());
+    verify(definitionRepository).findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
+    verify(workItemRepository).save(item);
+  }
+
   @Test
   void unexpectedItemFailureDoesNotAbortLaterClaimedItems() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);

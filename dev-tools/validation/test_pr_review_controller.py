@@ -1619,7 +1619,7 @@ class ControllerTests(unittest.TestCase):
                 )
                 controller.set_stack([1])
 
-                def read_history(pr_number, channel, histories=histories):
+                def read_history(pr_number, channel, histories=histories, **_kwargs):
                     return histories.get((pr_number, channel), [])
 
                 def runtime_payload(_repo, pr_number, controller=controller):
