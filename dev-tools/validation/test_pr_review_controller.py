@@ -1359,6 +1359,308 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "accepted findings remain pending"):
             controller.resolve_hosted_target()
 
+    def test_published_cli_correction_ignores_audited_hosted_rate_limit(self):
+        rate_limit = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:42",
+            "trigger_id": 42,
+            "response_id": 43,
+            "rate_limited": True,
+            "terminal": True,
+            "attributable": True,
+            "cooldown_until": "2999-01-01T00:00:00Z",
+        }
+        audit = {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+            "terminal_rate_limits": [
+                {
+                    "trigger_id": 42,
+                    "response_id": 43,
+                    "captured_head": HEAD_1,
+                    "cooldown_until": rate_limit["cooldown_until"],
+                    "terminal": True,
+                    "attributable": True,
+                }
+            ],
+        }
+
+        for cooldown_until in ("2999-01-01T00:00:00Z", "2000-01-01T00:00:00Z"):
+            with self.subTest(cooldown_until=cooldown_until):
+                rate_limit["cooldown_until"] = cooldown_until
+                audit["terminal_rate_limits"][0]["cooldown_until"] = cooldown_until
+                evidence = AuditedEvidence(
+                    {
+                        (1, "cli"): [self.allocation_evidence(checkpoint="cli-baseline", channel="cli")],
+                        (1, "hosted"): [rate_limit.copy()],
+                    },
+                    audit=audit,
+                )
+                controller = self.grant_bounded_allocation(
+                    channel="cli",
+                    checkpoint="cli-baseline",
+                    cap=2,
+                    minimum=1,
+                    evidence=evidence,
+                )
+                evidence[(1, "cli")].append(
+                    self.allocation_evidence(
+                        head=HEAD_1,
+                        checkpoint="cli-accepted-result",
+                        accepted=1,
+                        channel="cli",
+                    )
+                )
+                controller.github.values[1] = pr(1, HEAD_2)
+                controller.git.heads["feature-1"] = HEAD_2
+
+                allocation = controller.status()["prs"][0]["allocations"]["cli"]
+
+                self.assertEqual(allocation["status"], "CAP_ACTIVE")
+                self.assertEqual(controller.resolve_cli_target().snapshot.number, 1)
+                if cooldown_until.startswith("2999"):
+                    with self.assertRaisesRegex(ControllerError, "RATE_LIMITED"):
+                        controller.resolve_hosted_target()
+
+    def test_audited_rate_limit_does_not_waive_active_ambiguity_or_unpublished_fixes(self):
+        rate_limit = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "trigger:42",
+            "trigger_id": 42,
+            "response_id": 43,
+            "rate_limited": True,
+            "terminal": True,
+            "attributable": True,
+            "cooldown_until": "2000-01-01T00:00:00Z",
+        }
+        rate_limit_audit = {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+            "terminal_rate_limits": [
+                {
+                    "trigger_id": 42,
+                    "response_id": 43,
+                    "captured_head": HEAD_1,
+                    "cooldown_until": rate_limit["cooldown_until"],
+                    "terminal": True,
+                    "attributable": True,
+                }
+            ],
+        }
+        cases = (
+            (
+                "unpublished correction",
+                [rate_limit.copy()],
+                rate_limit_audit,
+                HEAD_1,
+            ),
+            (
+                "active Hosted request",
+                [rate_limit.copy(), {"pr": 1, "head": HEAD_1, "checkpoint": "trigger:44", "held": True}],
+                {**rate_limit_audit, "active_reservations": ["Hosted active"]},
+                HEAD_2,
+            ),
+            (
+                "ambiguous Hosted response",
+                [
+                    rate_limit.copy(),
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "checkpoint": "trigger:45",
+                        "terminal_ambiguous": True,
+                        "fingerprint": "a" * 64,
+                    },
+                ],
+                {
+                    **rate_limit_audit,
+                    "ambiguous_terminal_responses": [{"fingerprint": "a" * 64}],
+                    "ambiguous_responses": ["unattributed trigger response"],
+                },
+                HEAD_2,
+            ),
+        )
+
+        for name, hosted_history, audit, current_head in cases:
+            with self.subTest(name=name):
+                initial_hosted_history = [value for value in hosted_history if value.get("rate_limited") is True]
+                additional_hosted_history = [value for value in hosted_history if value.get("rate_limited") is not True]
+                evidence = AuditedEvidence(
+                    {
+                        (1, "cli"): [self.allocation_evidence(checkpoint="cli-baseline", channel="cli")],
+                        (1, "hosted"): initial_hosted_history,
+                    },
+                    audit=rate_limit_audit,
+                )
+                controller = self.grant_bounded_allocation(
+                    channel="cli",
+                    checkpoint="cli-baseline",
+                    cap=2,
+                    minimum=1,
+                    evidence=evidence,
+                )
+                evidence[(1, "hosted")].extend(additional_hosted_history)
+                evidence.audit = audit
+                evidence[(1, "cli")].append(
+                    self.allocation_evidence(
+                        head=HEAD_1,
+                        checkpoint="cli-accepted-result",
+                        accepted=1,
+                        channel="cli",
+                    )
+                )
+                if current_head == HEAD_2:
+                    controller.github.values[1] = pr(1, HEAD_2)
+                    controller.git.heads["feature-1"] = HEAD_2
+
+                allocation = controller.status()["prs"][0]["allocations"]["cli"]
+
+                self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+                self.assertTrue(allocation["details"])
+
+    def test_cli_allocation_clearance_allows_only_fresh_exact_hosted_overlap(self):
+        current_anchor = {
+            "pr": 1,
+            "child_head": HEAD_2,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_2[:4]}",
+        }
+        exact_active = {
+            "pr": 1,
+            "head": HEAD_2,
+            "checkpoint": "trigger:46",
+            "trigger_id": 46,
+            "response_id": 47,
+            "state": "active",
+            "active_reservation": True,
+            "held": True,
+            "unstable": False,
+            "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+            "attributable": True,
+            "terminal": False,
+            "anchor": current_anchor,
+        }
+
+        def controller_for(hosted_observation, audit):
+            evidence = AuditedEvidence(
+                {
+                    (1, "cli"): [self.allocation_evidence(checkpoint="cli-baseline", channel="cli")],
+                    (1, "hosted"): [],
+                },
+                audit=audit,
+            )
+            controller = self.grant_bounded_allocation(
+                channel="cli",
+                checkpoint="cli-baseline",
+                cap=2,
+                minimum=1,
+                evidence=evidence,
+            )
+            evidence[(1, "cli")].append(
+                self.allocation_evidence(
+                    head=HEAD_1,
+                    checkpoint="cli-accepted-result",
+                    accepted=1,
+                    channel="cli",
+                )
+            )
+            controller.github.values[1] = pr(1, HEAD_2)
+            controller.git.heads["feature-1"] = HEAD_2
+            evidence[(1, "hosted")].append(hosted_observation)
+            return controller
+
+        exact_audit = {
+            "complete": True,
+            "active_reservations": ["active"],
+            "active_hosted_reservations": [exact_active],
+            "unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
+        allowed = controller_for(dict(exact_active), exact_audit)
+
+        allocation = allowed.status()["prs"][0]["allocations"]["cli"]
+
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertEqual(allowed.resolve_cli_target().snapshot.head_sha, HEAD_2)
+
+        mismatched_anchor = {**current_anchor, "patch_id": "different-patch"}
+        cases = (
+            (
+                "missing live response proof",
+                dict(exact_active),
+                {**exact_audit, "active_hosted_reservations": []},
+            ),
+            (
+                "pre-POST reservation",
+                {
+                    **exact_active,
+                    "state": "awaiting_response",
+                    "response_id": None,
+                    "reason": "no attributable terminal response",
+                    "terminal": False,
+                },
+                {
+                    **exact_audit,
+                    "active_reservations": ["awaiting_response"],
+                    "active_hosted_reservations": [
+                        {
+                            **exact_active,
+                            "state": "awaiting_response",
+                            "response_id": None,
+                            "reason": "no attributable terminal response",
+                        }
+                    ],
+                },
+            ),
+            (
+                "mismatched patch identity",
+                {**exact_active, "anchor": mismatched_anchor},
+                {
+                    **exact_audit,
+                    "active_hosted_reservations": [{**exact_active, "anchor": mismatched_anchor}],
+                },
+            ),
+            (
+                "incomplete live audit",
+                dict(exact_active),
+                {**exact_audit, "complete": False},
+            ),
+            (
+                "ambiguous reservation",
+                {
+                    **exact_active,
+                    "state": "ambiguous",
+                    "unstable": True,
+                    "reason": "response attribution is ambiguous",
+                },
+                {
+                    **exact_audit,
+                    "active_reservations": ["ambiguous"],
+                    "active_hosted_reservations": [],
+                    "ambiguous_responses": ["unattributed trigger response"],
+                },
+            ),
+        )
+
+        for name, hosted_observation, audit in cases:
+            with self.subTest(name=name):
+                controller = controller_for(hosted_observation, audit)
+                allocation = controller.status()["prs"][0]["allocations"]["cli"]
+                self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+                with self.assertRaises(ControllerError):
+                    controller.resolve_cli_target()
+
     def test_bounded_in_flight_work_keeps_completed_front_selected_ahead_of_next_pr(self):
         values = {
             1: pr(1, HEAD_1),

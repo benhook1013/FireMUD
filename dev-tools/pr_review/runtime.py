@@ -18,7 +18,12 @@ from typing import Any
 
 from . import evidence, github, hosted, sqlite_hosted_capture
 from . import status as status_module
-from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
+from .cli_runner import (
+    PullRequestSnapshot,
+    ReviewRunnerError,
+    ReviewTarget,
+    run_cli_review,
+)
 from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
 from .sqlite_review_records import SqliteReviewRecords
 from .state import (
@@ -569,6 +574,7 @@ class LiveEvidence:
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
         terminal_rate_limits: list[dict[str, Any]] = []
+        now = datetime.now(timezone.utc)
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
                 record = hosted.load_trigger_record(path, self.repo, pr)
@@ -596,7 +602,6 @@ class LiveEvidence:
                 and isinstance(captured_head, str)
                 and hosted.EXACT_SHA.fullmatch(captured_head) is not None
                 and cooldown_until is not None
-                and cooldown_until > datetime.now(timezone.utc)
             ):
                 terminal_rate_limits.append(
                     {
@@ -621,9 +626,12 @@ class LiveEvidence:
         active_reservations = list(audit["active_reservations"])
         unmatched_responses = list(audit["unmatched_responses"])
         ambiguous_responses = list(audit["ambiguous_responses"])
-        if len(terminal_rate_limits) > active_reservations.count("rate_limited"):
+        active_terminal_rate_limits = [
+            item for item in terminal_rate_limits if hosted.parse_timestamp(item["cooldown_until"]) > now
+        ]
+        if len(active_terminal_rate_limits) > active_reservations.count("rate_limited"):
             raise ControllerError("terminal Hosted rate-limit evidence cannot be isolated from other reservations")
-        for _item in terminal_rate_limits:
+        for _item in active_terminal_rate_limits:
             active_reservations.remove("rate_limited")
         if pins:
             terminal_count = len(ambiguous_terminal_responses)
@@ -671,6 +679,7 @@ class LiveEvidence:
             "checkpoints": checkpoints,
             "ambiguous_terminal_responses": ambiguous_terminal_responses,
             "terminal_rate_limits": terminal_rate_limits,
+            "active_hosted_reservations": list(audit.get("active_hosted_reservations", ())),
             "retained_ambiguous": list(retained_by_fingerprint.values()),
         }
 
@@ -805,6 +814,7 @@ class LiveEvidence:
 
         records_by_trigger: dict[int, tuple[dict[str, Any], hosted.TriggerState]] = {}
         active_reservations: list[str] = []
+        active_hosted_reservations: list[dict[str, Any]] = []
         ambiguous_responses: list[str] = []
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
@@ -821,6 +831,25 @@ class LiveEvidence:
             records_by_trigger[trigger_id] = (record, state)
             if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
                 active_reservations.append(state.state)
+                if state.state in {"active", "awaiting_response"}:
+                    anchor = record.get("anchor")
+                    active_hosted_reservations.append(
+                        {
+                            "pr": pr,
+                            "head": state.head_sha,
+                            "checkpoint": f"trigger:{trigger_id}",
+                            "trigger_id": trigger_id,
+                            "response_id": state.response_id,
+                            "state": state.state,
+                            "active_reservation": True,
+                            "held": True,
+                            "unstable": False,
+                            "reason": state.reason,
+                            "attributable": state.attributed,
+                            "terminal": state.terminal,
+                            "anchor": dict(anchor) if isinstance(anchor, Mapping) else None,
+                        }
+                    )
             elif state.state == "rate_limited":
                 reset = hosted.parse_timestamp(state.cooldown_until)
                 if reset is None or reset > datetime.now(timezone.utc):
@@ -1018,6 +1047,7 @@ class LiveEvidence:
         return {
             "complete": True,
             "active_reservations": active_reservations,
+            "active_hosted_reservations": active_hosted_reservations,
             "unmatched_responses": unmatched_responses,
             "historical_unmatched_responses": historical_unmatched_responses,
             "ambiguous_responses": ambiguous_responses,

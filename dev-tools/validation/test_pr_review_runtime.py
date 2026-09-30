@@ -2930,6 +2930,39 @@ class RuntimeTest(unittest.TestCase):
         )
         self.assertIn("active Hosted reservation: review active", audit["blockers"])
 
+        expired_cooldown = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        expired_state = SimpleNamespace(**{**vars(state), "cooldown_until": expired_cooldown})
+        expired_audit = {**generic_audit, "active_reservations": ["review active"]}
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=expired_audit),
+            patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_record", return_value=record),
+            patch.object(hosted, "trigger_state", return_value=expired_state),
+            patch.object(observer, "history", return_value=[]),
+        ):
+            expired_result = observer.review_stop_audit(42, anchor)
+
+        self.assertEqual(expired_result["active_reservations"], ["review active"])
+        self.assertEqual(
+            expired_result["terminal_rate_limits"][0]["cooldown_until"],
+            expired_cooldown,
+        )
+
+        mismatched_audit = {**generic_audit, "active_reservations": ["review active"]}
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=mismatched_audit),
+            patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_record", return_value=record),
+            patch.object(hosted, "trigger_state", return_value=state),
+            patch.object(observer, "history", return_value=[]),
+            self.assertRaisesRegex(ControllerError, "cannot be isolated from other reservations"),
+        ):
+            observer.review_stop_audit(42, anchor)
+
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
             f"Hosted: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files · 2m 00s\n"
@@ -3522,6 +3555,68 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(observation["anchor"], record["anchor"])
         self.assertEqual(observation["trigger_id"], 10)
         self.assertEqual(observation["response_id"], 11)
+
+    def test_complete_audit_exposes_exact_active_hosted_response_identity(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+        response_at = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review triggered.",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            response_id=11,
+            state="active",
+            terminal=False,
+            attributed=True,
+            head_sha=HEAD,
+            reason="CodeRabbit acknowledged that the full review is active",
+        )
+        payload = self._payload([trigger, response])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[record_path]),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[record_path]),
+                patch.object(hosted, "load_trigger_record", return_value=record),
+                patch.object(hosted, "load_trigger_reservation", return_value=record),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                audit = observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                )
+
+        self.assertEqual(audit["active_reservations"], ["active"])
+        self.assertEqual(len(audit["active_hosted_reservations"]), 1)
+        active = audit["active_hosted_reservations"][0]
+        self.assertEqual(active["trigger_id"], 10)
+        self.assertEqual(active["response_id"], 11)
+        self.assertEqual(active["anchor"], record["anchor"])
 
     def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
