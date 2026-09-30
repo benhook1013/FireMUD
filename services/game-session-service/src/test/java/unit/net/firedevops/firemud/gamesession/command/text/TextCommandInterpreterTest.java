@@ -425,7 +425,7 @@ class TextCommandInterpreterTest {
                         .setTenantId("22")
                         .setAccountId("123")
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
-                        .setName("Emberline")
+                        .setName("demo")
                         .setLevel(12)
                         .build())
                 .build());
@@ -553,7 +553,7 @@ class TextCommandInterpreterTest {
         interpreter.interpret("1", "CHARS demo", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("CHARS demo", interpretation).contains("Emberline"));
+    assertTrue(renderedResponse("CHARS demo", interpretation).contains("demo"));
     assertTrue(
         renderedResponse("CHARS demo", interpretation)
             .contains("Realm state: shared, creation: allow_new"));

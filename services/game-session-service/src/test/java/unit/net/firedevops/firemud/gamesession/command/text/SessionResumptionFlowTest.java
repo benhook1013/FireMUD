@@ -406,9 +406,9 @@ class SessionResumptionFlowTest {
                 context ->
                     context.sessionId() == 1L
                         && context.gameInstanceId() == 1L
-                        && context.characterId() == 77L
+                        && context.characterId() == 7001L
                         && "R-1021".equals(context.roomInstanceId())),
-            Mockito.eq("disconnect:takeover:1:1:77"),
+            Mockito.eq("disconnect:takeover:1:1:7001"),
             Mockito.eq("TAKEOVER"));
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
