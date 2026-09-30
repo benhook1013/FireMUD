@@ -3152,6 +3152,7 @@ class RuntimeTest(unittest.TestCase):
         class SteppedDateTime(datetime):
             last_sample = None
             calls = 0
+            samples = iter(())
 
             @classmethod
             def now(cls, tz=None):
