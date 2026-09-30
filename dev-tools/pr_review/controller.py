@@ -69,6 +69,7 @@ class _SelectionChanged(ControllerError):
 GIT_TIMEOUT_SECONDS = 30
 MAX_BASE_RESELECTIONS = 2
 LEGACY_UNCHECKPOINTED = re.compile(r"^trigger-uncheckpointed:[1-9][0-9]*$")
+DRAFT_PR_NOTICE = "Draft PR — mark ready for review if preparation is complete."
 
 
 class GitProvider(Protocol):
@@ -248,6 +249,7 @@ class LivePullRequest:
     base_exists: bool = True
     changed_files: int = 0
     head_repository: str | None = None
+    is_draft: bool = False
 
     def snapshot(self) -> stack.PRSnapshot:
         return stack.PRSnapshot(
@@ -305,6 +307,7 @@ class Target:
     anchor: AnchorFacts
     provisional: bool = False
     selection_inputs: tuple[Any, ...] | None = None
+    is_draft: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -314,6 +317,8 @@ class Target:
             "reason": self.reason,
             "provisional": self.provisional,
             "anchor": self.anchor.as_dict(),
+            "is_draft": self.is_draft,
+            "draft_notice": DRAFT_PR_NOTICE if self.is_draft else None,
         }
 
 
@@ -393,6 +398,7 @@ def _live(value: Any, number: int) -> LivePullRequest:
         _as_bool(data.get("base_exists"), True),
         int(data.get("changed_files", data.get("changedFiles", 0))),
         head_repository,
+        _as_bool(data.get("isDraft", data.get("is_draft")), False),
     )
 
 
@@ -2524,13 +2530,15 @@ class ReviewController:
                     if evidence_value.accepted > 0:
                         reviewed_head = _field(value, "head", "reviewed_head")
                         try:
-                            _sha(reviewed_head, "accepted finding reviewed head")
-                            has_corrected_descendant = self.git.is_ancestor(reviewed_head, current.child_head)
+                            reviewed_head = _sha(reviewed_head, "accepted finding reviewed head")
+                            has_corrected_descendant = not require_checkpoint_ancestry or self.git.is_ancestor(
+                                reviewed_head, current.child_head
+                            )
                         except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as exc:
                             raise ControllerError(
                                 "could not verify corrected-head ancestry for accepted findings"
                             ) from exc
-                        if not has_corrected_descendant or reviewed_head.casefold() == current.child_head.casefold():
+                        if not has_corrected_descendant or reviewed_head == current.child_head.casefold():
                             raise ControllerError(
                                 "accepted findings need a published corrected head before review can stop"
                             )
@@ -3924,6 +3932,10 @@ class ReviewController:
                 }
                 continue
             value = decision.to_dict()
+            if decision.target is not None:
+                is_draft = live[decision.target].is_draft
+                value["is_draft"] = is_draft
+                value["draft_notice"] = DRAFT_PR_NOTICE if is_draft else None
             value["pr"] = value.pop("target")
             result[channel.value] = value
         return result
@@ -4103,6 +4115,7 @@ class ReviewController:
             anchor,
             decision.provisional,
             self._selection_inputs(state, pr, selected.value),
+            item.is_draft,
         )
 
     @staticmethod
@@ -4440,6 +4453,8 @@ class ReviewController:
                     "parent_head": reconciliation.links[pr].parent_head,
                     "state": item.state,
                     "merged": item.merged,
+                    "is_draft": item.is_draft,
+                    "draft_notice": DRAFT_PR_NOTICE if item.is_draft else None,
                     "reconciliation": reconciliation_status.value,
                     "reason": reconciliation.reasons.get(pr, ""),
                     "channels": channel_status,
@@ -4548,6 +4563,8 @@ class ReviewController:
                 "parent_head": None,
                 "state": "UNKNOWN",
                 "merged": None,
+                "is_draft": None,
+                "draft_notice": None,
                 "reconciliation": "UNKNOWN",
                 "reason": reason,
                 "channels": {"hosted": "UNKNOWN", "cli": "UNKNOWN"},
@@ -4936,6 +4953,8 @@ class ReviewController:
                     "parent_head": parent.parent_head,
                     "state": item.state,
                     "merged": item.merged,
+                    "is_draft": item.is_draft,
+                    "draft_notice": DRAFT_PR_NOTICE if item.is_draft else None,
                     "reconciliation": "UNKNOWN" if not stale else "UNRECONCILED",
                     "reason": reason,
                     "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"},
@@ -5410,6 +5429,7 @@ class ReviewController:
                 current,
                 reconciliation,
                 checkpoint_pin=None,
+                require_checkpoint_ancestry=not fresh_taper,
             )
             stop_evidence_checked = True
         if action == "grant":
@@ -5439,6 +5459,7 @@ class ReviewController:
                             current,
                             reconciliation,
                             checkpoint_pin=None,
+                            require_checkpoint_ancestry=not fresh_taper,
                         )
                 elif not (
                     bounded_replacement
