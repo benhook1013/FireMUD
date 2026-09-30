@@ -460,11 +460,13 @@ class CommunicationWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-summary-conn")) {
       client.send("FRIENDS SUMMARY");
-      client.awaitContains("Friend roster summary:");
-      client.awaitContains("Linked: 1");
-      client.awaitContains("Online: 1");
-      client.awaitContains("Offline: 0");
-      client.awaitContains("Recent offline: 0");
+      String summary =
+          client.awaitResponseMatching(
+              response -> response.contains("Friend roster summary:"),
+              "friend roster summary response");
+      assertThat(summary)
+          .contains("Linked: 1")
+          .doesNotContain("Online:", "Offline:", "Recent offline:");
     }
 
     GameplaySocialAssertions.assertFriendRosterSummaryRequest(
@@ -556,8 +558,7 @@ class CommunicationWebSocketCrossServiceTest {
       JsonNode summary = awaitStructuredCommand(client, baseline, "FRIENDS");
       JsonNode summaryPayload = requirePayload(summary, "friend_roster_summary_view");
       assertThat(summaryPayload.path("totalCount").asInt()).isEqualTo(1);
-      assertThat(summaryPayload.path("onlineCount").asInt()).isEqualTo(1);
-      assertThat(summaryPayload.path("sharedCount").asInt()).isEqualTo(1);
+      assertThat(summaryPayload.fieldNames()).toIterable().containsExactly("totalCount");
     }
   }
 

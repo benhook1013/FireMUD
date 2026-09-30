@@ -19,9 +19,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Sequence
-
+from typing import Any
 
 DEFAULT_USERNAME = "demo@example.com"
 DEFAULT_PASSWORD = "swordfish"

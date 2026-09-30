@@ -839,6 +839,15 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
         metadata = "\n".join(validator.SUMMARY_METADATA_LINES)
         self.assertEqual(len(validator.summary_write_regions(direct)), 1)
         self.assertEqual(len(validator.summary_write_regions(metadata)), 1)
+        for warning_lines in validator.SUMMARY_STATIC_WARNING_BLOCKS:
+            warning = "\n".join(warning_lines)
+            self.assertEqual(validator.summary_write_regions(warning), [warning])
+            self.assertEqual(
+                validator.summary_write_regions(
+                    warning.replace("**Warning:**", "${UNTRUSTED_WARNING}")
+                ),
+                [],
+            )
         self.assertEqual(
             validator.summary_write_regions('echo "safe summary" >> "$GITHUB_STEP_SUMMARY"'),
             [],
