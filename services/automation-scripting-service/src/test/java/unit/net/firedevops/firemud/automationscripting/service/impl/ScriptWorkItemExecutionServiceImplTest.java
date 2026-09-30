@@ -3464,8 +3464,16 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(workItemRepository, Mockito.never()).findById(item.getId());
   }
 
-  @Test
-  void receiverFenceUnavailableResponseStaysNonterminalThroughExecutor() {
+  @ParameterizedTest
+  @CsvSource({
+    "REJECTED,FAILED_PRECONDITION,automation_admission_receiver_fence_unavailable,''",
+    "RUNTIME_PAUSED,runtime_paused,Runtime ownership is paused,retained-paused-command",
+    "STALE_TIMELINE,stale_region_id,region does not match,retained-stale-region-command",
+    "STALE_TIMELINE,stale_region_epoch,region epoch does not match,retained-stale-command",
+    "OWNERSHIP_UNAVAILABLE,runtime_ownership_not_found,Runtime ownership not found,retained-owner-command"
+  })
+  void retainedOwnershipAndReceiverFenceResponsesStayNonterminalThroughExecutor(
+      String admissionOutcome, String errorCode, String errorMessage, String commandId) {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
         Mockito.mock(ScriptDefinitionRepository.class);
@@ -3501,12 +3509,10 @@ class ScriptWorkItemExecutionServiceImplTest {
         .thenReturn(
             EnqueueAutomationCommandIfAbsentResponse.newBuilder()
                 .setAccepted(false)
-                .setAdmissionOutcome("REJECTED")
+                .setAdmissionOutcome(admissionOutcome)
+                .setCommandId(commandId)
                 .setError(
-                    ErrorDetail.newBuilder()
-                        .setCode("FAILED_PRECONDITION")
-                        .setMessage("automation_admission_receiver_fence_unavailable")
-                        .build())
+                    ErrorDetail.newBuilder().setCode(errorCode).setMessage(errorMessage).build())
                 .build());
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -3518,8 +3524,10 @@ class ScriptWorkItemExecutionServiceImplTest {
         .thenAnswer(
             invocation -> {
               ScriptHandoffEvent event = invocation.getArgument(0);
-              event.setId((long) event.getCommandOrdinal() + 44L);
-              event.setRowVersion(7);
+              if (event.getId() == null) {
+                event.setId((long) event.getCommandOrdinal() + 44L);
+              }
+              event.setRowVersion(event.getRowVersion() + 1);
               handoffEvents.put(event.getCommandOrdinal(), event);
               return event;
             });
@@ -3565,6 +3573,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(audit.getFinalOutcome()).isNull();
     assertThat(handoffEvents).containsOnlyKeys(0);
     assertThat(handoffEvents.get(0).getHandoffOutcome()).isEqualTo("handoff_in_flight");
+    assertThat(handoffEvents.get(0).getGameSessionCommandId()).isEqualTo(commandId);
     verify(workItemService).claimPendingForEvaluation(10);
     verify(definitionRepository).findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
     verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
@@ -3572,6 +3581,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(workItemRepository, Mockito.times(2)).save(item);
     verify(rolloutProjectionService, Mockito.times(2)).refreshForWorkItem(item);
     verify(auditRepository, Mockito.never()).save(Mockito.any());
+    verify(handoffEventRepository, Mockito.times(commandId.isBlank() ? 1 : 2)).save(Mockito.any());
     verify(handoffEventRepository, Mockito.never())
         .findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 1);
     assertThat(
