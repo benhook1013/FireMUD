@@ -957,8 +957,12 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#directDeletionOfIssuanceOperationOrResponseEnvelopeIsRejected()' \
             account-service
 
       - name: 🔎 Verify Game Session PostgreSQL proof case
