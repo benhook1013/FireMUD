@@ -238,7 +238,8 @@ Governance requirements for ordering overrides and exclusivity:
 Domain services can define **custom events** that feed into the scripting pipeline:
 
 - The visual DSL exposes event source nodes for any event types enabled for the current game. Under the hood, bindings are stored as `<tenantId, eventTypeKey, eventSchemaVersion, scriptId>`.
-- Service-specific events follow the same pre-DSL trigger/outbox → DSL run → durable descriptor/outbox → tick command flow as built-in events; the Redis automation queue remains only a derived pointer to the pre-DSL trigger record.
+- **Target state only:** service-specific events follow the same pre-DSL trigger/outbox → DSL run → durable descriptor/outbox → tick command flow as built-in events; the Redis automation queue remains only a derived pointer to the pre-DSL trigger record.
+- **Current implementation:** the legacy service-specific event path attempts emitted commands through per-command Game Session handoff calls. It does not persist evaluated command descriptors/outbox rows or implement post-DSL descriptor replay; see [Scripting Runtime Execution: Current Implementation Status](./system-architecture-scripting-runtime-execution.md#current-implementation-status).
 - Event schemas are versioned so scripts can be migrated when payloads change.
 
 Custom events must follow the same determinism and idempotency rules as built-in events; the applicable identity and ingress requirements are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields).

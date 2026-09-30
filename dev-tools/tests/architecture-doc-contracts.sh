@@ -1953,6 +1953,15 @@ require_contains(
         "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "the server-derived `playableStateScope` is retained and exact-validated as immutable policy/routing/authorization/fence evidence, not as a uniqueness input",
         "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
+        "the target window must exclude them and cannot rediscover or remint their pending work under new candidate, firing-claim, or event identities",
+        "This does not prevent the target window from selecting independently reconciled candidates under the new exact pin",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-ticks.md",
+    [
+        "stable continuity identity is mode-qualified as `(isDryRun, {stableOwnerKind, stableOwnerId, scheduleDefinitionId, playableStateNamespaceId, targetScopeType, targetScopeId})`",
+        "[Scripting Scheduler and Timers](./system-architecture-scripting-scheduler-and-timers.md#target-state-design) under [ADR 0110]",
     ],
 )
 require_contains(
