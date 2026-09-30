@@ -615,6 +615,8 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
         )
 
+        segments = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
+        self.assertEqual([item["fingerprint"] for item in segments], [first_fingerprint, second_fingerprint])
         findings = {item["source_finding_key"]: item for item in self.records.history(PR)["findings"]}
         self.assertEqual(captured["counts"]["found"], 2)
         self.assertEqual(
@@ -680,6 +682,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         )
         self.assertEqual(len(one), 1)
         self.assertEqual(one[0]["key"], "hosted-comment:202")
+        self.assertEqual(one[0]["fingerprint"], fingerprint)
         self.assertNotIn("cr-comment:v1", one[0]["detail"])
 
         prose_mentions = sqlite_hosted_capture._hosted_comment_finding_segments(

@@ -703,6 +703,93 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void failedMalformedOwnerIntentCommitRestoresDeadLetterPreparationMutations() {
+    FailingIntentCommitTransactionManager transactionManager =
+        new FailingIntentCommitTransactionManager();
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(GameInstanceRuntimeState.getDefaultInstance())
+                .build());
+
+    Instant originalUpdatedAt = Instant.parse("2026-09-30T12:34:56Z");
+    ScriptWorkItem item = workItem();
+    item.setStatus("PENDING_EVALUATION");
+    item.setCancelReason("prior_cancel_reason");
+    item.setFailureGeneration(8L);
+    item.setUpdatedAt(originalUpdatedAt);
+    item.setRowVersion(4);
+    ScriptWorkItem persistedWorkItem = workItem();
+    persistedWorkItem.setStatus("PENDING_EVALUATION");
+    persistedWorkItem.setCancelReason("prior_cancel_reason");
+    persistedWorkItem.setFailureGeneration(8L);
+    persistedWorkItem.setUpdatedAt(originalUpdatedAt);
+    persistedWorkItem.setRowVersion(4);
+
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              assertThat(saved.getStatus()).isEqualTo("DEAD_LETTERED");
+              assertThat(saved.getCancelReason()).isEqualTo("remote_response_invalid");
+              assertThat(saved.getFailureGeneration()).isEqualTo(9L);
+              assertThat(saved.getUpdatedAt()).isNotEqualTo(originalUpdatedAt);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.empty());
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result =
+          service.handoff(
+              item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+      assertThat(result.accepted()).isFalse();
+      assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
+      assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
+      assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
+      assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(item.getCancelReason()).isEqualTo("prior_cancel_reason");
+      assertThat(item.getFailureGeneration()).isEqualTo(8L);
+      assertThat(item.getUpdatedAt()).isEqualTo(originalUpdatedAt);
+      assertThat(item.getRowVersion()).isEqualTo(4);
+      assertThat(persistedWorkItem.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(persistedWorkItem.getCancelReason()).isEqualTo("prior_cancel_reason");
+      assertThat(persistedWorkItem.getFailureGeneration()).isEqualTo(8L);
+      assertThat(persistedWorkItem.getUpdatedAt()).isEqualTo(originalUpdatedAt);
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(4);
+      verify(workItemRepository).save(Mockito.same(item));
+      verify(gameSessionClient).getGameInstanceRuntimeState("1", "7", "region-1");
+      verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+      verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @Test
   void recoveredAdmissionAfterSkippedRuntimePreflightRetriesWithoutMarkingMalformed() {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);

@@ -352,14 +352,25 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static void restoreWorkItemAfterFailedIntentTransaction(
       ScriptWorkItem workItem, WorkItemIntentState intentState) {
     workItem.setStatus(intentState.status());
+    workItem.setCancelReason(intentState.cancelReason());
+    workItem.setFailureGeneration(intentState.failureGeneration());
     workItem.setUpdatedAt(intentState.updatedAt());
     workItem.setRowVersion(intentState.rowVersion());
   }
 
-  private record WorkItemIntentState(String status, Instant updatedAt, int rowVersion) {
+  private record WorkItemIntentState(
+      String status,
+      String cancelReason,
+      long failureGeneration,
+      Instant updatedAt,
+      int rowVersion) {
     private static WorkItemIntentState capture(ScriptWorkItem workItem) {
       return new WorkItemIntentState(
-          workItem.getStatus(), workItem.getUpdatedAt(), workItem.getRowVersion());
+          workItem.getStatus(),
+          workItem.getCancelReason(),
+          workItem.getFailureGeneration(),
+          workItem.getUpdatedAt(),
+          workItem.getRowVersion());
     }
   }
 
