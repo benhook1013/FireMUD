@@ -1402,14 +1402,13 @@ class CliReviewRunnerTests(unittest.TestCase):
     def test_human_stop_preserves_running_cli_capture_and_rejects_next_admission(self):
         import test_pr_review_controller as controller_fixtures
         from pr_review.controller import ControllerError, ReviewController
-        from pr_review.state import StateStore
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             common = root / ".git"
             common.mkdir()
             controller = ReviewController(
-                store=StateStore(common / "firemud" / "pr-review-stack.json"),
+                store=SqliteStateStore(common / "firemud" / "pr-review-stack.sqlite3"),
                 repository="owner/repo",
                 github=controller_fixtures.FakeGitHub({42: controller_fixtures.pr(42, HEAD)}),
                 git=controller_fixtures.FakeGit({"feature-42": HEAD}),
@@ -1562,6 +1561,42 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
             self.assertEqual(len(set(observed_markers)), 1)
             self.assertEqual(lock_path.read_text(encoding="utf-8"), "")
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_owner_cleanup_failure_preserves_success_and_releases_execution_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+
+            with patch("pr_review.cli_runner._clear_cli_lock_owner", side_effect=OSError("disk unavailable")):
+                result = run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(result.pull_request, 42)
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    def test_cli_owner_cleanup_failure_preserves_primary_error_and_releases_execution_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            github = FakeGitHub()
+            github.mergeable = "CONFLICTING"
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+
+            with (
+                patch("pr_review.cli_runner._clear_cli_lock_owner", side_effect=OSError("disk unavailable")),
+                self.assertRaisesRegex(ReviewRunnerError, "not mergeable"),
+            ):
+                run_cli_review(target(), github=github, source_root=root, runner=commands)
+
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
             self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
 
     def test_cli_lock_owner_marker_write_failure_prevents_preflight_and_provider(self):

@@ -147,3 +147,9 @@ Entry format:
   - Expected pattern: deliver terminal response identity, exit status, and any authoritative reset immediately, before a separate cooldown wait. Keep a native process with its owning caller, or bind a read-only sentinel to the verified OS process and exact capture; never launch another review merely to recover observation.
   - Outcome: terminal reporting was corrected to surface completion before later eligibility; caller-scoped native process handles remain unavailable to a separate sentinel.
   - Reconsideration trigger: revisit if terminal outcomes are delayed again or during authorized observation stewardship of cross-caller process ownership; do not relaunch a review just to recover a handle.
+
+- `2026-09-30`: Completed helpers need an explicit continuation dispatch
+  - Context: after #2909's controller helper returned, integration corrections were sent as messages and the parent waited as though the fix was running.
+  - Observation: a message to a completed agent queues context but does not start a new turn; this was an orchestration error, not a model-capacity or review-provider failure.
+  - Expected pattern: use the bounded follow-up task operation for a continuation and verify that it started before awaiting its result. Preserve completed work and never restart a provider review to compensate.
+  - Outcome: the existing helper was explicitly resumed with the scoped correction; no active review or useful implementation was interrupted.

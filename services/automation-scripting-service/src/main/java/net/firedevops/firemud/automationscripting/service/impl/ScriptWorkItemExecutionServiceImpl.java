@@ -134,6 +134,24 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff,
       boolean childHandoffAttempted) {}
 
+  private record AuthorityUnavailableRetryState(
+      Instant since, int count, Instant nextEligibleAt, int rowVersion) {
+    private static AuthorityUnavailableRetryState capture(ScriptWorkItem workItem) {
+      return new AuthorityUnavailableRetryState(
+          workItem.getAuthorityUnavailableSince(),
+          workItem.getAuthorityUnavailableCount(),
+          workItem.getNextEligibleAt(),
+          workItem.getRowVersion());
+    }
+
+    private void restore(ScriptWorkItem workItem) {
+      workItem.setAuthorityUnavailableSince(since);
+      workItem.setAuthorityUnavailableCount(count);
+      workItem.setNextEligibleAt(nextEligibleAt);
+      workItem.setRowVersion(rowVersion);
+    }
+  }
+
   private record EvaluationFencePrecheck(boolean checked, String failure) {}
 
   /** Compatibility constructor for focused plugin-fence tests. */
@@ -657,7 +675,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         if (commandIndex == 0) {
           // Clear the outage window only after the post-evaluation runtime check and this fresh
           // plugin-fence check have both passed, immediately before the first dispatch.
-          commitPostEvaluationFenceState(workItem);
+          AuthorityUnavailableRetryState retryState =
+              AuthorityUnavailableRetryState.capture(workItem);
+          try {
+            commitPostEvaluationFenceState(workItem);
+          } catch (RuntimeException ex) {
+            retryState.restore(workItem);
+            LOGGER.warn(
+                "Unable to commit post-evaluation handoff fence state for workItemId={}; retaining unresolved",
+                workItem.getId(),
+                ex);
+            return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult(), false);
+          }
         }
         childHandoffAttempted = true;
         ScriptGameplayCommandHandoffService.HandoffResult result =

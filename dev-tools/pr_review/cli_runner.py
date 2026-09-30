@@ -1373,6 +1373,11 @@ def run_cli_review(
             finally:
                 try:
                     _clear_cli_lock_owner(lock_handle)
+                except OSError:
+                    # The owner marker is advisory cleanup. Preserve the
+                    # completed provider result or primary failure, while
+                    # still releasing the repository-wide execution lock.
+                    pass
                 finally:
                     fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 

@@ -3252,6 +3252,262 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
+  void failedPostEvaluationFenceCommitMarksParentUnresolvedWithoutDispatch() {
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    PlatformTransactionManager transactionManager = Mockito.mock(PlatformTransactionManager.class);
+    AtomicInteger commits = new AtomicInteger();
+    when(transactionManager.getTransaction(Mockito.any(TransactionDefinition.class)))
+        .thenAnswer(invocation -> new SimpleTransactionStatus());
+    Mockito.doAnswer(
+            invocation -> {
+              if (commits.incrementAndGet() == 3) {
+                throw new UnexpectedRollbackException(
+                    "simulated post-evaluation fence-state commit failure");
+              }
+              return null;
+            })
+        .when(transactionManager)
+        .commit(Mockito.any(TransactionStatus.class));
+
+    ScriptWorkItem item = workItem();
+    item.setStatus("PENDING_EVALUATION");
+    item.setRowVersion(12);
+    Instant authorityUnavailableSince = Instant.parse("2026-09-01T00:00:00Z");
+    Instant nextEligibleAt = Instant.parse("2026-09-01T00:01:00Z");
+    item.setAuthorityUnavailableSince(authorityUnavailableSince);
+    item.setAuthorityUnavailableCount(3);
+    item.setNextEligibleAt(nextEligibleAt);
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+            Mockito.eq("PENDING_EVALUATION"),
+            Mockito.any(Instant.class),
+            Mockito.any(Pageable.class)))
+        .thenReturn(List.of(item));
+    when(workItemService.claimPendingForEvaluation(Mockito.anyList(), Mockito.eq(1)))
+        .thenAnswer(
+            invocation -> {
+              item.setStatus("EVALUATING");
+              return List.of(item);
+            });
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    List<RetryStateSnapshot> savedRetryStates = new ArrayList<>();
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              savedRetryStates.add(
+                  new RetryStateSnapshot(
+                      saved.getAuthorityUnavailableSince(),
+                      saved.getAuthorityUnavailableCount(),
+                      saved.getNextEligibleAt(),
+                      saved.getRowVersion()));
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            automationQueueService,
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            rolloutProjectionService,
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            null,
+            null,
+            new ObjectMapper(),
+            meterRegistry,
+            gameSessionClient,
+            Mockito.mock(PluginRuntimeStateRepository.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      ScriptWorkItemExecutionService.ExecutionBatchResult result =
+          service.processPendingWorkItems(1);
+
+      assertThat(result.claimedCount()).isEqualTo(1);
+      assertThat(result.failedCount()).isEqualTo(1);
+      assertThat(result.completedCount()).isZero();
+      assertThat(commits).hasValue(4);
+      assertThat(item.getStatus()).isEqualTo("EVALUATING");
+      assertThat(item.getCancelReason())
+          .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+      assertThat(item.getFailureGeneration()).isZero();
+      assertThat(item.getAuthorityUnavailableSince()).isEqualTo(authorityUnavailableSince);
+      assertThat(item.getAuthorityUnavailableCount()).isEqualTo(3);
+      assertThat(item.getNextEligibleAt()).isEqualTo(nextEligibleAt);
+      assertThat(savedRetryStates)
+          .containsExactly(
+              new RetryStateSnapshot(null, 0, null, 12),
+              new RetryStateSnapshot(authorityUnavailableSince, 3, nextEligibleAt, 12));
+      assertThat(
+              meterRegistry
+                  .find("automation_script_post_evaluation_reconciliation_required_total")
+                  .counter())
+          .isNull();
+      verify(handoffService, Mockito.never()).handoff(Mockito.eq(item), Mockito.any());
+      verify(automationQueueService, Mockito.never()).enqueueWorkItem(Mockito.any());
+
+      completeSynchronizations(TransactionSynchronization.STATUS_COMMITTED);
+      assertThat(
+              meterRegistry
+                  .find("automation_script_post_evaluation_reconciliation_required_total")
+                  .tag("service", "automation-scripting-service")
+                  .tag("stage", "TICK_HANDOFF")
+                  .tag("priority", "normal")
+                  .tag("source_class", "gameplay")
+                  .counter())
+          .isNotNull()
+          .extracting(counter -> counter.count())
+          .isEqualTo(1.0);
+      assertThat(meterRegistry.find("automation_script_work_item_outcomes_total").counter())
+          .isNull();
+    } finally {
+      clearSynchronizations();
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"QUEUE_UNAVAILABLE", "GAME_SESSION_UNAVAILABLE"})
+  void realRetryableLocalHandoffResponseLeavesParentUnresolved(String errorCode) {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    AutomationAdmissionStateService admissionStateService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    when(admissionStateService.getState("1", "7", "region-1"))
+        .thenReturn(
+            new AutomationAdmissionStateService.AdmissionStateSummary(
+                "1", "7", "region-1", "NORMAL", 1L, "", "", 100L));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(runtimeStateResponse());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(false)
+                .setAdmissionOutcome("REJECTED")
+                .setError(ErrorDetail.newBuilder().setCode(errorCode).build())
+                .build());
+
+    ScriptWorkItem item = workItem();
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+    List<ScriptHandoffEvent> savedHandoffs = new ArrayList<>();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(
+            invocation ->
+                savedHandoffs.isEmpty() ? Optional.empty() : Optional.of(savedHandoffs.getLast()));
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent saved = invocation.getArgument(0);
+              if (saved.getId() == null) {
+                saved.setId(44L);
+                saved.setRowVersion(0);
+              } else {
+                saved.setRowVersion(saved.getRowVersion() + 1);
+              }
+              savedHandoffs.add(saved);
+              return saved;
+            });
+
+    ScriptGameplayCommandHandoffServiceImpl handoffService =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionStateService,
+            rolloutProjectionService);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            auditRepository,
+            rolloutProjectionService,
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper(),
+            meterRegistry,
+            automationQueueService,
+            null,
+            null,
+            gameSessionClient,
+            Mockito.mock(PluginRuntimeStateRepository.class));
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.claimedCount()).isEqualTo(1);
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(result.completedCount()).isZero();
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+    assertThat(item.getFailureGeneration()).isZero();
+    assertThat(savedHandoffs).hasSize(2);
+    assertThat(savedHandoffs.getLast().getHandoffOutcome()).isEqualTo("rejected");
+    assertThat(
+            meterRegistry
+                .find("automation_script_post_evaluation_reconciliation_required_total")
+                .tag("service", "automation-scripting-service")
+                .tag("stage", "TICK_HANDOFF")
+                .tag("priority", "normal")
+                .tag("source_class", "gameplay")
+                .counter())
+        .isNotNull()
+        .extracting(counter -> counter.count())
+        .isEqualTo(1.0);
+    assertThat(meterRegistry.find("automation_script_work_item_outcomes_total").counter()).isNull();
+    verify(definitionRepository).findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
+    verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
+    verify(automationQueueService, Mockito.never()).enqueueWorkItem(Mockito.any());
+  }
+
+  @Test
   void retryableHandoffRollbackLeavesDetachedParentUnresolvedWithoutReadback() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
@@ -5998,6 +6254,12 @@ class ScriptWorkItemExecutionServiceImplTest {
       SimpleMeterRegistry meterRegistry,
       long initialFailureGeneration,
       ScriptWorkItemExecutionService.ExecutionBatchResult result) {}
+
+  private record RetryStateSnapshot(
+      Instant authorityUnavailableSince,
+      int authorityUnavailableCount,
+      Instant nextEligibleAt,
+      int rowVersion) {}
 
   private static final class RecordingExecutionTransactionManager
       implements PlatformTransactionManager {
