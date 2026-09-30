@@ -329,8 +329,8 @@ class TextCommandInterpreterTest {
         .thenReturn(CommandEnqueueResult.success());
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L)));
+    when(pointerAuthorityService.listByRuntimeTarget(23L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 23L, 2L, 1L)));
     when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -350,7 +350,7 @@ class TextCommandInterpreterTest {
             gameplayPresenceLifecycleService);
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 23L, 2L, true)));
     GameplayWorldCatalog worldCatalog =
         TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
     LoginCommandHandler loginHandler =

@@ -5,6 +5,7 @@ import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.List;
+import java.util.Objects;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
@@ -580,9 +581,33 @@ public final class GameSessionGrpcService
     try {
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
+      // Cardinality and selector resolution must use one authoritative snapshot; a second
+      // selector query could return a stale pointer after another public realm is published.
+      List<GameplayAdmissionPointerSnapshot> pointerSnapshot =
+          gameplayAdmissionPointerAuthorityService.listPointers();
+      List<GameplayAdmissionPointerSnapshot> snapshot =
+          pointerSnapshot == null ? List.of() : pointerSnapshot;
+      long visiblePublicProductionPointerCount =
+          snapshot.stream()
+              .filter(Objects::nonNull)
+              .filter(pointer -> pointer.tenantId() == tenantId)
+              .filter(GameplayAdmissionPointerSnapshot::visible)
+              .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
+              .count();
+      if (visiblePublicProductionPointerCount != 1L) {
+        throw new CatalogRevisionUnavailableException(
+            "Expected exactly one visible public-production realm for tenant "
+                + tenantId
+                + " but found "
+                + visiblePublicProductionPointerCount);
+      }
       GameplayAdmissionPointerSnapshot realm =
-          gameplayAdmissionPointerAuthorityService
-              .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
+          snapshot.stream()
+              .filter(Objects::nonNull)
+              .filter(pointer -> pointer.tenantId() == tenantId)
+              .filter(pointer -> Objects.equals(pointer.worldSlug(), request.getWorldSlug()))
+              .filter(pointer -> Objects.equals(pointer.realmSlug(), request.getRealmSlug()))
+              .findFirst()
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()

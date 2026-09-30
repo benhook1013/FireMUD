@@ -301,6 +301,26 @@ class GameDesignGrpcServiceTest {
   }
 
   @Test
+  void publishVersionMapsUnavailableWorkflowWithoutHidingItAsInternal() throws Exception {
+    Mockito.when(versionService.publishVersion("tenant-1", "notes", "publish-request-1"))
+        .thenThrow(
+            new IllegalStateException("PUBLISH_WORKFLOW_UNAVAILABLE: Temporal is unavailable"));
+    AtomicReference<PublishVersionResponse> ref = new AtomicReference<>();
+
+    try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
+      service.publishVersion(
+          PublishVersionRequest.newBuilder()
+              .setTenantId("tenant-1")
+              .setNotes("notes")
+              .setPublishRequestId("publish-request-1")
+              .build(),
+          observerFor(ref));
+    }
+
+    assertEquals("PUBLISH_WORKFLOW_UNAVAILABLE", ref.get().getError().getCode());
+  }
+
+  @Test
   void publishVersionMapsTemporalKnownGateFailureCode() throws Exception {
     PublishGateFailureException gateFailure =
         (PublishGateFailureException)

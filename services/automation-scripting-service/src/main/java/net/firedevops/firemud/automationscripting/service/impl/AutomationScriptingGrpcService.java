@@ -496,12 +496,22 @@ public class AutomationScriptingGrpcService
         responseObserver.onCompleted();
         return;
       }
-      scriptVersionService.notifyUpdate(
-          request.getTenantId(),
-          request.getBaseVersionId(),
-          request.getScriptPatchVersion(),
-          request.getAffectedScriptsList());
-      response.setSuccess(true);
+      boolean readinessAccepted =
+          scriptVersionService.notifyUpdate(
+              request.getTenantId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getAffectedScriptsList());
+      response.setSuccess(readinessAccepted);
+      if (!readinessAccepted) {
+        response.setError(
+            GrpcAppErrors.error(
+                meterRegistry,
+                logger,
+                "NotifyScriptVersionUpdate",
+                "FAILED_PRECONDITION",
+                "patch_readiness_not_current"));
+      }
     } catch (IllegalArgumentException ex) {
       response
           .setSuccess(false)

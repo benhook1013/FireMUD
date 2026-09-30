@@ -16,6 +16,7 @@ import io.grpc.StatusRuntimeException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
@@ -521,7 +522,8 @@ class VersionServiceImplTest {
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
 
-    assertEquals("transaction completion outcome is ambiguous", thrown.getMessage());
+    assertTrue(thrown.getMessage().contains("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED"));
+    assertEquals("transaction completion outcome is ambiguous", thrown.getCause().getMessage());
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(scriptingClient).notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", List.of());
     verify(publishAttemptService, org.mockito.Mockito.never())
@@ -544,7 +546,56 @@ class VersionServiceImplTest {
     when(publishGateService.collectScriptPatchParticipantDigests(
             any(VersionDto.class), any(String.class), any(String.class)))
         .thenReturn(List.of());
-    doThrow(new IllegalStateException("SCRIPT_PATCH_NOTIFICATION_REJECTED"))
+    doThrow(
+            new AutomationScriptingClient.PreDispatchValidationException(
+                "SCRIPT_PATCH_NOTIFICATION_PRE_DISPATCH_INVALID: affectedScripts is required"))
+        .when(scriptingClient)
+        .notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", List.of());
+
+    AutomationScriptingClient.PreDispatchValidationException thrown =
+        assertThrows(
+            AutomationScriptingClient.PreDispatchValidationException.class,
+            () ->
+                service.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
+
+    assertTrue(thrown.getMessage().contains("SCRIPT_PATCH_NOTIFICATION_PRE_DISPATCH_INVALID"));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchSucceeded(any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+    verify(publishAttemptService)
+        .markScriptPatchFailed(
+            org.mockito.ArgumentMatchers.eq(binding.derivedWorkflowIdentity()),
+            org.mockito.ArgumentMatchers.eq("PUBLISH_FAILED"),
+            org.mockito.ArgumentMatchers.contains("affectedScripts"));
+    verify(versionRepository).delete(draft);
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = Status.Code.class,
+      names = {"INTERNAL", "DEADLINE_EXCEEDED"})
+  void notificationSideEffectFollowedByRpcFailureRetainsPending(Status.Code statusCode) {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt attempt = scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    Version draft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L)).thenReturn(Optional.of(draft));
+    when(publishGateService.collectScriptPatchParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(List.of());
+    AtomicBoolean automationMutated = new AtomicBoolean();
+    doAnswer(
+            invocation -> {
+              automationMutated.set(true);
+              throw new StatusRuntimeException(Status.fromCode(statusCode));
+            })
         .when(scriptingClient)
         .notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", List.of());
 
@@ -555,10 +606,13 @@ class VersionServiceImplTest {
                 service.publishScriptPatchVersion(
                     "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
 
-    assertTrue(thrown.getMessage().contains("SCRIPT_PATCH_NOTIFICATION_REJECTED"));
+    assertTrue(automationMutated.get());
+    assertTrue(thrown.getMessage().contains("PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED"));
+    assertEquals(statusCode, ((StatusRuntimeException) thrown.getCause()).getStatus().getCode());
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(publishAttemptService, org.mockito.Mockito.never())
-        .markScriptPatchSucceeded(any(String.class));
-    verify(versionRepository, org.mockito.Mockito.never()).save(any(Version.class));
+        .markScriptPatchFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, org.mockito.Mockito.never()).delete(any(Version.class));
   }
 
   @Test

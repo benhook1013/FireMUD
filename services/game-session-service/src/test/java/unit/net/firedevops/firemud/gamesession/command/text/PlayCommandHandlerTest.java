@@ -79,8 +79,8 @@ class PlayCommandHandlerTest {
                 "sandbox",
                 "Builder Sandbox",
                 List.of(
-                    realm("production", "Live Realm", 22L, 2L, true, true),
-                    realm("preview", "Preview Realm", 22L, 41L, true, true)))));
+                    realm("production", "Live Realm", 23L, 2L, true, true),
+                    realm("preview", "Preview Realm", 23L, 41L, true, true)))));
     handler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -102,24 +102,26 @@ class PlayCommandHandlerTest {
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetTenantMembershipForRuntimeResponse.newBuilder()
+                    .setAccountId("123")
+                    .setTenantId(invocation.getArgument(1, String.class))
+                    .setMembershipExists(true)
+                    .setGameplayAdmissionAllowed(true)
+                    .setMembershipVersion(1L)
+                    .setEvaluatedAt("2026-03-30T00:00:00Z")
+                    .build());
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build());
+        .thenAnswer(
+            invocation ->
+                GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                    .setTenantId(invocation.getArgument(0, String.class))
+                    .setGameplayAvailable(true)
+                    .setEntitlementVersion(1L)
+                    .setTenantBillingSequence(1L)
+                    .setEvaluatedAt("2026-03-30T00:00:00Z")
+                    .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),
@@ -141,7 +143,7 @@ class PlayCommandHandlerTest {
               String instanceId = invocation.getArgument(2);
               PlayableStateScope scope = invocation.getArgument(3);
               String name = "41".equals(instanceId) ? "Emberline" : "demo";
-              return roster(actor("123", name, scope));
+              return roster(actorForTenant(tenantForGameInstance(instanceId), "123", name, scope));
             });
   }
 
@@ -268,13 +270,13 @@ class PlayCommandHandlerTest {
   @Test
   void playUsesResolvedEntityManagementCharacterIdWhenNameExists() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 23L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     stubOwnedRoster(
         "2",
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        actor("9007", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
-    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 2L, 9007L))
+        actorForTenant("23", "9007", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(23L, 2L, 9007L))
         .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
@@ -290,7 +292,7 @@ class PlayCommandHandlerTest {
         .save(
             new SessionContext(
                 1L,
-                22L,
+                23L,
                 123L,
                 "demo@example.com",
                 9007L,
@@ -308,7 +310,7 @@ class PlayCommandHandlerTest {
         .publishCommandEvent(
             new SessionContext(
                 1L,
-                22L,
+                23L,
                 123L,
                 "demo@example.com",
                 9007L,
@@ -328,7 +330,7 @@ class PlayCommandHandlerTest {
         .publishSpawnEvent(
             new SessionContext(
                 1L,
-                22L,
+                23L,
                 123L,
                 "demo@example.com",
                 9007L,
@@ -349,12 +351,12 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsMalformedResolvedCharacterId() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 23L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     stubOwnedRoster(
         "2",
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        actor("abc", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+        actorForTenant("23", "abc", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -413,10 +415,11 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsAnotherAccountsActorEvenWhenNameMatches() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 23L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     Character foreign =
-        actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED).toBuilder()
+        actorForTenant("23", "7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .toBuilder()
             .setAccountId("999")
             .build();
     stubOwnedRoster("2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, foreign);
@@ -507,12 +510,12 @@ class PlayCommandHandlerTest {
   @Test
   void playReadsAccountMembershipGrantAndEntitlementBeforeActorRoster() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 23L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     stubOwnedRoster(
         "41",
         PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+        actorForTenant("23", "7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -526,21 +529,21 @@ class PlayCommandHandlerTest {
     org.mockito.InOrder order = Mockito.inOrder(accountClient, entityManagementClient);
     order
         .verify(accountClient)
-        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("22"), Mockito.anyString());
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("23"), Mockito.anyString());
     order
         .verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq("123"),
-            Mockito.eq("22"),
+            Mockito.eq("23"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
     order
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq("23"), Mockito.anyString());
     order
         .verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount("23", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -854,7 +857,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void sandboxWithoutCharacterReturnsSelectionRequired() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 23L, 123L, 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -865,17 +868,65 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo(
-            "Selection required. Use PLAY sandbox <realm> [character] or browse REALMS first.");
+            "Selection required. Use PLAY sandbox <character> or browse CHARS sandbox first.");
     assertThat(
             new TextPlayerOutputRenderer(new PresentationProperties())
                 .render(result.outputs().get(0), "fr"))
         .isEqualTo(
-            "ERROR PLAY_SELECTION_REQUIRED Sélection requise. Utilisez PLAY sandbox <realm> [character] ou consultez REALMS d’abord.");
+            "ERROR PLAY_SELECTION_REQUIRED Selection requise. Utilisez PLAY sandbox <character> ou consultez CHARS sandbox dabord.");
+  }
+
+  @Test
+  void deniedSameSlugSelectionInAnotherTenantPreservesExistingBinding() {
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0).setTenantId(23L);
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            2L,
+            "R-1",
+            "jwt-token",
+            null,
+            2L,
+            "sandbox",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.eq("23"), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("23")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipVersion(2L)
+                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("sandbox", "production", "Emberline"),
+                "PLAY sandbox production Emberline"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
   }
 
   @Test
   void explicitRealmWithoutCharacterReturnsCharacterSelectionGuidance() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 23L, 123L, 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -905,7 +956,7 @@ class PlayCommandHandlerTest {
         .getRealms()
         .get(1)
         .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 23L, 123L, 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -928,19 +979,19 @@ class PlayCommandHandlerTest {
         .get(1)
         .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
+        new SessionContext(1L, 23L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
+                    123L, 23L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
                     "gw-1")));
     stubOwnedRoster(
         "41",
         PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
-        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
-    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
+        actorForTenant("23", "7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(23L, 41L, 7002L))
         .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
@@ -965,7 +1016,7 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(
             1L,
-            22L,
+            23L,
             123L,
             "first-party:123",
             0L,
@@ -985,8 +1036,8 @@ class PlayCommandHandlerTest {
     stubOwnedRoster(
         "41",
         PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED,
-        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
-    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 41L, 7002L))
+        actorForTenant("23", "7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(23L, 41L, 7002L))
         .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
@@ -1008,7 +1059,7 @@ class PlayCommandHandlerTest {
     SessionContext context =
         new SessionContext(
             1L,
-            22L,
+            23L,
             123L,
             "first-party:123",
             0L,
@@ -1044,14 +1095,14 @@ class PlayCommandHandlerTest {
   @Test
   void playDeniedByMembershipReturnsWorldAccessDenied() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(1L, 23L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setAccountId("123")
-                .setTenantId("22")
+                .setTenantId("23")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
                 .setMembershipVersion(2L)
@@ -1073,14 +1124,14 @@ class PlayCommandHandlerTest {
   @Test
   void playNonPublicRealmRequiresExistingAdmissibleMembership() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(1L, 23L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setAccountId("123")
-                .setTenantId("22")
+                .setTenantId("23")
                 .setMembershipExists(false)
                 .setGameplayAdmissionAllowed(true)
                 .setEvaluatedAt("2026-03-30T00:00:00Z")
@@ -1125,7 +1176,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq("123"),
-            Mockito.eq("22"),
+            Mockito.eq("23"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
@@ -1150,7 +1201,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq("123"),
-            Mockito.eq("22"),
+            Mockito.eq("23"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
@@ -1602,7 +1653,8 @@ class PlayCommandHandlerTest {
       String gameInstanceId, PlayableStateScope scope, Character... characters) {
     Mockito.doReturn(roster(characters))
         .when(entityManagementClient)
-        .listCharactersByAccount("22", "123", gameInstanceId, scope);
+        .listCharactersByAccount(
+            tenantForGameInstance(gameInstanceId), "123", gameInstanceId, scope);
   }
 
   private static ListCharactersByAccountResponse roster(Character... characters) {
@@ -1612,13 +1664,22 @@ class PlayCommandHandlerTest {
   }
 
   private static Character actor(String id, String name, PlayableStateScope scope) {
+    return actorForTenant("22", id, name, scope);
+  }
+
+  private static Character actorForTenant(
+      String tenantId, String id, String name, PlayableStateScope scope) {
     return Character.newBuilder()
         .setId(id)
-        .setTenantId("22")
+        .setTenantId(tenantId)
         .setAccountId("123")
         .setName(name)
         .setPlayableStateScope(scope)
         .build();
+  }
+
+  private static String tenantForGameInstance(String gameInstanceId) {
+    return "2".equals(gameInstanceId) || "41".equals(gameInstanceId) ? "23" : "22";
   }
 
   private void markPreviewRealmInvisible() {
@@ -1628,7 +1689,7 @@ class PlayCommandHandlerTest {
   private SessionContext previewRealmContext() {
     return new SessionContext(
         1L,
-        22L,
+        23L,
         123L,
         "demo@example.com",
         123L,

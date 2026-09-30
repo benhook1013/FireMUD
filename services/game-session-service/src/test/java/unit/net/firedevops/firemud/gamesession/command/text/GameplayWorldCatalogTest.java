@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -47,13 +48,29 @@ class GameplayWorldCatalogTest {
         .thenReturn(
             List.of(
                 pointer("demo", "Demo World", "production", "Live Realm", 7L, 11L, 1L),
-                pointer("DEMO", "Other Demo World", "event", "Event Realm", 8L, 12L, 1L)));
+                pointer("DEMO", "Other Demo World", "event", "Event Realm", 8L, 12L, 1L),
+                pointer(
+                    "DEMO", "Other Demo World", "production", "Other Live Realm", 8L, 13L, 2L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     assertThat(catalog.visibleWorlds()).isEmpty();
     assertThat(catalog.browseView().worlds()).isEmpty();
     assertThat(catalog.resolveWorld("demo")).isEmpty();
     assertThat(catalog.browseRealms("DEMO")).isEmpty();
+  }
+
+  @Test
+  void visibleWorldsSuppressesCaseInsensitiveWorldSlugCollisionsWithinTenant() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                pointer("demo", "Demo World", "production", "Live Realm", 7L, 11L, 1L),
+                pointer("DEMO", "Other Demo World", "event", "Event Realm", 7L, 12L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
   }
 
   @Test
@@ -71,7 +88,130 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void explicitRealmSelectorFailsClosedOnCaseInsensitiveCollision() {
+  void sameTenantCannotExposeTwoVisiblePublicRealmsInOneWorld() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo",
+                    "Demo World",
+                    List.of(realm("production", true), realm("seasonal", true)))));
+
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.resolvePublicWorld("demo")).isEmpty();
+  }
+
+  @Test
+  void duplicateRealmSlugsCannotHideExtraVisiblePublicRealmRows() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo",
+                    "Demo World",
+                    List.of(
+                        realm("production", true),
+                        realm("event", true),
+                        realm("EVENT", true),
+                        realm("private", false)))));
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+  }
+
+  @Test
+  void sameTenantCannotExposeVisiblePublicRealmsAcrossDifferentWorlds() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo", "Demo World", List.of(realm("production", true))),
+                new GameplayWorldCatalog.WorldView(
+                    "sandbox", "Builder Sandbox", List.of(realm("production", true)))));
+
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.resolveWorld("sandbox")).isEmpty();
+  }
+
+  @Test
+  void hiddenSecondPublicRealmDoesNotInvalidateOrAuthorizePublicSelection() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo",
+                    "Demo World",
+                    List.of(
+                        realm("production", true),
+                        new GameplayWorldCatalog.RealmView(
+                            "hidden-production",
+                            "Hidden Production",
+                            7L,
+                            12L,
+                            1L,
+                            false,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW")))));
+
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("demo").orElseThrow();
+
+    assertThat(catalog.browseRealms("demo").orElseThrow().realms())
+        .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
+        .containsExactly("production");
+    assertThat(catalog.resolveRealmForAdmission(world, "hidden-production")).isEmpty();
+  }
+
+  @Test
+  void eachTenantMayExposeOneVisiblePublicRealm() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "demo", "Demo World", List.of(realm("production", true))),
+                new GameplayWorldCatalog.WorldView(
+                    "sandbox",
+                    "Builder Sandbox",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            8L,
+                            12L,
+                            1L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW")))));
+
+    assertThat(catalog.browseView().worlds()).extracting("slug").containsExactly("demo", "sandbox");
+    assertThat(catalog.resolveWorld("demo")).isPresent();
+    assertThat(catalog.resolveWorld("sandbox")).isPresent();
+  }
+
+  @Test
+  void resolvesWorldFromOneListSnapshot() {
+    AtomicInteger supplierCalls = new AtomicInteger();
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              supplierCalls.incrementAndGet();
+              return List.of(
+                  new GameplayWorldCatalog.WorldView(
+                      "demo", "Demo World", List.of(realm("production", true))));
+            });
+
+    assertThat(catalog.resolveWorld("1")).isPresent();
+    assertThat(supplierCalls).hasValue(1);
+  }
+
+  @Test
+  void ambiguousPublicRealmSelectorInvalidatesTenantCatalog() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
             List.of(
@@ -82,12 +222,9 @@ class GameplayWorldCatalogTest {
                         realm("production", true),
                         realm("PRODUCTION", false),
                         realm("event", false)))));
-    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("demo").orElseThrow();
-
-    assertThat(catalog.resolveRealm(world, "production")).isEmpty();
-    assertThat(catalog.resolveRealmForAdmission(world, " production ")).isEmpty();
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isEmpty();
     assertThat(catalog.resolveRealmTarget("demo", "production")).isEmpty();
-    assertThat(catalog.resolveRealmForAdmission(world, "event")).isPresent();
   }
 
   @Test
@@ -164,6 +301,61 @@ class GameplayWorldCatalogTest {
         .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
         .containsExactly("production");
     assertThat(catalog.browseRealms("private-world")).isEmpty();
+  }
+
+  @Test
+  void realmSelectionUsesPublicDefaultWhenVisiblePrivateRealmIsAlsoPresent() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "mixed-world",
+                    "Mixed World",
+                    List.of(
+                        new GameplayWorldCatalog.RealmView(
+                            "production",
+                            "Live Realm",
+                            7L,
+                            11L,
+                            1L,
+                            true,
+                            true,
+                            false,
+                            "SHARED",
+                            "ALLOW_NEW"),
+                        new GameplayWorldCatalog.RealmView(
+                            "private",
+                            "Private Realm",
+                            7L,
+                            17L,
+                            1L,
+                            true,
+                            false,
+                            false,
+                            "ISOLATED",
+                            "ALLOW_NEW")))));
+    GameplayWorldCatalog.WorldView world = catalog.resolveWorld("mixed-world").orElseThrow();
+
+    assertThat(catalog.requiresExplicitRealmSelection(world)).isFalse();
+    assertThat(catalog.resolveDefaultRealm(world))
+        .map(GameplayWorldCatalog.RealmView::slug)
+        .contains("production");
+  }
+
+  @Test
+  void tenantWithNoVisiblePublicRealmFailsClosedForDiscoveryAndSelection() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(
+                new GameplayWorldCatalog.WorldView(
+                    "private-only",
+                    "Private Only",
+                    List.of(realm("private-a", false), realm("private-b", false)))));
+
+    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolvePublicWorld("private-only")).isEmpty();
+    assertThat(catalog.resolveWorld("private-only")).isEmpty();
   }
 
   @Test

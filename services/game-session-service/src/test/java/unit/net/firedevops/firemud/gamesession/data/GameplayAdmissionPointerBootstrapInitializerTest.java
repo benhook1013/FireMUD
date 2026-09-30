@@ -41,7 +41,7 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     properties.setPointers(
         List.of(
             pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false),
-            pointerSeed("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, true)));
+            pointerSeed("sandbox", "Builder Sandbox", "production", "Live Realm", 2L, 2L, true)));
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
@@ -62,7 +62,30 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     assertEquals("Initial gameplay pointer bootstrap", mutations.get(0).reason());
     assertEquals("bootstrap:1:1:demo:production", mutations.get(0).controlPlaneRequestId());
     assertEquals("sandbox", mutations.get(1).worldSlug());
+    assertEquals(2L, mutations.get(1).tenantId());
     assertTrue(mutations.get(1).requiresCharacterSelection());
+  }
+
+  @Test
+  void defaultPropertiesSeedDistinctTenantsWithoutExplicitPointers() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+
+    initializer.run(new DefaultApplicationArguments(new String[] {}));
+
+    ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
+        ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
+    verify(authorityService, org.mockito.Mockito.times(2)).upsertPointer(mutationCaptor.capture());
+    List<GameplayAdmissionPointerMutation> mutations = mutationCaptor.getAllValues();
+    assertEquals(2, mutations.size());
+    assertEquals("demo", mutations.get(0).worldSlug());
+    assertEquals(1L, mutations.get(0).tenantId());
+    assertEquals(1L, mutations.get(0).gameInstanceId());
+    assertEquals("sandbox", mutations.get(1).worldSlug());
+    assertEquals(2L, mutations.get(1).tenantId());
+    assertEquals(2L, mutations.get(1).gameInstanceId());
+    assertTrue(mutations.stream().allMatch(GameplayAdmissionPointerMutation::visible));
+    assertTrue(
+        mutations.stream().allMatch(GameplayAdmissionPointerMutation::publicProductionRealm));
   }
 
   @Test

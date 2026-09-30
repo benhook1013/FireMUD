@@ -27,6 +27,9 @@ import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
+import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
@@ -553,6 +556,61 @@ class AccountServiceImplTest {
     org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
         .findByTenantIdForUpdate(7L);
+  }
+
+  @Test
+  void joinPublicProductionRejectsLateAmbiguousPublicRealmBeforeMembershipCommit() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    AtomicReference<VerifiedJoinScope> retainedScope = new AtomicReference<>();
+    AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
+        new AtomicReference<>();
+    retainJoinEvidence(retainedScope, retainedOperation);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+
+    net.firedevops.firemud.gamesession.v1.GameplayRealm selectedRealm =
+        gameSessionClient.listGameplayRealms("demo").getFirst();
+    net.firedevops.firemud.gamesession.v1.GameplayRealm lateDuplicate =
+        selectedRealm.toBuilder()
+            .setRealmSlug("staging")
+            .setDisplayName("Staging Realm")
+            .setRealmId("57c58f36-c5ea-4aa8-8ef7-91a45e407f01")
+            .setGameInstanceId("45")
+            .setPlayableStateNamespaceId("staging-namespace-7")
+            .setCatalogRevision(24L)
+            .setPointerVersion(1L)
+            .build();
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(java.util.List.of(selectedRealm, lateDuplicate));
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
+        .thenThrow(new IllegalStateException("ambiguous public-production realm catalog"));
+
+    JoinPublicProductionResult result =
+        service.joinPublicProduction(
+            bootstrap.bootstrapToken(),
+            new JoinPublicProductionRequest(connectScopeId, "join-late-ambiguous-realm-1"));
+
+    assertFalse(result.success());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", result.outcomeCode());
+    assertEquals("PENDING", retainedOperation.get().status());
+    assertEquals(null, retainedOperation.get().outcome());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", retainedOperation.get().lastAttemptFailureCode());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
+    org.mockito.Mockito.verify(gameSessionClient, org.mockito.Mockito.atLeastOnce())
+        .getAdmissionPointer(7L, "demo", "production");
   }
 
   @Test
@@ -2208,6 +2266,88 @@ class AccountServiceImplTest {
             () -> service.getTenantEntitlementsForRuntime(7L, "req-ambiguous-entitlement"));
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void issueDirectTextConnectScopeDoesNotMintScopeWithoutUniqueEntitlement(boolean ambiguous) {
+    Subscription active = new Subscription();
+    active.setId(31L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    Subscription duplicate = new Subscription();
+    duplicate.setId(32L);
+    duplicate.setTenantId(7L);
+    duplicate.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenReturn(ambiguous ? java.util.List.of(active, duplicate) : java.util.List.of());
+
+    AuthenticationException exception =
+        assertThrows(AuthenticationException.class, this::issueDirectTextConnectScopeForTest);
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    verifyNoInteractions(accountConnectScopeRepository);
+  }
+
+  @Test
+  void issueDirectTextConnectScopeDoesNotMintScopeWhenEntitlementReadIsUnavailable() {
+    when(subscriptionRepository.findByTenantId(7L))
+        .thenThrow(new IllegalStateException("subscription store unavailable"));
+
+    AuthenticationException exception =
+        assertThrows(AuthenticationException.class, this::issueDirectTextConnectScopeForTest);
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    verifyNoInteractions(accountConnectScopeRepository);
+  }
+
+  @Test
+  void issueDirectTextConnectScopeDoesNotMintScopeWhenGameplayIsUnavailable() {
+    Subscription canceled = new Subscription();
+    canceled.setId(31L);
+    canceled.setTenantId(7L);
+    canceled.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(canceled));
+
+    AuthenticationException exception =
+        assertThrows(AuthenticationException.class, this::issueDirectTextConnectScopeForTest);
+
+    assertEquals("TENANT_BILLING_BLOCKED", exception.getCode());
+    verifyNoInteractions(accountConnectScopeRepository);
+  }
+
+  @Test
+  void issueDirectTextConnectScopeRejectsNonPositiveEntitlementVersion() {
+    Subscription active = new Subscription();
+    active.setId(31L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    active.setEntitlementVersion(0L);
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    AuthenticationException exception =
+        assertThrows(AuthenticationException.class, this::issueDirectTextConnectScopeForTest);
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    verifyNoInteractions(accountConnectScopeRepository);
+  }
+
+  @Test
+  void issueDirectTextConnectScopeAllowsDiscoveryWhenPublicJoiningIsDisabled() {
+    Subscription grace = new Subscription();
+    grace.setId(31L);
+    grace.setTenantId(7L);
+    grace.setStatus("grace");
+    grace.setEntitlementVersion(4L);
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(grace));
+
+    DirectTextJoinScope scope = issueDirectTextConnectScopeForTest();
+
+    assertNotNull(scope.connectScopeId());
+    assertFalse(scope.connectScopeId().isBlank());
+    verify(subscriptionRepository).findByTenantId(7L);
+    verify(accountConnectScopeRepository)
+        .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
   }
 
   @Test
@@ -4570,6 +4710,34 @@ class AccountServiceImplTest {
     } finally {
       argon2.wipeArray(chars);
     }
+  }
+
+  private DirectTextJoinScope issueDirectTextConnectScopeForTest() {
+    Account account = new Account();
+    account.setId(11L);
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    DirectTextCallerContext caller =
+        new DirectTextCallerContext(
+            11L,
+            7L,
+            UUID.fromString(REALM_ID),
+            "production-namespace-7",
+            "SHARED",
+            44L,
+            "session-1",
+            "direct-realms-request-1");
+    DirectTextJoinTarget target =
+        new DirectTextJoinTarget(
+            7L,
+            UUID.fromString(REALM_ID),
+            "demo",
+            "production",
+            "production-namespace-7",
+            "SHARED",
+            44L,
+            23L,
+            17L);
+    return service.issueDirectTextConnectScope(caller, target);
   }
 
   private static net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer admissionPointer(

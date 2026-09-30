@@ -70,7 +70,7 @@ firemud:
       targets:
         - tenant-id: ${FIREMUD_BOOTSTRAP_DEMO_TENANT_ID:1}
           game-instance-id: ${FIREMUD_BOOTSTRAP_DEMO_GAME_INSTANCE_ID:1}
-        - tenant-id: ${FIREMUD_BOOTSTRAP_SANDBOX_TENANT_ID:1}
+        - tenant-id: ${FIREMUD_BOOTSTRAP_SANDBOX_TENANT_ID:2}
           game-instance-id: ${FIREMUD_BOOTSTRAP_SANDBOX_GAME_INSTANCE_ID:2}
   auth:
     http:
