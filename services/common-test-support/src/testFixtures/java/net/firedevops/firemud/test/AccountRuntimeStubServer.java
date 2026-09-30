@@ -40,15 +40,17 @@ import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.AccountProfileJson;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
     implements AutoCloseable {
-  private static final String EVALUATED_AT = "2026-03-30T00:00:00Z";
   private static final String AUTHORITY_STREAM_PREFIX = "account:auth-authority:v1:";
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
+  private static final String MEMBERSHIP_EVENT_ID = "00000000-0000-0000-0000-000000000099";
+  private static final String MEMBERSHIP_EVENT_REQUEST_ID = "runtime-membership-request";
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "Ping",
@@ -214,7 +216,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .setMembershipExists(exists)
               .setMembershipLifecycleState(lifecycle)
               .setGameplayAdmissionAllowed(admitted)
-              .setEvaluatedAt(EVALUATED_AT)
+              .setEvaluatedAt(Instant.now().toString())
               .build();
     }
     responseObserver.onNext(response);
@@ -267,17 +269,46 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setAuthorityTuple(tuple)
             .setIssuanceFence("1")
             .addAllOutboxCheckpoints(checkpoints)
-            .setEvaluatedAt(EVALUATED_AT);
+            .setEvaluatedAt(Instant.now().toString());
     if (admitted) {
       response.addRoles("player");
     }
     if (exists) {
+      MembershipAuthorityEventV1Codec.MembershipEvent event =
+          MembershipAuthorityEventV1Codec.seal(
+              Map.ofEntries(
+                  Map.entry("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION),
+                  Map.entry("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE),
+                  Map.entry("eventId", MEMBERSHIP_EVENT_ID),
+                  Map.entry("requestId", MEMBERSHIP_EVENT_REQUEST_ID),
+                  Map.entry("outboxStreamKey", membershipStream),
+                  Map.entry("outboxSequence", "1"),
+                  Map.entry("sourceScope", "membership/" + accountUuid + "/" + tenantUuid),
+                  Map.entry("accountId", accountUuid),
+                  Map.entry("tenantId", tenantUuid),
+                  Map.entry("membershipExists", true),
+                  Map.entry("membershipLifecycleState", lifecycle),
+                  Map.entry("membershipVersion", Map.of(tenantUuid, "1")),
+                  Map.entry("membershipAuthorityGeneration", "1"),
+                  Map.entry(
+                      "authorityTuple",
+                      Map.of(
+                          "issuerAuthGeneration", "1",
+                          "accountAuthorityGeneration", "1",
+                          "tenantAuthorityGeneration", Map.of(tenantUuid, "1"),
+                          "membershipAuthorityGeneration", Map.of(tenantUuid, "1"),
+                          "privateRealmGrantVersions", List.of())),
+                  Map.entry("issuanceFence", "1"),
+                  Map.entry("roles", admitted ? List.of("player") : List.of()),
+                  Map.entry("gameplayAdmissionAllowed", admitted),
+                  Map.entry("callerBoundAuthorityInvalidated", false)));
       response.addOutboxSourceEvidence(
           RuntimeOutboxSourceEvidence.newBuilder()
               .setOutboxStreamKey(membershipStream)
               .setOutboxSequence("1")
-              .setEventId("00000000-0000-0000-0000-000000000099")
-              .setEventDigest("sha256:" + "0".repeat(64)));
+              .setEventId(event.eventId())
+              .setEventDigest(event.eventDigest())
+              .setCanonicalEventJson(event.canonicalJson()));
     }
     return response.build();
   }
@@ -309,7 +340,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setRealmSlug(request.getRealmSlug())
             .setGranted(realmAccessGranted.get())
             .setGrantVersion(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(Instant.now().toString())
             .build());
     responseObserver.onCompleted();
   }
@@ -325,7 +356,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setAllowPublicJoin(allowPublicJoin.get())
             .setEntitlementVersion(1L)
             .setTenantBillingSequence(1L)
-            .setEvaluatedAt(EVALUATED_AT)
+            .setEvaluatedAt(Instant.now().toString())
             .build());
     responseObserver.onCompleted();
   }

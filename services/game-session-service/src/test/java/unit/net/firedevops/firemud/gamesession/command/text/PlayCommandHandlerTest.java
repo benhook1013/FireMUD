@@ -4,14 +4,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.IOException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
@@ -44,6 +50,7 @@ import org.mockito.Mockito;
 
 class PlayCommandHandlerTest {
   private static final String PLAY_COMMAND_NAME = "PLAY";
+  private static final ObjectMapper JSON = new ObjectMapper();
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
   private final SessionContextService sessionContextService =
@@ -108,8 +115,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .active(123L, 22L, "1"),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .active(123L, 22L, "1")),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1054,13 +1062,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net
-                            .firedevops
-                            .firemud
-                            .gamesession
-                            .support
-                            .RuntimeMembershipTestFixtures
-                            .active(123L, 22L, "2")
+                        freshMembership(
+                                net.firedevops.firemud.gamesession.support
+                                    .RuntimeMembershipTestFixtures.active(123L, 22L, "2"))
                             .toBuilder()
                             .setGameplayAdmissionAllowed(false)
                             .build(),
@@ -1088,8 +1092,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
 
     PlayCommandHandlingResult result =
@@ -1125,8 +1130,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .inactive(123L, 22L, "3"),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .inactive(123L, 22L, "3")),
                         invocation.getArgument(0)));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
@@ -1366,8 +1372,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1393,8 +1400,9 @@ class PlayCommandHandlerTest {
         .thenAnswer(
             invocation -> {
               var response =
-                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.missing(
-                      123L, 22L);
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .missing(123L, 22L));
               var malformedLifecycle =
                   response.toBuilder()
                       .setMembershipLifecycleState(lifecycleState)
@@ -1428,10 +1436,12 @@ class PlayCommandHandlerTest {
             invocation -> {
               var response =
                   "INACTIVE".equals(lifecycleState)
-                      ? net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                          .inactive(123L, 22L, "3")
-                      : net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                          .missing(123L, 22L);
+                      ? freshMembership(
+                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                              .inactive(123L, 22L, "3"))
+                      : freshMembership(
+                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                              .missing(123L, 22L));
               return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                   .echoRequestId(
                       response.toBuilder().setGameplayAdmissionAllowed(true).build(),
@@ -1457,8 +1467,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .inactive(123L, 22L, "4"),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .inactive(123L, 22L, "4")),
                         invocation.getArgument(0)));
 
     PlayCommandHandlingResult result =
@@ -1492,8 +1503,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1529,8 +1541,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1566,8 +1579,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1632,8 +1646,9 @@ class PlayCommandHandlerTest {
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
-                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L),
+                        freshMembership(
+                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                                .missing(123L, 22L)),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1660,8 +1675,9 @@ class PlayCommandHandlerTest {
         entityManagementClient, sessionContextService, gameplayPresenceLifecycleService);
   }
 
-  @Test
-  void playWhenMembershipAuthorityTimestampIsMalformedFailsClosed() {
+  @ParameterizedTest
+  @ValueSource(strings = {"malformed", "future", "stale"})
+  void playWhenMembershipAuthorityTimestampIsUnsafeFailsClosed(String defect) {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1670,10 +1686,16 @@ class PlayCommandHandlerTest {
         .thenAnswer(
             invocation -> {
               var response =
-                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          123L, 22L, "1")
+                  freshMembership(
+                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                              .active(123L, 22L, "1"))
                       .toBuilder()
-                      .setEvaluatedAt("not-a-timestamp")
+                      .setEvaluatedAt(
+                          switch (defect) {
+                            case "future" -> Instant.now().plusSeconds(1L).toString();
+                            case "stale" -> Instant.now().minus(16L, ChronoUnit.SECONDS).toString();
+                            default -> "not-a-timestamp";
+                          })
                       .build();
               return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                   .echoRequestId(response, invocation.getArgument(0));
@@ -1692,6 +1714,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -1706,8 +1729,9 @@ class PlayCommandHandlerTest {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                       .echoRequestId(
-                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                              .active(123L, 22L, "1"),
+                          freshMembership(
+                              net.firedevops.firemud.gamesession.support
+                                  .RuntimeMembershipTestFixtures.active(123L, 22L, "1")),
                           invocation.getArgument(0));
               return response.toBuilder().setRequestId("wrong-request-id").build();
             });
@@ -1737,8 +1761,9 @@ class PlayCommandHandlerTest {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                       .echoRequestId(
-                          net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                              .active(123L, 22L, "1"),
+                          freshMembership(
+                              net.firedevops.firemud.gamesession.support
+                                  .RuntimeMembershipTestFixtures.active(123L, 22L, "1")),
                           invocation.getArgument(0));
               return response.toBuilder().clearMembershipAuthorityGeneration().build();
             });
@@ -1753,6 +1778,158 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
+  void playWhenMembershipCanonicalEventChangesWithValidDigestFailsClosed() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var response =
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .active(123L, 22L, "1"));
+              String changedCanonicalJson =
+                  resealWithMembershipVersion(
+                      response.getOutboxSourceEvidence(0).getCanonicalEventJson(), "2");
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(
+                      replaceCanonicalEvent(response, changedCanonicalJson, true),
+                      invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
+    Mockito.verify(sessionContextService)
+        .save(Mockito.argThat(saved -> saved.characterId() == 0L && saved.gameInstanceId() == 0L));
+  }
+
+  @Test
+  void playWhenMembershipCanonicalEventDigestDoesNotMatchFailsClosed() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var response =
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .active(123L, 22L, "1"));
+              String changedCanonicalJson =
+                  changeCanonicalEventWithoutResealing(
+                      response.getOutboxSourceEvidence(0).getCanonicalEventJson());
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(
+                      replaceCanonicalEvent(response, changedCanonicalJson, false),
+                      invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
+    Mockito.verify(sessionContextService)
+        .save(Mockito.argThat(saved -> saved.characterId() == 0L && saved.gameInstanceId() == 0L));
+  }
+
+  @Test
+  void playWhenMembershipCanonicalEventContentIsAbsentFailsClosed() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var response =
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .active(123L, 22L, "1"));
+              var source =
+                  response.getOutboxSourceEvidence(0).toBuilder().clearCanonicalEventJson();
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(
+                      response.toBuilder()
+                          .clearOutboxSourceEvidence()
+                          .addOutboxSourceEvidence(source)
+                          .build(),
+                      invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
+    Mockito.verify(sessionContextService)
+        .save(Mockito.argThat(saved -> saved.characterId() == 0L && saved.gameInstanceId() == 0L));
+  }
+
+  @Test
+  void playWhenMembershipResponseDiffersFromCanonicalEventFailsClosed() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var response =
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .active(123L, 22L, "1"));
+              var mismatchedResponse =
+                  response.toBuilder()
+                      .putMembershipVersion("00000000-0000-0000-0000-000000000022", "2")
+                      .setMembershipBaseline(
+                          response.getMembershipBaseline().toBuilder()
+                              .putMembershipVersion("00000000-0000-0000-0000-000000000022", "2"))
+                      .build();
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(mismatchedResponse, invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
+    Mockito.verify(sessionContextService)
+        .save(Mockito.argThat(saved -> saved.characterId() == 0L && saved.gameInstanceId() == 0L));
   }
 
   @ParameterizedTest
@@ -2027,6 +2204,53 @@ class PlayCommandHandlerTest {
         .filter(text -> text != null && !text.isBlank())
         .reduce((left, right) -> left + "\n" + right)
         .orElse(null);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse replaceCanonicalEvent(
+      GetTenantMembershipForRuntimeResponse response,
+      String canonicalJson,
+      boolean synchronizeSourceMetadata) {
+    var source =
+        response.getOutboxSourceEvidence(0).toBuilder().setCanonicalEventJson(canonicalJson);
+    if (synchronizeSourceMetadata) {
+      var event = MembershipAuthorityEventV1Codec.verify(canonicalJson);
+      source
+          .setOutboxStreamKey(event.outboxStreamKey())
+          .setOutboxSequence(event.outboxSequence())
+          .setEventId(event.eventId())
+          .setEventDigest(event.eventDigest());
+    }
+    return response.toBuilder().clearOutboxSourceEvidence().addOutboxSourceEvidence(source).build();
+  }
+
+  private static String resealWithMembershipVersion(
+      String canonicalJson, String membershipVersion) {
+    try {
+      ObjectNode event = (ObjectNode) JSON.readTree(canonicalJson);
+      ((ObjectNode) event.get("membershipVersion"))
+          .put("00000000-0000-0000-0000-000000000022", membershipVersion);
+      event.remove("eventDigest");
+      return MembershipAuthorityEventV1Codec.seal(
+              JSON.convertValue(event, new TypeReference<Map<String, Object>>() {}))
+          .canonicalJson();
+    } catch (IOException ex) {
+      throw new AssertionError("test event should be valid JSON", ex);
+    }
+  }
+
+  private static String changeCanonicalEventWithoutResealing(String canonicalJson) {
+    try {
+      ObjectNode event = (ObjectNode) JSON.readTree(canonicalJson);
+      event.put("requestId", "tampered-membership-request");
+      return event.toString();
+    } catch (IOException ex) {
+      throw new AssertionError("test event should be valid JSON", ex);
+    }
+  }
+
+  private static GetTenantMembershipForRuntimeResponse freshMembership(
+      GetTenantMembershipForRuntimeResponse response) {
+    return response.toBuilder().setEvaluatedAt(Instant.now().toString()).build();
   }
 
   private void assertIdentityUnavailableWithoutMutation(PlayCommandHandlingResult result) {

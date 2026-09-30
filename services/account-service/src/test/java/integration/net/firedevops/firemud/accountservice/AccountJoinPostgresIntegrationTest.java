@@ -882,7 +882,8 @@ class AccountJoinPostgresIntegrationTest {
                 authorityStreamKey(fixture),
                 snapshot.authorityEvent().outboxSequence(),
                 snapshot.authorityEvent().eventId(),
-                snapshot.authorityEvent().eventDigest()));
+                snapshot.authorityEvent().eventDigest(),
+                snapshot.authorityEvent().canonicalJson()));
   }
 
   @Test
@@ -1041,7 +1042,8 @@ class AccountJoinPostgresIntegrationTest {
                 authorityStreamKey(fixture),
                 "1",
                 positive.authorityEvent().eventId(),
-                positive.authorityEvent().eventDigest()));
+                positive.authorityEvent().eventDigest(),
+                positive.authorityEvent().canonicalJson()));
     assertThat(joinedPairRow)
         .containsEntry("membership_exists", true)
         .containsEntry("membership_version", 2L)
@@ -1099,7 +1101,11 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(active.outboxSourceEvidence())
         .containsExactly(
             new OutboxSourceEvidence(
-                authorityStreamKey(fixture), "1", event.eventId(), event.eventDigest()));
+                authorityStreamKey(fixture),
+                "1",
+                event.eventId(),
+                event.eventDigest(),
+                event.canonicalJson()));
     assertThat(active.roles()).contains("player");
     assertThat(active.issuanceFence()).matches("[1-9][0-9]*");
   }

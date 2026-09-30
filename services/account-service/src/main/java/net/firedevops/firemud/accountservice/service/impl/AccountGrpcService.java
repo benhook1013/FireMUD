@@ -500,7 +500,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               .setOutboxStreamKey(evidence.outboxStreamKey())
               .setOutboxSequence(evidence.outboxSequence())
               .setEventId(evidence.eventId())
-              .setEventDigest(evidence.eventDigest()));
+              .setEventDigest(evidence.eventDigest())
+              .setCanonicalEventJson(evidence.canonicalEventJson()));
     }
     return response.build();
   }
@@ -531,6 +532,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   private static void requireRuntimeMembershipEvidence(RuntimeMembershipSnapshotDto snapshot) {
+    snapshot.requireConsistentSourceEvent();
     String tenantUuid = snapshot.tenantUuid();
     Map<String, String> version = snapshot.membershipBaseline().membershipVersion();
     AuthorityTuple tuple = snapshot.authorityTuple();
