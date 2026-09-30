@@ -156,3 +156,11 @@ Entry format:
   - Context: #2911 removed unreachable legacy HMAC first-party success fixtures. A Redis value store named for first-party context also served normal gameplay presence; its mock/stubs were removed with the obsolete cases.
   - Observation: local Docker-backed integration cases skipped, so compilation and module checks did not expose the lost shared support. Exact-head CI ran the cases and all 16 WebSocket scenarios failed at a null value-operations collaborator, before the intended assertions. The fixture support was restored without restoring HMAC admission; executed correction proof remains required.
   - Expected pattern: trace every consumer of a shared fixture before removing it, use neutral names for shared support, and preserve an exact executed integration gate when cleanup affects skipped local tests. A green compiled/skipped gate is not proof that fixture dependencies were retained.
+
+- `2026-10-01`: Shared WebSocket fixture correction gained exact executed proof
+  - Outcome: exact #2911 head `b7766564d` in CI run `36769172597` executed all 16 required WebSocket integration cases with no skips or failures, including the named complete-signed-context no-mutation denial. This closes the executed correction-proof gap above, not the independent real first-party credential or live browser proof.
+
+- `2026-10-01`: Stack ancestors may not support the tail's test-proof CLI
+  - Context: Account counter-exhaustion tests belong to #2876, whose test-result inspector is diagnostic-only; the strict required-suite/case interface exists only in its later descendant.
+  - Observation: inspection before publication caught an unsupported strict CI step in the older ancestor. The uncommitted step was removed and the required execution gate placed in #2911, preserving source-test ownership without copying future tooling into the ancestor. Local PostgreSQL skips remain explicitly unproved.
+  - Expected pattern: verify a workflow command against that exact branch's tooling version, not the latest tail; gate composed runtime proof where the required tool exists, then keep owning-PR and composed-descendant proof distinct.

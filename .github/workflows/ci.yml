@@ -965,6 +965,17 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#directDeletionOfIssuanceOperationOrResponseEnvelopeIsRejected()' \
             account-service
 
+      - name: 🔎 Verify Account authority exhaustion rollback proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest#exhaustedAccountCountersRollbackTheWholeCallerTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest#exhaustedSequenceRejectsAppendWithoutChangingEventCheckpointOrCallerSentinel()' \
+            account-service
+
       - name: 🔎 Verify Game Session PostgreSQL proof case
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
