@@ -127,6 +127,56 @@ class SqliteStateStoreTest(unittest.TestCase):
             },
         )
 
+    def test_writer_five_fences_every_new_optional_stop_context_and_preserves_old_state(self) -> None:
+        for missing in ("stop_checkpoint", "merge_base", "patch_id", "stop_merge_base", "stop_patch_id"):
+            with self.subTest(missing=missing):
+                database = self.root / f"{missing}.sqlite3"
+                older = SqliteStateStore(database, writer_build=4)
+                initial = self.representative_state()
+                older.update(lambda _, initial=initial: initial)
+                current = SqliteStateStore(database)
+                self.assertEqual(current.load(), initial)
+                stop_values = {
+                    "pr": 2828,
+                    "channel": "cli",
+                    "head": "a" * 40,
+                    "parent_identity": "develop",
+                    "parent_head": "b" * 40,
+                    "merge_base": "c" * 40,
+                    "patch_id": "patch",
+                    "baseline_checkpoints": (),
+                    "reason": "no further requests",
+                    "stop_basis": "direct_human",
+                    "stop_checkpoint": "review-1",
+                    "stop_reviewed_head": "a" * 40,
+                    "stop_reviewed_patch_id": "patch",
+                    "stop_head": "a" * 40,
+                    "stop_parent_identity": "develop",
+                    "stop_parent_head": "b" * 40,
+                    "stop_merge_base": "c" * 40,
+                    "stop_patch_id": "patch",
+                    "stop_reason": "no further requests",
+                }
+                stop_values[missing] = None
+                if missing == "stop_checkpoint":
+                    stop_values.update(stop_reviewed_head=None, stop_reviewed_patch_id=None)
+                allocation = ReviewAllocation(**stop_values)
+                updated = current.update(
+                    lambda state, allocation=allocation: dataclasses.replace(
+                        state, allocations={**state.allocations, "2828:cli": allocation}
+                    )
+                )
+                self.assertEqual(current.load(), updated)
+                self.assertEqual(current.status()["min_writer_build"], 5)
+                with self.assertRaisesRegex(StateError, "requires writer build 5"):
+                    older.update(lambda state: state)
+                restored = self.root / f"restored-{missing}.sqlite3"
+                with sqlite3.connect(database) as source, sqlite3.connect(restored) as target:
+                    source.backup(target)
+                self.assertEqual(SqliteStateStore(restored).load(), updated)
+                with self.assertRaisesRegex(StateError, "requires writer build 5"):
+                    SqliteStateStore(restored, writer_build=4).load()
+
     def test_legacy_import_round_trips_all_validated_state_semantics(self) -> None:
         original = self.representative_state()
         source = self.root / "legacy.json"

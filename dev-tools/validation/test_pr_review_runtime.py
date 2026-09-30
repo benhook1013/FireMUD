@@ -332,10 +332,7 @@ class RuntimeTest(unittest.TestCase):
         checkpoint = {
             "databaseId": 12,
             "author": {"login": "maintainer"},
-            "body": (
-                f"Hosted: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
-                "<!-- firemud-hosted-review: 55 -->"
-            ),
+            "body": (f"Hosted: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n<!-- firemud-hosted-review: 55 -->"),
             "createdAt": checkpoint_at,
             "updatedAt": checkpoint_at,
         }
@@ -402,16 +399,18 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(
                     hosted,
                     "load_trigger_record",
-                    side_effect=lambda path, *_: selected_record
-                    if Path(path).name == "trigger-10.json"
-                    else records_by_path[Path(path).name],
+                    side_effect=lambda path, *_: (
+                        selected_record if Path(path).name == "trigger-10.json" else records_by_path[Path(path).name]
+                    ),
                 ),
                 patch.object(
                     hosted,
                     "trigger_state",
-                    side_effect=lambda _repo, _pr, _payload, selected, _path: selected_state
-                    if selected["trigger"]["id"] == 10
-                    else states_by_trigger[selected["trigger"]["id"]],
+                    side_effect=lambda _repo, _pr, _payload, selected, _path: (
+                        selected_state
+                        if selected["trigger"]["id"] == 10
+                        else states_by_trigger[selected["trigger"]["id"]]
+                    ),
                 ),
                 patch.object(observer, "history", return_value=[]),
             ):
@@ -658,10 +657,7 @@ class RuntimeTest(unittest.TestCase):
         self.assertIn("headRepository", run.call_args.args[0][-1])
 
     def test_historical_cli_capture_remains_attributable(self) -> None:
-        body = (
-            f"CLI: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
-            "<!-- firemud-cli-run: run.Legacy -->"
-        )
+        body = f"CLI: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files\n<!-- firemud-cli-run: run.Legacy -->"
         payload = {
             "data": {
                 "repository": {
@@ -727,8 +723,7 @@ class RuntimeTest(unittest.TestCase):
             self.assertIsNone(_review_activity(history, HEAD)["recent"][0]["routed"])
 
             payload["data"]["repository"]["pullRequest"]["comments"]["nodes"][0]["body"] = (
-                f"CLI: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files\n"
-                "<!-- firemud-cli-run: run.Legacy -->"
+                f"CLI: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files\n<!-- firemud-cli-run: run.Legacy -->"
             )
             (run / "decisions.tsv").write_text("1\trouted\tbelongs to another PR\n", encoding="utf-8")
             with (
@@ -791,7 +786,10 @@ class RuntimeTest(unittest.TestCase):
                 if args != expected:
                     raise AssertionError(f"unexpected GitHub command: {args!r}")
                 post_saw_started_attempt.append(
-                    any(item["channel"] == "hosted" and item["state"] == "started" for item in records.attempt_history(42))
+                    any(
+                        item["channel"] == "hosted" and item["state"] == "started"
+                        for item in records.attempt_history(42)
+                    )
                 )
                 output = comment
             return CompletedProcess(args, 0, json.dumps(output), "")
@@ -1117,7 +1115,10 @@ class RuntimeTest(unittest.TestCase):
     def test_hosted_request_rechecks_target_after_repository_sweep(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(
-            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE,
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
             repository="owner/repo",
         )
         manual = {
@@ -1145,7 +1146,8 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(LiveGitHub, "pull_request", return_value=snapshot),
                 patch.object(LiveGitHub, "branch_head", return_value=BASE),
                 patch.object(
-                    github, "fetch_pull_request",
+                    github,
+                    "fetch_pull_request",
                     side_effect=lambda *_: self._payload([manual] if sweep_finished else []),
                 ),
                 patch.object(HostedRunner, "_assert_no_other_active_reservations", side_effect=repository_sweep),
@@ -1445,7 +1447,9 @@ class RuntimeTest(unittest.TestCase):
             with (
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
-                patch.object(github, "fetch_pull_request", side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr]),
+                patch.object(
+                    github, "fetch_pull_request", side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr]
+                ),
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
                 patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
@@ -1501,7 +1505,7 @@ class RuntimeTest(unittest.TestCase):
             tempfile.TemporaryDirectory() as directory,
             patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
             patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
-                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
             self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
         ):
             HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
@@ -1563,9 +1567,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
                 patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
             ):
-                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
-                    42, common
-                )
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(42, common)
 
             self.assertTrue(record_path.exists())
             fetch_full.assert_called_once_with("owner/repo", 99)
@@ -1624,9 +1626,7 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
                 self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
             ):
-                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
-                    42, common
-                )
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(42, common)
         fetch_full.assert_called_once_with("owner/repo", 99)
         preceding.assert_called_once_with("owner/repo", 99, payload, 912, common)
 
@@ -1799,15 +1799,12 @@ class RuntimeTest(unittest.TestCase):
         payload = self._payload([manual, failed_incomplete], head="d" * 40)
         with tempfile.TemporaryDirectory() as directory:
             self.assertFalse(
-                HostedRunner._manual_terminal_without_head(
-                    "owner/repo", 99, payload, manual, Path(directory)
-                )
+                HostedRunner._manual_terminal_without_head("owner/repo", 99, payload, manual, Path(directory))
             )
 
     def test_hosted_repository_admission_lock_serializes_different_pr_posts(self) -> None:
         snapshots = {
-            number: PullRequestSnapshot(number, "OPEN", "develop", BASE, HEAD, "feature", 1)
-            for number in (42, 43)
+            number: PullRequestSnapshot(number, "OPEN", "develop", BASE, HEAD, "feature", 1) for number in (42, 43)
         }
         targets = {
             number: ReviewTarget(
@@ -1876,6 +1873,71 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(len(posts), 1)
             self.assertTrue(paths[42].exists())
             self.assertFalse(paths[43].exists())
+
+    def test_hosted_stop_at_admission_leaves_no_post_or_started_sqlite_attempt(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE, repository="owner/repo"
+        )
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            database = common / "records.sqlite3"
+            sqlite_store.SqliteStateStore(database).update(lambda _: ReviewState())
+            records = sqlite_review_records.SqliteReviewRecords(database)
+            records.bootstrap()
+            runner = HostedRunner("owner/repo", live, records=records)
+
+            def stopped(_reserve):
+                raise ControllerError("hosted discovery is stopped")
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(runner, "_authenticated_login", return_value="maintainer"),
+                patch("pr_review.runtime.subprocess.run", side_effect=AssertionError("stopped admission posted")),
+                self.assertRaisesRegex(ControllerError, "discovery is stopped"),
+            ):
+                runner(target, expect_pr=42, admit=stopped)
+            self.assertFalse(path.exists())
+            self.assertEqual(len(records.attempt_history(42)), 1)
+            self.assertEqual(records.attempt_history(42)[0]["state"], "failed")
+
+    def test_cli_activity_uses_existing_capture_and_excludes_terminal_files(self) -> None:
+        import fcntl
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            root = common / "firemud" / "pr-review"
+            capture = root / "runs" / "run.active"
+            capture.mkdir(parents=True)
+            metadata = {
+                "run_id": "run.active",
+                "pull_request": 42,
+                "candidate_sha": HEAD,
+                "parent_ref": "develop",
+                "parent_sha": BASE,
+                "merge_base": BASE,
+                "patch_identity": PATCH,
+            }
+            (capture / "metadata.json").write_text(json.dumps(metadata))
+            with (root / "cli.lock").open("a+") as handle:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                history = self._history(common, self._payload(), "cli")
+                self.assertEqual(
+                    [item["checkpoint"] for item in history if item.get("active_review")], ["active-cli:run.active"]
+                )
+                for terminal_file in ("error", "exit-status", "capture-complete"):
+                    with self.subTest(terminal_file=terminal_file):
+                        path = capture / terminal_file
+                        path.write_text("0")
+                        history = self._history(common, self._payload(), "cli")
+                        self.assertFalse(any(item.get("active_review") for item in history))
+                        path.unlink()
 
     def test_hosted_request_rejects_more_than_100_files_before_reserving_or_posting(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 101)
@@ -2298,10 +2360,7 @@ class RuntimeTest(unittest.TestCase):
         run_id = "run.ContextUnavailable"
         checkpoint = {
             "databaseId": 44,
-            "body": (
-                f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
-                f"<!-- firemud-cli-run: {run_id} -->"
-            ),
+            "body": (f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n<!-- firemud-cli-run: {run_id} -->"),
             "createdAt": "2026-09-23T00:01:00Z",
             "updatedAt": "2026-09-23T00:01:00Z",
         }
@@ -2348,10 +2407,7 @@ class RuntimeTest(unittest.TestCase):
     def test_history_exposes_valid_and_malformed_scope_markers_as_non_counting_events(self):
         valid = {
             "databaseId": 90,
-            "body": (
-                "**Review scope changed:** reused PR scope was reset\n"
-                "<!-- firemud-review-scope-change -->"
-            ),
+            "body": ("**Review scope changed:** reused PR scope was reset\n<!-- firemud-review-scope-change -->"),
             "createdAt": "2026-09-23T00:00:00Z",
             "updatedAt": "2026-09-24T00:00:00Z",
             "author": {"login": "maintainer"},
@@ -2393,10 +2449,7 @@ class RuntimeTest(unittest.TestCase):
         }
         coderabbit_marker = {
             "databaseId": 96,
-            "body": (
-                "**Review scope changed:** bot-authored marker is ignored\n"
-                "<!-- firemud-review-scope-change -->"
-            ),
+            "body": ("**Review scope changed:** bot-authored marker is ignored\n<!-- firemud-review-scope-change -->"),
             "createdAt": "2026-09-29T00:00:00Z",
             "updatedAt": "2026-09-29T00:00:00Z",
             "author": {"login": "coderabbitai[bot]"},
@@ -2563,16 +2616,19 @@ class RuntimeTest(unittest.TestCase):
             audit = observer.review_stop_audit(42, anchor)
 
         self.assertEqual(audit["active_reservations"], ["review active"])
-        self.assertEqual(audit["terminal_rate_limits"], [
-            {
-                "trigger_id": 10,
-                "response_id": 11,
-                "captured_head": old_head,
-                "cooldown_until": cooldown_until,
-                "terminal": True,
-                "attributable": True,
-            }
-        ])
+        self.assertEqual(
+            audit["terminal_rate_limits"],
+            [
+                {
+                    "trigger_id": 10,
+                    "response_id": 11,
+                    "captured_head": old_head,
+                    "cooldown_until": cooldown_until,
+                    "terminal": True,
+                    "attributable": True,
+                }
+            ],
+        )
         self.assertIn("active Hosted reservation: review active", audit["blockers"])
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
@@ -2681,9 +2737,7 @@ class RuntimeTest(unittest.TestCase):
                 common = Path(directory)
                 record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
                 record_path.parent.mkdir(parents=True)
-                record_path.write_text(
-                    json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8"
-                )
+                record_path.write_text(json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8")
                 return self._history(common, self._payload(comments, reviews, threads))
 
         valid = history_for([trigger, summary, reply, checkpoint])
@@ -2720,7 +2774,9 @@ class RuntimeTest(unittest.TestCase):
         provider_valid = history_for([trigger, provider_summary, edited_reply, edited_duration_checkpoint])
         self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_valid))
         provider_old_duration = history_for([trigger, provider_summary, edited_reply, checkpoint])
-        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_old_duration))
+        self.assertFalse(
+            any(item.get("checkpoint") == "13" and item.get("completed") for item in provider_old_duration)
+        )
 
         incomplete_provider_summary = {
             **provider_summary,
@@ -2773,14 +2829,18 @@ class RuntimeTest(unittest.TestCase):
 
         mismatched_summary = {**summary, "body": summary["body"].replace(HEAD, "d" * 40)}
         missing_summary = [trigger, reply, checkpoint]
-        self.assertTrue(any(
-            item.get("checkpoint") == "13" and item.get("completed")
-            for item in history_for(missing_summary)
-        ))
+        self.assertTrue(
+            any(item.get("checkpoint") == "13" and item.get("completed") for item in history_for(missing_summary))
+        )
         for invalid_comments in (
             [trigger, mismatched_summary, reply, checkpoint],
             [trigger, summary, {**reply, "author": {"login": "other-user"}}, checkpoint],
-            [trigger, summary, {**reply, "body": "Review rate limited; next reviews available in 30 minutes"}, checkpoint],
+            [
+                trigger,
+                summary,
+                {**reply, "body": "Review rate limited; next reviews available in 30 minutes"},
+                checkpoint,
+            ],
         ):
             with self.subTest(comments=invalid_comments):
                 rejected = history_for(invalid_comments)
@@ -2984,9 +3044,7 @@ class RuntimeTest(unittest.TestCase):
             archived = trigger_dir / "trigger-5858100193.json"
             archived.write_text(json.dumps(first_record), encoding="utf-8")
             second_record = self._trigger_record(head=second_head, created=second_at)
-            second_record["trigger"].update(
-                {"id": 5860038456, "url": "https://example.test/comments/5860038456"}
-            )
+            second_record["trigger"].update({"id": 5860038456, "url": "https://example.test/comments/5860038456"})
             hosted.default_trigger_record_path("owner/repo", 42, common).write_text(
                 json.dumps(second_record), encoding="utf-8"
             )
@@ -3044,9 +3102,7 @@ class RuntimeTest(unittest.TestCase):
             common = Path(directory)
             record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
             record_path.parent.mkdir(parents=True)
-            record_path.write_text(
-                json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8"
-            )
+            record_path.write_text(json.dumps(self._trigger_record(created=trigger_at)), encoding="utf-8")
             history = self._history(common, self._payload([trigger, summary, reply]))
 
         held = [item for item in history if item.get("checkpoint") == "trigger-uncheckpointed:11"]
@@ -3386,7 +3442,9 @@ class RuntimeTest(unittest.TestCase):
         self.assertIn("completed Hosted response has no checkpoint or prior audit", rejected["unmatched_responses"])
 
         history_alone = run_audit((), [expected])
-        self.assertIn("completed Hosted response has no checkpoint or prior audit", history_alone["unmatched_responses"])
+        self.assertIn(
+            "completed Hosted response has no checkpoint or prior audit", history_alone["unmatched_responses"]
+        )
 
     def test_unrecorded_completed_hosted_response_requires_one_checkpoint_by_review_identity(self) -> None:
         trigger = {
@@ -3408,10 +3466,7 @@ class RuntimeTest(unittest.TestCase):
         checkpoint = {
             "databaseId": 72,
             "author": {"login": "maintainer"},
-            "body": (
-                f"Hosted: 1 found / 1 accepted · `{HEAD}` · 1 files\n"
-                "<!-- firemud-hosted-review: 71 -->"
-            ),
+            "body": (f"Hosted: 1 found / 1 accepted · `{HEAD}` · 1 files\n<!-- firemud-hosted-review: 71 -->"),
             "createdAt": "2026-09-24T00:02:00Z",
             "updatedAt": "2026-09-24T00:02:00Z",
         }
@@ -3776,7 +3831,10 @@ class RuntimeTest(unittest.TestCase):
             records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
             attempt_id = "prepost-retry-attempt"
             sqlite_hosted_capture.start_hosted_attempt(
-                records, attempt_id=attempt_id, source_pr=42, candidate_sha=HEAD,
+                records,
+                attempt_id=attempt_id,
+                source_pr=42,
+                candidate_sha=HEAD,
                 started_at="2026-09-23T00:00:00Z",
             )
             path = hosted.default_trigger_record_path("owner/repo", 42, common)
@@ -3816,7 +3874,10 @@ class RuntimeTest(unittest.TestCase):
             records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
             attempt_id = "prepost-invalid-audit-head"
             sqlite_hosted_capture.start_hosted_attempt(
-                records, attempt_id=attempt_id, source_pr=42, candidate_sha=HEAD,
+                records,
+                attempt_id=attempt_id,
+                source_pr=42,
+                candidate_sha=HEAD,
                 started_at="2026-09-23T00:00:00Z",
             )
             path = hosted.default_trigger_record_path("owner/repo", 42, common)
@@ -4093,10 +4154,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_duplicate_public_checkpoints_for_one_cli_capture_count_once(self) -> None:
         run_id = "run.Duplicate"
-        body = (
-            f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
-            f"<!-- firemud-cli-run: {run_id} -->"
-        )
+        body = f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n<!-- firemud-cli-run: {run_id} -->"
         comments = [
             {
                 "databaseId": comment_id,
@@ -4137,9 +4195,7 @@ class RuntimeTest(unittest.TestCase):
             (run / "stdout").write_text(
                 json.dumps({"type": "finding", "message": "one"})
                 + "\n"
-                + json.dumps(
-                    {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
-                )
+                + json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]})
                 + "\n",
                 encoding="utf-8",
             )
@@ -4251,8 +4307,7 @@ class RuntimeTest(unittest.TestCase):
             cli_history = self._history(Path(directory), payload, "cli", changed_files=100)
         self.assertTrue(
             any(
-                item.get("held") and item.get("checkpoint", "").startswith("review-threads:")
-                for item in hosted_history
+                item.get("held") and item.get("checkpoint", "").startswith("review-threads:") for item in hosted_history
             )
         )
         self.assertTrue(
@@ -4318,9 +4373,7 @@ class RuntimeTest(unittest.TestCase):
             current_record = self._trigger_record(HEAD)
             self._bind_trigger(Path(directory), current_payload, current_record)
             for changed_files in (100, 101):
-                cli_history = self._history(
-                    Path(directory), current_payload, "cli", changed_files=changed_files
-                )
+                cli_history = self._history(Path(directory), current_payload, "cli", changed_files=changed_files)
                 self.assertFalse(any(item.get("over_ceiling") for item in cli_history))
             within_ceiling_hosted = self._history(Path(directory), current_payload, "hosted", changed_files=100)
             self.assertFalse(any(item.get("over_ceiling") for item in within_ceiling_hosted))
@@ -4364,14 +4417,10 @@ class RuntimeTest(unittest.TestCase):
             provider_payload = self._payload([provider_skip])
             self._bind_trigger(Path(directory), provider_payload, self._trigger_record())
             hosted_history = self._history(Path(directory), provider_payload, "hosted", changed_files=121)
-            cli_history = self._history(
-                Path(directory), provider_payload, "cli", changed_files=121
-            )
+            cli_history = self._history(Path(directory), provider_payload, "cli", changed_files=121)
             docstring_payload = self._payload([docstring_skip])
             self._bind_trigger(Path(directory), docstring_payload, self._trigger_record())
-            docstring_history = self._history(
-                Path(directory), docstring_payload, "hosted", changed_files=121
-            )
+            docstring_history = self._history(Path(directory), docstring_payload, "hosted", changed_files=121)
 
         self.assertTrue(any(item.get("over_ceiling") for item in hosted_history))
         self.assertFalse(any(item.get("over_ceiling") for item in cli_history))

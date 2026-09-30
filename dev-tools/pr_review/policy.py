@@ -172,10 +172,7 @@ def _same_head_provisional_barrier(history: Sequence[Evidence], reviews: Sequenc
         ),
         default=-1,
     )
-    return (
-        last_provisional > last_review
-        and history[last_provisional].head == reviews[-1].head
-    )
+    return last_provisional > last_review and history[last_provisional].head == reviews[-1].head
 
 
 def taper_satisfied(
@@ -219,11 +216,7 @@ def taper_satisfied(
             continue
         if not _valid_complete(item, channel, require_corrected_state=require_corrected_state):
             continue
-        if (
-            allow_uncorrected_state
-            and item.corrected_state is not True
-            and item.patch_id != retained_patch_id
-        ):
+        if allow_uncorrected_state and item.corrected_state is not True and item.patch_id != retained_patch_id:
             # A retain judgment only makes uncorrected evidence eligible on
             # its exact patch. A mismatched row is ignored, not a streak break.
             continue
@@ -260,9 +253,7 @@ def fresh_taper_history(
         (
             judgment
             for judgment in reversed(state.judgments)
-            if judgment.pr == pr
-            and judgment.channel == selected.value
-            and judgment.decision == "reopen"
+            if judgment.pr == pr and judgment.channel == selected.value and judgment.decision == "reopen"
         ),
         None,
     )
@@ -431,9 +422,7 @@ def completion_status(
         # must not manufacture corrected evidence for unrelated histories.
         retained_equivalent_history = latest_judgment.decision == "retain"
     effective_taper_history = (
-        taper_history
-        if taper_history is not None
-        else fresh_taper_history(state, selected, history)
+        taper_history if taper_history is not None else fresh_taper_history(state, selected, history)
     )
     required = required_taper(state, selected, effective_taper_history)
     if retained_equivalent_history:
@@ -523,9 +512,6 @@ def select_review_target(
     for pr in live_prs:
         if pr in handed_off:
             continue
-        if pr in human_stopped:
-            encountered_human_stop = True
-            continue
         if pr in active_reviews:
             return ChannelDecision(
                 selected,
@@ -534,6 +520,9 @@ def select_review_target(
                 f"{pr} has an active review or reservation in a review channel",
                 taper_complete=completed_taper(pr),
             )
+        if pr in human_stopped:
+            encountered_human_stop = True
+            continue
         if pr in allocation_blocks:
             return ChannelDecision(
                 selected,
@@ -552,7 +541,9 @@ def select_review_target(
             )
         if pr in exhausted:
             return ChannelDecision(
-                selected, pr, ReviewStatus.ALLOCATION_EXHAUSTED,
+                selected,
+                pr,
+                ReviewStatus.ALLOCATION_EXHAUSTED,
                 f"{pr} has consumed its {selected.value} allocation; an explicit stop decision is required",
                 taper_complete=completed_taper(pr),
             )
@@ -635,13 +626,19 @@ def select_review_target(
             completed_taper_seen = True
             continue
         reconciliation_status = reconciliation_by_pr.get(pr)
-        if taper_complete and reconciliation_status in {
-            ReconciliationStatus.PATCH_CHANGED,
-            ReconciliationStatus.EQUIVALENT_HISTORY,
-        } and latest_judgment is None and not (
-            selected == Channel.CLI
-            and latest.current_candidate_descendant_proven
-            and reconciliation_status == ReconciliationStatus.PATCH_CHANGED
+        if (
+            taper_complete
+            and reconciliation_status
+            in {
+                ReconciliationStatus.PATCH_CHANGED,
+                ReconciliationStatus.EQUIVALENT_HISTORY,
+            }
+            and latest_judgment is None
+            and not (
+                selected == Channel.CLI
+                and latest.current_candidate_descendant_proven
+                and reconciliation_status == ReconciliationStatus.PATCH_CHANGED
+            )
         ):
             return ChannelDecision(
                 selected,
