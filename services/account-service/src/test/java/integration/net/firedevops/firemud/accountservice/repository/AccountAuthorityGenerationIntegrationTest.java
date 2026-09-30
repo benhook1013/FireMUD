@@ -290,7 +290,7 @@ class AccountAuthorityGenerationIntegrationTest {
       String caseName,
       int sentinelId,
       OverflowCounter overflowCounter) {
-    UUID accountId = insertAccount(setupDsl, "authority-overflow-" + UUID.randomUUID());
+    UUID accountId = insertAccount(setupDsl, "auth-overflow-" + UUID.randomUUID());
     AuthorityScope scope = AuthorityScope.account(accountId);
     inTransaction(transaction, () -> generationRepository.initialize(scope));
     seedOverflowCounter(setupDsl, accountId, overflowCounter);
