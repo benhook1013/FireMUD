@@ -1074,6 +1074,36 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   }
 
   @Test
+  void retentionAndParentCleanupSerializeParentBeforeChildWithoutDeadlock() throws Exception {
+    ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
+    handoffRepository.save(retainedHandoff(parent.getId()));
+    Instant cutoff = Instant.parse("2021-01-01T00:00:00Z");
+    Instant now = Instant.parse("2021-01-02T00:00:00Z");
+
+    DSLContext parentCleanupDsl = newDsl("automation-retention-parent-cleanup-race-");
+    DSLContext handoffCleanupDsl = newDsl("automation-retention-handoff-cleanup-race-");
+    Future<Long> parentCleanup =
+        executor.submit(
+            () ->
+                parentCleanupDsl.transactionResult(
+                    configuration ->
+                        new ScriptWorkItemRepository(configuration.dsl())
+                            .deleteByStatusAndUpdatedAtBefore("HANDED_OFF", now)));
+    Future<Long> handoffCleanup =
+        executor.submit(
+            () ->
+                handoffCleanupDsl.transactionResult(
+                    configuration ->
+                        new ScriptHandoffEventRepository(configuration.dsl())
+                            .deleteExpiredRetentionEvidence(cutoff, now)));
+
+    assertThat(get(parentCleanup)).isBetween(0L, 1L);
+    assertThat(get(handoffCleanup)).isBetween(0L, 1L);
+    assertThat(dsl.fetchCount(SCRIPT_WORK_ITEMS)).isZero();
+    assertThat(dsl.fetchCount(SCRIPT_HANDOFF_EVENTS)).isZero();
+  }
+
+  @Test
   void retentionRechecksSiblingHoldCommittedAfterCandidateSnapshot() throws Exception {
     ScriptWorkItem parent = workItemRepository.save(retainedWorkItem());
     ScriptHandoffEvent candidate = retainedHandoff(parent.getId());

@@ -2,6 +2,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.sql.SQLException;
 import java.util.List;
@@ -2111,7 +2112,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2120,12 +2121,10 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setControlPlaneRequestId("request-replay")
             .setActorPrincipal("  ")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().hasError()).isTrue();
-    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo("actorPrincipal is required for replay");
+    assertReplayTransportError(
+        replayObserver, Status.Code.INVALID_ARGUMENT, "actorPrincipal is required for replay");
     Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
   }
 
@@ -2139,7 +2138,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2148,12 +2147,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setControlPlaneRequestId("request-replay")
             .setActorPrincipal("another-account")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().hasError()).isTrue();
-    assertThat(ref.get().getError().getCode()).isEqualTo("PERMISSION_DENIED");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo("actorPrincipal must match the authenticated account");
+    assertReplayTransportError(
+        replayObserver,
+        Status.Code.PERMISSION_DENIED,
+        "actorPrincipal must match the authenticated account");
     Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
   }
 
@@ -2172,7 +2171,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2182,9 +2181,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setActorPrincipal("1")
             .setReason("retry")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().getError().getCode()).isEqualTo(expectedErrorCode);
+    assertReplayTransportError(
+        replayObserver,
+        Status.Code.valueOf(expectedErrorCode),
+        "UNAVAILABLE".equals(expectedErrorCode)
+            ? "Replay service temporarily unavailable; retry with the same control_plane_request_id"
+            : "Replay failed due to an internal error");
   }
 
   @Test
@@ -2197,7 +2201,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2206,12 +2210,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setControlPlaneRequestId("request-replay")
             .setActorPrincipal("1")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().hasError()).isTrue();
-    assertThat(ref.get().getError().getCode()).isEqualTo("PERMISSION_DENIED");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo("authenticated account is required for replay");
+    assertReplayTransportError(
+        replayObserver,
+        Status.Code.PERMISSION_DENIED,
+        "authenticated account is required for replay");
     Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
   }
 
@@ -2229,7 +2233,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2239,12 +2243,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setActorPrincipal("1")
             .setReason("retry")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().hasError()).isTrue();
-    assertThat(ref.get().getError().getCode()).isEqualTo("FAILED_PRECONDITION");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo("control_plane_request_id already records a different replay request");
+    assertReplayTransportError(
+        replayObserver,
+        Status.Code.FAILED_PRECONDITION,
+        "control_plane_request_id already records a different replay request");
     Mockito.verify(workItemService).replayDeadLetters(Mockito.any());
   }
 
@@ -2260,7 +2264,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     ReplayDeadLetteredWorkItemsRequest request =
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2270,15 +2274,14 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setActorPrincipal("1")
             .setReason("retry")
             .build();
-    AtomicBoolean completed = new AtomicBoolean();
-    service.replayDeadLetteredWorkItems(request, observer(ref, completed));
+    service.replayDeadLetteredWorkItems(request, replayObserver);
 
-    assertThat(completed).isTrue();
-    assertThat(ref.get().getError().getCode()).isEqualTo("UNAVAILABLE");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo(
-            "Replay service temporarily unavailable; retry with the same control_plane_request_id");
-    assertThat(ref.get().getError().getMessage()).doesNotContain("database secret");
+    assertReplayTransportError(
+        replayObserver,
+        Status.Code.UNAVAILABLE,
+        "Replay service temporarily unavailable; retry with the same control_plane_request_id");
+    assertThat(Status.fromThrowable(replayObserver.error).getDescription())
+        .doesNotContain("database secret");
     Mockito.verify(workItemService)
         .replayDeadLetters(
             Mockito.argThat(command -> "request-replay".equals(command.controlPlaneRequestId())));
@@ -2298,7 +2301,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2308,11 +2311,10 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setActorPrincipal("1")
             .setReason("retry")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().getError().getCode()).isEqualTo("INTERNAL");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo("Replay failed due to an internal error");
+    assertReplayTransportError(
+        replayObserver, Status.Code.INTERNAL, "Replay failed due to an internal error");
   }
 
   @Test
@@ -2327,7 +2329,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2337,9 +2339,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setActorPrincipal("1")
             .setReason("retry")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().getError().getCode()).isEqualTo("UNAVAILABLE");
+    assertReplayTransportError(
+        replayObserver,
+        Status.Code.UNAVAILABLE,
+        "Replay service temporarily unavailable; retry with the same control_plane_request_id");
   }
 
   @Test
@@ -2354,7 +2359,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2364,12 +2369,12 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setActorPrincipal("1")
             .setReason("retry")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().getError().getCode()).isEqualTo("INTERNAL");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo("Replay failed due to an internal error");
-    assertThat(ref.get().getError().getMessage()).doesNotContain("sensitive implementation detail");
+    assertReplayTransportError(
+        replayObserver, Status.Code.INTERNAL, "Replay failed due to an internal error");
+    assertThat(Status.fromThrowable(replayObserver.error).getDescription())
+        .doesNotContain("sensitive implementation detail");
   }
 
   @Test
@@ -2384,7 +2389,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             Mockito.mock(PluginRuntimeStateService.class),
             admissionStateService(),
             Mockito.mock(ScriptPatchPinProjectionService.class));
-    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+    ReplayObserver replayObserver = new ReplayObserver();
 
     service.replayDeadLetteredWorkItems(
         ReplayDeadLetteredWorkItemsRequest.newBuilder()
@@ -2394,12 +2399,11 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
             .setActorPrincipal("1")
             .setReason("retry")
             .build(),
-        observer(ref));
+        replayObserver);
 
-    assertThat(ref.get().getError().getCode()).isEqualTo("INTERNAL");
-    assertThat(ref.get().getError().getMessage())
-        .isEqualTo("Replay failed due to an internal error");
-    assertThat(ref.get().getError().getMessage())
+    assertReplayTransportError(
+        replayObserver, Status.Code.INTERNAL, "Replay failed due to an internal error");
+    assertThat(Status.fromThrowable(replayObserver.error).getDescription())
         .doesNotContain("permanent transaction configuration");
   }
 
@@ -2773,6 +2777,37 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         completed.set(true);
       }
     };
+  }
+
+  private static void assertReplayTransportError(
+      ReplayObserver observer, Status.Code expectedCode, String expectedMessage) {
+    assertThat(observer.response).isNull();
+    assertThat(observer.error).isNotNull();
+    assertThat(Status.fromThrowable(observer.error).getCode()).isEqualTo(expectedCode);
+    assertThat(Status.fromThrowable(observer.error).getDescription()).isEqualTo(expectedMessage);
+    assertThat(observer.completed).isFalse();
+  }
+
+  private static final class ReplayObserver
+      implements StreamObserver<ReplayDeadLetteredWorkItemsResponse> {
+    private ReplayDeadLetteredWorkItemsResponse response;
+    private Throwable error;
+    private boolean completed;
+
+    @Override
+    public void onNext(ReplayDeadLetteredWorkItemsResponse value) {
+      response = value;
+    }
+
+    @Override
+    public void onError(Throwable t) {
+      error = t;
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
   }
 
   private static AdmissionPointerControlPlaneEntry currentPointer(

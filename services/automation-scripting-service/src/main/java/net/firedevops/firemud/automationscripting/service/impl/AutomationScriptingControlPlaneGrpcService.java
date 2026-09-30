@@ -1,6 +1,7 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import net.firedevops.firemud.automationscripting.v1.AutomationScriptingControlPlaneServiceGrpc;
@@ -53,6 +54,7 @@ import net.firedevops.firemud.automationscripting.v1.SetPluginActiveVersionRespo
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -430,28 +432,56 @@ public final class AutomationScriptingControlPlaneGrpcService
       requireReplayActor(request);
       response = patchControlPlaneService.replayDeadLetteredWorkItems(request);
     } catch (ScriptWorkItemServiceImpl.ReplayIdempotencyConflictException ex) {
-      response =
-          ReplayDeadLetteredWorkItemsResponse.newBuilder()
-              .setError(AutomationControlPlaneSupport.failedPrecondition(ex.getMessage()))
-              .build();
+      sendReplayTransportError(
+          responseObserver,
+          AutomationControlPlaneSupport.failedPrecondition(replayExceptionMessage(ex)));
+      return;
     } catch (IllegalArgumentException ex) {
-      response =
-          ReplayDeadLetteredWorkItemsResponse.newBuilder()
-              .setError(AutomationControlPlaneSupport.invalidArgument(ex.getMessage()))
-              .build();
+      sendReplayTransportError(
+          responseObserver,
+          AutomationControlPlaneSupport.invalidArgument(replayExceptionMessage(ex)));
+      return;
     } catch (AdminAuthorizationException ex) {
-      response =
-          ReplayDeadLetteredWorkItemsResponse.newBuilder()
-              .setError(AutomationControlPlaneSupport.authorizationError(ex))
-              .build();
+      sendReplayTransportError(
+          responseObserver,
+          ErrorDetail.newBuilder()
+              .setCode("PERMISSION_DENIED")
+              .setMessage(replayExceptionMessage(ex))
+              .build());
+      return;
     } catch (RuntimeException ex) {
-      response =
-          ReplayDeadLetteredWorkItemsResponse.newBuilder()
-              .setError(AutomationControlPlaneSupport.replayRuntimeError(ex))
-              .build();
+      sendReplayTransportError(
+          responseObserver, AutomationControlPlaneSupport.replayRuntimeError(ex));
+      return;
     }
     responseObserver.onNext(response);
     responseObserver.onCompleted();
+  }
+
+  private static void sendReplayTransportError(
+      StreamObserver<ReplayDeadLetteredWorkItemsResponse> responseObserver, ErrorDetail error) {
+    Status.Code statusCode =
+        switch (error.getCode()) {
+          case "INVALID_ARGUMENT" -> Status.Code.INVALID_ARGUMENT;
+          case "PERMISSION_DENIED" -> Status.Code.PERMISSION_DENIED;
+          case "FAILED_PRECONDITION" -> Status.Code.FAILED_PRECONDITION;
+          case "UNAVAILABLE" -> Status.Code.UNAVAILABLE;
+          case "INTERNAL" -> Status.Code.INTERNAL;
+          default -> Status.Code.INTERNAL;
+        };
+    String message = error.getMessage();
+    if (message == null || message.isBlank()) {
+      message = "Replay request failed";
+    } else if (message.length() > 256) {
+      message = message.substring(0, 256);
+    }
+    responseObserver.onError(
+        Status.fromCode(statusCode).withDescription(message).asRuntimeException());
+  }
+
+  private static String replayExceptionMessage(RuntimeException failure) {
+    String message = failure.getMessage();
+    return message == null || message.isBlank() ? "Replay request failed" : message;
   }
 
   @Override

@@ -73,18 +73,7 @@ public class ScriptHandoffEventRepository {
       return 0L;
     }
 
-    // Lock all existing siblings before locking their parents. This mirrors parent cleanup's
-    // child-first order and fences a concurrent hold or sibling disposition update.
-    dsl.select(SCRIPT_HANDOFF_EVENTS.ID)
-        .from(SCRIPT_HANDOFF_EVENTS)
-        .where(selectedHandoffBundleCondition(selected))
-        .orderBy(
-            SCRIPT_HANDOFF_EVENTS.TENANT_ID.asc(),
-            SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.asc(),
-            SCRIPT_HANDOFF_EVENTS.ID.asc())
-        .forUpdate()
-        .fetch();
-
+    // Lock existing parents first, matching scheduled parent cleanup's parent-before-child order.
     // A parent row is the FK lock that fences new siblings and replay receipts. Missing parents
     // are deliberately excluded below so an orphaned child cannot be treated as disposable.
     List<RetentionBundle> existingParents =
@@ -100,6 +89,18 @@ public class ScriptHandoffEventRepository {
     if (existingParents.isEmpty()) {
       return 0L;
     }
+
+    // Lock every existing sibling in the selected bundle after its parent. This retains a
+    // deterministic bundle order while fencing concurrent hold or sibling disposition updates.
+    dsl.select(SCRIPT_HANDOFF_EVENTS.ID)
+        .from(SCRIPT_HANDOFF_EVENTS)
+        .where(selectedHandoffBundleCondition(selected))
+        .orderBy(
+            SCRIPT_HANDOFF_EVENTS.TENANT_ID.asc(),
+            SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.asc(),
+            SCRIPT_HANDOFF_EVENTS.ID.asc())
+        .forUpdate()
+        .fetch();
 
     // Re-evaluate every selected child only after sibling and parent locks are held. The fresh
     // statement snapshot sees a sibling hold, replay receipt, or parent status that committed

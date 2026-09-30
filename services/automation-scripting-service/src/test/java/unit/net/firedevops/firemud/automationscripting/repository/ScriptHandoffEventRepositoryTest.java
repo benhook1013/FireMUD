@@ -656,10 +656,10 @@ class ScriptHandoffEventRepositoryTest {
         .contains("retention_candidates", "order by", "event_id", "fetch next ? rows only")
         .doesNotContain("for update");
     assertThat(statements.get(1))
-        .contains("script_handoff_events", "tenant_id", "work_item_id", "for update")
+        .contains("script_work_items", "tenant_id", "id", "for update")
         .doesNotContain("retention_candidates");
     assertThat(statements.get(2))
-        .contains("script_work_items", "tenant_id", "id", "for update")
+        .contains("script_handoff_events", "tenant_id", "work_item_id", "for update")
         .doesNotContain("retention_candidates");
     assertThat(statements.get(3))
         .contains(
