@@ -55,6 +55,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolver;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
@@ -91,6 +92,8 @@ class SessionResumptionFlowTest {
   private final GameplayWorldCatalog worldCatalog =
       TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+  private final JwtUtil gameplayJwtUtil =
+      new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final LookTextRenderer lookTextRenderer = Mockito.mock(LookTextRenderer.class);
   private final GameLogicProperties gameLogicProperties = new GameLogicProperties();
@@ -123,7 +126,7 @@ class SessionResumptionFlowTest {
   private final CommunicationCommandHandler communicationHandler =
       Mockito.mock(CommunicationCommandHandler.class);
   private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+      new FakeGameplayPresenceService(gameplayJwtUtil);
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
@@ -370,6 +373,78 @@ class SessionResumptionFlowTest {
   }
 
   @Test
+  void reconnectDoesNotRestoreElevationFromPriorTenantRoleClaims() {
+    String tenantAdminJwt =
+        gameplayJwtUtil.generateToken(
+            "77",
+            Map.of(
+                "accountId",
+                "77",
+                "scopedRoles",
+                Map.of("22", List.of("tenantAdmin", "moderator"))));
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(tenantAdminJwt)
+                .setAccountId("77")
+                .build());
+
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", LOOK_PAYLOAD, false).commandResult().accepted());
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
+
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
+
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
+    assertEquals(1.0, meterRegistry.counter("gamesession.session.resume").count());
+  }
+
+  @Test
+  void unavailableAccountAdmissionEvidenceDoesNotElevateReconnectPresence() {
+    String tenantAdminJwt =
+        gameplayJwtUtil.generateToken(
+            "77", Map.of("accountId", "77", "scopedRoles", Map.of("22", List.of("tenantAdmin"))));
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(tenantAdminJwt)
+                .setAccountId("77")
+                .build());
+
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+    assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
+
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("FAILED_PRECONDITION")
+                        .setMessage("runtime authority unavailable")
+                        .build())
+                .build());
+    assertTrue(interpreter.interpret("1", LOGIN_PAYLOAD, false).commandResult().accepted());
+
+    TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
+
+    assertFalse(deniedPlay.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", deniedPlay.commandResult().errorCode());
+    assertTrue(
+        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+            .allMatch(presence -> presence.role() == GameplayPresenceRole.PLAYER));
+  }
+
+  @Test
   void secondConnectionTakesOverAndFirstConnectionIsUnauthenticated() {
     TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(firstLogin.commandResult().accepted());
@@ -446,10 +521,23 @@ class SessionResumptionFlowTest {
 
   @Test
   void deniedReconnectPlayClearsStaleGameplayBinding() {
+    String tenantAdminJwt =
+        gameplayJwtUtil.generateToken(
+            "77", Map.of("accountId", "77", "scopedRoles", Map.of("22", List.of("tenantAdmin"))));
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            AuthenticateResponse.newBuilder()
+                .setAuthToken(tenantAdminJwt)
+                .setAccountId("77")
+                .build());
+
     TextCommandInterpretationResult firstLogin = interpreter.interpret("1", LOGIN_PAYLOAD, false);
     assertTrue(firstLogin.commandResult().accepted());
     TextCommandInterpretationResult firstPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertTrue(firstPlay.commandResult().accepted());
+    assertEquals(
+        GameplayPresenceRole.PLAYER,
+        gameplayPresenceService.findConnectedBySessionId(1L).orElseThrow().role());
     TextCommandInterpretationResult firstLook = interpreter.interpret("1", LOOK_PAYLOAD, false);
     assertTrue(firstLook.commandResult().accepted());
 
@@ -470,6 +558,9 @@ class SessionResumptionFlowTest {
     TextCommandInterpretationResult deniedPlay = interpreter.interpret("1", PLAY_PAYLOAD, false);
     assertFalse(deniedPlay.commandResult().accepted());
     assertEquals("JOIN_REQUIRED", deniedPlay.commandResult().errorCode());
+    assertTrue(
+        gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
+            .allMatch(presence -> presence.role() == GameplayPresenceRole.PLAYER));
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);

@@ -49,7 +49,7 @@ class WhoCommandHandlerTest {
   }
 
   @Test
-  void whoGroupsElevatedPlayersFirstAndPlayersAfterward() {
+  void whoKeepsTenantRoleClaimsInThePlayerListWithoutGrantEvidence() {
     FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
@@ -83,7 +83,7 @@ class WhoCommandHandlerTest {
             new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
 
     assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(render(result)).isEqualTo("Gods [2]: Aster, Dara\nPlayers [2]: Ben, Cara");
+    assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [4]: Aster, Ben, Cara, Dara");
   }
 
   @Test
