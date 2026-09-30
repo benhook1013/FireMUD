@@ -3,7 +3,7 @@ plugins {
 }
 
 dependencies {
-    implementation("io.gatling:gatling-core:3.15.1")
+    implementation("io.gatling:gatling-core:3.16.0")
     implementation("io.gatling:gatling-http:3.16.0")
 }
 
