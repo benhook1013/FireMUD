@@ -1350,6 +1350,62 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(attempts[0]["state"], "failed")
             self.assertIsNone(attempts[0]["run_id"])
 
+    def test_hosted_admission_callback_must_complete_durable_reservation_before_post(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        completed_review = {
+            "databaseId": 901,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload(reviews=[completed_review])
+        post_calls: list[list[str]] = []
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            post_calls.append(args)
+            raise AssertionError("Hosted POST must not run without a durable reservation")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            original_record = self._trigger_record()
+            self._bind_trigger(common, payload, original_record)
+            original_bytes = path.read_bytes()
+            records = self._new_review_records(common / "controller.sqlite3")
+            runner = HostedRunner("owner/repo", live, records=records)
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(runner, "_authenticated_login", return_value="maintainer"),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "returned without reserving"),
+            ):
+                runner(target, expect_pr=42, admit=lambda _reserve: None)
+
+            self.assertEqual(path.read_bytes(), original_bytes)
+            self.assertFalse(path.with_name("trigger-10.json").exists())
+            self.assertEqual(post_calls, [])
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
+            self.assertIsNone(attempts[0]["run_id"])
+
     def test_next_hosted_request_captures_prior_terminal_attempt_before_archiving(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(

@@ -1212,6 +1212,8 @@ class StateStore:
             self._save_unlocked(state)
 
     def _save_unlocked(self, state: ReviewState) -> None:
+        if any(allocation.stop_basis == "direct_human" for allocation in state.allocations.values()):
+            raise StateError("direct-human stop state requires compatible SQLite review state")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False

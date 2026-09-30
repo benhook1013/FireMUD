@@ -2679,13 +2679,17 @@ class HostedRunner:
                     # the reservation so explicit sync can adopt or backfill it.
                     sqlite_capture_warnings.append(f"SQLite Hosted attempt start failed ({type(exc).__name__}).")
 
+            reservation_saved = False
+
             def reserve() -> None:
+                nonlocal reservation_saved
                 if archive_current_path is not None:
                     trigger_id = (record.get("trigger") or {}).get("id")
                     archive = archive_current_path.with_name(f"trigger-{trigger_id}.json")
                     try:
                         os.replace(archive_current_path, archive)
                         hosted.atomic_write_json(path, posting)
+                        reservation_saved = True
                     except Exception as exc:
                         if sqlite_attempt_started and sqlite_attempt_id is not None:
                             self._finish_unposted_attempt(sqlite_attempt_id)
@@ -2693,6 +2697,7 @@ class HostedRunner:
                 else:
                     try:
                         hosted.atomic_write_json(path, posting)
+                        reservation_saved = True
                     except Exception as exc:
                         if sqlite_attempt_started and sqlite_attempt_id is not None:
                             self._finish_unposted_attempt(sqlite_attempt_id)
@@ -2707,6 +2712,10 @@ class HostedRunner:
                     if sqlite_attempt_started and sqlite_attempt_id is not None:
                         self._finish_unposted_attempt(sqlite_attempt_id)
                     raise
+            if not reservation_saved:
+                if sqlite_attempt_started and sqlite_attempt_id is not None:
+                    self._finish_unposted_attempt(sqlite_attempt_id)
+                raise ControllerError("Hosted admission callback returned without reserving the candidate")
             try:
                 completed = subprocess.run(
                     [

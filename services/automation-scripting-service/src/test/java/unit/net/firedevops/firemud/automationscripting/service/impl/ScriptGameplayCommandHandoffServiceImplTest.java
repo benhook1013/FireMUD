@@ -806,6 +806,86 @@ class ScriptGameplayCommandHandoffServiceImplTest {
   }
 
   @Test
+  void failedIntentCommitWithUnchangedPreexistingInFlightIntentRequiresReconciliation() {
+    FailingIntentCommitTransactionManager transactionManager =
+        new FailingIntentCommitTransactionManager();
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+
+    ScriptWorkItem item = workItem();
+    item.setStatus("HANDOFF_IN_FLIGHT");
+    item.setRowVersion(9);
+    ScriptWorkItem persistedWorkItem = workItem();
+    persistedWorkItem.setStatus("HANDOFF_IN_FLIGHT");
+    persistedWorkItem.setRowVersion(9);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent persistedIntent = acceptedHandoffEvent(item, command, "handoff_in_flight");
+    persistedIntent.setId(44L);
+    persistedIntent.setRowVersion(7);
+    persistedIntent.setHandoffReason("handoff_in_flight");
+    persistedIntent.setGameSessionCommandId("prior-command-1");
+    AtomicReference<ScriptHandoffEvent> attemptedIntent = new AtomicReference<>();
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.of(persistedIntent));
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              attemptedIntent.set(invocation.getArgument(0));
+              return attemptedIntent.get();
+            });
+
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+      assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
+      assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(item.getRowVersion()).isEqualTo(9);
+      assertThat(persistedWorkItem.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(9);
+      assertThat(attemptedIntent.get()).isNotNull();
+      assertThat(attemptedIntent.get().getId()).isEqualTo(44L);
+      assertThat(attemptedIntent.get().getRowVersion()).isEqualTo(7);
+      assertThat(persistedIntent.getHandoffOutcome()).isEqualTo("handoff_in_flight");
+      assertThat(persistedIntent.getRowVersion()).isEqualTo(7);
+      assertThat(persistedIntent.getGameSessionCommandId()).isEqualTo("prior-command-1");
+      verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+      verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @Test
   void failedIntentCommitWithMismatchedDurableIdentityStillRequiresReconciliation() {
     FailingIntentCommitTransactionManager transactionManager =
         new FailingIntentCommitTransactionManager();

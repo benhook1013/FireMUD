@@ -48,6 +48,7 @@ from pr_review.policy import (
     taper_satisfied,
 )
 from pr_review.runtime import LiveEvidence
+from pr_review.sqlite_store import SqliteStateStore
 from pr_review.state import (
     Judgment,
     LegacyEvidenceTransition,
@@ -371,6 +372,7 @@ class ControllerTests(unittest.TestCase):
                             2: pr(2, HEAD_2, "feature-1", HEAD_1) if mutation == "reopen" else pr(2, HEAD_2),
                         },
                         heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+                        sqlite=mutation == "reopen",
                     )
                     controller.set_stack([1, 2])
                     if mutation == "reopen":
@@ -416,7 +418,9 @@ class ControllerTests(unittest.TestCase):
 
     def test_stopped_history_is_not_read_for_requests_but_is_retained_for_status(self):
         controller = self.make(
-            {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}, heads={"feature-1": HEAD_1, "feature-2": HEAD_2}
+            {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+            sqlite=True,
         )
         controller.set_stack([1, 2])
         controller.decide_stop(pr=1, channel="cli", reason="no further discovery")
@@ -451,6 +455,7 @@ class ControllerTests(unittest.TestCase):
                 controller = self.make(
                     {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)},
                     heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+                    sqlite=True,
                 )
                 controller.set_stack([1, 2])
                 controller.decide_stop(pr=1, channel=channel, reason="no more discovery")
@@ -522,14 +527,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(target.status, ReviewStatus.READY)
         self.assertEqual(target.reason, allocation_decision.reason)
 
-    def make(self, values, evidence=None, *, heads=None):
+    def make(self, values, evidence=None, *, heads=None, sqlite=False):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         provider = evidence if evidence is not None else {}
         if not callable(getattr(provider, "legacy_transition_reauthorization_audit", None)):
             provider = AuditedEvidence(provider)
+        state_path = Path(directory.name) / ("state.sqlite3" if sqlite else "state.json")
+        state_store = SqliteStateStore(state_path) if sqlite else StateStore(state_path)
         return ReviewController(
-            store=StateStore(Path(directory.name) / "state.json"),
+            store=state_store,
             github=FakeGitHub(values),
             git=FakeGit(heads),
             evidence=provider,
@@ -703,10 +710,8 @@ class ControllerTests(unittest.TestCase):
     def test_human_stop_does_not_acquire_either_provider_run_lock(self):
         for channel in ("cli", "hosted"):
             with self.subTest(channel=channel):
-                controller = self.make({1: pr(1, HEAD_1)}, heads={"feature-1": HEAD_1})
+                controller = self.make({1: pr(1, HEAD_1)}, heads={"feature-1": HEAD_1}, sqlite=True)
                 common_dir = controller.store.path.parent
-                controller.store = StateStore(common_dir / "firemud" / "pr-review-stack.json")
-                common_dir = controller.store.path.parent.parent
                 controller.set_stack([1])
                 private_root = common_dir / "firemud" / "pr-review"
                 cli_path = private_root / "cli.lock"
@@ -3053,6 +3058,7 @@ class ControllerTests(unittest.TestCase):
             {1: pr(1, HEAD_1)},
             {(1, "hosted"): [hosted]},
             heads={"feature-1": HEAD_1},
+            sqlite=True,
         )
         controller.set_stack([1])
 
@@ -3074,6 +3080,7 @@ class ControllerTests(unittest.TestCase):
                 2: pr(2, HEAD_2, "feature-1", HEAD_1),
             },
             heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+            sqlite=True,
         )
         controller.set_stack([1, 2])
 
@@ -3124,7 +3131,7 @@ class ControllerTests(unittest.TestCase):
                 ],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(
@@ -3162,7 +3169,7 @@ class ControllerTests(unittest.TestCase):
                 "unresolved_findings": [],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(
@@ -3193,7 +3200,7 @@ class ControllerTests(unittest.TestCase):
                 "unresolved_findings": [marker["checkpoint"]],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         with self.assertRaisesRegex(ControllerError, "requires the exact live head"):
@@ -3312,7 +3319,7 @@ class ControllerTests(unittest.TestCase):
                 "unresolved_findings": [marker["checkpoint"], "review-threads:42"],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, provider, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(
@@ -3335,6 +3342,7 @@ class ControllerTests(unittest.TestCase):
                 (1, "cli"): [self.allocation_evidence(checkpoint="cli-findings", accepted=1, channel="cli")],
             },
             heads={"feature-1": HEAD_1},
+            sqlite=True,
         )
         controller.set_stack([1])
 
@@ -3350,7 +3358,12 @@ class ControllerTests(unittest.TestCase):
 
     def test_stop_keeps_unexplained_older_accepted_findings_as_an_independent_obligation(self):
         older = self.allocation_evidence(head=HEAD_1, checkpoint="accepted-old", accepted=1)
-        controller = self.make({1: pr(1, HEAD_2)}, {(1, "hosted"): [older]}, heads={"feature-1": HEAD_2})
+        controller = self.make(
+            {1: pr(1, HEAD_2)},
+            {(1, "hosted"): [older]},
+            heads={"feature-1": HEAD_2},
+            sqlite=True,
+        )
         controller.set_stack([1])
         controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (HEAD_1, HEAD_2)
         controller.decide_stop(pr=1, channel="hosted", reason="human overrides unfinished taper")
@@ -3388,6 +3401,7 @@ class ControllerTests(unittest.TestCase):
                 ],
             },
             heads={"feature-1": HEAD_2},
+            sqlite=True,
         )
         controller.set_stack([1])
 
@@ -3418,6 +3432,7 @@ class ControllerTests(unittest.TestCase):
                 (1, "cli"): [provisional, completed_cli],
             },
             heads={"feature-1": HEAD_1},
+            sqlite=True,
         )
         controller.set_stack([1])
 
@@ -3450,6 +3465,7 @@ class ControllerTests(unittest.TestCase):
                 (1, "cli"): [completed_cli, provisional],
             },
             heads={"feature-1": HEAD_1},
+            sqlite=True,
         )
         controller.set_stack([1])
 
@@ -3481,6 +3497,7 @@ class ControllerTests(unittest.TestCase):
                 ]
             },
             heads={"feature-1": HEAD_1},
+            sqlite=True,
         )
         controller.set_stack([1])
 
@@ -3496,7 +3513,7 @@ class ControllerTests(unittest.TestCase):
     def test_audited_stop_survives_later_head_parent_and_patch_movement(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="reviewed-head")]}
         values = {1: pr(1, HEAD_1)}
-        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
         controller.decide_stop(
             pr=1,
@@ -3529,7 +3546,7 @@ class ControllerTests(unittest.TestCase):
                         "reason": "provider is still running",
                     }
                     histories = {(1, active_channel): [active]}
-                    controller = self.make({1: pr(1, HEAD_1)}, histories, heads={"feature-1": HEAD_1})
+                    controller = self.make({1: pr(1, HEAD_1)}, histories, heads={"feature-1": HEAD_1}, sqlite=True)
                     controller.set_stack([1])
                     stopped = controller.decide_stop(pr=1, channel=selected, reason="no further requests")
                     self.assertIsNone(stopped["reviewed_head"])
@@ -3551,7 +3568,9 @@ class ControllerTests(unittest.TestCase):
         for channel in ("hosted", "cli"):
             with self.subTest(channel=channel):
                 controller = self.make(
-                    {1: pr(1, HEAD_1, base_tip=PARENT)}, heads={"feature-1": HEAD_1, "develop": HEAD_3}
+                    {1: pr(1, HEAD_1, base_tip=PARENT)},
+                    heads={"feature-1": HEAD_1, "develop": HEAD_3},
+                    sqlite=True,
                 )
                 controller.set_stack([1])
                 with patch.object(controller.git, "merge_base", side_effect=ControllerError("missing local commit")):
@@ -3615,7 +3634,7 @@ class ControllerTests(unittest.TestCase):
                 ],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         state = controller.store.load()
@@ -3707,7 +3726,7 @@ class ControllerTests(unittest.TestCase):
                 ],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(
@@ -3760,7 +3779,7 @@ class ControllerTests(unittest.TestCase):
                 "retained_ambiguous": [],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, live_evidence, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, live_evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
         stopped = controller.decide_stop(pr=1, channel="hosted", reason="live ambiguity is unpinned")
         self.assertEqual(stopped["stop_basis"], "direct_human")
@@ -3936,7 +3955,7 @@ class ControllerTests(unittest.TestCase):
                 ],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(
@@ -3985,7 +4004,7 @@ class ControllerTests(unittest.TestCase):
                 "retained_ambiguous": [],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(pr=1, channel="cli", reason="current Hosted ambiguity is unpinned")
@@ -4006,7 +4025,7 @@ class ControllerTests(unittest.TestCase):
                 "unresolved_findings": [],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(pr=1, channel="cli", reason="current unmatched response remains")
@@ -4033,7 +4052,7 @@ class ControllerTests(unittest.TestCase):
                 "unresolved_findings": [],
             },
         )
-        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
 
         stopped = controller.decide_stop(
@@ -4090,6 +4109,7 @@ class ControllerTests(unittest.TestCase):
             {1: pr(1, HEAD_1)},
             {(1, "hosted"): [latest, unresolved]},
             heads={"feature-1": HEAD_1},
+            sqlite=True,
         )
         controller.set_stack([1])
         stopped = controller.decide_stop(pr=1, channel="hosted", reason="thread is still actionable")
@@ -4110,6 +4130,7 @@ class ControllerTests(unittest.TestCase):
             {1: pr(1, HEAD_1)},
             {(1, "hosted"): [old_finding, latest]},
             heads={"feature-1": HEAD_1},
+            sqlite=True,
         )
         controller.git.is_ancestor = lambda ancestor, descendant: (ancestor, descendant) != (old_head, HEAD_1)
         controller.set_stack([1])
@@ -4983,7 +5004,7 @@ class ControllerTests(unittest.TestCase):
     def test_status_overview_skips_merged_and_human_stopped_targets(self):
         values, heads = _stacked_prs(4, merged=(1,))
         evidence = CountingEvidence()
-        controller = self.make(values, evidence, heads=heads)
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
         controller.set_stack(list(values))
         stopped = self.review_evidence(controller, 2, "hosted", "hosted-stop-2")
         evidence[(2, "hosted")] = [stopped]
@@ -5299,7 +5320,7 @@ class ControllerTests(unittest.TestCase):
                 (1, "cli"): [self.allocation_evidence(checkpoint="cli-stop")],
             }
         )
-        controller = self.make(values, evidence, heads={"feature-1": HEAD_1})
+        controller = self.make(values, evidence, heads={"feature-1": HEAD_1}, sqlite=True)
         controller.set_stack([1])
         controller.decide_stop(pr=1, channel="hosted", reason="hosted channel stop")
         controller.decide_stop(pr=1, channel="cli", reason="CLI channel stop")
