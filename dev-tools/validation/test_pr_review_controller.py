@@ -3580,6 +3580,55 @@ class ControllerTests(unittest.TestCase):
                 self.assertIsNone(stopped["reviewed_head"])
                 self.assertEqual(controller.store.load().allocations[f"1:{channel}"].stop_basis, "direct_human")
 
+    def test_stop_persists_when_optional_reconciliation_identity_raises(self):
+        for exception_type in (RuntimeError, TypeError):
+            with self.subTest(exception_type=exception_type.__name__):
+                controller = self.make(
+                    {1: pr(1, HEAD_1, base_tip=PARENT)},
+                    heads={"feature-1": HEAD_1},
+                    sqlite=True,
+                )
+                controller.set_stack([1])
+
+                with (
+                    patch.object(
+                        controller.git,
+                        "merge_base",
+                        side_effect=ControllerError("optional local anchor is unavailable"),
+                    ),
+                    patch.object(
+                        controller,
+                        "_reconciliation",
+                        side_effect=exception_type("optional reconciliation identity is unavailable"),
+                    ),
+                ):
+                    stopped = controller.decide_stop(
+                        pr=1,
+                        channel="hosted",
+                        reason="stop despite unavailable optional anchor evidence",
+                    )
+
+                    self.assertEqual(stopped["stop_basis"], "direct_human")
+                    self.assertEqual(stopped["allocation"]["stop_head"], HEAD_1)
+                    self.assertEqual(stopped["allocation"]["stop_parent_identity"], "develop")
+                    self.assertEqual(stopped["allocation"]["stop_parent_head"], PARENT)
+                    self.assertIsNone(stopped["allocation"]["stop_merge_base"])
+                    self.assertIsNone(stopped["allocation"]["stop_patch_id"])
+                    persisted = controller.store.load().allocations["1:hosted"]
+                    self.assertEqual(persisted.stop_head, HEAD_1)
+                    self.assertEqual(persisted.stop_parent_identity, "develop")
+                    self.assertIsNone(persisted.stop_merge_base)
+                    self.assertIsNone(persisted.stop_patch_id)
+
+                    with self.assertRaisesRegex(ControllerError, "does not match the live pull-request head"):
+                        controller.decide_stop(
+                            pr=1,
+                            channel="hosted",
+                            head=HEAD_2,
+                            reason="reject a stale explicit head pin",
+                        )
+                    self.assertEqual(controller.store.load().allocations["1:hosted"].stop_head, HEAD_1)
+
     def test_stop_rejects_an_explicit_stale_checkpoint_pin(self):
         controller = self.make(
             {1: pr(1, HEAD_1)},
