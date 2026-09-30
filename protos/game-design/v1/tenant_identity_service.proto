@@ -12,6 +12,9 @@ service TenantIdentityService {
   // Owner-approved cross-service legacy association; Account is the sole caller.
   rpc ResolveLegacyAccountTenantAssociation(ResolveLegacyAccountTenantAssociationRequest)
       returns (ResolveLegacyAccountTenantAssociationResponse);
+  // Exact immutable readback of a newly created tenant operation for Account.
+  rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
+      returns (ResolveFreshTenantCreationResponse);
 }
 
 message ResolveLegacyGameTenantIdentityRequest {
@@ -45,4 +48,22 @@ message ResolveLegacyAccountTenantAssociationResponse {
   int32 operation_entry_count = 13;
   string manifest_signature = 14;
   int32 manifest_schema_version = 15;
+}
+
+message ResolveFreshTenantCreationRequest {
+  string creation_request_id = 1;
+  string expected_request_digest = 2;
+}
+
+message ResolveFreshTenantCreationResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string creation_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  int64 source_game_row_id = 7;
+  string source_game_tenant_key = 8;
+  string provenance_kind = 9;
+  string evidence_digest = 10;
 }

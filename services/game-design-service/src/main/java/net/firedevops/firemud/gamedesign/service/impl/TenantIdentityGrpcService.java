@@ -2,19 +2,28 @@ package net.firedevops.firemud.gamedesign.service.impl;
 
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.Base64;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReceipt;
+import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
+import org.jooq.exception.DataAccessException;
 import org.jooq.exception.TooManyRowsException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.grpc.server.service.GrpcService;
 
 /** Authenticated read of Game Design's own retained tenant identity provenance. */
@@ -23,14 +32,17 @@ public class TenantIdentityGrpcService
     extends TenantIdentityServiceGrpc.TenantIdentityServiceImplBase {
   private final GameRepository gameRepository;
   private final TenantAssociationMigrationService associationService;
+  private final GameTenantCreationRepository creationRepository;
   private final String workloadNamespace;
 
   public TenantIdentityGrpcService(
       GameRepository gameRepository,
       TenantAssociationMigrationService associationService,
+      GameTenantCreationRepository creationRepository,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.gameRepository = gameRepository;
     this.associationService = associationService;
+    this.creationRepository = creationRepository;
     this.workloadNamespace = workloadNamespace;
   }
 
@@ -170,6 +182,137 @@ public class TenantIdentityGrpcService
     responseObserver.onCompleted();
   }
 
+  @Override
+  public void resolveFreshTenantCreation(
+      ResolveFreshTenantCreationRequest request,
+      StreamObserver<ResolveFreshTenantCreationResponse> responseObserver) {
+    if (!isAccountPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Verified Account workload identity is required")
+              .asRuntimeException());
+      return;
+    }
+
+    String expectedRequestDigest = request.getExpectedRequestDigest();
+    if (!isSha256Digest(expectedRequestDigest)) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical expected request digest is required")
+              .asRuntimeException());
+      return;
+    }
+    UUID creationRequestId = parseCanonicalNonNilUuid(request.getCreationRequestId());
+    if (creationRequestId == null) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical nonnil creation request ID is required")
+              .asRuntimeException());
+      return;
+    }
+
+    Optional<GameTenantCreationReceipt> resolved;
+    try {
+      resolved = creationRepository.read(creationRequestId, workloadNamespace);
+    } catch (GameTenantCreationRepository.InvalidCreationEvidenceException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant creation evidence is incomplete or inconsistent")
+              .asRuntimeException());
+      return;
+    } catch (TooManyRowsException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant creation evidence is ambiguous")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessResourceFailureException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Fresh tenant creation evidence is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription(
+                  code == Status.Code.UNAVAILABLE
+                      ? "Fresh tenant creation evidence is temporarily unavailable"
+                      : "Fresh tenant creation evidence could not be read")
+              .asRuntimeException());
+      return;
+    } catch (RuntimeException ex) {
+      responseObserver.onError(
+          Status.INTERNAL
+              .withDescription("Fresh tenant creation evidence could not be read")
+              .asRuntimeException());
+      return;
+    }
+    if (resolved.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("No fresh tenant creation for exact request ID")
+              .asRuntimeException());
+      return;
+    }
+
+    GameTenantCreationReceipt receipt = resolved.orElseThrow();
+    boolean exactReceipt =
+        receipt.schemaVersion() == 1
+            && workloadNamespace.equals(receipt.targetNamespace())
+            && creationRequestId.equals(receipt.creationRequestId())
+            && isCanonicalNonNilUuid(receipt.operationId())
+            && expectedRequestDigest.equals(receipt.requestDigest())
+            && isSha256Digest(receipt.requestDigest())
+            && isCanonicalNonNilUuid(receipt.canonicalTenantId())
+            && receipt.sourceGameRowId() > 0
+            && receipt.sourceGameTenantKey() != null
+            && !receipt.sourceGameTenantKey().isBlank()
+            && "NEW_GAME_ROW".equals(receipt.provenanceKind())
+            && isSha256Digest(receipt.evidenceDigest());
+    if (exactReceipt) {
+      try {
+        String expectedEvidenceDigest =
+            GameTenantCreationDigest.evidenceDigest(
+                receipt.targetNamespace(),
+                receipt.creationRequestId(),
+                receipt.operationId(),
+                receipt.requestDigest(),
+                receipt.canonicalTenantId(),
+                receipt.sourceGameRowId(),
+                receipt.sourceGameTenantKey(),
+                receipt.provenanceKind());
+        exactReceipt = expectedEvidenceDigest.equals(receipt.evidenceDigest());
+      } catch (IllegalArgumentException ex) {
+        exactReceipt = false;
+      }
+    }
+    if (!exactReceipt) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Fresh tenant creation readback does not match the exact request")
+              .asRuntimeException());
+      return;
+    }
+
+    responseObserver.onNext(
+        ResolveFreshTenantCreationResponse.newBuilder()
+            .setSchemaVersion(receipt.schemaVersion())
+            .setTargetNamespace(receipt.targetNamespace())
+            .setCreationRequestId(receipt.creationRequestId().toString())
+            .setOperationId(receipt.operationId().toString())
+            .setRequestDigest(receipt.requestDigest())
+            .setCanonicalTenantId(receipt.canonicalTenantId().toString())
+            .setSourceGameRowId(receipt.sourceGameRowId())
+            .setSourceGameTenantKey(receipt.sourceGameTenantKey())
+            .setProvenanceKind(receipt.provenanceKind())
+            .setEvidenceDigest(receipt.evidenceDigest())
+            .build());
+    responseObserver.onCompleted();
+  }
+
   private boolean isAccountPeer() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     return peer != null
@@ -185,6 +328,38 @@ public class TenantIdentityGrpcService
         && !workloadNamespace.isBlank()
         && peer.uri()
             .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-tenant-migrator");
+  }
+
+  private static UUID parseCanonicalNonNilUuid(String value) {
+    if (value == null) {
+      return null;
+    }
+    try {
+      UUID parsed = UUID.fromString(value);
+      return isCanonicalNonNilUuid(parsed) && parsed.toString().equals(value) ? parsed : null;
+    } catch (IllegalArgumentException ex) {
+      return null;
+    }
+  }
+
+  private static boolean isCanonicalNonNilUuid(UUID value) {
+    return value != null && !new UUID(0L, 0L).equals(value);
+  }
+
+  private static boolean isSha256Digest(String value) {
+    return value != null && value.matches("sha256:[0-9a-f]{64}");
+  }
+
+  private static boolean hasConnectionFailureSqlState(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof SQLException exception) {
+        String sqlState = exception.getSQLState();
+        if (sqlState != null && sqlState.startsWith("08")) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private static boolean validSignature(String value) {

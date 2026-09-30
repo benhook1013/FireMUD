@@ -987,6 +987,16 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#doesNotReturnWhenAccountFenceWaitOutlivesTheUnchangedGatewayDeadline()' \
             account-service
 
+      - name: Verify Game Design fresh tenant creation PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#createCandidateExactRetryReturnsCommittedReceiptWithoutSecondGameWrite()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#concurrentDuplicateCreationRequestsConvergeOnOneUuidAndReceipt()' \
+            game-design-service
+
       - name: 🔎 Verify Game Session PostgreSQL proof case
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
