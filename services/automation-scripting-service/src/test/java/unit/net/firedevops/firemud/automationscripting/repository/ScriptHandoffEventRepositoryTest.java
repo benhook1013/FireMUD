@@ -582,6 +582,26 @@ class ScriptHandoffEventRepositoryTest {
     assertThat(outerTuplePredicate).as(renderedSql).isGreaterThanOrEqualTo(0);
     assertThat(renderedSql.substring(0, outerTuplePredicate))
         .contains("\"script_handoff_events\".\"id\"", "\"script_handoff_events\".\"tenant_id\"");
+    int candidateSelect = renderedSql.indexOf("select \"retention_candidates\"");
+    int candidateLimit = renderedSql.indexOf("fetch next ? rows only", candidateSelect);
+    assertThat(candidateSelect).as(renderedSql).isGreaterThan(outerTuplePredicate);
+    assertThat(candidateLimit).as(renderedSql).isGreaterThan(candidateSelect);
+    String candidateSql = renderedSql.substring(candidateSelect, candidateLimit);
+    String outerRecheckSql =
+        renderedSql.substring(candidateLimit + "fetch next ? rows only".length());
+    assertThat(candidateSql)
+        .contains(
+            "\"retention_candidates\".\"observed_at\" <",
+            "\"retention_candidates\".\"retention_hold_until\"",
+            "\"retention_candidates\".\"handoff_outcome\"",
+            "regexp_replace");
+    assertThat(outerRecheckSql)
+        .contains(
+            "\"script_handoff_events\".\"observed_at\" <",
+            "retention_hold_until",
+            "handoff_outcome",
+            "regexp_replace")
+        .doesNotContain("retention_candidates");
     assertThat(renderedSql)
         .contains(
             "select \"retention_candidates\".\"id\", \"retention_candidates\".\"tenant_id\"",

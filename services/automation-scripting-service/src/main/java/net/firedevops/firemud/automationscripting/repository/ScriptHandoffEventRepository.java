@@ -125,7 +125,10 @@ public class ScriptHandoffEventRepository {
                         .from(candidates)
                         .where(candidateEligibility)
                         .orderBy(candidates.EVENT_ID.asc())
-                        .limit(RETENTION_DELETE_BATCH_SIZE)))
+                        .limit(RETENTION_DELETE_BATCH_SIZE))
+                .and(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT.lt(cutoff))
+                .and(RETENTION_HOLD_UNTIL.isNull().or(RETENTION_HOLD_UNTIL.le(current)))
+                .and(nonBlankHandoffOutcome(SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME)))
         .execute();
   }
 
