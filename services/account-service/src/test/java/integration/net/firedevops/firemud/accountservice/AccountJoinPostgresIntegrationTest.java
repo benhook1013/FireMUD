@@ -1094,9 +1094,9 @@ class AccountJoinPostgresIntegrationTest {
   @Test
   void runtimeMembershipSnapshotKeepsAbsenceAndFirstJoinEvidenceInOneFencedResult() {
     JoinFixture fixture = fixture("active");
-    preparePairAuthorityBaseline(fixture);
 
     var absent = readRuntimeMembershipSnapshot(fixture);
+    Map<String, Object> baselineRow = membershipPairAuthorityRow(fixture);
     assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
     assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
     assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
@@ -1117,8 +1117,36 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(absent.outboxSourceEvidence()).isEmpty();
     assertThat(absent.roles()).isEmpty();
     assertThat(absent.issuanceFence()).matches("[1-9][0-9]*");
+    assertThat(baselineRow)
+        .containsEntry("membership_exists", false)
+        .containsEntry("membership_version", 1L)
+        .containsEntry("membership_authority_generation", 1L)
+        .containsEntry("last_event_sequence", 0L)
+        .containsEntry("last_event_id", null)
+        .containsEntry("last_event_digest", null);
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countAuthorityMembershipEvents(fixture)).isZero();
+    assertThat(countAuthorityMembershipStreams(fixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+    assertThat(countMembershipAuthorityGenerations(fixture)).isEqualTo(1L);
+    assertThat(countMembershipPairAuthorities(fixture)).isEqualTo(1L);
 
-    assertThat(join(fixture).success()).isTrue();
+    var retriedAbsence = readRuntimeMembershipSnapshot(fixture);
+    assertThat(retriedAbsence.membershipExists()).isFalse();
+    assertThat(retriedAbsence.membershipBaseline()).isEqualTo(absent.membershipBaseline());
+    assertThat(retriedAbsence.authorityTuple()).isEqualTo(absent.authorityTuple());
+    assertThat(retriedAbsence.outboxCheckpoints()).isEqualTo(absent.outboxCheckpoints());
+    assertThat(retriedAbsence.outboxSourceEvidence()).isEmpty();
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(baselineRow);
+    assertThat(countAuthorityMembershipEvents(fixture)).isZero();
+    assertThat(countAuthorityMembershipStreams(fixture)).isZero();
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+
+    JoinPublicProductionResult joined = join(fixture);
+    assertThat(joined.success()).isTrue();
+    assertThat(joined.membershipVersion()).isEqualTo(2L);
+    assertThat(joined.membershipAuthorityGeneration()).isEqualTo(1L);
     var active = readRuntimeMembershipSnapshot(fixture);
     var event = readPairBoundPositiveMembershipSnapshot(fixture).authorityEvent();
     assertThat(active.membershipExists()).isTrue();
@@ -1144,15 +1172,11 @@ class AccountJoinPostgresIntegrationTest {
                 event.canonicalJson()));
     assertThat(active.roles()).contains("player");
     assertThat(active.issuanceFence()).matches("[1-9][0-9]*");
+    assertThat(active.outboxSourceEvidence()).hasSize(1);
   }
 
   @Test
-  void runtimeMembershipSnapshotRejectsUnprovedPairAndContradictoryGeneration() {
-    JoinFixture missingPair = fixture("active");
-    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(missingPair))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("Never-joined pair baseline is absent");
-
+  void runtimeMembershipSnapshotRejectsContradictoryGeneration() {
     JoinFixture contradictoryPair = fixture("active");
     preparePairAuthorityBaseline(contradictoryPair);
     dsl.execute(
@@ -1164,7 +1188,7 @@ class AccountJoinPostgresIntegrationTest {
     assertThatThrownBy(() -> readRuntimeMembershipSnapshot(contradictoryPair))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(
-            "membership authority generation cannot prove its sequence-zero baseline");
+            "Absent Account membership differs from its durable pair authority baseline");
   }
 
   @Test
@@ -1233,9 +1257,9 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
-  void runtimeSnapshotPreparationRejectsUnmappedTenantAndAbsentMembershipHistory() {
+  void runtimeMembershipSnapshotRejectsUnmappedTenantAndAbsentMembershipHistory() {
     JoinFixture unmappedTenant = fixture("active", TenantAssociationSetup.MISSING);
-    assertThatThrownBy(() -> prepareRuntimeSnapshotAuthority(unmappedTenant))
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(unmappedTenant))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("approved Account tenant association is absent");
     assertThat(countMemberships(unmappedTenant)).isZero();
@@ -1259,7 +1283,7 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(joined.success()).isTrue();
     assertThat(countMemberships(removedMembership)).isZero();
     assertThat(countAuthorityMembershipEvents(removedMembership)).isEqualTo(1L);
-    assertThatThrownBy(() -> prepareRuntimeSnapshotAuthority(removedMembership))
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(removedMembership))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(
             "Retained Account membership history has no supported restoration path");
@@ -1269,7 +1293,7 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
-  void runtimeSnapshotPreparationRejectsInactiveMembershipWithoutChangingAuthority() {
+  void runtimeMembershipSnapshotRejectsInactiveMembershipWithoutChangingAuthority() {
     JoinFixture fixture = fixture("active");
     JoinPublicProductionResult joined = join(fixture);
     Map<String, Object> pairRow = membershipPairAuthorityRow(fixture);
@@ -1280,7 +1304,7 @@ class AccountJoinPostgresIntegrationTest {
             + "gameplay_admission_allowed = FALSE WHERE id = ?",
         joined.membershipId());
 
-    assertThatThrownBy(() -> prepareRuntimeSnapshotAuthority(fixture))
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(fixture))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not a positive active explicit membership");
     assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(pairRow);

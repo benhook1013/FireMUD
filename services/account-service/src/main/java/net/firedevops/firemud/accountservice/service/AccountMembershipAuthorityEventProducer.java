@@ -316,7 +316,7 @@ public class AccountMembershipAuthorityEventProducer {
     if (accountId <= 0L || legacyTenantId <= 0L) {
       throw new IllegalArgumentException("Account and retained tenant identities must be positive");
     }
-    joinOperationRepository.lockAccount(accountId);
+    preparePairAuthorityForRuntimeSnapshot(accountId, legacyTenantId);
     if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isPresent()) {
       PositiveMembershipSnapshot positive =
           readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
