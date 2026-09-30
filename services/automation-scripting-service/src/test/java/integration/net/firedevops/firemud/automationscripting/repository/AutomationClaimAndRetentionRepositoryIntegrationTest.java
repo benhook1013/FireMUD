@@ -176,12 +176,13 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .migrate();
 
     assertThat(
-            upgradeDsl.fetchValue(
-                "SELECT is_nullable FROM information_schema.columns"
-                    + " WHERE table_schema = ? AND table_name = 'script_work_items'"
-                    + " AND column_name = 'next_eligible_at'",
-                String.class,
-                upgradeSchema))
+            upgradeDsl
+                .fetchOne(
+                    "SELECT is_nullable FROM information_schema.columns"
+                        + " WHERE table_schema = ? AND table_name = 'script_work_items'"
+                        + " AND column_name = 'next_eligible_at'",
+                    upgradeSchema)
+                .get(0, String.class))
         .isEqualTo("YES");
     String eligibilityIndex =
         upgradeDsl
@@ -199,24 +200,27 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
                     + "FROM script_work_items ORDER BY id"))
         .isEqualTo(retainedRowsBeforeV4);
     assertThat(
-            upgradeDsl.fetchValue(
-                "SELECT failure_generation FROM script_work_items WHERE id = ?",
-                Long.class,
-                deadLetteredWorkItemId))
+            upgradeDsl
+                .fetchOne(
+                    "SELECT failure_generation FROM script_work_items WHERE id = ?",
+                    deadLetteredWorkItemId)
+                .get(0, Long.class))
         .isEqualTo(1L);
     assertThat(
-            upgradeDsl.fetchValue(
-                "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
-                java.time.LocalDateTime.class,
-                pendingWorkItemId))
+            upgradeDsl
+                .fetchOne(
+                    "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
+                    pendingWorkItemId)
+                .get(0, java.time.LocalDateTime.class))
         .isEqualTo(java.time.LocalDateTime.parse("2035-01-02T03:04:05"));
     upgradeDsl.execute(
         "UPDATE script_work_items SET next_eligible_at = NULL WHERE id = ?", pendingWorkItemId);
     assertThat(
-            upgradeDsl.fetchValue(
-                "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
-                java.time.LocalDateTime.class,
-                pendingWorkItemId))
+            upgradeDsl
+                .fetchOne(
+                    "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
+                    pendingWorkItemId)
+                .get(0, java.time.LocalDateTime.class))
         .isNull();
 
     Long replayRequestId =
@@ -238,27 +242,30 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         deadLetteredWorkItemId);
 
     assertThat(
-            upgradeDsl.fetchValue(
-                "SELECT control_plane_request_id FROM script_dead_letter_replay_requests "
-                    + "WHERE tenant_id = 'tenant-v3-retained' AND id = ?",
-                String.class,
-                replayRequestId))
+            upgradeDsl
+                .fetchOne(
+                    "SELECT control_plane_request_id FROM script_dead_letter_replay_requests "
+                        + "WHERE tenant_id = 'tenant-v3-retained' AND id = ?",
+                    replayRequestId)
+                .get(0, String.class))
         .isEqualTo("request-44");
     assertThat(
-            upgradeDsl.fetchValue(
-                "SELECT original_failure_reason FROM script_dead_letter_replay_results "
-                    + "WHERE replay_request_id = ? AND requested_work_item_id = ?",
-                String.class,
-                replayRequestId,
-                deadLetteredWorkItemId))
+            upgradeDsl
+                .fetchOne(
+                    "SELECT original_failure_reason FROM script_dead_letter_replay_results "
+                        + "WHERE replay_request_id = ? AND requested_work_item_id = ?",
+                    replayRequestId,
+                    deadLetteredWorkItemId)
+                .get(0, String.class))
         .isEqualTo("retained_failure");
     assertThat(
-            upgradeDsl.fetchValue(
-                "SELECT count(*) FROM information_schema.tables WHERE table_schema = ? "
-                    + "AND table_name IN ('script_dead_letter_replay_requests', "
-                    + "'script_dead_letter_replay_results')",
-                Long.class,
-                upgradeSchema))
+            upgradeDsl
+                .fetchOne(
+                    "SELECT count(*) FROM information_schema.tables WHERE table_schema = ? "
+                        + "AND table_name IN ('script_dead_letter_replay_requests', "
+                        + "'script_dead_letter_replay_results')",
+                    upgradeSchema)
+                .get(0, Long.class))
         .isEqualTo(2L);
   }
 
