@@ -334,6 +334,7 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
         findings.append(
             {
                 "key": key,
+                "fingerprint": fingerprint or "",
                 "title": title[:300],
                 "detail": _safe_finding_detail(cleaned),
             }
@@ -1171,7 +1172,7 @@ def _findings_for_completed_result(
             except ReviewRecordsError:
                 # Raw evidence remains in the scrubbed artifact; structured history
                 # uses a safe headline if the provider prose resembles a secret.
-                fingerprint = finding["key"].partition(":fingerprint:")[2]
+                fingerprint = finding["fingerprint"]
                 fallback_title = f"CodeRabbit review comment {comment_id}"
                 if fingerprint:
                     fallback_title += f" finding {fingerprint}"

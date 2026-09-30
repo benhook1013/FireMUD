@@ -312,7 +312,20 @@ class RuntimeTest(unittest.TestCase):
             capture = cli_root / "runs" / run_id
             capture.mkdir(parents=True)
             (capture / "metadata.json").write_text(
-                json.dumps({"run_id": run_id, "pull_request": 42, "candidate_sha": HEAD}),
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "pull_request": 42,
+                        "candidate_sha": HEAD,
+                        "child_head_sha": HEAD,
+                        "parent_pr": 41,
+                        "parent_ref": "feature-1",
+                        "parent_sha": BASE,
+                        "merge_base": BASE,
+                        "patch_identity": PATCH,
+                        "run_counter": 7,
+                    }
+                ),
                 encoding="utf-8",
             )
             unrelated = cli_root / "runs" / "run.unrelated"
@@ -332,7 +345,30 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual([item["checkpoint"] for item in owner_history], [f"active-cli:{run_id}"])
             self.assertTrue(owner_history[0]["current_lock_owner"])
+            self.assertEqual(
+                (owner_history[0]["child_head"], owner_history[0]["parent_identity"], owner_history[0]["parent_head"]),
+                (HEAD, "41", BASE),
+            )
+            self.assertEqual((owner_history[0]["merge_base"], owner_history[0]["patch_id"]), (BASE, PATCH))
             self.assertEqual(other_pr_history, [])
+
+            invalid_parent_metadata = {
+                "run_id": run_id,
+                "pull_request": 42,
+                "candidate_sha": HEAD,
+                "parent_pr": True,
+                "parent_ref": "feature-1",
+                "parent_sha": BASE,
+                "merge_base": BASE,
+                "patch_identity": PATCH,
+            }
+            (capture / "metadata.json").write_text(json.dumps(invalid_parent_metadata), encoding="utf-8")
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(Path, "glob", side_effect=AssertionError("recognized owner must not scan run history")),
+            ):
+                invalid_parent_history = provider._active_cli_history(42, common)
+            self.assertEqual(invalid_parent_history[0]["parent_identity"], "feature-1")
 
     def test_recognized_cli_owner_requires_matching_active_metadata_to_suppress_fallback(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
@@ -3115,9 +3151,11 @@ class RuntimeTest(unittest.TestCase):
 
         class SteppedDateTime(datetime):
             last_sample = None
+            calls = 0
 
             @classmethod
             def now(cls, tz=None):
+                cls.calls += 1
                 try:
                     cls.last_sample = next(cls.samples)
                 except StopIteration:
@@ -3125,6 +3163,7 @@ class RuntimeTest(unittest.TestCase):
                 return cls.last_sample
 
         SteppedDateTime.last_sample = now
+        SteppedDateTime.calls = 0
         SteppedDateTime.samples = iter((now, audit_after))
 
         def legacy_audit_at_sample(*_args, **kwargs):
@@ -3145,8 +3184,8 @@ class RuntimeTest(unittest.TestCase):
             patch("pr_review.runtime.datetime", SteppedDateTime),
         ):
             audit = observer.review_stop_audit(42, anchor)
+            self.assertEqual(SteppedDateTime.calls, 1)
 
-        self.assertEqual(SteppedDateTime.now(timezone.utc), audit_after)
         self.assertEqual(audit["active_reservations"], ["review active"])
         self.assertEqual(
             audit["terminal_rate_limits"],

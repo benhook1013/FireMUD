@@ -1499,11 +1499,14 @@ class LiveEvidence:
                     if exact_owner_metadata:
                         exact_owner_active_for_other_pr = True
                     continue
-                anchor_metadata = {
-                    key: value
-                    for key, value in active_metadata.items()
-                    if isinstance(key, str) and isinstance(value, str)
-                }
+                anchor_metadata: dict[str, str] = {}
+                for key, value in active_metadata.items():
+                    if not isinstance(key, str):
+                        continue
+                    if isinstance(value, str):
+                        anchor_metadata[key] = value
+                    elif key == "parent_pr" and isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                        anchor_metadata[key] = str(value)
                 run_id = active_metadata.get("run_id")
                 if not isinstance(run_id, str) or not run_id:
                     run_id = metadata_path.parent.name
