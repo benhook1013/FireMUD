@@ -1310,6 +1310,7 @@ def _cutover_sqlite_store(path: Path) -> tuple[Any, dict[str, Any]]:
         isinstance(marker_writer_build, bool)
         or not isinstance(marker_writer_build, int)
         or marker_writer_build <= 0
+        or isinstance(database_writer_build, bool)
         or not isinstance(database_writer_build, int)
         or marker_writer_build > database_writer_build
     ):
