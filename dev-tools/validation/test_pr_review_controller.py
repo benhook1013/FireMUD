@@ -704,15 +704,25 @@ class ControllerTests(unittest.TestCase):
         for channel in ("cli", "hosted"):
             with self.subTest(channel=channel):
                 controller = self.make({1: pr(1, HEAD_1)}, heads={"feature-1": HEAD_1})
+                common_dir = controller.store.path.parent
+                controller.store = StateStore(common_dir / "firemud" / "pr-review-stack.json")
+                common_dir = controller.store.path.parent.parent
                 controller.set_stack([1])
-                root = controller.store.path.parent
-                cli_path = root / "cli.lock"
-                hosted_path = hosted.default_trigger_record_path("owner/repo", 1, root).parent / "request.lock"
+                private_root = common_dir / "firemud" / "pr-review"
+                cli_path = private_root / "cli.lock"
+                hosted_path = hosted.default_trigger_record_path("owner/repo", 1, common_dir).parent / "request.lock"
+                cli_path.parent.mkdir(parents=True, exist_ok=True)
                 hosted_path.parent.mkdir(parents=True, exist_ok=True)
                 with cli_path.open("a+") as cli_handle, hosted_path.open("a+") as hosted_handle:
                     for handle in (cli_handle, hosted_handle):
                         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    stopped = controller.decide_stop(pr=1, channel=channel, reason="human overrides incomplete taper")
+                    with (
+                        patch("pr_review.evidence.git_common_dir", return_value=common_dir),
+                        patch("pr_review.hosted._git_common_dir", return_value=common_dir),
+                    ):
+                        stopped = controller.decide_stop(
+                            pr=1, channel=channel, reason="human overrides incomplete taper"
+                        )
                     self.assertEqual(stopped["stop_basis"], "direct_human")
                     self.assertIsNone(stopped["checkpoint"])
                     self.assertIsNone(stopped["reviewed_head"])
