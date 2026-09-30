@@ -2364,6 +2364,28 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(stopped["stop_head"], HEAD_1)
         self.assertEqual(controller.status()["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 
+    def test_stacked_child_stop_records_parent_pr_identity_without_false_status_movement(self):
+        controller = self.make(
+            {
+                1: pr(1, HEAD_1),
+                2: pr(2, HEAD_2, "feature-1", HEAD_1),
+            },
+            heads={"feature-1": HEAD_1, "feature-2": HEAD_2},
+        )
+        controller.set_stack([1, 2])
+
+        stopped = controller.decide_stop(
+            pr=2,
+            channel="hosted",
+            reason="stop further discovery on the stacked child",
+        )
+
+        self.assertEqual(stopped["allocation"]["stop_parent_identity"], "1")
+        child = controller.status()["prs"][1]
+        self.assertEqual(child["reconciliation"], "COHERENT")
+        self.assertEqual(child["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(child["allocations"]["hosted"]["status"], "STOPPED")
+
     def test_direct_human_stop_records_after_an_audit_proven_terminal_rate_limit(self):
         old_head = "7" * 40
         cooldown_until = "2999-01-01T00:00:00Z"

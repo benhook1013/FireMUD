@@ -5575,7 +5575,20 @@ class ReviewController:
             patch_id = self.git.patch_identity(merge_base, item.head)
         except (ControllerError, OSError, ValueError, subprocess.SubprocessError):
             merge_base, patch_id = None, None
-        current = AnchorFacts(pr, item.head, item.base_ref, item.base_tip, merge_base, patch_id)
+        parent_link = None
+        try:
+            _, reconciliation = self._reconciliation(state, evidence_prs=set())
+            parent_link = reconciliation.links.get(pr)
+        except (ControllerError, KeyError, OSError, ValueError, subprocess.SubprocessError):
+            pass
+        current = AnchorFacts(
+            pr,
+            item.head,
+            parent_link.identity if parent_link is not None else item.base_ref,
+            item.base_tip,
+            merge_base,
+            patch_id,
+        )
         basis = previous.stop_basis if previous is not None and previous.stop_basis is not None else "direct_human"
         if acknowledge_over_ceiling and basis != "direct_human":
             raise ControllerError("over-ceiling acknowledgment is available only to a direct human stop")
