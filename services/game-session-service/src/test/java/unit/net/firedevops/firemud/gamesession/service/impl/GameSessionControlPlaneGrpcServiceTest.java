@@ -7295,6 +7295,49 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void enqueueAutomationCommandRejectsMalformedRoutingBundleAtAuthenticatedReceiverFence() {
+    EnqueueAutomationCommandIfAbsentRequest malformedRoutingBundle =
+        automationRequest().toBuilder().clearRealmSlug().build();
+    GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
+    TickService tickService = Mockito.mock(TickService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            commandRepository,
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            tickService,
+            meterRegistry);
+    setAutomationScriptingInternalContext();
+
+    AtomicReference<EnqueueAutomationCommandIfAbsentResponse> responseRef = new AtomicReference<>();
+    service.enqueueAutomationCommandIfAbsent(
+        malformedRoutingBundle,
+        new NoopObserver<>() {
+          @Override
+          public void onNext(EnqueueAutomationCommandIfAbsentResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals(false, responseRef.get().getAccepted());
+    assertEquals("REJECTED", responseRef.get().getAdmissionOutcome());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
+    assertEquals(
+        "automation_admission_receiver_fence_unavailable",
+        responseRef.get().getError().getMessage());
+    assertEquals(
+        1.0,
+        meterRegistry.get("grpc.app_error").tag("code", "FAILED_PRECONDITION").counter().count());
+    assertTrue(
+        meterRegistry.find("grpc.app_error").tag("code", "INVALID_ARGUMENT").counter() == null);
+    Mockito.verifyNoInteractions(commandRepository, tickService);
+  }
+
+  @Test
   void enqueueAutomationCommandRejectsUnauthenticatedCallerBeforeDispatch() {
     SessionContext.clear();
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);

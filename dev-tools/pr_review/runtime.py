@@ -39,6 +39,7 @@ _PLAN_CEILING_PATTERN = re.compile(
 )
 _HOSTED_CODERABBIT_FILE_CEILING = 100
 _PREPOST_ABANDONED_PATTERN = re.compile(r"^prepost-abandoned-[0-9a-f]{20}\.json$")
+_CLI_LOCK_OWNER_PATTERN = re.compile(r"run_id=(run\.[0-9a-f]{32})\n\Z")
 
 
 class LiveGitHub:
@@ -1421,15 +1422,37 @@ class LiveEvidence:
     def _active_cli_history(self, pr: int, cli_common: Path, *, operational_only: bool = False) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
         cli_root = cli_common / "firemud" / "pr-review"
-        if self._request_lock_is_held(cli_root / "cli.lock"):
+        cli_lock_path = cli_root / "cli.lock"
+        if self._request_lock_is_held(cli_lock_path):
+            owner_run_id = self._cli_lock_owner_run_id(cli_lock_path)
+            owner_terminal_error_for_pr = False
+            active_capture_for_other_pr = False
             for metadata_path in (cli_root / "runs").glob("*/metadata.json"):
-                if any((metadata_path.parent / name).exists() for name in ("capture-complete", "error", "exit-status")):
-                    continue
                 try:
                     active_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
                 except (OSError, ValueError):
                     continue
-                if not isinstance(active_metadata, Mapping) or active_metadata.get("pull_request") != pr:
+                if not isinstance(active_metadata, Mapping):
+                    continue
+                capture_pr = active_metadata.get("pull_request")
+                terminal_error = (metadata_path.parent / "error").is_file()
+                if any((metadata_path.parent / name).exists() for name in ("capture-complete", "error", "exit-status")):
+                    run_id = active_metadata.get("run_id")
+                    if (
+                        owner_run_id is not None
+                        and metadata_path.parent.name == owner_run_id
+                        and run_id == owner_run_id
+                        and isinstance(capture_pr, int)
+                        and not isinstance(capture_pr, bool)
+                        and capture_pr == pr
+                        and terminal_error
+                    ):
+                        owner_terminal_error_for_pr = True
+                    continue
+                if not isinstance(capture_pr, int) or isinstance(capture_pr, bool) or capture_pr <= 0:
+                    continue
+                if capture_pr != pr:
+                    active_capture_for_other_pr = True
                     continue
                 anchor_metadata = {
                     key: value
@@ -1451,7 +1474,11 @@ class LiveEvidence:
                         **self._anchor(anchor_metadata),
                     }
                 )
-            if operational_only and not values:
+            if (
+                operational_only
+                and not values
+                and not (owner_terminal_error_for_pr and not active_capture_for_other_pr)
+            ):
                 values.append(
                     {
                         "pr": pr,
@@ -1463,6 +1490,17 @@ class LiveEvidence:
                     }
                 )
         return values
+
+    @staticmethod
+    def _cli_lock_owner_run_id(path: Path) -> str | None:
+        """Read the runner's exact current owner marker without guessing from history."""
+
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        match = _CLI_LOCK_OWNER_PATTERN.fullmatch(content)
+        return match.group(1) if match is not None else None
 
     def _current_hosted_history(
         self,
@@ -2261,8 +2299,10 @@ class HostedRunner:
                     payload = github.fetch_pull_request(self.repo, closed_pr)
                     state = hosted.trigger_state(self.repo, closed_pr, payload, record, path)
                     reset = hosted.parse_timestamp(state.cooldown_until) if state.state == "rate_limited" else None
-                except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-                    continue
+                except Exception as exc:
+                    raise ControllerError(
+                        f"current Hosted reservation for closed PR #{closed_pr} cannot be verified"
+                    ) from exc
                 if (
                     state.state == "rate_limited"
                     and state.terminal is True

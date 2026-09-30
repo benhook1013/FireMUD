@@ -68,9 +68,39 @@ class RuntimeTest(unittest.TestCase):
                     if name == "rate_limited" and reset == future and attributed:
                         with self.assertRaisesRegex(ControllerError, "cooldown.*closed PR"):
                             runner._assert_no_other_active_reservations(42, Path(directory))
+                    elif name == "error":
+                        with self.assertRaisesRegex(ControllerError, "closed PR #99 cannot be verified"):
+                            runner._assert_no_other_active_reservations(42, Path(directory))
                     else:
                         runner._assert_no_other_active_reservations(42, Path(directory))
                 self.assertFalse((path.parent / "request.lock").exists())
+
+    def test_closed_reservation_unavailable_or_malformed_live_read_fails_closed(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        for failure, reservation_side_effect, pull_request_side_effect in (
+            ("reservation", OSError("unreadable reservation"), None),
+            ("live fetch", None, RuntimeError("pull request unavailable")),
+            ("malformed live payload", None, lambda *_args: {}),
+        ):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "trigger.json"
+                with (
+                    patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
+                    patch.object(
+                        hosted,
+                        "load_trigger_reservation",
+                        side_effect=reservation_side_effect,
+                        return_value={"status": "posted"},
+                    ),
+                    patch.object(
+                        github,
+                        "fetch_pull_request",
+                        side_effect=pull_request_side_effect,
+                        return_value=self._payload(),
+                    ),
+                    self.assertRaisesRegex(ControllerError, "closed PR #99 cannot be verified"),
+                ):
+                    runner._assert_no_other_active_reservations(42, Path(directory))
 
     def test_stopped_request_projection_never_reads_idle_historical_evidence(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
@@ -136,6 +166,98 @@ class RuntimeTest(unittest.TestCase):
             self.assertRaisesRegex(ControllerError, "current request unverified"),
         ):
             provider.request_history(42, "hosted")
+
+    def test_cli_terminal_error_cleanup_is_not_reported_as_an_active_review(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            run_id = f"run.{'a' * 32}"
+            cli_root = common / "firemud" / "pr-review"
+            failed_capture = cli_root / "runs" / run_id
+            failed_capture.mkdir(parents=True)
+            (failed_capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (failed_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            (cli_root / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+            with (
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+            ):
+                self.assertEqual(provider.request_history(42, "cli"), [])
+
+    def test_cli_terminal_error_does_not_hide_another_active_capture_or_pr(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            runs = common / "firemud" / "pr-review" / "runs"
+            run_id = f"run.{'b' * 32}"
+            failed_capture = runs / run_id
+            failed_capture.mkdir(parents=True)
+            (failed_capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (failed_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            (common / "firemud" / "pr-review" / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+            active_capture = runs / "run.other"
+            active_capture.mkdir(parents=True)
+            (active_capture / "metadata.json").write_text(
+                json.dumps({"run_id": "run.other", "pull_request": 43, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+            ):
+                target_observation = provider.request_history(42, "cli")
+                other_pr_observation = provider.request_history(43, "cli")
+
+            self.assertEqual([item["checkpoint"] for item in target_observation], ["active-cli:unidentified"])
+            self.assertEqual([item["checkpoint"] for item in other_pr_observation], ["active-cli:run.other"])
+
+    def test_historical_terminal_error_does_not_identify_a_later_lock_owner(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            old_run_id = f"run.{'c' * 32}"
+            old_capture = cli_root / "runs" / old_run_id
+            old_capture.mkdir(parents=True)
+            (old_capture / "metadata.json").write_text(
+                json.dumps({"run_id": old_run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (old_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            (cli_root / "cli.lock").write_text(f"run_id=run.{'d' * 32}\n", encoding="utf-8")
+            with (
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+            ):
+                history = provider.request_history(42, "cli")
+
+            self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
+
+    def test_missing_or_malformed_cli_lock_owner_retains_active_fallback(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            run_id = f"run.{'e' * 32}"
+            failed_capture = cli_root / "runs" / run_id
+            failed_capture.mkdir(parents=True)
+            (failed_capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (failed_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            lock_path = cli_root / "cli.lock"
+            for marker in ("", "not-an-owner\n", f"run_id={run_id}"):
+                with self.subTest(marker=marker):
+                    lock_path.write_text(marker, encoding="utf-8")
+                    with (
+                        patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                        patch.object(provider, "_request_lock_is_held", return_value=True),
+                    ):
+                        history = provider.request_history(42, "cli")
+                    self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
 
     def test_stopped_hosted_projection_preserves_current_cooldown(self) -> None:
         now = datetime.now(timezone.utc)

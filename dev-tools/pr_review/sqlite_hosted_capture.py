@@ -74,9 +74,7 @@ def record_hosted_terminal_result(
     record = _validate_trigger_record(repo, source_pr, trigger_record)
     attempt = _matching_attempt(records, attempt_id, source_pr, record["head_sha"])
     if attempt["state"] == "completed" and attempt["run_id"] is None:
-        return _recover_archived_completed_attempt(
-            records, attempt_id, repo, source_pr, record, current_record_path
-        )
+        return _recover_archived_completed_attempt(records, attempt_id, repo, source_pr, record, current_record_path)
     pull_request = _complete_pull_request(payload, source_pr)
     try:
         result = hosted.trigger_state(repo, source_pr, payload, record, current_record_path)
@@ -109,9 +107,7 @@ def record_hosted_terminal_result(
         else "ambiguous"
     )
     terminal_observed_at = (
-        record["timeout"]["at"]
-        if result.state == "timed_out" and record.get("status") == "timed_out"
-        else observed_at
+        record["timeout"]["at"] if result.state == "timed_out" and record.get("status") == "timed_out" else observed_at
     )
     finish_time, response_review, response_comment = _terminal_event(
         result, pull_request, observed_at=terminal_observed_at
@@ -130,9 +126,7 @@ def record_hosted_terminal_result(
         if completed:
             if attempt["run_id"] != attempt_id:
                 raise HostedCaptureError("terminal Hosted attempt links to a different source run")
-            runs = [
-                item for item in records.history(source_pr)["runs"] if item["run_id"] == attempt_id
-            ]
+            runs = [item for item in records.history(source_pr)["runs"] if item["run_id"] == attempt_id]
             if len(runs) != 1:
                 raise HostedCaptureError("completed Hosted attempt has no unique stored source run")
             return {
@@ -168,9 +162,7 @@ def record_hosted_terminal_result(
         )
 
     trigger = record["trigger"]
-    checkpoint_id = (
-        _checkpoint_id(pull_request, result.response_id) if provider_response_id is not None else None
-    )
+    checkpoint_id = _checkpoint_id(pull_request, result.response_id) if provider_response_id is not None else None
     window = archive_window(
         pull_request,
         record,
@@ -192,10 +184,12 @@ def record_hosted_terminal_result(
     }
     artifacts = {
         "hosted_review": _json(window["reviews"]),
-        "hosted_comments": _json({
-            "comments": window["comments"],
-            "review_threads": window["review_threads"],
-        }),
+        "hosted_comments": _json(
+            {
+                "comments": window["comments"],
+                "review_threads": window["review_threads"],
+            }
+        ),
         "metadata": _json(capture_metadata),
     }
     finish_fields = {
@@ -246,6 +240,156 @@ def record_hosted_terminal_result(
     }
 
 
+_HOSTED_COMMENT_FINGERPRINT = re.compile(
+    r"<!--\s*cr-comment:v1:([0-9a-f]{24})\s*-->",
+    re.DOTALL,
+)
+_HOSTED_COMMENT_MARKER_PREFIX = "cr-comment:v1"
+_HOSTED_COMMENT_AUXILIARY_PREFIXES = (
+    "fingerprinting:",
+    "cr-indicator-types:",
+    "cr-comment:v1:",
+)
+
+
+def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[str, str]]:
+    """Project one inline comment into stable findings without losing its thread.
+
+    CodeRabbit's ``cr-comment:v1`` comments close each independently
+    fingerprinted finding section. A section's immutable GitHub comment ID is
+    retained in every key, so multiple findings still point to the same thread.
+    A single marker keeps the legacy key because it still identifies exactly
+    one finding.
+    """
+
+    if isinstance(comment_id, bool) or not isinstance(comment_id, int) or comment_id <= 0:
+        raise HostedCaptureError("Hosted finding comment has an invalid immutable ID")
+    if not isinstance(body, str):
+        raise HostedCaptureError("Hosted finding comment body is not text")
+
+    fenced_ranges = _markdown_fenced_ranges(body)
+
+    def outside_fence(start: int, end: int) -> bool:
+        return not any(start < fence_end and end > fence_start for fence_start, fence_end in fenced_ranges)
+
+    marker_matches = [
+        match for match in _HOSTED_COMMENT_FINGERPRINT.finditer(body) if outside_fence(match.start(), match.end())
+    ]
+    marker_mentions = sum(
+        len(re.findall(re.escape(_HOSTED_COMMENT_MARKER_PREFIX), body[start:end]))
+        for start, end in _outside_fence_ranges(len(body), fenced_ranges)
+    )
+    if marker_mentions != len(marker_matches):
+        raise HostedCaptureError("Hosted finding comment contains a malformed cr-comment:v1 marker")
+
+    fingerprints = [match.group(1) for match in marker_matches]
+    if len(fingerprints) != len(set(fingerprints)):
+        raise HostedCaptureError("Hosted finding comment repeats a cr-comment:v1 fingerprint")
+
+    if not marker_matches:
+        sections = [(None, body)]
+    else:
+        sections = []
+        previous_end = 0
+        for index, match in enumerate(marker_matches):
+            section = body[previous_end : match.start()]
+            if index:
+                section = _strip_leading_finding_separator(section)
+            sections.append((match.group(1), section))
+            previous_end = match.end()
+
+    findings: list[dict[str, str]] = []
+    multiple = len(marker_matches) > 1
+    for ordinal, (fingerprint, section) in enumerate(sections, start=1):
+        cleaned = _strip_hosted_auxiliary_comments(section)
+        title = _first_line(cleaned)
+        if title is None:
+            title = (
+                f"CodeRabbit review comment {comment_id} finding {ordinal}"
+                if multiple
+                else f"CodeRabbit review comment {comment_id}"
+            )
+        key = f"hosted-comment:{comment_id}"
+        if multiple:
+            # Multiple markers were validated above, so every atomic finding has
+            # its own provider fingerprint while sharing the comment/thread ID.
+            assert fingerprint is not None
+            key += f":fingerprint:{fingerprint}"
+        findings.append(
+            {
+                "key": key,
+                "title": title[:300],
+                "detail": _safe_finding_detail(cleaned),
+            }
+        )
+    return findings
+
+
+def _markdown_fenced_ranges(value: str) -> list[tuple[int, int]]:
+    """Return Markdown fenced-code ranges so marker-like examples stay inert."""
+
+    ranges: list[tuple[int, int]] = []
+    opening: tuple[str, int, int] | None = None
+    offset = 0
+    for line in value.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        match = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", content)
+        if opening is None:
+            if match:
+                fence = match.group(1)
+                remainder = match.group(2)
+                if fence[0] != "`" or "`" not in remainder:
+                    opening = (fence[0], len(fence), offset)
+        elif (
+            match
+            and match.group(1)[0] == opening[0]
+            and len(match.group(1)) >= opening[1]
+            and not match.group(2).strip()
+        ):
+            ranges.append((opening[2], offset + len(line)))
+            opening = None
+        offset += len(line)
+    if opening is not None:
+        ranges.append((opening[2], len(value)))
+    return ranges
+
+
+def _outside_fence_ranges(length: int, fenced_ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    for start, end in fenced_ranges:
+        if cursor < start:
+            ranges.append((cursor, start))
+        cursor = max(cursor, end)
+    if cursor < length:
+        ranges.append((cursor, length))
+    return ranges
+
+
+def _strip_leading_finding_separator(value: str) -> str:
+    return re.sub(
+        r"\A(?:[ \t]*\r?\n)*[ \t]*---[ \t]*(?:\r?\n|$)",
+        "",
+        value,
+        count=1,
+    )
+
+
+def _strip_hosted_auxiliary_comments(value: str) -> str:
+    fenced_ranges = _markdown_fenced_ranges(value)
+    result: list[str] = []
+    cursor = 0
+    for match in re.finditer(r"<!--(.*?)-->", value, re.DOTALL):
+        if any(match.start() < end and match.end() > start for start, end in fenced_ranges):
+            continue
+        content = match.group(1).strip()
+        if content.startswith(_HOSTED_COMMENT_AUXILIARY_PREFIXES):
+            result.append(value[cursor : match.start()])
+            cursor = match.end()
+    result.append(value[cursor:])
+    return "".join(result)
+
+
 def _recover_archived_completed_attempt(
     records: SqliteReviewRecords,
     attempt_id: str,
@@ -257,9 +401,7 @@ def _recover_archived_completed_attempt(
     """Recover an old partial completion from its immutable stored snapshot."""
 
     attempt = records.attempt(attempt_id)
-    attempt_row = next(
-        item for item in records.attempt_history(source_pr) if item["attempt_id"] == attempt_id
-    )
+    attempt_row = next(item for item in records.attempt_history(source_pr) if item["attempt_id"] == attempt_id)
     archive = records.attempt_artifacts(attempt_id)
     if not {"hosted_review", "hosted_comments", "metadata"} <= archive.keys():
         raise HostedCaptureError("completed Hosted attempt lacks exact archived evidence for recovery")
@@ -270,7 +412,8 @@ def _recover_archived_completed_attempt(
     except (TypeError, ValueError, json.JSONDecodeError) as exc:
         raise HostedCaptureError("completed Hosted attempt has malformed archived evidence") from exc
     if (
-        not isinstance(metadata, dict) or metadata.get("state") != "completed"
+        not isinstance(metadata, dict)
+        or metadata.get("state") != "completed"
         or metadata.get("attributable") is not True
         or metadata.get("repository") != repo
         or metadata.get("pull_request") != source_pr
@@ -278,41 +421,46 @@ def _recover_archived_completed_attempt(
         or str(metadata.get("trigger_id")) != str(record["trigger"]["id"])
         or str(metadata.get("response_id")) != attempt_row["provider_review_id"]
         or attempt_row["trigger_id"] != str(record["trigger"]["id"])
-        or not isinstance(reviews, list) or not isinstance(comments, dict)
+        or not isinstance(reviews, list)
+        or not isinstance(comments, dict)
         or not isinstance(comments.get("comments"), list)
         or not isinstance(comments.get("review_threads"), list)
     ):
         raise HostedCaptureError("completed Hosted archive conflicts with its immutable request identity")
     archived_payload = {
-        "data": {"repository": {"pullRequest": {
-            "number": source_pr,
-            "headRefOid": record["head_sha"],
-            "reviews": {"nodes": reviews},
-            "comments": {"nodes": comments["comments"]},
-            "reviewThreads": {"nodes": comments["review_threads"]},
-        }}}
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "number": source_pr,
+                    "headRefOid": record["head_sha"],
+                    "reviews": {"nodes": reviews},
+                    "comments": {"nodes": comments["comments"]},
+                    "reviewThreads": {"nodes": comments["review_threads"]},
+                }
+            }
+        }
     }
     pull_request = _complete_pull_request(archived_payload, source_pr)
     try:
-        result = hosted.trigger_state(
-            repo, source_pr, archived_payload, record, current_record_path
-        )
+        result = hosted.trigger_state(repo, source_pr, archived_payload, record, current_record_path)
     except (KeyError, TypeError, ValueError) as exc:
         raise HostedCaptureError(f"archived Hosted attribution failed: {exc}") from exc
     if (
-        result.state != "completed" or result.attributed is not True
+        result.state != "completed"
+        or result.attributed is not True
         or str(result.response_id) != attempt_row["provider_review_id"]
     ):
         raise HostedCaptureError("archived Hosted result does not prove the stored completion")
     finished_at = attempt_row["finished_at"]
     if not isinstance(finished_at, str) or not finished_at:
         raise HostedCaptureError("completed Hosted attempt lacks its terminal timestamp")
-    _event_at, response_review, response_comment = _terminal_event(
-        result, pull_request, observed_at=finished_at
-    )
+    _event_at, response_review, response_comment = _terminal_event(result, pull_request, observed_at=finished_at)
     findings = _findings_for_completed_result(
-        result, pull_request, record,
-        response_review=response_review, response_comment=response_comment,
+        result,
+        pull_request,
+        record,
+        response_review=response_review,
+        response_comment=response_comment,
         finished_at=finished_at,
     )
     recorded = records.recover_completed_attempt_run(
@@ -398,9 +546,7 @@ def sync_hosted_pending(
         attempt_paths.setdefault(attempt_id, []).append((pr, path, record))
         grouped.setdefault(pr, []).append((path, record))
 
-    duplicate_attempt_ids = {
-        attempt_id for attempt_id, entries in attempt_paths.items() if len(entries) > 1
-    }
+    duplicate_attempt_ids = {attempt_id for attempt_id, entries in attempt_paths.items() if len(entries) > 1}
     for attempt_id in sorted(duplicate_attempt_ids):
         for pr, path, _record in attempt_paths[attempt_id]:
             add(
@@ -461,9 +607,7 @@ def sync_hosted_pending(
                     )
                     attempt = records.attempt(attempt_id)
                     attempt_history = next(
-                        item
-                        for item in records.attempt_history(pr)
-                        if item["attempt_id"] == attempt_id
+                        item for item in records.attempt_history(pr) if item["attempt_id"] == attempt_id
                     )
                     attempt_rows[attempt_id] = attempt_history
                 else:
@@ -495,13 +639,16 @@ def sync_hosted_pending(
                 attempt_state = attempt["state"]
                 if attempt_state == "completed":
                     if attempt["run_id"] is None:
-                        recovered = _recover_archived_completed_attempt(
-                            records, attempt_id, repo, pr, record, path
-                        )
+                        recovered = _recover_archived_completed_attempt(records, attempt_id, repo, pr, record, path)
                         add(
-                            "synced", pr, path, attempt_id=attempt_id,
-                            trigger_id=trigger_id, state="completed",
-                            run_id=recovered["run_id"], counts=recovered["counts"],
+                            "synced",
+                            pr,
+                            path,
+                            attempt_id=attempt_id,
+                            trigger_id=trigger_id,
+                            state="completed",
+                            run_id=recovered["run_id"],
+                            counts=recovered["counts"],
                             recovered_from_archive=True,
                         )
                         continue
@@ -617,9 +764,8 @@ def sync_hosted_pending(
                 bucket = "ambiguous" if result["state"] in {"ambiguous", "unattributed"} else "pending"
                 entry["reason"] = result.get("reason")
                 report[bucket].append(entry)
-            elif (
-                result["state"] in {"ambiguous", "unattributed", "retired", "timed_out"}
-                or (result["state"] == "completed" and result.get("attributable") is not True)
+            elif result["state"] in {"ambiguous", "unattributed", "retired", "timed_out"} or (
+                result["state"] == "completed" and result.get("attributable") is not True
             ):
                 report["ambiguous"].append(entry)
             else:
@@ -648,7 +794,9 @@ def _sync_hosted_record_paths(
                 continue
             except OSError as exc:
                 add_report(
-                    "errors", None, repository_dir,
+                    "errors",
+                    None,
+                    repository_dir,
                     error=f"Hosted trigger directory cannot be inspected ({type(exc).__name__})",
                 )
                 continue
@@ -659,7 +807,9 @@ def _sync_hosted_record_paths(
                 children = list(repository_dir.iterdir())
             except OSError as exc:
                 add_report(
-                    "errors", None, repository_dir,
+                    "errors",
+                    None,
+                    repository_dir,
                     error=f"Hosted pull-request directories cannot be listed ({type(exc).__name__})",
                 )
                 continue
@@ -671,13 +821,17 @@ def _sync_hosted_record_paths(
                     child_mode = child.lstat().st_mode
                 except OSError as exc:
                     add_report(
-                        "errors", int(match.group(1)), child,
+                        "errors",
+                        int(match.group(1)),
+                        child,
                         error=f"Hosted pull-request directory cannot be inspected ({type(exc).__name__})",
                     )
                     continue
                 if stat.S_ISLNK(child_mode) or not stat.S_ISDIR(child_mode):
                     add_report(
-                        "errors", int(match.group(1)), child,
+                        "errors",
+                        int(match.group(1)),
+                        child,
                         error="Hosted pull-request directory is unsafe",
                     )
                     continue
@@ -693,7 +847,9 @@ def _sync_hosted_record_paths(
                 continue
             except OSError as exc:
                 add_report(
-                    "errors", pr, directory,
+                    "errors",
+                    pr,
+                    directory,
                     error=f"Hosted pull-request directory cannot be inspected ({type(exc).__name__})",
                 )
                 continue
@@ -704,7 +860,9 @@ def _sync_hosted_record_paths(
                 children = list(directory.iterdir())
             except OSError as exc:
                 add_report(
-                    "errors", pr, directory,
+                    "errors",
+                    pr,
+                    directory,
                     error=f"Hosted trigger records cannot be listed ({type(exc).__name__})",
                 )
                 continue
@@ -718,7 +876,9 @@ def _sync_hosted_record_paths(
                     child_mode = child.lstat().st_mode
                 except OSError as exc:
                     add_report(
-                        "errors", pr, child,
+                        "errors",
+                        pr,
+                        child,
                         error=f"Hosted trigger record cannot be inspected ({type(exc).__name__})",
                     )
                     continue
@@ -730,11 +890,7 @@ def _sync_hosted_record_paths(
 
 
 def _validate_pending_record(repo: str, source_pr: int, record: Mapping[str, Any]) -> str:
-    if (
-        record.get("repository") != repo
-        or type(record.get("pr_number")) is not int
-        or record["pr_number"] != source_pr
-    ):
+    if record.get("repository") != repo or type(record.get("pr_number")) is not int or record["pr_number"] != source_pr:
         raise HostedCaptureError("Hosted trigger record does not match the exact repository and PR")
     head = record.get("head_sha")
     if not isinstance(head, str) or not hosted.EXACT_SHA.fullmatch(head):
@@ -883,13 +1039,13 @@ def archive_window(
         ):
             comments.append(item)
     reviews = [
-        item for item in pull_request["reviews"]["nodes"]
+        item
+        for item in pull_request["reviews"]["nodes"]
         if github.immutable_database_id(item) == response_id
         or (
             in_window(item.get("submittedAt"))
             and github.is_coderabbit_login(
-                item.get("author", {}).get("login")
-                if isinstance(item.get("author"), dict) else None
+                item.get("author", {}).get("login") if isinstance(item.get("author"), dict) else None
             )
         )
     ]
@@ -902,13 +1058,15 @@ def archive_window(
         author = first.get("author")
         login = author.get("login") if isinstance(author, dict) else None
         if in_window(first.get("createdAt")) and github.is_coderabbit_login(login):
-            review_threads.append({
-                **thread,
-                "comments": {
-                    **thread["comments"],
-                    "nodes": [item for item in nodes if in_window(item.get("createdAt"))],
-                },
-            })
+            review_threads.append(
+                {
+                    **thread,
+                    "comments": {
+                        **thread["comments"],
+                        "nodes": [item for item in nodes if in_window(item.get("createdAt"))],
+                    },
+                }
+            )
     return {"reviews": reviews, "comments": comments, "review_threads": review_threads}
 
 
@@ -985,29 +1143,25 @@ def _findings_for_completed_result(
         if comment_id is None or comment_id in seen_ids or not isinstance(body, str):
             raise HostedCaptureError("Hosted review finding has incomplete immutable identity")
         seen_ids.add(comment_id)
-        title = _first_line(body) or ""
-        if not title:
-            title = f"CodeRabbit review comment {comment_id}"
-        title = title[:300]
-        detail = _safe_finding_detail(body)
-        try:
-            observations.append(
-                FindingObservation(
-                    source_finding_key=f"hosted-comment:{comment_id}",
-                    title=title,
-                    detail=detail,
+        for finding in _hosted_comment_finding_segments(comment_id, body):
+            try:
+                observations.append(
+                    FindingObservation(
+                        source_finding_key=finding["key"],
+                        title=finding["title"],
+                        detail=finding["detail"],
+                    )
                 )
-            )
-        except ReviewRecordsError:
-            # Raw evidence remains in the scrubbed artifact; structured history
-            # uses a safe headline if the provider prose resembles a secret.
-            observations.append(
-                FindingObservation(
-                    source_finding_key=f"hosted-comment:{comment_id}",
-                    title=f"CodeRabbit review comment {comment_id}",
-                    detail=detail,
+            except ReviewRecordsError:
+                # Raw evidence remains in the scrubbed artifact; structured history
+                # uses a safe headline if the provider prose resembles a secret.
+                observations.append(
+                    FindingObservation(
+                        source_finding_key=finding["key"],
+                        title=f"CodeRabbit review comment {comment_id}",
+                        detail=finding["detail"],
+                    )
                 )
-            )
 
     source_kind = "review" if response_review is not None else "comment"
     source = response_review or response_comment
@@ -1026,9 +1180,7 @@ def _findings_for_completed_result(
                 for ordinal in range(1, count + 1):
                     observations.append(
                         FindingObservation(
-                            source_finding_key=(
-                                f"hosted-summary:{source_kind}:{source_id}:{kind}:{ordinal}"
-                            ),
+                            source_finding_key=(f"hosted-summary:{source_kind}:{source_id}:{kind}:{ordinal}"),
                             title=(
                                 f"CodeRabbit summary-only {kind.replace('_', '-')} finding "
                                 f"{ordinal} of {count} (aggregate; no individual detail)"
@@ -1070,11 +1222,7 @@ def _checkpoint_id(pull_request: dict[str, Any], review_id: int | None) -> str |
         checkpoints, _ = evidence.parse_checkpoint_comments(comments)
     except evidence.EvidenceError:
         return None
-    matches = [
-        item
-        for item in checkpoints
-        if item.type.casefold() == "hosted" and item.hosted_review_id == review_id
-    ]
+    matches = [item for item in checkpoints if item.type.casefold() == "hosted" and item.hosted_review_id == review_id]
     return str(matches[0].comment_id) if len(matches) == 1 and matches[0].comment_id is not None else None
 
 

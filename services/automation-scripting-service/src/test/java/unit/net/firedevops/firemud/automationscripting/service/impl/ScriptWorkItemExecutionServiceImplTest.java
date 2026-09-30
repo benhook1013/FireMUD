@@ -207,6 +207,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(ScriptGameplayCommandHandoffService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    AutomationQueueService automationQueueService = Mockito.mock(AutomationQueueService.class);
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     Instant outageSince = Instant.now().minus(Duration.ofSeconds(1));
@@ -223,11 +224,14 @@ class ScriptWorkItemExecutionServiceImplTest {
     ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
     ScriptEventAudit audit = new ScriptEventAudit();
-    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item), List.of());
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
     when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+    when(automationQueueService.drainIndexedWorkItemPointers(Mockito.anyInt(), Mockito.anyInt()))
+        .thenReturn(List.of());
+    item.setUpdatedAt(Instant.EPOCH);
 
     ScriptWorkItemExecutionService service =
         fenceExecutionService(
@@ -236,20 +240,31 @@ class ScriptWorkItemExecutionServiceImplTest {
             auditRepository,
             definitionRepository,
             handoffService,
-            null,
+            automationQueueService,
             gameSessionClient,
             Mockito.mock(PluginRuntimeStateRepository.class));
 
     ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+    ScriptWorkItemExecutionService.ExecutionBatchResult retryScan =
+        service.processPendingWorkItems(1);
 
     assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(retryScan.claimedCount()).isZero();
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
-    assertThat(item.getCancelReason()).isNull();
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:script_pin_authority_unavailable");
+    assertThat(item.getUpdatedAt()).isAfter(Instant.EPOCH);
     assertThat(item.getAuthorityUnavailableSince()).isEqualTo(outageSince);
     assertThat(item.getAuthorityUnavailableCount()).isEqualTo(9);
     assertThat(item.getNextEligibleAt()).isEqualTo(outageSince.plusSeconds(30));
-    verify(workItemRepository, Mockito.never()).save(item);
+    verify(workItemRepository).save(item);
+    verify(definitionRepository, Mockito.times(1))
+        .findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
+    verify(automationQueueService, Mockito.never()).enqueueWorkItem(Mockito.any());
     verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    verify(auditRepository, Mockito.never()).save(audit);
+    assertThat(audit.getFinalStage()).isNull();
+    assertThat(audit.getFinalOutcome()).isNull();
   }
 
   @Test
@@ -1115,10 +1130,12 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
-    assertThat(item.getCancelReason()).isNull();
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:script_pin_authority_unavailable");
+    assertThat(item.getUpdatedAt()).isAfter(Instant.EPOCH);
     assertThat(item.getAuthorityUnavailableCount()).isEqualTo(9);
     verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
-    verify(workItemRepository, Mockito.never()).save(item);
+    verify(workItemRepository).save(item);
     verify(auditRepository, Mockito.never()).save(audit);
   }
 
@@ -2960,10 +2977,12 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.completedCount()).isZero();
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
     verify(handoffService).beginAggregateFanout(item);
     verify(handoffService).endAggregateFanout(item);
     verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
-    verify(workItemRepository, Mockito.never()).save(item);
+    verify(workItemRepository).save(item);
   }
 
   @Test
@@ -3045,7 +3064,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
         .thenAnswer(
             invocation -> {
-              item.setStatus("CANCELED");
+              item.setStatus("HANDOFF_IN_FLIGHT");
               return new ScriptGameplayCommandHandoffService.HandoffResult(
                   false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
             });
@@ -3062,11 +3081,14 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     service.processPendingWorkItems(1);
 
-    assertThat(item.getStatus()).isEqualTo("CANCELED");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
     assertThat(audit.getFinalStage()).isNull();
     assertThat(audit.getFinalOutcome()).isNull();
     verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(item), Mockito.any());
-    verify(pluginRepository, Mockito.times(4))
+    verify(handoffService, Mockito.never())
+        .recordUnattempted(Mockito.eq(item), Mockito.any(), Mockito.anyString());
+    verify(workItemRepository, Mockito.never()).save(item);
+    verify(pluginRepository, Mockito.times(3))
         .findByTenantIdAndGameInstanceIdAndPluginId("1", "7", "plugin-1");
   }
 
@@ -3196,7 +3218,10 @@ class ScriptWorkItemExecutionServiceImplTest {
       assertThat(item.getStatus()).isEqualTo("EVALUATING");
       assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
       assertThat(item.getNextEligibleAt()).isEqualTo(eligibleAtBeforeRetry);
-      assertThat(operations).isEmpty();
+      assertThat(item.getCancelReason())
+          .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+      assertThat(item.getUpdatedAt()).isNotNull();
+      assertThat(operations).containsExactly("save:EVALUATING");
       assertThat(TransactionSynchronizationManager.getSynchronizations()).isEmpty();
       verify(automationQueueService, Mockito.never()).enqueueWorkItem(Mockito.any());
     } finally {
@@ -3247,8 +3272,54 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("CANCELED");
     assertThat(item.getRowVersion()).isEqualTo(8);
+    assertThat(item.getCancelReason()).isNull();
     verify(workItemRepository, Mockito.never()).findById(item.getId());
     verify(workItemRepository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void retryableHandoffDispositionDoesNotOverwriteInFlightParent() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItem item = workItem();
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              item.setStatus("HANDOFF_IN_FLIGHT");
+              return new ScriptGameplayCommandHandoffService.HandoffResult(
+                  false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE");
+            });
+
+    ScriptWorkItemExecutionService service =
+        new ScriptWorkItemExecutionServiceImpl(
+            workItemService,
+            definitionRepository,
+            handoffService,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            new ScriptOutputProperties(),
+            allowingTenantBudgetService(),
+            allowingDryRunCapacityService(),
+            new ObjectMapper());
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(item.getCancelReason()).isNull();
+    verify(workItemRepository, Mockito.never()).findById(item.getId());
+    verify(workItemRepository, Mockito.never()).save(Mockito.any());
+    verify(handoffService).handoff(Mockito.eq(item), Mockito.any());
   }
 
   @Test
@@ -3286,10 +3357,12 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
     verify(handoffService).beginAggregateFanout(item);
     verify(handoffService).endAggregateFanout(item);
     verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
-    verify(workItemRepository, Mockito.never()).save(Mockito.any());
+    verify(workItemRepository).save(item);
   }
 
   @ParameterizedTest
@@ -3348,6 +3421,8 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(result.completedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
     assertThat(sibling.getStatus()).isEqualTo("HANDED_OFF");
     verify(handoffService, Mockito.times(acceptedChildren))
         .handoff(Mockito.eq(item), Mockito.any());
@@ -3356,7 +3431,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(handoffService).beginAggregateFanout(item);
     verify(handoffService).endAggregateFanout(item);
     verify(workItemRepository).save(sibling);
-    verify(workItemRepository, Mockito.never()).save(item);
+    verify(workItemRepository).save(item);
     verify(workItemRepository, Mockito.never()).findById(item.getId());
   }
 

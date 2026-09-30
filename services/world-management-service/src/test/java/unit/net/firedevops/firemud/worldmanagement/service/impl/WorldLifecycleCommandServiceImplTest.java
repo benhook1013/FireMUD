@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -270,7 +271,14 @@ class WorldLifecycleCommandServiceImplTest {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
         .thenReturn(Optional.of(instance));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              WorldInstance saved = invocation.getArgument(0);
+              if ("TERMINATED".equals(saved.getStatus())) {
+                assertTrue(localTransactionActive.get());
+              }
+              return saved;
+            });
     doThrow(new IllegalStateException("world cleanup failed"))
         .when(roomInstanceExitRepository)
         .deleteByTenantIdAndGameInstanceId(42L, 101L);
@@ -300,12 +308,17 @@ class WorldLifecycleCommandServiceImplTest {
         IllegalStateException.class,
         () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
 
-    org.mockito.Mockito.doNothing()
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return null;
+            })
         .when(roomInstanceExitRepository)
         .deleteByTenantIdAndGameInstanceId(42L, 101L);
     var snapshot = service.terminateWorldInstance(42L, 101L, 3L, "term-1", "stop");
 
     assertEquals("TERMINATED", snapshot.status());
+    assertEquals(4L, snapshot.lifecycleEpoch());
     verify(entityManagementClient, org.mockito.Mockito.times(2))
         .cleanupRuntimeInstance(42L, 101L, "term-1");
   }
@@ -316,7 +329,21 @@ class WorldLifecycleCommandServiceImplTest {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
         .thenReturn(Optional.of(instance));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              WorldInstance saved = invocation.getArgument(0);
+              if ("TERMINATED".equals(saved.getStatus())) {
+                assertTrue(localTransactionActive.get());
+              }
+              return saved;
+            });
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return null;
+            })
+        .when(worldEventRepository)
+        .deleteByTenantIdAndGameInstanceId(42L, 101L);
     when(entityManagementClient.cleanupRuntimeInstance(42L, 101L, "term-1"))
         .thenAnswer(
             invocation -> {
@@ -326,7 +353,9 @@ class WorldLifecycleCommandServiceImplTest {
 
     service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
 
+    assertEquals("TERMINATED", instance.getStatus());
     assertFalse(localTransactionActive.get());
+    verify(worldInstanceRepository, org.mockito.Mockito.times(2)).save(instance);
   }
 
   @Test
