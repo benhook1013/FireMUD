@@ -152,7 +152,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
   }
 
-  private record EvaluationFencePrecheck(boolean checked, String failure) {}
+  private record EvaluationFencePrecheck(String failure) {}
 
   /** Compatibility constructor for focused plugin-fence tests. */
   public ScriptWorkItemExecutionServiceImpl(
@@ -573,7 +573,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private EvaluationFencePrecheck precheckEvaluationFences(ScriptWorkItem workItem) {
-    return new EvaluationFencePrecheck(true, validateCurrentExecutionFences(workItem));
+    return new EvaluationFencePrecheck(validateCurrentExecutionFences(workItem));
   }
 
   private EvaluationResult executeEvaluationTransaction(
@@ -880,7 +880,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private EvaluationResult evaluateClaimedWorkItemTransaction(
       ScriptWorkItem workItem, EvaluationFencePrecheck precheck) {
     Instant now = Instant.now();
-    String fenceFailure = precheck.checked() ? precheck.failure() : null;
+    String fenceFailure = precheck.failure();
     if (fenceFailure != null) {
       if (isTerminalFenceFailure(fenceFailure)) {
         cancel(workItem, STAGE_ADMISSION, "canceled", fenceFailure, now);
@@ -1856,60 +1856,33 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void recordOutcome(ScriptWorkItem workItem, String stage, String outcome) {
-    if (workItem.isDryRun()) {
-      return;
-    }
-    String priority = normalizePriorityTag(workItem.getPriorityTag());
-    String sourceClass = normalizeSourceClass(workItem.getEventType());
-    Runnable increment =
-        () ->
-            meterRegistry
-                .counter(
-                    "automation_script_work_item_outcomes_total",
-                    "service",
-                    SERVICE_NAME,
-                    "stage",
-                    stage,
-                    "outcome",
-                    outcome,
-                    "priority",
-                    priority,
-                    "source_class",
-                    sourceClass)
-                .increment();
-    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
-      increment.run();
-      return;
-    }
-    TransactionSynchronizationManager.registerSynchronization(
-        new TransactionSynchronization() {
-          @Override
-          public void afterCommit() {
-            increment.run();
-          }
-        });
+    recordWorkItemCounterAfterCommit(
+        workItem, "automation_script_work_item_outcomes_total", stage, "outcome", outcome);
   }
 
   private void recordPostEvaluationReconciliationRequired(ScriptWorkItem workItem, String stage) {
+    recordWorkItemCounterAfterCommit(workItem, POST_EVALUATION_RECONCILIATION_METRIC, stage);
+  }
+
+  private void recordWorkItemCounterAfterCommit(
+      ScriptWorkItem workItem, String metricName, String stage, String... extraTags) {
     if (workItem.isDryRun()) {
       return;
     }
     String priority = normalizePriorityTag(workItem.getPriorityTag());
     String sourceClass = normalizeSourceClass(workItem.getEventType());
-    Runnable increment =
-        () ->
-            meterRegistry
-                .counter(
-                    POST_EVALUATION_RECONCILIATION_METRIC,
-                    "service",
-                    SERVICE_NAME,
-                    "stage",
-                    stage,
-                    "priority",
-                    priority,
-                    "source_class",
-                    sourceClass)
-                .increment();
+    String[] tags = new String[8 + extraTags.length];
+    tags[0] = "service";
+    tags[1] = SERVICE_NAME;
+    tags[2] = "stage";
+    tags[3] = stage;
+    System.arraycopy(extraTags, 0, tags, 4, extraTags.length);
+    int remainingTagsIndex = 4 + extraTags.length;
+    tags[remainingTagsIndex] = "priority";
+    tags[remainingTagsIndex + 1] = priority;
+    tags[remainingTagsIndex + 2] = "source_class";
+    tags[remainingTagsIndex + 3] = sourceClass;
+    Runnable increment = () -> meterRegistry.counter(metricName, tags).increment();
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       increment.run();
       return;

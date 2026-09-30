@@ -954,6 +954,19 @@ public class ScriptGameplayCommandHandoffServiceImpl
         || "REMOTE_SCHEDULED".equals(outcome);
   }
 
+  private static boolean isDefinitiveNonAcceptedHandoff(ScriptHandoffEvent event) {
+    String outcome = normalize(event.getHandoffOutcome()).trim().toUpperCase(Locale.ROOT);
+    return switch (outcome) {
+      case "REMOTE_REJECTED",
+          "RUNTIME_PAUSED",
+          "ROLLBACK_EPOCH_ADVANCED",
+          "RUNTIME_REGION_SCOPE_ADVANCED",
+          "UNATTEMPTED" ->
+          true;
+      default -> false;
+    };
+  }
+
   private static HandoffResult handoffResult(ScriptHandoffEvent event) {
     String outcome = normalize(event.getHandoffOutcome()).trim().toUpperCase(Locale.ROOT);
     return new HandoffResult(
@@ -1201,8 +1214,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
                 return reconciliationRequiredResult(
                     "persisted handoff intent identity does not match request; reconciliation is required");
               }
-              return reconciliationRequiredResult(
-                  "handoff intent may have committed; reconciliation is required");
+              if (!isDefinitiveNonAcceptedHandoff(intent)) {
+                return reconciliationRequiredResult(
+                    "handoff intent may have committed; reconciliation is required");
+              }
             }
             if (persistedWorkItem.isEmpty()) {
               return reconciliationRequiredResult(
