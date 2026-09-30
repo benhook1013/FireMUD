@@ -3,22 +3,35 @@ package integration.net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceOperation.Lifecycle;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepository;
 import net.firedevops.firemud.accountservice.security.AccountEncryptedEnvelope;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeBinding;
+import net.firedevops.firemud.accountservice.security.AccountEnvelopeCrypto;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopePurpose;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -80,6 +93,150 @@ class AccountConnectTokenIssuanceRepositoryIntegrationTest {
                 context.transaction(),
                 () -> context.repository().find(identity, digest).orElseThrow()))
         .isEqualTo(claimed.operation());
+  }
+
+  @Test
+  void concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter() throws Exception {
+    TestContext context = newTestContext();
+    AccountConnectTokenIssuanceIdentity identity = newIdentity(insertAccount(context.dsl()));
+    byte[] requestDigest = digest(2);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Callable<AccountConnectTokenIssuanceRepository.ClaimResult> issue =
+          () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Issuance claim race did not start together");
+            }
+            return inTransaction(
+                context.transaction(),
+                () -> {
+                  var claim = context.repository().claim(identity, requestDigest);
+                  if (claim.disposition()
+                      == AccountConnectTokenIssuanceRepository.ClaimDisposition.CLAIMED) {
+                    AccountEnvelopeBinding binding =
+                        binding(claim.operation().operationId(), identity, requestDigest);
+                    context
+                        .repository()
+                        .completeWithEnvelope(
+                            claim,
+                            requestDigest,
+                            Lifecycle.FAILED,
+                            "JOIN_REQUIRED",
+                            null,
+                            null,
+                            binding,
+                            encryptedEnvelope(AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE));
+                  }
+                  return claim;
+                });
+          };
+      Future<AccountConnectTokenIssuanceRepository.ClaimResult> first = executor.submit(issue);
+      Future<AccountConnectTokenIssuanceRepository.ClaimResult> second = executor.submit(issue);
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      var results = List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
+      assertThat(results)
+          .extracting(AccountConnectTokenIssuanceRepository.ClaimResult::disposition)
+          .containsExactlyInAnyOrder(
+              AccountConnectTokenIssuanceRepository.ClaimDisposition.CLAIMED,
+              AccountConnectTokenIssuanceRepository.ClaimDisposition.REPLAYED);
+      assertThat(results.get(0).operation().operationId())
+          .isEqualTo(results.get(1).operation().operationId());
+      assertThat(
+              inTransaction(
+                      context.transaction(),
+                      () -> context.repository().find(identity, requestDigest).orElseThrow())
+                  .lifecycle())
+          .isEqualTo(Lifecycle.FAILED);
+      AccountEnvelopeBinding binding =
+          binding(results.get(0).operation().operationId(), identity, requestDigest);
+      assertThat(
+              inTransaction(
+                  context.transaction(),
+                  () ->
+                      context.repository().readResponseEnvelope(identity, requestDigest, binding)))
+          .isPresent();
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(
+      @TempDir Path temporaryDirectory) throws Exception {
+    TestContext context = newTestContext();
+    AccountConnectTokenIssuanceIdentity identity = newIdentity(insertAccount(context.dsl()));
+    byte[] requestDigest = digest(3);
+    byte[] originalResult = "original-connect-token-result".getBytes(StandardCharsets.UTF_8);
+    byte[] connectKey = new byte[32];
+    byte[] bareLoginKey = new byte[32];
+    java.util.Arrays.fill(connectKey, (byte) 1);
+    java.util.Arrays.fill(bareLoginKey, (byte) 2);
+    Path manifest = temporaryDirectory.resolve("manifest.v1");
+    Files.writeString(
+        manifest,
+        "version=1\nactiveKeyId=k1\n"
+            + "key:k1:bare-login="
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(bareLoginKey)
+            + "\nkey:k1:connect-token="
+            + Base64.getUrlEncoder().withoutPadding().encodeToString(connectKey)
+            + "\n",
+        StandardCharsets.US_ASCII);
+    AccountEnvelopeCrypto writer = new AccountEnvelopeCrypto(manifest);
+
+    AccountEnvelopeBinding binding =
+        inTransaction(
+            context.transaction(),
+            () -> {
+              var claim = context.repository().claim(identity, requestDigest);
+              AccountEnvelopeBinding issuedBinding =
+                  binding(claim.operation().operationId(), identity, requestDigest);
+              context
+                  .repository()
+                  .completeWithEnvelope(
+                      claim,
+                      requestDigest,
+                      Lifecycle.COMMITTED,
+                      "SUCCESS",
+                      "connect-jti-recovery",
+                      digest(84),
+                      issuedBinding,
+                      writer.encrypt(
+                          AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE,
+                          issuedBinding,
+                          originalResult));
+              return issuedBinding;
+            });
+
+    var retry =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    assertThat(retry.disposition())
+        .isEqualTo(AccountConnectTokenIssuanceRepository.ClaimDisposition.REPLAYED);
+    assertThat(retry.operation().lifecycle()).isEqualTo(Lifecycle.COMMITTED);
+    var stored =
+        inTransaction(
+            context.transaction(),
+            () ->
+                context
+                    .repository()
+                    .readResponseEnvelope(identity, requestDigest, binding)
+                    .orElseThrow());
+    AccountEnvelopeCrypto recoveryReader = new AccountEnvelopeCrypto(manifest);
+    assertThat(
+            recoveryReader.decrypt(
+                stored.envelope(), AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE, stored.binding()))
+        .containsExactly(originalResult);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(), () -> context.repository().find(identity, digest(4))))
+        .isInstanceOf(AccountConnectTokenIssuanceRepository.IdempotencyConflictException.class);
   }
 
   @Test
