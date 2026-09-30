@@ -62,6 +62,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
@@ -69,6 +70,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
   private static final String OUTCOME_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
+  private static final String REASON_HANDOFF_IN_FLIGHT = "handoff_in_flight";
+  private static final String REASON_HANDOFF_PREPARATION_UNAVAILABLE =
+      "handoff_preparation_unavailable";
   private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
   private static final String OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED =
@@ -84,6 +88,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String SERVICE_NAME = "automation-scripting-service";
   private static final String PROCESSING_FAILURE_AFTER_CLAIM_METRIC =
       "script_outbox_processing_failure_after_claim_total";
+  private static final String POST_EVALUATION_RECONCILIATION_METRIC =
+      "automation_script_post_evaluation_reconciliation_required_total";
   private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
   // Only authority-unavailable plugin-fence reads get three durable retries, spaced 15, 30, and
   // 60 seconds apart. This keeps a missing authority from cycling with the five-second poll.
@@ -130,7 +136,25 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff,
       boolean childHandoffAttempted) {}
 
-  private record EvaluationFencePrecheck(boolean checked, String failure) {}
+  private record AuthorityUnavailableRetryState(
+      Instant since, int count, Instant nextEligibleAt, int rowVersion) {
+    private static AuthorityUnavailableRetryState capture(ScriptWorkItem workItem) {
+      return new AuthorityUnavailableRetryState(
+          workItem.getAuthorityUnavailableSince(),
+          workItem.getAuthorityUnavailableCount(),
+          workItem.getNextEligibleAt(),
+          workItem.getRowVersion());
+    }
+
+    private void restore(ScriptWorkItem workItem) {
+      workItem.setAuthorityUnavailableSince(since);
+      workItem.setAuthorityUnavailableCount(count);
+      workItem.setNextEligibleAt(nextEligibleAt);
+      workItem.setRowVersion(rowVersion);
+    }
+  }
+
+  private record EvaluationFencePrecheck(String failure) {}
 
   /** Compatibility constructor for focused plugin-fence tests. */
   public ScriptWorkItemExecutionServiceImpl(
@@ -551,7 +575,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private EvaluationFencePrecheck precheckEvaluationFences(ScriptWorkItem workItem) {
-    return new EvaluationFencePrecheck(true, validateCurrentExecutionFences(workItem));
+    return new EvaluationFencePrecheck(validateCurrentExecutionFences(workItem));
   }
 
   private EvaluationResult executeEvaluationTransaction(
@@ -581,6 +605,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void commitPostEvaluationFenceState(ScriptWorkItem workItem) {
+    if (!hasAuthorityUnavailableRetryState(workItem)) {
+      return;
+    }
     if (transactionTemplate == null) {
       clearAuthorityUnavailableRetryState(workItem);
       return;
@@ -596,10 +623,25 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     Instant now = Instant.now();
     if (isTerminalFenceFailure(fenceFailure)) {
       cancel(workItem, STAGE_DSL_EVAL, "canceled", fenceFailure, now);
+    } else {
+      markPostEvaluationReconciliationRequired(workItem, fenceFailure, now, STAGE_DSL_EVAL);
     }
     // Evaluation has already emitted output, but there is no durable descriptor/child ledger
     // from which to resume handoff. Keep retryable fence failures unresolved for reconciliation;
     // requeueing would rerun the DSL after an uncertain evaluated-output boundary.
+  }
+
+  private void markPostEvaluationReconciliationRequired(
+      ScriptWorkItem workItem, String reason, Instant now, String stage) {
+    if (!"EVALUATING".equals(workItem.getStatus())
+        && !STATUS_HANDOFF_IN_FLIGHT.equals(workItem.getStatus())) {
+      return;
+    }
+    workItem.setCancelReason("post_evaluation_reconciliation_required:" + reason);
+    workItem.setUpdatedAt(now);
+    ScriptWorkItem persistedWorkItem = workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(persistedWorkItem);
+    recordPostEvaluationReconciliationRequired(persistedWorkItem, stage);
   }
 
   private HandoffExecutionResult executeHandoffLoop(
@@ -638,7 +680,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         if (commandIndex == 0) {
           // Clear the outage window only after the post-evaluation runtime check and this fresh
           // plugin-fence check have both passed, immediately before the first dispatch.
-          commitPostEvaluationFenceState(workItem);
+          AuthorityUnavailableRetryState retryState =
+              AuthorityUnavailableRetryState.capture(workItem);
+          try {
+            commitPostEvaluationFenceState(workItem);
+          } catch (RuntimeException ex) {
+            retryState.restore(workItem);
+            LOGGER.warn(
+                "Unable to commit post-evaluation handoff fence state for workItemId={}; retaining unresolved",
+                workItem.getId(),
+                ex);
+            return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult(), false);
+          }
         }
         childHandoffAttempted = true;
         ScriptGameplayCommandHandoffService.HandoffResult result =
@@ -648,10 +701,23 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
                 || isHandoffReconciliationRequired(result)
                 || (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)
                     && !ScriptHandoffOutcomeSupport.isRetryable(result)))) {
-          // Continue through the complete emitted set. The handoff owner records one durable
-          // attempted child per call; returning here would leave later siblings without either an
-          // attempted disposition or an explicit unattempted terminal record.
+          // Continue through the complete emitted set when the child outcome is definite. An
+          // ambiguous child below is the exception: preserve its in-flight evidence and stop.
           firstRejectedHandoff = result;
+        }
+        if (isHandoffPreparationUnavailableWithoutIntent(result)) {
+          for (int unattemptedIndex = commandIndex;
+              unattemptedIndex < commands.size();
+              unattemptedIndex++) {
+            handoffService.recordUnattempted(
+                workItem, commands.get(unattemptedIndex), REASON_HANDOFF_PREPARATION_UNAVAILABLE);
+          }
+          break;
+        }
+        if (isHandoffReconciliationRequired(result)) {
+          // This child may already have been accepted remotely. Preserve that in-flight evidence
+          // and defer all later siblings until this exact child has been reconciled.
+          break;
         }
       }
     } finally {
@@ -825,7 +891,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private EvaluationResult evaluateClaimedWorkItemTransaction(
       ScriptWorkItem workItem, EvaluationFencePrecheck precheck) {
     Instant now = Instant.now();
-    String fenceFailure = precheck.checked() ? precheck.failure() : null;
+    String fenceFailure = precheck.failure();
     if (fenceFailure != null) {
       if (isTerminalFenceFailure(fenceFailure)) {
         cancel(workItem, STAGE_ADMISSION, "canceled", fenceFailure, now);
@@ -1033,6 +1099,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (isHandoffReconciliationRequired(firstRejectedHandoff)) {
       // An earlier child may already have been accepted. Keep the parent active until that
       // exact-identity handoff is reconciled, even if a later sibling hits a terminal fence.
+      markPostEvaluationReconciliationRequired(
+          workItem, REASON_HANDOFF_IN_FLIGHT, now, ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     if (firstRejectedHandoff != null
@@ -1048,12 +1116,22 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       // Evaluation has already emitted output, but there is no durable descriptor/child ledger
       // from which to resume all commands. Keep the parent unresolved for explicit reconciliation;
       // retrying it would re-enter the DSL after an uncertain partial fanout.
+      markPostEvaluationReconciliationRequired(
+          workItem,
+          handoffResult.retryableFence().reason(),
+          now,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     if (firstRejectedHandoff != null
         && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
       // The child attempt may have rolled back after a remote uncertainty. Keep the evaluated
       // parent unresolved instead of re-entering the DSL.
+      markPostEvaluationReconciliationRequired(
+          workItem,
+          postEvaluationHandoffReconciliationReason(firstRejectedHandoff),
+          now,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     markTerminalSuccess(
@@ -1109,15 +1187,19 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   /** Clears an outage budget after a fresh fence read succeeds. */
   private void clearAuthorityUnavailableRetryState(ScriptWorkItem workItem) {
-    if (workItem.getAuthorityUnavailableSince() == null
-        && workItem.getAuthorityUnavailableCount() == 0
-        && workItem.getNextEligibleAt() == null) {
+    if (!hasAuthorityUnavailableRetryState(workItem)) {
       return;
     }
     workItem.setAuthorityUnavailableSince(null);
     workItem.setAuthorityUnavailableCount(0);
     workItem.setNextEligibleAt(null);
     workItemRepository.save(workItem);
+  }
+
+  private static boolean hasAuthorityUnavailableRetryState(ScriptWorkItem workItem) {
+    return workItem.getAuthorityUnavailableSince() != null
+        || workItem.getAuthorityUnavailableCount() != 0
+        || workItem.getNextEligibleAt() != null;
   }
 
   private static boolean isRepositoryUnavailable(Throwable exception) {
@@ -1662,6 +1744,35 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
                 normalizeHandoffToken(result.errorCode())));
   }
 
+  private static boolean isHandoffPreparationUnavailableWithoutIntent(
+      ScriptGameplayCommandHandoffService.HandoffResult result) {
+    return result != null
+        && !result.accepted()
+        && ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE.equalsIgnoreCase(
+            normalizeHandoffToken(result.outcome()))
+        && "UNAVAILABLE".equalsIgnoreCase(normalizeHandoffToken(result.errorCode()))
+        && normalizeHandoffToken(result.commandId()).isEmpty()
+        && normalizeHandoffToken(result.remoteCoordinatorId()).isEmpty()
+        && normalizeHandoffToken(result.remoteFollowupId()).isEmpty();
+  }
+
+  private static String postEvaluationHandoffReconciliationReason(
+      ScriptGameplayCommandHandoffService.HandoffResult result) {
+    String errorCode =
+        normalizeHandoffToken(result.errorCode())
+            .replace('-', '_')
+            .toUpperCase(java.util.Locale.ROOT);
+    return switch (errorCode) {
+      case "AUTH_UNAVAILABLE",
+          "AUTHORITY_UNAVAILABLE",
+          "GAME_SESSION_UNAVAILABLE",
+          "UNAVAILABLE",
+          "QUEUE_UNAVAILABLE" ->
+          errorCode.toLowerCase(java.util.Locale.ROOT);
+      default -> ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
+    };
+  }
+
   private static String normalizeHandoffToken(String value) {
     return value == null ? "" : value.trim();
   }
@@ -1785,27 +1896,33 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void recordOutcome(ScriptWorkItem workItem, String stage, String outcome) {
+    recordWorkItemCounterAfterCommit(
+        workItem, "automation_script_work_item_outcomes_total", stage, "outcome", outcome);
+  }
+
+  private void recordPostEvaluationReconciliationRequired(ScriptWorkItem workItem, String stage) {
+    recordWorkItemCounterAfterCommit(workItem, POST_EVALUATION_RECONCILIATION_METRIC, stage);
+  }
+
+  private void recordWorkItemCounterAfterCommit(
+      ScriptWorkItem workItem, String metricName, String stage, String... extraTags) {
     if (workItem.isDryRun()) {
       return;
     }
     String priority = normalizePriorityTag(workItem.getPriorityTag());
     String sourceClass = normalizeSourceClass(workItem.getEventType());
-    Runnable increment =
-        () ->
-            meterRegistry
-                .counter(
-                    "automation_script_work_item_outcomes_total",
-                    "service",
-                    SERVICE_NAME,
-                    "stage",
-                    stage,
-                    "outcome",
-                    outcome,
-                    "priority",
-                    priority,
-                    "source_class",
-                    sourceClass)
-                .increment();
+    String[] tags = new String[8 + extraTags.length];
+    tags[0] = "service";
+    tags[1] = SERVICE_NAME;
+    tags[2] = "stage";
+    tags[3] = stage;
+    System.arraycopy(extraTags, 0, tags, 4, extraTags.length);
+    int remainingTagsIndex = 4 + extraTags.length;
+    tags[remainingTagsIndex] = "priority";
+    tags[remainingTagsIndex + 1] = priority;
+    tags[remainingTagsIndex + 2] = "source_class";
+    tags[remainingTagsIndex + 3] = sourceClass;
+    Runnable increment = () -> meterRegistry.counter(metricName, tags).increment();
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       increment.run();
       return;

@@ -49,7 +49,7 @@ Required writes:
 
 Reconciliation:
 
-- Retry World Management using the same command-root `EffectId` and participant guard until the World location/occupancy mutation converges under the current epoch/fence.
+- Retry World Management using the same persisted mutation `EffectId` and participant guard until the World location/occupancy mutation converges under the current epoch/fence. For generated work, this is the recorded child `EffectId`; the enclosing root remains lineage only.
 - There is no Entity success/failure or retry branch for pure `MOVE`. An Entity leg exists only for a future MOVE variant that explicitly writes containment; that variant must declare Entity as a participant with its own write, guard, and reconciliation contract.
 
 `MOVE` commits World location/occupancy before destination presentation. `DROP` and `PICKUP` commit entirely in Entity against the admitted room scope, using the shared actor-lock/executor-fence and durable-barrier contract defined in [Transaction Strategies](./system-architecture-transactions.md#drop-pickup-targeting-and-actor-fence-critical-section). Lock expiry or handoff cannot admit a conflicting `MOVE` while the barrier lacks terminal evidence; Game Session owns retry orchestration and invokes Game Logic to re-resolve stale evidence under the same command-root `EffectId`, preserving the `requestDigest`. This catalog records only the effect-local writes and reconciliation consequences. An item never has two holders and an actor never has two authoritative locations.
@@ -68,13 +68,13 @@ Required inputs:
 Required writes:
 
 - **World Management**
-  - No required write unless the game also models a world-side “sound/door/hazard reaction”; such reactions must be expressed as separate ambient effects with their own `EffectId` (derived deterministically from the parent).
+  - No required write unless the game also models a world-side “sound/door/hazard reaction”; such reactions must be expressed as separate ambient effects with their own persisted mutation `EffectId`. A generated child's recorded `EffectId` is its mutation identity; the enclosing root remains lineage only.
 - **Entity Management**
   - Move `itemInstanceId` into the synthetic room-ground container for `roomInstanceRef`.
 
 Reconciliation:
 
-- Retry the Entity mutation using the same participant guard until it converges or is terminalized. Derived ambient reactions use deterministic child effect identities and explicit required/optional classification; do not undo a committed item move to compensate for an optional reaction.
+- Retry the Entity mutation using the same persisted mutation `EffectId` and participant guard until it converges or is terminalized. Derived ambient reactions use their recorded child `EffectId` and explicit required/optional classification; do not undo a committed item move to compensate for an optional reaction.
 
 ### Pickup (Ground → Inventory)
 
@@ -96,7 +96,7 @@ Required writes:
 
 Reconciliation:
 
-- Retry the EMS move using the same command-root `EffectId` until applied. Treat an already-moved item as replay only when the stored [participant guard identity](./system-architecture-identifier-glossary.md#cross-service-effect-identity) matches the `PICKUP` typed operation, the same persisted mutation `EffectId`, the owner-declared runtime-family partition (`(tenantId, playableStateNamespaceId)` for S1/S2 or an explicitly classified `(tenantId, gameInstanceId)` for S3), and the immutable `requestDigest`, with exact target semantics of `{item: itemInstanceId (or the canonical stack/item target), source: the synthetic room-ground container for this RoomInstanceRef, destination: the actor-inventory container for this actorEntityId}`. If the item is held by another actor/container or the destination differs, return a conflict/stale/reconciliation outcome rather than replay/no-op.
+- Retry the EMS move using the same persisted mutation `EffectId` until applied; for generated work, use its recorded child `EffectId` and retain the enclosing root only as lineage. Treat an already-moved item as replay only when the stored [participant guard identity](./system-architecture-identifier-glossary.md#cross-service-effect-identity) matches the `PICKUP` typed operation, the same persisted mutation `EffectId`, the owner-declared runtime-family partition (`(tenantId, playableStateNamespaceId)` for S1/S2 or an explicitly classified `(tenantId, gameInstanceId)` for S3), and the immutable `requestDigest`, with exact target semantics of `{item: itemInstanceId (or the canonical stack/item target), source: the synthetic room-ground container for this RoomInstanceRef, destination: the actor-inventory container for this actorEntityId}`. If the item is held by another actor/container or the destination differs, return a conflict/stale/reconciliation outcome rather than replay/no-op. The World targeting attestation remains bound to the root `EffectId`, actor, exact room, epoch, fence, and request digest as specified above.
 
 ## Ambient Effects (World Management Authoritative)
 

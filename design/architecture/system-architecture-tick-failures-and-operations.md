@@ -467,13 +467,13 @@ Two patterns are used:
   - It is a narrow exception, not the default for gameplay-visible mutations.
   - Typical safe uses are once-per-tick watermark-style updates or aggregates whose design guarantees a single logical writer/effect per tick.
   - Aggregates that may receive multiple legitimate effects in one tick must not use this pattern.
-  - A shadow tick-state record such as `entity_tick_state` is keyed by `(tenant_id, game_instance_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)`, not by the aggregate identifier alone; `playable_state_scope` is separately persisted and exact-validated evidence, not a key dimension.
+  - A shadow tick-state record such as `entity_tick_state` follows its owner-declared runtime-family partition: S1/S2 uses `(tenant_id, playable_state_namespace_id)`; only explicit S3 uses the complete `(tenant_id, game_instance_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)` watermark identity. For S1/S2, `game_instance_id` is separately exact-validated active-runtime authorization/fence evidence, not part of the namespace partition. `playable_state_scope` is separately persisted and exact-validated evidence, not a key dimension.
   - The shadow state stores at minimum:
     - `last_region_epoch`
     - `last_tick_id`
-    - (plus tenant/game-instance/region identifiers or a foreign key implying them)
+    - (plus the owner-declared partition and region/target-aggregate identifiers or a foreign key implying them; S1/S2 retains active `game_instance_id` separately as authorization/fence evidence)
   - When applying a tick effect:
-    - The handler resolves and reads the shadow tick-state row using `(tenant_id, game_instance_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)`, exact-validating separately persisted `playable_state_scope` evidence; an aggregate-only, aggregate-type-free, or namespace-free lookup is invalid.
+    - The handler resolves the shadow tick-state row using `(tenant_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)` for S1/S2, or the complete `(tenant_id, game_instance_id, playable_state_namespace_id, region_id, target_aggregate_type, aggregate_id)` identity only for explicit S3. For S1/S2 it separately exact-validates the active `game_instance_id` as authorization/fence evidence; it also exact-validates separately persisted `playable_state_scope`. An aggregate-only, aggregate-type-free, or namespace-free lookup is invalid.
     - If `(last_region_epoch, last_tick_id) >= (currentRegionEpoch, currentTickId)` for that exact row, the update is treated as a replay or out-of-order attempt and becomes a no-op (or, in strict modes, a validation-only check).
     - If `(last_region_epoch, last_tick_id) < (currentRegionEpoch, currentTickId)`, the handler applies the change and updates `(last_region_epoch, last_tick_id) = (currentRegionEpoch, currentTickId)` on that same composite-key row in the same transaction as the domain mutation.
 - **Operation-level effect guard**
@@ -504,7 +504,7 @@ Examples:
 - **Once-per-tick aggregate watermark (per-aggregate last-tick state)**
   - `AdvanceRegionAuraWatermark` receives `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId, targetAggregateType, targetAggregateId)`.
   - The design guarantees this aggregate is advanced at most once per tick.
-  - It reads the shadow tick state for `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, targetAggregateType, targetAggregateId)`, exact-validating separately persisted `playableStateScope` evidence, and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
+  - For S1/S2, it reads the shadow tick state in the owner-defined `(tenantId, playableStateNamespaceId, regionId, targetAggregateType, targetAggregateId)` partition and separately exact-validates active `gameInstanceId` as authorization/fence evidence; only explicit S3 uses the complete `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, targetAggregateType, targetAggregateId)` instance-keyed identity. It also exact-validates separately persisted `playableStateScope` evidence and applies the update only when `(last_region_epoch, last_tick_id) < (regionEpoch, tickId)`.
   - If `(last_region_epoch, last_tick_id) >= (regionEpoch, tickId)`, the handler treats the request as a replay/out-of-order and returns without changing state.
 - **Trade between two entities (operation-level effect guard)**
   - The `TradeItem` endpoint explicitly receives `rootEffectId` (the mutation `EffectId` for this root operation) and immutable `requestDigest` in addition to `(tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, tickId, fromEntityId, toEntityId, itemId)`. It creates one participant guard/ledger projection linked to that mutation/root effect per affected inventory aggregate.

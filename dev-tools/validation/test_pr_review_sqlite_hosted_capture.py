@@ -92,9 +92,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         }
 
     @staticmethod
-    def trigger_comment(
-        *, pr: int = PR, trigger_id: int = 101, created_at: str = TRIGGER_AT
-    ) -> dict[str, object]:
+    def trigger_comment(*, pr: int = PR, trigger_id: int = 101, created_at: str = TRIGGER_AT) -> dict[str, object]:
         return {
             "databaseId": trigger_id,
             "author": {"login": "maintainer"},
@@ -133,9 +131,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "parse_checkpoint_comments",
             return_value=(checkpoints, None),
         ):
-            checkpoint_id = sqlite_hosted_capture._checkpoint_id(
-                {"comments": {"nodes": []}}, 103
-            )
+            checkpoint_id = sqlite_hosted_capture._checkpoint_id({"comments": {"nodes": []}}, 103)
 
         self.assertEqual(checkpoint_id, "802")
 
@@ -170,9 +166,9 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             observed_at="2026-09-29T01:05:00Z",
         )
         replay_payload = json.loads(json.dumps(payload))
-        replay_payload["data"]["repository"]["pullRequest"]["comments"]["nodes"][1][
-            "updatedAt"
-        ] = "2026-09-29T01:06:00Z"
+        replay_payload["data"]["repository"]["pullRequest"]["comments"]["nodes"][1]["updatedAt"] = (
+            "2026-09-29T01:06:00Z"
+        )
         replay = sqlite_hosted_capture.record_hosted_terminal_result(
             self.records,
             attempt_id=self.attempt_id,
@@ -333,7 +329,10 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "updatedAt": "2026-09-29T01:02:00Z",
         }
         captured = sqlite_hosted_capture.record_hosted_terminal_result(
-            self.records, attempt_id=self.attempt_id, repo=REPO, source_pr=PR,
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
             trigger_record=self.trigger_record(),
             payload=self.payload(comments=[old_comment, self.trigger_comment(), reply, summary]),
         )
@@ -352,17 +351,29 @@ class SqliteHostedCaptureTest(unittest.TestCase):
     def test_archive_window_excludes_replies_after_review_completion(self) -> None:
         thread = {
             "id": "thread-1",
-            "comments": {"nodes": [
-                {"databaseId": 201, "author": {"login": "coderabbitai[bot]"},
-                 "createdAt": "2026-09-29T01:02:00Z", "body": "Fix the retry fence"},
-                {"databaseId": 202, "author": {"login": "maintainer"},
-                 "createdAt": "2026-09-29T02:00:00Z", "body": "x" * (9 * 1024 * 1024)},
-            ]},
+            "comments": {
+                "nodes": [
+                    {
+                        "databaseId": 201,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "createdAt": "2026-09-29T01:02:00Z",
+                        "body": "Fix the retry fence",
+                    },
+                    {
+                        "databaseId": 202,
+                        "author": {"login": "maintainer"},
+                        "createdAt": "2026-09-29T02:00:00Z",
+                        "body": "x" * (9 * 1024 * 1024),
+                    },
+                ]
+            },
         }
         pull_request = sqlite_hosted_capture._complete_pull_request(
-            self.payload(comments=[self.trigger_comment()], review_threads=[thread]), PR)
+            self.payload(comments=[self.trigger_comment()], review_threads=[thread]), PR
+        )
         window = sqlite_hosted_capture.archive_window(
-            pull_request, self.trigger_record(), finished_at="2026-09-29T01:04:00Z")
+            pull_request, self.trigger_record(), finished_at="2026-09-29T01:04:00Z"
+        )
         self.assertEqual(
             [item["databaseId"] for item in window["review_threads"][0]["comments"]["nodes"]],
             [201],
@@ -464,9 +475,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             repo=REPO,
             source_pr=PR,
             trigger_record=self.trigger_record(),
-            payload=self.payload(
-                comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]
-            ),
+            payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
         )
 
         finding = self.records.history(PR)["findings"][0]
@@ -481,6 +490,229 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(finding["title"], "Check the current route target before recording the decision.")
         self.assertNotIn("ghp_", finding["detail"])
         self.assertIn("[redacted credential]", finding["detail"])
+
+    def test_multiple_fingerprinted_sections_become_findings_on_the_same_thread(self) -> None:
+        first_fingerprint = "a1e39b83f15845dc073e0b8b"
+        second_fingerprint = "30d1ed367e7421c8d02b1413"
+        body = (
+            "**Check the first boundary.**\n\n"
+            "The first section has its own detail.\n\n"
+            "```text\n---\n```\n\n"
+            "<!-- fingerprinting:phantom:medusa:pangolin -->\n"
+            "<!-- cr-indicator-types:potential_issue -->\n"
+            f"<!-- cr-comment:v1:{first_fingerprint} -->\n\n"
+            "---\n\n"
+            "**Check the second boundary.**\n\n"
+            "The second section has different detail.\n\n"
+            "<!-- fingerprinting:phantom:medusa:pangolin -->\n"
+            "<!-- cr-indicator-types:potential_issue -->\n"
+            f"<!-- cr-comment:v1:{second_fingerprint} -->\n\n"
+            "_Source: Path instructions_\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->"
+        )
+        review = {
+            "databaseId": 201,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-29T01:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        comment = {
+            "databaseId": 202,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+            "url": "https://github.example/owner/repo/pull/42#discussion_r202",
+        }
+        thread = {
+            "id": "PRRT_thread_1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "src/example.py",
+            "comments": {"nodes": [comment]},
+        }
+
+        captured = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(),
+            payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
+        )
+
+        history = self.records.history(PR)
+        findings = {item["source_finding_key"]: item for item in history["findings"]}
+        self.assertEqual(captured["counts"]["found"], 2)
+        self.assertEqual(
+            set(findings),
+            {
+                f"hosted-comment:202:fingerprint:{first_fingerprint}",
+                f"hosted-comment:202:fingerprint:{second_fingerprint}",
+            },
+        )
+        self.assertEqual(
+            findings[f"hosted-comment:202:fingerprint:{first_fingerprint}"]["title"],
+            "Check the first boundary.",
+        )
+        self.assertEqual(
+            findings[f"hosted-comment:202:fingerprint:{second_fingerprint}"]["title"],
+            "Check the second boundary.",
+        )
+        first_detail = findings[f"hosted-comment:202:fingerprint:{first_fingerprint}"]["detail"]
+        second_detail = findings[f"hosted-comment:202:fingerprint:{second_fingerprint}"]["detail"]
+        self.assertIn("first section has its own detail", first_detail)
+        self.assertIn("---", first_detail)
+        self.assertNotIn("second section", first_detail)
+        self.assertIn("second section has different detail", second_detail)
+        self.assertNotIn("---", second_detail)
+        self.assertNotIn("fingerprinting:", first_detail + second_detail)
+        self.assertNotIn("cr-indicator-types:", first_detail + second_detail)
+
+    def test_multisegment_rejected_titles_keep_distinct_fingerprint_fallbacks(self) -> None:
+        first_fingerprint = "a1e39b83f15845dc073e0b8b"
+        second_fingerprint = "30d1ed367e7421c8d02b1413"
+        body = (
+            "**Bearer first-unsafe-value**\n\n"
+            "The first section has useful public detail.\n\n"
+            f"<!-- cr-comment:v1:{first_fingerprint} -->\n\n---\n\n"
+            "**Bearer second-unsafe-value**\n\n"
+            "The second section has separate public detail.\n\n"
+            f"<!-- cr-comment:v1:{second_fingerprint} -->\n\n"
+            "_Source: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n"
+        )
+        review = {
+            "databaseId": 201,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-29T01:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        comment = {
+            "databaseId": 202,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+            "url": "https://github.example/owner/repo/pull/42#discussion_r202",
+        }
+        thread = {
+            "id": "PRRT_thread_1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "src/example.py",
+            "comments": {"nodes": [comment]},
+        }
+
+        captured = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(),
+            payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
+        )
+
+        segments = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
+        self.assertEqual([item["fingerprint"] for item in segments], [first_fingerprint, second_fingerprint])
+        findings = {item["source_finding_key"]: item for item in self.records.history(PR)["findings"]}
+        self.assertEqual(captured["counts"]["found"], 2)
+        self.assertEqual(
+            set(findings),
+            {
+                f"hosted-comment:202:fingerprint:{first_fingerprint}",
+                f"hosted-comment:202:fingerprint:{second_fingerprint}",
+            },
+        )
+        self.assertEqual(
+            findings[f"hosted-comment:202:fingerprint:{first_fingerprint}"]["title"],
+            f"CodeRabbit review comment 202 finding {first_fingerprint}",
+        )
+        self.assertEqual(
+            findings[f"hosted-comment:202:fingerprint:{second_fingerprint}"]["title"],
+            f"CodeRabbit review comment 202 finding {second_fingerprint}",
+        )
+        self.assertIn(
+            "first section has useful public detail",
+            findings[f"hosted-comment:202:fingerprint:{first_fingerprint}"]["detail"],
+        )
+        self.assertIn(
+            "second section has separate public detail",
+            findings[f"hosted-comment:202:fingerprint:{second_fingerprint}"]["detail"],
+        )
+
+    def test_final_fingerprint_accepts_only_empty_or_known_auxiliary_tail(self) -> None:
+        fingerprint = "a1e39b83f15845dc073e0b8b"
+        prefix = f"**One finding.**\nDetails.\n<!-- cr-comment:v1:{fingerprint} -->"
+        valid_tails = (
+            "",
+            " \n\n",
+            "\n\n---\n\n",
+            "\n<!-- fingerprinting:phantom:medusa:pangolin -->\n<!-- cr-indicator-types:potential_issue -->",
+            "\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Source: Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Source: Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Source: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+        )
+        for tail in valid_tails:
+            with self.subTest(tail=tail):
+                findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, prefix + tail)
+                self.assertEqual(len(findings), 1)
+                self.assertEqual(findings[0]["key"], "hosted-comment:202")
+
+        invalid_tails = (
+            "\nAn unmarked substantive finding.",
+            "\n```text\nFenced substantive detail.\n```",
+            "\n<!-- unknown auxiliary: preserve this finding -->",
+            "\n_Source: Unrecognized source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
+        )
+        for tail in invalid_tails:
+            with (
+                self.subTest(tail=tail),
+                self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "unmarked content after its final"),
+            ):
+                sqlite_hosted_capture._hosted_comment_finding_segments(202, prefix + tail)
+
+    def test_single_fingerprint_keeps_legacy_key_and_malformed_markers_fail_closed(self) -> None:
+        fingerprint = "a1e39b83f15845dc073e0b8b"
+        one = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202,
+            f"**One finding.**\nDetails.\n<!-- cr-comment:v1:{fingerprint} -->",
+        )
+        self.assertEqual(len(one), 1)
+        self.assertEqual(one[0]["key"], "hosted-comment:202")
+        self.assertEqual(one[0]["fingerprint"], fingerprint)
+        self.assertNotIn("cr-comment:v1", one[0]["detail"])
+
+        prose_mentions = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202,
+            "**Reject malformed `cr-comment:v1` markers.**\n\n"
+            "The cr-comment:v1 prefix is mentioned in ordinary prose.\n\n"
+            "<!-- Note about cr-comment:v1 examples. -->\n\n"
+            "```text\n<!-- cr-comment:v1:not-a-fingerprint -->\n```\n\n"
+            f"Details.\n<!-- cr-comment:v1:{fingerprint} -->",
+        )
+        self.assertEqual(len(prose_mentions), 1)
+        self.assertEqual(prose_mentions[0]["key"], "hosted-comment:202")
+        self.assertEqual(prose_mentions[0]["title"], "Reject malformed `cr-comment:v1` markers.")
+
+        with self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "malformed cr-comment:v1 marker"):
+            sqlite_hosted_capture._hosted_comment_finding_segments(
+                202, "**Finding.**\n<!-- cr-comment:v1:not-a-fingerprint -->"
+            )
+        with self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "malformed cr-comment:v1 marker"):
+            sqlite_hosted_capture._hosted_comment_finding_segments(202, "**Finding.**\n<!-- cr-comment:v1:bad")
+        with self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "repeats a cr-comment:v1 fingerprint"):
+            sqlite_hosted_capture._hosted_comment_finding_segments(
+                202,
+                "**First.**\n"
+                f"<!-- cr-comment:v1:{fingerprint} -->\n\n---\n\n"
+                "**Second.**\n"
+                f"<!-- cr-comment:v1:{fingerprint} -->",
+            )
 
     def test_live_finding_uses_safe_fallback_for_secret_headline(self) -> None:
         body = "**Bearer unsafe-value**\nDetails include token=ghp_" + "A" * 30
@@ -514,9 +746,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             repo=REPO,
             source_pr=PR,
             trigger_record=self.trigger_record(),
-            payload=self.payload(
-                comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]
-            ),
+            payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
         )
 
         finding = self.records.history(PR)["findings"][0]
@@ -524,6 +754,54 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertNotIn("unsafe-value", finding["detail"])
         self.assertNotIn("ghp_", finding["detail"])
         self.assertIn("[redacted credential]", finding["detail"])
+
+    def test_rejected_fallback_detail_is_omitted_without_losing_scrubbed_archive(self) -> None:
+        raw_secret = "ghp_" + "A" * 30
+        body = f"**Bearer unsafe-value**\nDetails include token={raw_secret}"
+        review = {
+            "databaseId": 201,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-29T01:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        comment = {
+            "databaseId": 202,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+            "url": "https://github.example/owner/repo/pull/42#discussion_r202",
+        }
+        thread = {
+            "id": "PRRT_thread_1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "src/example.py",
+            "comments": {"nodes": [comment]},
+        }
+
+        with patch.object(sqlite_hosted_capture, "_safe_finding_detail", return_value="secret=unsafe-fallback"):
+            captured = sqlite_hosted_capture.record_hosted_terminal_result(
+                self.records,
+                attempt_id=self.attempt_id,
+                repo=REPO,
+                source_pr=PR,
+                trigger_record=self.trigger_record(),
+                payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
+            )
+
+        self.assertEqual(captured["state"], "completed")
+        self.assertEqual(captured["counts"]["found"], 1)
+        finding = self.records.history(PR)["findings"][0]
+        self.assertEqual(finding["source_finding_key"], "hosted-comment:202")
+        self.assertEqual(finding["title"], "CodeRabbit review comment 202")
+        self.assertEqual(finding["detail"], "")
+        archived = json.loads(self.records.attempt_artifacts(self.attempt_id)["hosted_comments"])
+        archived_body = archived["review_threads"][0]["comments"]["nodes"][0]["body"]
+        self.assertNotIn(raw_secret, archived_body)
+        self.assertIn("[redacted credential]", archived_body)
 
     def test_nonterminal_observation_keeps_the_attempt_open(self) -> None:
         active = {
@@ -623,9 +901,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 self.assertTrue(captured["terminal"])
                 self.assertEqual(captured["state"], expected_state)
                 self.assertTrue(replay["idempotent_replay"])
-                attempt = next(
-                    item for item in self.records.attempt_history(PR) if item["attempt_id"] == attempt_id
-                )
+                attempt = next(item for item in self.records.attempt_history(PR) if item["attempt_id"] == attempt_id)
                 self.assertEqual(attempt["state"], expected_state)
                 self.assertIsNone(attempt["run_id"])
 
@@ -667,9 +943,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 comments=[self.trigger_comment(trigger_id=501, created_at=trigger_at), edited_reply, summary]
             )
 
-            with patch.object(
-                sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload
-            ) as fetch:
+            with patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch:
                 first = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
             fetch.assert_called_once_with(REPO, PR)
 
@@ -688,9 +962,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 "fetch_pull_request",
                 side_effect=AssertionError("linked replay must not refetch GitHub"),
             ) as replay_fetch:
-                replay = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                replay = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
             replay_fetch.assert_not_called()
             self.assertTrue(replay["synced"], replay)
             self.assertTrue(replay["synced"][0]["idempotent_replay"])
@@ -747,12 +1019,8 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                     comments=[self.trigger_comment(trigger_id=trigger_id, created_at=trigger_at), response]
                 )
 
-                with patch.object(
-                    sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload
-                ) as fetch:
-                    report = sqlite_hosted_capture.sync_hosted_pending(
-                        records, REPO, common=common, pr_number=PR
-                    )
+                with patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch:
+                    report = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
 
                 fetch.assert_called_once_with(REPO, PR)
                 self.assertEqual(len(report[bucket]), 1)
@@ -811,9 +1079,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch,
                 patch.object(sqlite_hosted_capture.hosted, "trigger_state", return_value=terminal),
             ):
-                first = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                first = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
 
             fetch.assert_called_once_with(REPO, PR)
             self.assertEqual(len(first["synced"]), 1)
@@ -829,9 +1095,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 "fetch_pull_request",
                 side_effect=AssertionError("terminal replay must not refetch GitHub"),
             ) as replay_fetch:
-                second = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                second = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
 
             replay_fetch.assert_not_called()
             self.assertEqual(len(second["synced"]), 1)
@@ -892,9 +1156,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch,
                 patch.object(sqlite_hosted_capture.hosted, "trigger_state", return_value=terminal),
             ):
-                first = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                first = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
 
             fetch.assert_called_once_with(REPO, PR)
             self.assertEqual(len(first["synced"]), 0)
@@ -911,9 +1173,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 "fetch_pull_request",
                 side_effect=AssertionError("ambiguous replay must not refetch GitHub"),
             ) as replay_fetch:
-                second = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                second = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
 
             replay_fetch.assert_not_called()
             self.assertEqual(len(second["synced"]), 0)
@@ -1005,9 +1265,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                     raise RuntimeError("injected history failure")
                 return payload
 
-            with patch.object(
-                sqlite_hosted_capture.github, "fetch_pull_request", side_effect=fetch_pr
-            ):
+            with patch.object(sqlite_hosted_capture.github, "fetch_pull_request", side_effect=fetch_pr):
                 report = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common)
 
             self.assertEqual(fetched, [(REPO, PR), (REPO, 43)])
@@ -1052,9 +1310,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 "fetch_pull_request",
                 side_effect=AssertionError("partial completed attempt must not be rewritten"),
             ) as fetch:
-                report = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                report = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
 
             fetch.assert_not_called()
             self.assertEqual(len(report["errors"]), 1)
@@ -1070,23 +1326,31 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             attempt_id = "hosted-sync-recover"
             started_at = "2026-09-29T00:59:00Z"
             record = self.trigger_record(
-                trigger_id=951, created_at="2026-09-29T01:00:00Z",
-                posting_started_at=started_at, attempt_id=attempt_id,
+                trigger_id=951,
+                created_at="2026-09-29T01:00:00Z",
+                posting_started_at=started_at,
+                attempt_id=attempt_id,
             )
             self.write_trigger_record(common, record)
             sqlite_hosted_capture.start_hosted_attempt(
-                records, attempt_id=attempt_id, source_pr=PR, candidate_sha=HEAD,
-                started_at=started_at, metadata={"repository": REPO},
+                records,
+                attempt_id=attempt_id,
+                source_pr=PR,
+                candidate_sha=HEAD,
+                started_at=started_at,
+                metadata={"repository": REPO},
             )
             reply = {
-                "databaseId": 952, "author": {"login": "coderabbitai"},
+                "databaseId": 952,
+                "author": {"login": "coderabbitai"},
                 "body": "Full review finished.",
                 "createdAt": "2026-09-29T01:01:00Z",
                 "updatedAt": "2026-09-29T01:05:00Z",
                 "url": "https://github.example/owner/repo/pull/42#issuecomment-952",
             }
             summary = {
-                "databaseId": 953, "author": {"login": "coderabbitai[bot]"},
+                "databaseId": 953,
+                "author": {"login": "coderabbitai[bot]"},
                 "body": (
                     "No actionable comments were generated in the recent review.\n"
                     f"Reviewing files that changed from the base of the PR and between {HEAD[:12]} and {HEAD}."
@@ -1096,14 +1360,23 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             }
             comments = [self.trigger_comment(trigger_id=951), reply, summary]
             metadata = {
-                "state": "completed", "terminal": True, "attributable": True,
-                "reason": "", "repository": REPO, "pull_request": PR,
-                "head_sha": HEAD, "trigger_id": 951, "response_id": 952,
+                "state": "completed",
+                "terminal": True,
+                "attributable": True,
+                "reason": "",
+                "repository": REPO,
+                "pull_request": PR,
+                "head_sha": HEAD,
+                "trigger_id": 951,
+                "response_id": 952,
                 "observed_at": "2026-09-29T01:05:00Z",
             }
             records.finish_attempt(
-                attempt_id, state="completed", finished_at="2026-09-29T01:05:00Z",
-                trigger_id="951", provider_review_id="952",
+                attempt_id,
+                state="completed",
+                finished_at="2026-09-29T01:05:00Z",
+                trigger_id="951",
+                provider_review_id="952",
                 artifacts={
                     "hosted_review": json.dumps([]),
                     "hosted_comments": json.dumps({"comments": comments, "review_threads": []}),
@@ -1112,12 +1385,11 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             )
 
             with patch.object(
-                sqlite_hosted_capture.github, "fetch_pull_request",
+                sqlite_hosted_capture.github,
+                "fetch_pull_request",
                 side_effect=AssertionError("archived recovery does not need live GitHub"),
             ) as fetch:
-                report = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                report = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
             fetch.assert_not_called()
             self.assertEqual(report["errors"], [])
             self.assertEqual(len(report["synced"]), 1)
@@ -1140,16 +1412,19 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             }
             self.write_trigger_record(common, record)
             sqlite_hosted_capture.start_hosted_attempt(
-                records, attempt_id=attempt_id, source_pr=PR, candidate_sha=HEAD,
-                started_at=TRIGGER_AT, metadata={"repository": REPO},
+                records,
+                attempt_id=attempt_id,
+                source_pr=PR,
+                candidate_sha=HEAD,
+                started_at=TRIGGER_AT,
+                metadata={"repository": REPO},
             )
             with patch.object(
-                sqlite_hosted_capture.github, "fetch_pull_request",
+                sqlite_hosted_capture.github,
+                "fetch_pull_request",
                 return_value=self.payload(comments=[self.trigger_comment(trigger_id=951)]),
             ):
-                report = sqlite_hosted_capture.sync_hosted_pending(
-                    records, REPO, common=common, pr_number=PR
-                )
+                report = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
             self.assertEqual(report["errors"], [])
             self.assertEqual(len(report["ambiguous"]), 1, report)
             self.assertEqual(records.attempt(attempt_id)["state"], "timed_out")

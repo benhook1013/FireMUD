@@ -1953,6 +1953,15 @@ require_contains(
         "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "the server-derived `playableStateScope` is retained and exact-validated as immutable policy/routing/authorization/fence evidence, not as a uniqueness input",
         "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
+        "the target window must exclude them and cannot rediscover or remint their pending work under new candidate, firing-claim, or event identities",
+        "This does not prevent the target window from selecting independently reconciled candidates under the new exact pin",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-ticks.md",
+    [
+        "stable continuity identity is mode-qualified as `(isDryRun, {stableOwnerKind, stableOwnerId, scheduleDefinitionId, playableStateNamespaceId, targetScopeType, targetScopeId})`",
+        "[Scripting Scheduler and Timers](./system-architecture-scripting-scheduler-and-timers.md#target-state-design) under [ADR 0110]",
     ],
 )
 require_contains(
@@ -1992,24 +2001,30 @@ canonical_resume_identity_fixture = (
 if obsolete_scope_resume_window_identity.fullmatch(canonical_resume_identity_fixture):
     raise SystemExit("canonical namespace-owned resume-window identity was rejected")
 require_contains(
-    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
         "The canonical scheduler preimage fields are serialized in this fixed order:",
         "`resumeWindowId` is absent for non-catch-up triggers",
         "Fields marked `when ...` are omitted, not replaced by empty or sentinel values",
     ],
 )
-adr0001 = (
+require_contains(
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    [
+        "[Table 1's Scheduler Candidate Identity Preimage](../system-architecture-scripting-normative-contract-tables.md#scheduler-candidate-identity-preimage-normative)"
+    ],
+)
+normative_contract_tables = (
     root
-    / "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md"
+    / "design/architecture/system-architecture-scripting-normative-contract-tables.md"
 ).read_text(encoding="utf-8")
 preimage_matches = re.findall(
     r"The canonical scheduler preimage fields are serialized in this fixed order: `([^`]+)`",
-    adr0001,
+    normative_contract_tables,
 )
 if len(preimage_matches) != 1:
     raise SystemExit(
-        "adr-0001-scripting-event-ingress-idempotency-identity.md: expected exactly one canonical scheduler preimage"
+        "system-architecture-scripting-normative-contract-tables.md: expected exactly one canonical scheduler preimage"
     )
 expected_scheduler_preimage = [
     "tenantId",
@@ -2043,7 +2058,7 @@ actual_scheduler_preimage = [
 ]
 if actual_scheduler_preimage != expected_scheduler_preimage:
     raise SystemExit(
-        "adr-0001-scripting-event-ingress-idempotency-identity.md: canonical scheduler preimage fields/order drifted"
+        "system-architecture-scripting-normative-contract-tables.md: canonical scheduler preimage fields/order drifted"
     )
 specialized_inventory = (
     root / "design/project-management/design-alignment/decision-inventory-specialized-runtime.md"
