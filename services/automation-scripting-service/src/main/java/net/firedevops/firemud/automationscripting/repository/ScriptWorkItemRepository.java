@@ -54,7 +54,7 @@ public class ScriptWorkItemRepository {
   private static final Field<OffsetDateTime> CURRENT_OFFSET_TIMESTAMP =
       field("CURRENT_TIMESTAMP", OffsetDateTime.class);
   private static final Field<OffsetDateTime> HANDOFF_RETENTION_HOLD_UNTIL =
-      field("retention_hold_until", OffsetDateTime.class);
+      SCRIPT_HANDOFF_EVENTS.RETENTION_HOLD_UNTIL;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
