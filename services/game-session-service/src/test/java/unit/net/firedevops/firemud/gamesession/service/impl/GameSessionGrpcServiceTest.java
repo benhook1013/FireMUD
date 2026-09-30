@@ -1115,7 +1115,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void unknownNamedWorldFailsClosedAsAdmissionPointerUnavailable() {
+  void unknownNamedWorldReturnsInvalidArgument() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of());
@@ -1134,7 +1134,7 @@ class GameSessionGrpcServiceTest {
 
     ListGameplayRealmsResponse response = listGameplayRealms(service, "unknown-world");
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
     assertEquals(0, response.getRealmsCount());
   }
 
