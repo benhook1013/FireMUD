@@ -3020,7 +3020,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
     assertThat(item.getCancelReason())
-        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+        .isEqualTo("post_evaluation_reconciliation_required:unavailable");
     verify(handoffService).beginAggregateFanout(item);
     verify(handoffService).endAggregateFanout(item);
     verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
@@ -3198,8 +3198,18 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(handoffService, Mockito.times(2)).handoff(Mockito.any(), Mockito.any());
   }
 
-  @Test
-  void retryableHandoffAttemptLeavesEvaluatedParentUnresolved() {
+  @ParameterizedTest
+  @CsvSource({
+    "REMOTE_REJECTED, AUTH_UNAVAILABLE, auth_unavailable",
+    "REMOTE_REJECTED, ' AUTHORITY-UNAVAILABLE ', authority_unavailable",
+    "REMOTE_REJECTED, GAME_SESSION_UNAVAILABLE, game_session_unavailable",
+    "REMOTE_REJECTED, UNAVAILABLE, unavailable",
+    "REMOTE_REJECTED, QUEUE_UNAVAILABLE, queue_unavailable",
+    "RETRY_QUEUED, '', unclassified_handoff_error",
+    "RETRY_QUEUED, 'provider-specific temporary failure', unclassified_handoff_error"
+  })
+  void retryableHandoffAttemptLeavesEvaluatedParentUnresolved(
+      String outcome, String errorCode, String expectedReason) {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptDefinitionRepository definitionRepository =
         Mockito.mock(ScriptDefinitionRepository.class);
@@ -3222,7 +3232,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     when(handoffService.handoff(Mockito.eq(item), Mockito.any()))
         .thenReturn(
             new ScriptGameplayCommandHandoffService.HandoffResult(
-                false, "REMOTE_REJECTED", "", "", "", "QUEUE_UNAVAILABLE"));
+                false, outcome, "", "", "", errorCode));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(
             invocation -> {
@@ -3269,7 +3279,7 @@ class ScriptWorkItemExecutionServiceImplTest {
       assertThat(item.getAuthorityUnavailableRetryCount()).isZero();
       assertThat(item.getNextEligibleAt()).isEqualTo(eligibleAtBeforeRetry);
       assertThat(item.getCancelReason())
-          .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+          .isEqualTo("post_evaluation_reconciliation_required:" + expectedReason);
       assertThat(item.getUpdatedAt()).isNotNull();
       assertThat(operations).containsExactly("save:EVALUATING", "refresh");
       assertThat(TransactionSynchronizationManager.getSynchronizations()).hasSize(1);
@@ -3379,7 +3389,7 @@ class ScriptWorkItemExecutionServiceImplTest {
       assertThat(commits).hasValue(4);
       assertThat(item.getStatus()).isEqualTo("EVALUATING");
       assertThat(item.getCancelReason())
-          .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+          .isEqualTo("post_evaluation_reconciliation_required:unavailable");
       assertThat(item.getFailureGeneration()).isZero();
       assertThat(item.getAuthorityUnavailableSince()).isEqualTo(authorityUnavailableSince);
       assertThat(item.getAuthorityUnavailableCount()).isEqualTo(3);
@@ -3514,7 +3524,9 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.completedCount()).isZero();
     assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
     assertThat(item.getCancelReason())
-        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+        .isEqualTo(
+            "post_evaluation_reconciliation_required:"
+                + errorCode.toLowerCase(java.util.Locale.ROOT));
     assertThat(item.getFailureGeneration()).isZero();
     assertThat(savedHandoffs).hasSize(2);
     assertThat(savedHandoffs.getLast().getHandoffOutcome()).isEqualTo("rejected");
@@ -3623,7 +3635,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
     assertThat(item.getCancelReason())
-        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+        .isEqualTo("post_evaluation_reconciliation_required:queue_unavailable");
     verify(workItemRepository, Mockito.never()).findById(item.getId());
     verify(workItemRepository).save(item);
     verify(handoffService).handoff(Mockito.eq(item), Mockito.any());
@@ -3665,7 +3677,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.failedCount()).isEqualTo(1);
     assertThat(item.getStatus()).isEqualTo("EVALUATING");
     assertThat(item.getCancelReason())
-        .isEqualTo("post_evaluation_reconciliation_required:authority_unavailable");
+        .isEqualTo("post_evaluation_reconciliation_required:unavailable");
     verify(handoffService).beginAggregateFanout(item);
     verify(handoffService).endAggregateFanout(item);
     verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());

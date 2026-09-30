@@ -1118,7 +1118,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       // parent unresolved instead of re-entering the DSL.
       markPostEvaluationReconciliationRequired(
           workItem,
-          ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(firstRejectedHandoff),
+          postEvaluationHandoffReconciliationReason(firstRejectedHandoff),
           now,
           ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
@@ -1731,6 +1731,23 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         && (OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(normalizeHandoffToken(result.outcome()))
             || OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(
                 normalizeHandoffToken(result.errorCode())));
+  }
+
+  private static String postEvaluationHandoffReconciliationReason(
+      ScriptGameplayCommandHandoffService.HandoffResult result) {
+    String errorCode =
+        normalizeHandoffToken(result.errorCode())
+            .replace('-', '_')
+            .toUpperCase(java.util.Locale.ROOT);
+    return switch (errorCode) {
+      case "AUTH_UNAVAILABLE",
+          "AUTHORITY_UNAVAILABLE",
+          "GAME_SESSION_UNAVAILABLE",
+          "UNAVAILABLE",
+          "QUEUE_UNAVAILABLE" ->
+          errorCode.toLowerCase(java.util.Locale.ROOT);
+      default -> ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
+    };
   }
 
   private static String normalizeHandoffToken(String value) {
