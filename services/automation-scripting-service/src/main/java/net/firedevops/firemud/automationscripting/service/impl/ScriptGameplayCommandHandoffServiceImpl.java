@@ -941,7 +941,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private static HandoffResult retryablePreparationResult() {
     return new HandoffResult(
         false,
-        ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+        ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE,
         "",
         "",
         "",

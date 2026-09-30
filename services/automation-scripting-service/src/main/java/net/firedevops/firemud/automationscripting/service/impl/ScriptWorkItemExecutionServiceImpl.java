@@ -71,6 +71,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
   private static final String OUTCOME_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
   private static final String REASON_HANDOFF_IN_FLIGHT = "handoff_in_flight";
+  private static final String REASON_HANDOFF_PREPARATION_UNAVAILABLE =
+      "handoff_preparation_unavailable";
   private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
   private static final String OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED =
@@ -702,6 +704,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           // Continue through the complete emitted set when the child outcome is definite. An
           // ambiguous child below is the exception: preserve its in-flight evidence and stop.
           firstRejectedHandoff = result;
+        }
+        if (isHandoffPreparationUnavailableWithoutIntent(result)) {
+          for (int unattemptedIndex = commandIndex;
+              unattemptedIndex < commands.size();
+              unattemptedIndex++) {
+            handoffService.recordUnattempted(
+                workItem, commands.get(unattemptedIndex), REASON_HANDOFF_PREPARATION_UNAVAILABLE);
+          }
+          break;
         }
         if (isHandoffReconciliationRequired(result)) {
           // This child may already have been accepted remotely. Preserve that in-flight evidence
@@ -1731,6 +1742,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         && (OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(normalizeHandoffToken(result.outcome()))
             || OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(
                 normalizeHandoffToken(result.errorCode())));
+  }
+
+  private static boolean isHandoffPreparationUnavailableWithoutIntent(
+      ScriptGameplayCommandHandoffService.HandoffResult result) {
+    return result != null
+        && !result.accepted()
+        && ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE.equalsIgnoreCase(
+            normalizeHandoffToken(result.outcome()))
+        && "UNAVAILABLE".equalsIgnoreCase(normalizeHandoffToken(result.errorCode()))
+        && normalizeHandoffToken(result.commandId()).isEmpty()
+        && normalizeHandoffToken(result.remoteCoordinatorId()).isEmpty()
+        && normalizeHandoffToken(result.remoteFollowupId()).isEmpty();
   }
 
   private static String postEvaluationHandoffReconciliationReason(

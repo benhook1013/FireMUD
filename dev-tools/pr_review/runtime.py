@@ -572,7 +572,9 @@ class LiveEvidence:
             now=audit_now,
         )
         payload = self._payload(pr)
-        channel_history = {channel: list(self.history(pr, channel)) for channel in ("hosted", "cli")}
+        channel_history = {
+            channel: list(self.history(pr, channel, now=audit_now)) for channel in ("hosted", "cli")
+        }
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
         terminal_rate_limits: list[dict[str, Any]] = []
@@ -706,7 +708,7 @@ class LiveEvidence:
         self._histories.pop((pr, "hosted"), None)
         self._histories.pop((pr, "cli"), None)
         payload = self._payload(pr)
-        self.history(pr, "hosted")
+        self.history(pr, "hosted", now=now)
         self.history(pr, "cli")
         try:
             pull = payload["data"]["repository"]["pullRequest"]
@@ -1564,6 +1566,7 @@ class LiveEvidence:
         emitted_hosted_response_ids: set[int],
         *,
         operational_only: bool = False,
+        now: datetime | None = None,
     ) -> list[dict[str, Any]]:
         values: list[dict[str, Any]] = []
         paths = hosted.current_trigger_record_paths(self.repo, pr)
@@ -1598,8 +1601,8 @@ class LiveEvidence:
                 continue
             if state.state == "rate_limited":
                 reset = hosted.parse_timestamp(state.cooldown_until)
-                now = datetime.now(timezone.utc)
-                if reset is not None and reset <= now:
+                history_now = now if now is not None else datetime.now(timezone.utc)
+                if reset is not None and reset <= history_now:
                     continue
                 values.append(
                     {
@@ -1709,9 +1712,11 @@ class LiveEvidence:
             values = self._current_hosted_history(pr, head, payload, set(), operational_only=True)
         return values
 
-    def history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
+    def history(self, pr: int, channel: str, *, now: datetime | None = None) -> Sequence[dict[str, Any]]:
         key = (pr, channel)
-        if key in self._histories:
+        # A time-pinned audit must classify cooldowns at its own cutoff instead
+        # of reusing history built at an earlier wall-clock sample.
+        if now is None and key in self._histories:
             return self._histories[key]
         payload = self._payload(pr)
         pull = payload.get("data", {}).get("repository", {}).get("pullRequest")
@@ -1867,7 +1872,9 @@ class LiveEvidence:
                     }
                 )
         if channel == "hosted":
-            values.extend(self._current_hosted_history(pr, head, payload, emitted_hosted_response_ids))
+            values.extend(
+                self._current_hosted_history(pr, head, payload, emitted_hosted_response_ids, now=now)
+            )
         parsed_scope_changes = {
             (item.comment_id, item.created_at, item.description, item.updated_at) for item in scope_changes
         }
@@ -1944,7 +1951,8 @@ class LiveEvidence:
             }
         )
         values.extend(global_blockers)
-        self._histories[key] = values
+        if now is None:
+            self._histories[key] = values
         return values
 
 
