@@ -53,6 +53,7 @@ from pr_review.state import (
     LegacyEvidenceTransition,
     StackReconciliationDecision,
     StateStore,
+    SummaryFindingDisposition,
     observation_fingerprint,
 )
 
@@ -291,6 +292,75 @@ def hosted_anchor(*, parent_identity="develop", parent_head=BASE, merge_base=BAS
 
 
 class ControllerTests(unittest.TestCase):
+    def test_summary_decision_race_reselects_and_holds_before_reservation(self):
+        evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="baseline")]}
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_bounded_allocation(evidence=evidence, values=values, checkpoint="baseline", minimum=2)
+        evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="accepted-result", accepted=1))
+        values[1] = pr(1, HEAD_2)
+        controller.git.heads["feature-1"] = HEAD_2
+        admitted, attempted = [], []
+
+        def adapter(target, *, admit, **kwargs):
+            attempted.append(target.snapshot.number)
+            disposition = SummaryFindingDisposition(
+                1,
+                HEAD_2,
+                "comment",
+                42,
+                "outside_diff",
+                1,
+                "accepted_unfixed",
+                "current summary finding requires a fix",
+            )
+            controller.store.update(lambda state: dataclasses.replace(state, summary_dispositions=(disposition,)))
+            controller._evidence_provider.audit["unresolved_findings"] = ["summary:42"]
+            admit(lambda: admitted.append(1))
+
+        controller.hosted_adapter = adapter
+        with self.assertRaisesRegex(ControllerError, "accepted findings remain pending"):
+            controller.run_hosted()
+        self.assertEqual(attempted, [1])
+        self.assertEqual(admitted, [])
+
+    def test_allocation_counts_survive_head_parent_and_merge_base_movement(self):
+        for bounded in (False, True):
+            with self.subTest(bounded=bounded):
+                evidence = {(1, "cli"): [self.allocation_evidence(checkpoint="baseline", channel="cli")]}
+                if bounded:
+                    controller = self.grant_bounded_allocation(
+                        channel="cli", evidence=evidence, checkpoint="baseline", minimum=3, cap=3, fresh_taper=True
+                    )
+                    count = 3
+                else:
+                    controller = self.grant_allocation(channel="cli", evidence=evidence)
+                    count = 1
+                for index in range(count):
+                    evidence[(1, "cli")].append(
+                        self.allocation_evidence(
+                            head=(HEAD_2, HEAD_3, PARENT)[index],
+                            checkpoint=f"new-{index}",
+                            channel="cli",
+                            parent_identity="moved-parent",
+                            parent_head=PARENT,
+                            merge_base=MERGE_1,
+                        )
+                    )
+                controller.github.values[1] = pr(1, HEAD_3)
+                controller.git.heads["feature-1"] = HEAD_3
+                controller.git.merge_base = lambda left, right: MERGE_2
+                controller.git.is_ancestor = lambda ancestor, child: (ancestor, child) != (HEAD_1, HEAD_3)
+                progress = controller.status()["prs"][0]["allocations"]["cli"]
+                self.assertEqual(progress["completed_count"], count)
+                self.assertEqual(progress["remaining"], 0)
+                self.assertEqual(progress["min_additional_completed"], count)
+                self.assertEqual(progress["max_additional_completed"], count)
+                if bounded:
+                    self.assertTrue(progress["taper_complete"])
+                    self.assertEqual(progress["status"], "CAP_TAPERED")
+                else:
+                    self.assertEqual(progress["status"], "EXHAUSTED_PENDING")
+
     def test_admission_reselects_after_stack_reorder_or_earlier_reopen(self):
         for channel in ("cli", "hosted"):
             for mutation in ("reorder", "reopen"):
@@ -1983,7 +2053,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(progress["remaining"], 1)
         self.assertEqual(progress["status"], "CAP_ACTIVE")
 
-    def test_bounded_cap_fails_closed_on_changed_parent_or_result_scope(self):
+    def test_bounded_count_survives_changed_parent_or_result_anchor(self):
         for mode in ("parent", "result-scope"):
             with self.subTest(mode=mode):
                 evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="baseline")]}
@@ -2009,8 +2079,8 @@ class ControllerTests(unittest.TestCase):
 
                 progress = controller.status()["prs"][0]["allocations"]["hosted"]
 
-                self.assertEqual(progress["status"], "INVALID")
-                self.assertEqual(progress["used"], 0)
+                self.assertEqual(progress["status"], "CAP_ACTIVE" if mode == "parent" else "CAP_TAPERED")
+                self.assertEqual(progress["used"], 0 if mode == "parent" else 1)
 
     def test_bounded_cap_allows_scope_change_marker_before_exact_baseline(self):
         evidence = {
@@ -3509,7 +3579,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(renewed["allocation"]["head"], HEAD_2)
         self.assertEqual(renewed["allocation"]["baseline_checkpoints"], ["before-allocation"])
 
-    def test_allocation_ancestry_lookup_failure_is_invalid_without_breaking_status_or_target_selection(self):
+    def test_allocation_consumption_does_not_require_corrected_head_ancestry(self):
         evidence = {(1, "hosted"): [self.allocation_evidence(completed=False)]}
         values = {1: pr(1, HEAD_1)}
         controller = self.grant_allocation(evidence=evidence, values=values)
@@ -3525,8 +3595,8 @@ class ControllerTests(unittest.TestCase):
 
         with patch.object(controller.git, "is_ancestor", side_effect=fail_corrected_head_lookup):
             allocation = controller.status()["prs"][0]["allocations"]["hosted"]
-            self.assertEqual(allocation["status"], "INVALID")
-            self.assertIn("could not verify corrected-head ancestry", allocation["reason"])
+            self.assertEqual(allocation["status"], "EXHAUSTED_PENDING")
+            self.assertEqual(allocation["completed_count"], 1)
             with self.assertRaises(ControllerError):
                 controller.resolve_hosted_target()
 
@@ -3575,7 +3645,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(moved["allocations"]["hosted"]["status"], "STOPPED")
         self.assertEqual(len(controller._evidence_provider.stop_audit_calls), audit_count)
 
-    def test_duplicate_stale_partial_and_rate_limited_results_do_not_consume(self):
+    def test_partial_and_rate_limited_results_do_not_consume_but_moved_head_does(self):
         cases = (
             (
                 "duplicate",
@@ -3599,7 +3669,9 @@ class ControllerTests(unittest.TestCase):
         controller = self.grant_allocation(evidence=evidence, values=values)
         evidence[(1, "hosted")].append(self.allocation_evidence(checkpoint="stale", head=HEAD_2))
         values[1] = pr(1, HEAD_2)
-        self.assertEqual(controller.status()["prs"][0]["allocations"]["hosted"]["status"], "INVALID")
+        progress = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(progress["status"], "EXHAUSTED_PENDING")
+        self.assertEqual(progress["completed_count"], 1)
 
     def test_hosted_and_cli_allocations_are_independent(self):
         values = {1: pr(1, HEAD_1)}

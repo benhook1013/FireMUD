@@ -34,6 +34,44 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_closed_reservations_only_hold_positive_finite_repository_cooldown(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+        past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        for name, reset, attributed in (
+            ("rate_limited", future, True),
+            ("rate_limited", past, True),
+            ("rate_limited", None, True),
+            ("rate_limited", future, False),
+            ("active", None, True),
+            ("unattributed", None, False),
+            ("completed", None, True),
+            ("error", None, False),
+        ):
+            with (
+                self.subTest(name=name, reset=reset, attributed=attributed),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "trigger.json"
+                state = SimpleNamespace(state=name, cooldown_until=reset, attributed=attributed, terminal=True)
+                with (
+                    patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
+                    patch.object(hosted, "load_trigger_reservation", return_value={"status": "posted"}),
+                    patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                    patch.object(
+                        hosted,
+                        "trigger_state",
+                        side_effect=RuntimeError("unreadable") if name == "error" else None,
+                        return_value=state,
+                    ),
+                ):
+                    if name == "rate_limited" and reset == future and attributed:
+                        with self.assertRaisesRegex(ControllerError, "cooldown.*closed PR"):
+                            runner._assert_no_other_active_reservations(42, Path(directory))
+                    else:
+                        runner._assert_no_other_active_reservations(42, Path(directory))
+                self.assertFalse((path.parent / "request.lock").exists())
+
     def test_stopped_request_projection_never_reads_idle_historical_evidence(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
         with (

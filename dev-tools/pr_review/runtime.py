@@ -2250,6 +2250,28 @@ class HostedRunner:
             open_prs.add(number)
         open_prs.discard(pr)
 
+        # Closing a PR releases its execution slot, including unknown requests.
+        # A positively attributed provider cooldown still applies repository-wide.
+        for closed_pr, paths in current.items():
+            if closed_pr == pr or closed_pr in open_prs:
+                continue
+            for path in paths:
+                try:
+                    record = hosted.load_trigger_reservation(path, self.repo, closed_pr)
+                    payload = github.fetch_pull_request(self.repo, closed_pr)
+                    state = hosted.trigger_state(self.repo, closed_pr, payload, record, path)
+                    reset = hosted.parse_timestamp(state.cooldown_until) if state.state == "rate_limited" else None
+                except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                    continue
+                if (
+                    state.state == "rate_limited"
+                    and state.terminal is True
+                    and state.attributed is True
+                    and reset is not None
+                    and reset > datetime.now(timezone.utc)
+                ):
+                    raise ControllerError(f"Hosted repository cooldown remains active on closed PR #{closed_pr}")
+
         comments_by_pr: dict[int, dict[str, Any]] = {}
         for other_pr in sorted(open_prs):
             try:
