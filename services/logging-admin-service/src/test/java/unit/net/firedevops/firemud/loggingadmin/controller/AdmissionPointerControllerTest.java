@@ -1,5 +1,7 @@
 package net.firedevops.firemud.loggingadmin.controller;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -29,6 +31,8 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.server.ResponseStatusException;
+import org.yaml.snakeyaml.Yaml;
 
 @WebMvcTest(AdmissionPointerController.class)
 @AutoConfigureMockMvc(addFilters = false)
@@ -87,6 +91,47 @@ class AdmissionPointerControllerTest {
         .andExpect(
             jsonPath("$.data[0].playableStateNamespaceId")
                 .value("22222222-2222-2222-2222-222222222222"));
+  }
+
+  @Test
+  void listPointersMapsUnavailableCurrentAuthorityToServiceUnavailable() throws Exception {
+    when(admissionPointerService.listPointers())
+        .thenThrow(
+            new ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "current pointer authority unavailable"));
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+        .andExpect(jsonPath("$.error.message").value("current pointer authority unavailable"));
+  }
+
+  @Test
+  void openApiDocumentsAdmissionPointerList503Response() throws Exception {
+    Map<?, ?> document;
+    try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
+      assertNotNull(input);
+      document = new Yaml().load(input);
+    }
+
+    Map<?, ?> paths = (Map<?, ?>) document.get("paths");
+    Map<?, ?> admissionPointers = (Map<?, ?>) paths.get("/admission-pointers");
+    Map<?, ?> getOperation = (Map<?, ?>) admissionPointers.get("get");
+    Map<?, ?> responses = (Map<?, ?>) getOperation.get("responses");
+    Map<?, ?> success = (Map<?, ?>) responses.get("200");
+    Map<?, ?> unavailable = (Map<?, ?>) responses.get("503");
+    Map<?, ?> successContent = (Map<?, ?>) success.get("content");
+    Map<?, ?> unavailableContent = (Map<?, ?>) unavailable.get("content");
+    Map<?, ?> successJson = (Map<?, ?>) successContent.get("application/json");
+    Map<?, ?> unavailableJson = (Map<?, ?>) unavailableContent.get("application/json");
+    Map<?, ?> successSchema = (Map<?, ?>) successJson.get("schema");
+    Map<?, ?> unavailableSchema = (Map<?, ?>) unavailableJson.get("schema");
+
+    assertEquals("#/components/schemas/ApiResponseError", unavailableSchema.get("$ref"));
+    assertEquals("object", successSchema.get("type"));
   }
 
   @Test

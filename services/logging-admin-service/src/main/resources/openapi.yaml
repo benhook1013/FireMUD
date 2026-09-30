@@ -1670,6 +1670,11 @@ paths:
     get:
       summary: List visible gameplay admission pointers
       operationId: listAdmissionPointers
+      description: >-
+        The list is available only when every current pointer has a latest audit
+        row matching its catalog revision, realm ID, and playable-state namespace.
+        Missing or incomplete current authority returns 503. Historical audit reads
+        preserve unknown legacy identity fields.
       responses:
         '200':
           description: Admission pointer list
@@ -1686,6 +1691,12 @@ paths:
                       $ref: '#/components/schemas/AdmissionPointerDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Current admission-pointer authority or matching audit evidence is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit:
     get:
       summary: Read admission-pointer audit history
