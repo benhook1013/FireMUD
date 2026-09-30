@@ -68,6 +68,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String STAGE_ADMISSION = "ADMISSION";
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
+  private static final String OUTCOME_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
   private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
   private static final String OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED =
@@ -108,6 +109,28 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
   private final TransactionTemplate transactionTemplate;
   private final TransactionTemplate pluginFenceReadTransactionTemplate;
+
+  private record EvaluationResult(
+      boolean requiresHandoff,
+      List<ScriptGameplayCommandHandoffService.EmittedCommand> commands,
+      boolean completed) {
+    static EvaluationResult terminal(boolean completed) {
+      return new EvaluationResult(false, List.of(), completed);
+    }
+
+    static EvaluationResult requiringHandoff(
+        List<ScriptGameplayCommandHandoffService.EmittedCommand> commands) {
+      return new EvaluationResult(true, List.copyOf(commands), false);
+    }
+  }
+
+  private record HandoffExecutionResult(
+      String terminalFenceFailure,
+      PluginFenceValidation retryableFence,
+      ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff,
+      boolean childHandoffAttempted) {}
+
+  private record EvaluationFencePrecheck(boolean checked, String failure) {}
 
   /** Compatibility constructor for focused plugin-fence tests. */
   public ScriptWorkItemExecutionServiceImpl(
@@ -489,7 +512,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     int failedCount = 0;
     for (ScriptWorkItem workItem : claimed) {
       try {
-        if (processClaimedWorkItem(workItem)) {
+        if (processOneWorkItemInTransaction(workItem)) {
           completedCount++;
         } else {
           failedCount++;
@@ -506,6 +529,158 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       }
     }
     return new ExecutionBatchResult(claimed.size(), completedCount, failedCount);
+  }
+
+  /**
+   * Commits evaluation before entering the handoff loop. The handoff loop and its Game Session
+   * calls therefore never run inside this evaluator transaction; parent convergence is committed
+   * afterward in a separate local transaction.
+   */
+  private boolean processOneWorkItemInTransaction(ScriptWorkItem workItem) {
+    EvaluationFencePrecheck precheck = precheckEvaluationFences(workItem);
+    EvaluationResult evaluation = executeEvaluationTransaction(workItem, precheck);
+    if (!evaluation.requiresHandoff()) {
+      return evaluation.completed();
+    }
+    String postEvaluationFenceFailure = validateCurrentExecutionFences(workItem);
+    if (postEvaluationFenceFailure != null) {
+      return executePostEvaluationFenceDisposition(workItem, postEvaluationFenceFailure);
+    }
+    HandoffExecutionResult handoffResult = executeHandoffLoop(workItem, evaluation.commands());
+    return executeHandoffFinalization(workItem, handoffResult);
+  }
+
+  private EvaluationFencePrecheck precheckEvaluationFences(ScriptWorkItem workItem) {
+    return new EvaluationFencePrecheck(true, validateCurrentExecutionFences(workItem));
+  }
+
+  private EvaluationResult executeEvaluationTransaction(
+      ScriptWorkItem workItem, EvaluationFencePrecheck precheck) {
+    if (transactionTemplate == null) {
+      // Focused unit-test constructors intentionally have no transaction manager.
+      return evaluateClaimedWorkItemTransaction(workItem, precheck);
+    }
+    EvaluationResult result =
+        transactionTemplate.execute(
+            status -> evaluateClaimedWorkItemTransaction(workItem, precheck));
+    return result == null ? EvaluationResult.terminal(false) : result;
+  }
+
+  private boolean executePostEvaluationFenceDisposition(
+      ScriptWorkItem workItem, String fenceFailure) {
+    if (transactionTemplate == null) {
+      applyPostEvaluationFenceDisposition(workItem, fenceFailure);
+      return false;
+    }
+    transactionTemplate.execute(
+        status -> {
+          applyPostEvaluationFenceDisposition(workItem, fenceFailure);
+          return null;
+        });
+    return false;
+  }
+
+  private void commitPostEvaluationFenceState(ScriptWorkItem workItem) {
+    if (transactionTemplate == null) {
+      clearAuthorityUnavailableRetryState(workItem);
+      return;
+    }
+    transactionTemplate.execute(
+        status -> {
+          clearAuthorityUnavailableRetryState(workItem);
+          return null;
+        });
+  }
+
+  private void applyPostEvaluationFenceDisposition(ScriptWorkItem workItem, String fenceFailure) {
+    Instant now = Instant.now();
+    if (isTerminalFenceFailure(fenceFailure)) {
+      cancel(workItem, STAGE_DSL_EVAL, "canceled", fenceFailure, now);
+    }
+    // Evaluation has already emitted output, but there is no durable descriptor/child ledger
+    // from which to resume handoff. Keep retryable fence failures unresolved for reconciliation;
+    // requeueing would rerun the DSL after an uncertain evaluated-output boundary.
+  }
+
+  private HandoffExecutionResult executeHandoffLoop(
+      ScriptWorkItem workItem, List<ScriptGameplayCommandHandoffService.EmittedCommand> commands) {
+    ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
+    String terminalFenceFailure = null;
+    PluginFenceValidation retryableFence = null;
+    boolean childHandoffAttempted = false;
+    try {
+      try {
+        handoffService.beginAggregateFanout(workItem);
+      } catch (RuntimeException ex) {
+        LOGGER.warn(
+            "Unable to preflight script handoff fanout for workItemId={}; retaining unresolved parent",
+            workItem.getId(),
+            ex);
+        return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult(), false);
+      }
+      for (int commandIndex = 0; commandIndex < commands.size(); commandIndex++) {
+        ScriptGameplayCommandHandoffService.EmittedCommand command = commands.get(commandIndex);
+        PluginFenceValidation handoffPluginFence = validateCurrentPluginFence(workItem);
+        if (handoffPluginFence != null) {
+          if (handoffPluginFence.retryable()) {
+            retryableFence = handoffPluginFence;
+          } else {
+            terminalFenceFailure = handoffPluginFence.reason();
+          }
+          for (int unattemptedIndex = commandIndex;
+              unattemptedIndex < commands.size();
+              unattemptedIndex++) {
+            handoffService.recordUnattempted(
+                workItem, commands.get(unattemptedIndex), handoffPluginFence.reason());
+          }
+          break;
+        }
+        if (commandIndex == 0) {
+          // Clear the outage window only after the post-evaluation runtime check and this fresh
+          // plugin-fence check have both passed, immediately before the first dispatch.
+          commitPostEvaluationFenceState(workItem);
+        }
+        childHandoffAttempted = true;
+        ScriptGameplayCommandHandoffService.HandoffResult result =
+            handoffService.handoff(workItem, command);
+        if (!result.accepted()
+            && (firstRejectedHandoff == null
+                || isHandoffReconciliationRequired(result)
+                || (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)
+                    && !ScriptHandoffOutcomeSupport.isRetryable(result)))) {
+          // Continue through the complete emitted set. The handoff owner records one durable
+          // attempted child per call; returning here would leave later siblings without either an
+          // attempted disposition or an explicit unattempted terminal record.
+          firstRejectedHandoff = result;
+        }
+      }
+    } finally {
+      handoffService.endAggregateFanout(workItem);
+    }
+    return new HandoffExecutionResult(
+        terminalFenceFailure, retryableFence, firstRejectedHandoff, childHandoffAttempted);
+  }
+
+  private static ScriptGameplayCommandHandoffService.HandoffResult
+      retryableHandoffPreflightResult() {
+    return new ScriptGameplayCommandHandoffService.HandoffResult(
+        false,
+        ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+        "",
+        "",
+        "",
+        "UNAVAILABLE",
+        "handoff preparation unavailable");
+  }
+
+  private boolean executeHandoffFinalization(
+      ScriptWorkItem workItem, HandoffExecutionResult handoffResult) {
+    if (transactionTemplate == null) {
+      return finalizeHandoff(workItem, handoffResult);
+    }
+    Boolean result =
+        transactionTemplate.execute(status -> finalizeHandoff(workItem, handoffResult));
+    return Boolean.TRUE.equals(result);
   }
 
   /** Commits each candidate claim before processing it in a separate transaction. */
@@ -603,11 +778,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     // EVALUATING row without a processing attempt; that recovery gap is intentionally unresolved.
     ScriptWorkItem workItem = claimed.getFirst();
     try {
-      Boolean completed = transactionTemplate.execute(status -> processClaimedWorkItem(workItem));
-      return WorkItemAttempt.claimed(Boolean.TRUE.equals(completed));
+      // Evaluation and parent convergence use their own local transactions. Remote handoff
+      // execution runs between them, after the evaluation result has committed.
+      return WorkItemAttempt.claimed(processOneWorkItemInTransaction(workItem));
     } catch (RuntimeException ex) {
-      // Catch outside execute: an inner REQUIRED service may mark the shared transaction
-      // rollback-only and throw UnexpectedRollbackException only during execute's commit.
+      // Catch outside the phase transaction wrappers so a failed processing commit cannot undo
+      // the already committed EVALUATING claim or abort the remaining batch.
       processingFailureAfterClaimCounter.increment();
       return WorkItemAttempt.failedAfterClaim(ex);
     }
@@ -646,32 +822,33 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return List.copyOf(combined);
   }
 
-  private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
+  private EvaluationResult evaluateClaimedWorkItemTransaction(
+      ScriptWorkItem workItem, EvaluationFencePrecheck precheck) {
     Instant now = Instant.now();
-    String fenceFailure = validateCurrentExecutionFences(workItem);
+    String fenceFailure = precheck.checked() ? precheck.failure() : null;
     if (fenceFailure != null) {
       if (isTerminalFenceFailure(fenceFailure)) {
         cancel(workItem, STAGE_ADMISSION, "canceled", fenceFailure, now);
       } else {
         requeueAfterAuthorityUnavailable(workItem, fenceFailure, STAGE_ADMISSION, now);
       }
-      return false;
+      return EvaluationResult.terminal(false);
     }
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
         retryOrDeadLetterPluginFence(workItem, pluginFence, STAGE_ADMISSION);
-        return false;
+        return EvaluationResult.terminal(false);
       }
       cancel(workItem, STAGE_ADMISSION, "canceled", pluginFence.reason(), now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
     if (!workItem.isDryRun()
         && ScriptQuotaClasses.consumesLiveTenantBudget(workItem.getQuotaClass())
         && !tenantBudgetService.tryReserve(
             workItem.getTenantId(), normalizeReservationTier(workItem.getPriorityTag()))) {
       cancel(workItem, STAGE_ADMISSION, "tenant_budget_exceeded", "tenant_budget_exceeded", now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
     if (!workItem.isDryRun()
         && ScriptQuotaClasses.usesPublishReadinessCapacity(workItem.getQuotaClass())
@@ -680,7 +857,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           readinessCapacityService.tryReserve(workItem.getTenantId(), requireWorkItemId(workItem));
       if (reservation.isEmpty()) {
         cancel(workItem, STAGE_ADMISSION, "quota_denied", "onload_budget_exceeded", now);
-        return false;
+        return EvaluationResult.terminal(false);
       }
       try {
         return evaluateClaimedWorkItem(workItem, now);
@@ -693,7 +870,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           dryRunCapacityService.tryReserve(workItem.getTenantId(), requireWorkItemId(workItem));
       if (reservation.isEmpty()) {
         cancel(workItem, STAGE_ADMISSION, "quota_denied", "dry_run_capacity_exhausted", now);
-        return false;
+        return EvaluationResult.terminal(false);
       }
       try {
         return evaluateClaimedWorkItem(workItem, now);
@@ -748,7 +925,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return null;
   }
 
-  private boolean evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
+  private EvaluationResult evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
     // Capacity admission may have taken time. Re-read plugin authority immediately before
     // definition lookup/DSL parsing so a stale or unavailable lifecycle cannot reach even a
     // zero-command success path.
@@ -756,24 +933,24 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
         retryOrDeadLetterPluginFence(workItem, pluginFence, STAGE_DSL_EVAL);
-        return false;
+        return EvaluationResult.terminal(false);
       }
       cancel(workItem, STAGE_DSL_EVAL, "canceled", pluginFence.reason(), now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
     final long tenantId;
     try {
       tenantId = parseTenantId(workItem);
     } catch (IllegalArgumentException ex) {
       deadLetter(workItem, STAGE_DSL_EVAL, "definition_invalid", "tenant_id_invalid", now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
     Optional<ScriptDefinition> definition =
         scriptDefinitionRepository.findByTenantIdAndScriptVersionAndName(
             tenantId, workItem.getScriptPatchVersion(), workItem.getScriptId());
     if (definition.isEmpty()) {
       deadLetter(workItem, STAGE_DSL_EVAL, "definition_missing", "script_definition_missing", now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
 
     Long retainedBaseVersionId = workItem.getScriptPatchBaseVersionId();
@@ -788,7 +965,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           "definition_invalid",
           "script_patch_base_version_unavailable",
           now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
     if (!retainedBaseVersionId.equals(definitionBaseVersionId)) {
       deadLetter(
@@ -797,7 +974,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           "definition_invalid",
           "script_patch_base_version_mismatch",
           now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
 
     JsonNode definitionRoot;
@@ -805,14 +982,14 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       definitionRoot = parseDefinitionRoot(definition.get().getDefinition());
     } catch (IllegalArgumentException ex) {
       deadLetter(workItem, STAGE_DSL_EVAL, "definition_invalid", ex.getMessage(), now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
 
     if (isOnLoad(workItem)) {
       if (declaresCommands(definitionRoot, workItem.getEventType())) {
         deadLetter(
             workItem, STAGE_DSL_EVAL, "definition_invalid", "onload_commands_not_allowed", now);
-        return false;
+        return EvaluationResult.terminal(false);
       }
     }
 
@@ -827,10 +1004,11 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
               ? OUTCOME_SANDBOX_ERROR
               : "definition_invalid";
       deadLetter(workItem, STAGE_DSL_EVAL, outcome, reason, now);
-      return false;
+      return EvaluationResult.terminal(false);
     }
 
     if (commands.isEmpty() || workItem.isDryRun()) {
+      clearAuthorityUnavailableRetryState(workItem);
       markTerminalSuccess(
           workItem,
           STAGE_DSL_EVAL,
@@ -839,84 +1017,43 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
               ? "dry_run_no_handoff"
               : isOnLoad(workItem) ? "ready_for_tenant" : "script_emitted_no_commands",
           now);
-      return true;
+      return EvaluationResult.terminal(true);
     }
 
-    // DSL evaluation is not the effect boundary. Re-read every authoritative execution fence
-    // after evaluation and immediately before the first gameplay handoff so a repin, plugin ABA,
-    // lifecycle transition, or policy revocation that won during evaluation cannot emit effects.
-    String handoffFenceFailure = validateCurrentExecutionFences(workItem);
-    if (handoffFenceFailure != null) {
-      if (isTerminalFenceFailure(handoffFenceFailure)) {
-        cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffFenceFailure, now);
-      } else {
-        requeueAfterAuthorityUnavailable(workItem, handoffFenceFailure, STAGE_DSL_EVAL, now);
-      }
+    // The final authoritative execution fence is read outside the evaluator transaction by the
+    // caller immediately before entering the handoff loop. This keeps Game Session RPCs outside
+    // every local transaction while preserving the post-evaluation fence boundary.
+    return EvaluationResult.requiringHandoff(commands);
+  }
+
+  private boolean finalizeHandoff(ScriptWorkItem workItem, HandoffExecutionResult handoffResult) {
+    Instant now = Instant.now();
+    ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff =
+        handoffResult.firstRejectedHandoff();
+    if (isHandoffReconciliationRequired(firstRejectedHandoff)) {
+      // An earlier child may already have been accepted. Keep the parent active until that
+      // exact-identity handoff is reconciled, even if a later sibling hits a terminal fence.
       return false;
-    }
-    clearAuthorityUnavailableRetryState(workItem);
-
-    ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
-    PluginFenceValidation retryableFanoutFence = null;
-    PluginFenceValidation terminalFanoutFence = null;
-    handoffService.beginAggregateFanout(workItem);
-    try {
-      for (int commandIndex = 0; commandIndex < commands.size(); commandIndex++) {
-        ScriptGameplayCommandHandoffService.EmittedCommand command = commands.get(commandIndex);
-        PluginFenceValidation handoffPluginFence = validateCurrentPluginFence(workItem);
-        if (handoffPluginFence != null) {
-          if (handoffPluginFence.retryable()) {
-            retryableFanoutFence = handoffPluginFence;
-          } else {
-            terminalFanoutFence = handoffPluginFence;
-          }
-          for (int unattemptedIndex = commandIndex;
-              unattemptedIndex < commands.size();
-              unattemptedIndex++) {
-            handoffService.recordUnattempted(
-                workItem, commands.get(unattemptedIndex), handoffPluginFence.reason());
-          }
-          break;
-        }
-        ScriptGameplayCommandHandoffService.HandoffResult result =
-            handoffService.handoff(workItem, command);
-        if (!result.accepted()
-            && (firstRejectedHandoff == null
-                || (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)
-                    && !ScriptHandoffOutcomeSupport.isRetryable(result)))) {
-          // Continue through the complete emitted set. The handoff owner records one durable
-          // attempted child per call; returning here would leave later siblings without either an
-          // attempted disposition or an explicit unattempted terminal record.
-          firstRejectedHandoff = result;
-        }
-      }
-    } finally {
-      handoffService.endAggregateFanout(workItem);
     }
     if (firstRejectedHandoff != null
         && !ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
       recordTerminalHandoffOutcome(workItem, firstRejectedHandoff);
       return false;
     }
-    if (terminalFanoutFence != null) {
-      cancel(workItem, STAGE_DSL_EVAL, "canceled", terminalFanoutFence.reason(), now);
+    if (handoffResult.terminalFenceFailure() != null) {
+      cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffResult.terminalFenceFailure(), now);
       return false;
     }
-    if (retryableFanoutFence != null) {
-      // Evaluation has already produced output and fan-out may have accepted earlier commands.
-      // There is no durable output/child ledger to safely resume, so neither automatic retry nor
-      // operator replay may re-enter the DSL after this uncertain post-evaluation boundary.
-      deadLetter(
-          workItem,
-          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
-          OUTCOME_INFRASTRUCTURE_ERROR,
-          retryableFanoutFence.reason(),
-          Instant.now());
+    if (handoffResult.retryableFence() != null) {
+      // Evaluation has already emitted output, but there is no durable descriptor/child ledger
+      // from which to resume all commands. Keep the parent unresolved for explicit reconciliation;
+      // retrying it would re-enter the DSL after an uncertain partial fanout.
       return false;
     }
     if (firstRejectedHandoff != null
         && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
-      requeueAfterRetryableFailure(workItem);
+      // The child attempt may have rolled back after a remote uncertainty. Keep the evaluated
+      // parent unresolved instead of re-entering the DSL.
       return false;
     }
     markTerminalSuccess(
@@ -1515,6 +1652,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         ScriptHandoffOutcomeSupport.OUTCOME_INFRASTRUCTURE_ERROR,
         ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result),
         now);
+  }
+
+  private static boolean isHandoffReconciliationRequired(
+      ScriptGameplayCommandHandoffService.HandoffResult result) {
+    return result != null
+        && (OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(normalizeHandoffToken(result.outcome()))
+            || OUTCOME_HANDOFF_IN_FLIGHT.equalsIgnoreCase(
+                normalizeHandoffToken(result.errorCode())));
+  }
+
+  private static String normalizeHandoffToken(String value) {
+    return value == null ? "" : value.trim();
   }
 
   private static long parseTenantId(ScriptWorkItem workItem) {
