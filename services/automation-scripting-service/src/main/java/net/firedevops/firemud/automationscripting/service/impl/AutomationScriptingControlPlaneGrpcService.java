@@ -444,6 +444,11 @@ public final class AutomationScriptingControlPlaneGrpcService
           ReplayDeadLetteredWorkItemsResponse.newBuilder()
               .setError(AutomationControlPlaneSupport.authorizationError(ex))
               .build();
+    } catch (RuntimeException ex) {
+      response =
+          ReplayDeadLetteredWorkItemsResponse.newBuilder()
+              .setError(AutomationControlPlaneSupport.replayRuntimeError(ex))
+              .build();
     }
     responseObserver.onNext(response);
     responseObserver.onCompleted();

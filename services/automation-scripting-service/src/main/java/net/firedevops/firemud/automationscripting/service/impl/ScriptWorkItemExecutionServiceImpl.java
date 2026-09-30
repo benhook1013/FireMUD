@@ -48,6 +48,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -1566,7 +1567,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     final PluginRuntimeState state;
     try {
       state = readCurrentPluginRuntimeState(workItem).orElse(null);
-    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
+    } catch (DataAccessException
+        | org.springframework.dao.DataAccessException
+        | TransactionException ex) {
       if (isRepositoryUnavailable(ex)) {
         return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
       }

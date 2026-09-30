@@ -41,7 +41,10 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
   private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
-  private static final int MAX_CANCELLATION_ROWS = 100;
+
+  /** Shared bound for each patch- or plugin-version cancellation page. */
+  public static final int CANCELLATION_PAGE_SIZE = 100;
+
   private static final String PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE =
       "script_pin_control_plane_request_id conflicts with existing identity";
   private static final Field<Boolean> INSERTED_ROW =
@@ -215,7 +218,7 @@ public class ScriptWorkItemRepository {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(condition)
         .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
-        .limit(MAX_CANCELLATION_ROWS)
+        .limit(CANCELLATION_PAGE_SIZE)
         .forUpdate()
         .fetch(this::toEntity);
   }
@@ -259,7 +262,7 @@ public class ScriptWorkItemRepository {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(condition)
         .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
-        .limit(MAX_CANCELLATION_ROWS)
+        .limit(CANCELLATION_PAGE_SIZE)
         .forUpdate()
         .fetch(this::toEntity);
   }
@@ -492,10 +495,11 @@ public class ScriptWorkItemRepository {
   }
 
   /**
-   * Parent-cleanup proof for the current schema. Replay results always remain attached until a
-   * receipt-retention horizon exists; handoff rows may be removed only when their owner hold is
-   * absent or no longer active and, for age cleanup, their observed time is before the supplied
-   * cutoff. Audit rows are detached separately and therefore do not block the parent here.
+   * Parent-cleanup proof for the current schema. Any retained replay result always blocks its
+   * parent, regardless of age, until a receipt-retention horizon exists; handoff rows may be
+   * removed only when their owner hold is absent or no longer active and, for age cleanup, their
+   * observed time is before the supplied cutoff. Audit rows are detached separately and therefore
+   * do not block the parent here.
    */
   private static Condition noBlockingRetentionEvidence(Instant handoffObservedBefore) {
     return notExists(
@@ -937,6 +941,7 @@ public class ScriptWorkItemRepository {
       Instant now) {
     return dsl.update(SCRIPT_WORK_ITEMS)
         .set(SCRIPT_WORK_ITEMS.STATUS, "PENDING_EVALUATION")
+        .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, (String) null)
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE, (LocalDateTime) null)
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT, 0)
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT, 0)

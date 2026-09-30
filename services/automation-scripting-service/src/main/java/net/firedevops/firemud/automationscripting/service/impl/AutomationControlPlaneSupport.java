@@ -1,13 +1,30 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import io.grpc.Status;
+import io.grpc.StatusException;
+import io.grpc.StatusRuntimeException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.sql.SQLException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientException;
 import java.util.Locale;
+import java.util.concurrent.TimeoutException;
 import net.firedevops.firemud.automationscripting.v1.AutomationAdmissionMode;
 import net.firedevops.firemud.automationscripting.v1.TriggerMode;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.springframework.dao.ConcurrencyFailureException;
+import org.springframework.dao.RecoverableDataAccessException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.transaction.TransactionTimedOutException;
 
 final class AutomationControlPlaneSupport {
+  private static final String REPLAY_UNAVAILABLE_MESSAGE =
+      "Replay service temporarily unavailable; retry with the same control_plane_request_id";
+  private static final String REPLAY_INTERNAL_MESSAGE = "Replay failed due to an internal error";
+
   private AutomationControlPlaneSupport() {}
 
   static ErrorDetail authorizationError(AdminAuthorizationException ex) {
@@ -30,6 +47,59 @@ final class AutomationControlPlaneSupport {
         .setCode("NOT_FOUND")
         .setMessage(method + " failed: " + reason)
         .build();
+  }
+
+  static ErrorDetail replayRuntimeError(Throwable failure) {
+    if (isRetryableReplayFailure(failure)) {
+      return ErrorDetail.newBuilder()
+          .setCode("UNAVAILABLE")
+          .setMessage(REPLAY_UNAVAILABLE_MESSAGE)
+          .build();
+    }
+    return ErrorDetail.newBuilder().setCode("INTERNAL").setMessage(REPLAY_INTERNAL_MESSAGE).build();
+  }
+
+  private static boolean isRetryableReplayFailure(Throwable failure) {
+    Throwable current = failure;
+    while (current != null) {
+      if (current instanceof StatusRuntimeException statusFailure
+          && isRetryableGrpcStatus(statusFailure.getStatus().getCode())) {
+        return true;
+      }
+      if (current instanceof StatusException statusFailure
+          && isRetryableGrpcStatus(statusFailure.getStatus().getCode())) {
+        return true;
+      }
+      if (current instanceof SQLTransientException
+          || current instanceof SQLRecoverableException
+          || current instanceof TransientDataAccessException
+          || current instanceof RecoverableDataAccessException
+          || current instanceof ConcurrencyFailureException
+          || current instanceof TransactionTimedOutException
+          || current instanceof ConnectException
+          || current instanceof SocketTimeoutException
+          || current instanceof TimeoutException) {
+        return true;
+      }
+      if (current instanceof SQLException sqlException && isRetryableSqlState(sqlException)) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
+  }
+
+  private static boolean isRetryableGrpcStatus(Status.Code statusCode) {
+    return statusCode == Status.Code.UNAVAILABLE || statusCode == Status.Code.DEADLINE_EXCEEDED;
+  }
+
+  private static boolean isRetryableSqlState(SQLException sqlException) {
+    String sqlState = sqlException.getSQLState();
+    return sqlState != null
+        && (sqlState.startsWith("08")
+            || sqlState.startsWith("40")
+            || sqlState.equals("57014")
+            || sqlState.equals("55P03"));
   }
 
   static AutomationAdmissionMode toProtoMode(String mode) {

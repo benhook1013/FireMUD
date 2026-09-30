@@ -76,7 +76,6 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       List.of(STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
   private static final List<String> DRAIN_RELEVANT_STATUSES =
       List.of(STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
-  private static final int CANCELLATION_PAGE_SIZE = 100;
   private static final int REPLAY_CONTROL_PLANE_REQUEST_ID_MAX_LENGTH = 128;
   private static final int REPLAY_ACTOR_PRINCIPAL_MAX_LENGTH = 256;
   private static final int REPLAY_REASON_MAX_LENGTH = 256;
@@ -200,7 +199,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         return canceled;
       }
       canceled += cancelCandidates(candidates, command.reason());
-      if (candidates.size() < CANCELLATION_PAGE_SIZE) {
+      if (candidates.size() < ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE) {
         return canceled;
       }
     }
@@ -230,7 +229,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         return canceled;
       }
       canceled += cancelCandidates(candidates, command.reason());
-      if (candidates.size() < CANCELLATION_PAGE_SIZE) {
+      if (candidates.size() < ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE) {
         return canceled;
       }
     }

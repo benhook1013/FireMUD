@@ -133,6 +133,10 @@ if ! grep -Fqx -- "          for: 5m" <<<"$dead_letter_retention_alert_rule"; th
   echo "AutomationDeadLetterRetentionBlocked must retain its five-minute hold" >&2
   exit 1
 fi
+if ! grep -Fqx -- "            severity: P2" <<<"$dead_letter_retention_alert_rule"; then
+  echo "AutomationDeadLetterRetentionBlocked must use severity P2" >&2
+  exit 1
+fi
 if grep -Fq -- "expr: automation_retention_blocked_rows" <<<"$dead_letter_retention_alert_rule"; then
   echo "AutomationDeadLetterRetentionBlocked must not use the aggregate retention gauge" >&2
   exit 1

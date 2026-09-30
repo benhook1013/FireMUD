@@ -424,6 +424,7 @@ class ScriptWorkItemRepositoryTest {
                     .contains(
                         "update",
                         "status",
+                        "cancel_reason",
                         "authority_unavailable_since",
                         "authority_unavailable_count",
                         "next_eligible_at",
@@ -432,9 +433,9 @@ class ScriptWorkItemRepositoryTest {
                     .satisfies(
                         sqlText ->
                             assertThat(sqlText.substring(0, sqlText.indexOf(" returning ")))
-                                .doesNotContain("cancel_reason")));
+                                .contains("cancel_reason")));
     assertThat(bindings.get())
-        .containsSubsequence("PENDING_EVALUATION", null, 0, 0, null)
+        .containsSubsequence("PENDING_EVALUATION", null, null, 0, 0, null)
         .contains("DEAD_LETTERED", 4, 3L);
   }
 

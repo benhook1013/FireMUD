@@ -6,6 +6,7 @@ import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
@@ -73,6 +74,8 @@ import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.dao.TransientDataAccessResourceException;
+import org.springframework.transaction.CannotCreateTransactionException;
 
 class AutomationScriptingControlPlaneGrpcServiceTest {
   private static AutomationAdmissionStateService admissionStateService() {
@@ -2173,6 +2176,103 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void mapsRetryableReplayRuntimeFailureToUnavailableWithSameRequestRetryGuidance() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenThrow(new TransientDataAccessResourceException("database secret"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    ReplayDeadLetteredWorkItemsRequest request =
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
+            .setActorPrincipal("1")
+            .setReason("retry")
+            .build();
+    AtomicBoolean completed = new AtomicBoolean();
+    service.replayDeadLetteredWorkItems(request, observer(ref, completed));
+
+    assertThat(completed).isTrue();
+    assertThat(ref.get().getError().getCode()).isEqualTo("UNAVAILABLE");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo(
+            "Replay service temporarily unavailable; retry with the same control_plane_request_id");
+    assertThat(ref.get().getError().getMessage()).doesNotContain("database secret");
+    Mockito.verify(workItemService)
+        .replayDeadLetters(
+            Mockito.argThat(command -> "request-replay".equals(command.controlPlaneRequestId())));
+  }
+
+  @Test
+  void mapsUnknownReplayRuntimeFailureToInternalWithoutLeakingDetails() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenThrow(new IllegalStateException("sensitive implementation detail"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
+            .setActorPrincipal("1")
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("INTERNAL");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("Replay failed due to an internal error");
+    assertThat(ref.get().getError().getMessage()).doesNotContain("sensitive implementation detail");
+  }
+
+  @Test
+  void mapsCauseFreeCannotCreateTransactionFailureToInternal() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenThrow(new CannotCreateTransactionException("permanent transaction configuration"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
+            .setActorPrincipal("1")
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("INTERNAL");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("Replay failed due to an internal error");
+    assertThat(ref.get().getError().getMessage())
+        .doesNotContain("permanent transaction configuration");
+  }
+
+  @Test
   void mapsEmptyReplayResultListWithoutFabricatingItems() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
@@ -2524,6 +2624,23 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
       @Override
       public void onCompleted() {}
+    };
+  }
+
+  private static <T> StreamObserver<T> observer(AtomicReference<T> ref, AtomicBoolean completed) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(T value) {
+        ref.set(value);
+      }
+
+      @Override
+      public void onError(Throwable t) {}
+
+      @Override
+      public void onCompleted() {
+        completed.set(true);
+      }
     };
   }
 

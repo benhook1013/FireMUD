@@ -1042,8 +1042,12 @@ class ScriptWorkItemServiceImplTest {
   @Test
   void cancellationContinuesAfterFullPageAndStopsAfterShortPage() {
     List<ScriptWorkItem> firstPage =
-        IntStream.rangeClosed(1, 100).mapToObj(id -> cancelableWorkItem(id, "patch-1")).toList();
-    List<ScriptWorkItem> secondPage = List.of(cancelableWorkItem(101L, "patch-1"));
+        IntStream.rangeClosed(1, ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE)
+            .mapToObj(id -> cancelableWorkItem(id, "patch-1"))
+            .toList();
+    List<ScriptWorkItem> secondPage =
+        List.of(
+            cancelableWorkItem(ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE + 1L, "patch-1"));
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
     when(workItemRepository
@@ -1068,13 +1072,80 @@ class ScriptWorkItemServiceImplTest {
             new ScriptWorkItemService.CancelPendingForPatchCommand(
                 "tenant-1", "patch-1", "game-1", "region-1", "req-1", "admin", "rollback"));
 
-    assertThat(canceled).isEqualTo(101L);
+    assertThat(canceled).isEqualTo(ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE + 1L);
     assertThat(firstPage).allSatisfy(item -> assertThat(item.getStatus()).isEqualTo("CANCELED"));
     assertThat(secondPage).allSatisfy(item -> assertThat(item.getStatus()).isEqualTo("CANCELED"));
     verify(workItemRepository, Mockito.times(2)).saveAll(Mockito.anyCollection());
     verify(workItemRepository, Mockito.times(2))
         .findByTenantIdAndScriptPatchVersionAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
             "tenant-1", "patch-1", "game-1", "region-1", List.of("PENDING_EVALUATION"));
+  }
+
+  @Test
+  void pluginCancellationContinuesAfterFullPageAndStopsAfterShortPage() {
+    List<ScriptWorkItem> firstPage =
+        IntStream.rangeClosed(1, ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE)
+            .mapToObj(
+                id -> {
+                  ScriptWorkItem item = cancelableWorkItem(id, "patch-1");
+                  item.setPluginId("plugin-1");
+                  item.setPluginVersionId("plugin-v1");
+                  return item;
+                })
+            .toList();
+    ScriptWorkItem secondItem =
+        cancelableWorkItem(ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE + 1L, "patch-1");
+    secondItem.setPluginId("plugin-1");
+    secondItem.setPluginVersionId("plugin-v1");
+    List<ScriptWorkItem> secondPage = List.of(secondItem);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    when(workItemRepository
+            .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                "game-1",
+                "region-1",
+                List.of("PENDING_EVALUATION")))
+        .thenReturn(firstPage, secondPage);
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            auditRepository,
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    long canceled =
+        service.cancelPendingForPluginVersion(
+            new ScriptWorkItemService.CancelPendingForPluginVersionCommand(
+                "tenant-1",
+                "plugin-1",
+                "plugin-v1",
+                "game-1",
+                "region-1",
+                "req-1",
+                "admin",
+                "rollback"));
+
+    assertThat(canceled).isEqualTo(ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE + 1L);
+    assertThat(firstPage).allSatisfy(item -> assertThat(item.getStatus()).isEqualTo("CANCELED"));
+    assertThat(secondPage).allSatisfy(item -> assertThat(item.getStatus()).isEqualTo("CANCELED"));
+    verify(workItemRepository, Mockito.times(2)).saveAll(Mockito.anyCollection());
+    verify(workItemRepository, Mockito.times(2))
+        .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+            "tenant-1",
+            "plugin-1",
+            "plugin-v1",
+            "game-1",
+            "region-1",
+            List.of("PENDING_EVALUATION"));
   }
 
   private static ScriptWorkItem cancelableWorkItem(long id, String scriptPatchVersion) {

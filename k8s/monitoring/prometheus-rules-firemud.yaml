@@ -265,7 +265,7 @@ spec:
           for: 5m
           labels:
             service: automation-scripting-service
-            severity: P1
+            severity: P2
             owner: automation
             runbook: design/architecture/system-architecture-scripting-quotas-and-operations.md#auditability--metrics
           annotations:
