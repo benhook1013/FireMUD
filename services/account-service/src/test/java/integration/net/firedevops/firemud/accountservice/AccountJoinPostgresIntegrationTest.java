@@ -22,6 +22,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
@@ -32,6 +33,7 @@ import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
@@ -1249,6 +1251,144 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
+  void concurrentFirstJoinCannotMixWithCompleteFencedRuntimeMembershipSnapshot() throws Exception {
+    JoinFixture fixture = fixture("active");
+    CountDownLatch snapshotCaptured = new CountDownLatch(1);
+    CountDownLatch releaseSnapshotCommit = new CountDownLatch(1);
+    CountDownLatch joinReachedAccountFence = new CountDownLatch(1);
+    AtomicReference<RuntimeMembershipSnapshotDto> capturedSnapshot = new AtomicReference<>();
+    AtomicReference<Thread> joinThread = new AtomicReference<>();
+    AtomicReference<Integer> snapshotBackendPid = new AtomicReference<>();
+    AtomicReference<Integer> joinBackendPid = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              if (Thread.currentThread() == joinThread.get()) {
+                joinBackendPid.set(
+                    dsl.resultQuery("SELECT pg_backend_pid()").fetchOne(0, Integer.class));
+                joinReachedAccountFence.countDown();
+              }
+              return invocation.callRealMethod();
+            })
+        .when(joinOperationRepository)
+        .lockAccount(fixture.accountId());
+
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<?> snapshotAttempt =
+          executor.submit(
+              () ->
+                  new TransactionTemplate(transactionManager)
+                      .executeWithoutResult(
+                          status -> {
+                            capturedSnapshot.set(
+                                membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
+                                    fixture.accountId(), fixture.tenantId()));
+                            snapshotBackendPid.set(
+                                dsl.resultQuery("SELECT pg_backend_pid()")
+                                    .fetchOne(0, Integer.class));
+                            snapshotCaptured.countDown();
+                            try {
+                              if (!releaseSnapshotCommit.await(45, TimeUnit.SECONDS)) {
+                                throw new IllegalStateException(
+                                    "runtime snapshot transaction was not released before its bounded wait expired");
+                              }
+                            } catch (InterruptedException ex) {
+                              Thread.currentThread().interrupt();
+                              throw new IllegalStateException(
+                                  "runtime snapshot transaction was interrupted before commit", ex);
+                            }
+                          }));
+
+      assertThat(snapshotCaptured.await(10, TimeUnit.SECONDS)).isTrue();
+      Future<JoinPublicProductionResult> joinAttempt =
+          executor.submit(
+              () -> {
+                joinThread.set(Thread.currentThread());
+                return join(fixture);
+              });
+
+      assertThat(joinReachedAccountFence.await(10, TimeUnit.SECONDS)).isTrue();
+      awaitAccountFenceLockWait(snapshotBackendPid.get(), joinBackendPid.get());
+      assertThat(joinAttempt.isDone())
+          .as("first JOIN must remain blocked until the snapshot owner transaction commits")
+          .isFalse();
+
+      RuntimeMembershipSnapshotDto absent = capturedSnapshot.get();
+      assertThat(absent).isNotNull();
+      assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
+      assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
+      assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
+      assertThat(absent.tenantUuid()).isEqualTo(fixture.tenantUuid().toString());
+      assertThat(absent.membershipExists()).isFalse();
+      assertThat(absent.gameplayAdmissionAllowed()).isFalse();
+      assertThat(absent.membershipBaseline().membershipLifecycleState()).isEqualTo("MISSING");
+      assertThat(absent.membershipBaseline().membershipVersion())
+          .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
+      assertThat(absent.membershipBaseline().membershipAuthorityGeneration()).isEqualTo("1");
+      assertThat(absent.authorityTuple().membershipAuthorityGeneration())
+          .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
+      assertThat(absent.issuanceFence()).matches("[1-9][0-9]*");
+      assertThat(absent.outboxCheckpoints())
+          .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "0"));
+      assertThat(absent.outboxSourceEvidence()).isEmpty();
+      assertThat(absent.sourceEvent()).isNull();
+      assertThat(absent.roles()).isEmpty();
+
+      releaseSnapshotCommit.countDown();
+      snapshotAttempt.get(30, TimeUnit.SECONDS);
+      JoinPublicProductionResult joined = joinAttempt.get(30, TimeUnit.SECONDS);
+
+      assertThat(joined.success()).isTrue();
+      assertThat(joined.outcomeCode()).isEqualTo("JOINED");
+      assertThat(joined.membershipVersion()).isEqualTo(2L);
+      assertThat(joined.membershipAuthorityGeneration()).isEqualTo(1L);
+      assertAuthorityMembershipEvent(fixture, 1L, 2L, false);
+
+      RuntimeMembershipSnapshotDto active = readRuntimeMembershipSnapshot(fixture);
+      var eventRow = authorityMembershipEventRow(fixture, 1L);
+      String canonicalEventJson =
+          new String(eventRow.get("payload", byte[].class), StandardCharsets.UTF_8);
+      MembershipAuthorityEventV1Codec.MembershipEvent event =
+          MembershipAuthorityEventV1Codec.verify(canonicalEventJson);
+      assertThat(active.membershipExists()).isTrue();
+      assertThat(active.gameplayAdmissionAllowed()).isTrue();
+      assertThat(active.membershipBaseline().membershipLifecycleState()).isEqualTo("ACTIVE");
+      assertThat(active.membershipBaseline().membershipVersion())
+          .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+      assertThat(active.membershipBaseline().membershipAuthorityGeneration()).isEqualTo("1");
+      assertThat(active.membershipBaseline().membershipVersion())
+          .isEqualTo(event.membershipVersion());
+      assertThat(active.membershipBaseline().membershipAuthorityGeneration())
+          .isEqualTo(event.membershipAuthorityGeneration());
+      assertThat(active.authorityTuple()).isEqualTo(event.authorityTuple());
+      assertThat(active.authorityTuple()).isEqualTo(absent.authorityTuple());
+      assertThat(active.issuanceFence()).isEqualTo(event.issuanceFence());
+      assertThat(active.issuanceFence()).isEqualTo(absent.issuanceFence());
+      assertThat(active.sourceEvent().eventId()).isEqualTo(event.eventId());
+      assertThat(active.sourceEvent().eventDigest()).isEqualTo(event.eventDigest());
+      assertThat(active.sourceEvent().canonicalJson().getBytes(StandardCharsets.UTF_8))
+          .containsExactly(event.canonicalJson().getBytes(StandardCharsets.UTF_8));
+      assertThat(active.outboxCheckpoints())
+          .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "1"));
+      assertThat(active.outboxSourceEvidence())
+          .containsExactly(
+              new OutboxSourceEvidence(
+                  authorityStreamKey(fixture),
+                  "1",
+                  event.eventId(),
+                  event.eventDigest(),
+                  event.canonicalJson()));
+      assertThat(active.roles()).containsExactlyElementsOf(event.roles());
+      assertThat(countMemberships(fixture)).isEqualTo(1L);
+      assertThat(countAuthorityMembershipEvents(fixture)).isEqualTo(1L);
+      assertThat(countAuthorityMembershipStreams(fixture)).isEqualTo(1L);
+    } finally {
+      releaseSnapshotCommit.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
   void neverJoinedSnapshotReaderRejectsMissingPairWithoutEnrollingIt() {
     JoinFixture missingPair = fixture("active");
     assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(missingPair))
@@ -2018,6 +2158,27 @@ class AccountJoinPostgresIntegrationTest {
       Thread.currentThread().interrupt();
       throw new IllegalStateException("concurrent JOIN test was interrupted", ex);
     }
+  }
+
+  private void awaitAccountFenceLockWait(Integer snapshotBackendPid, Integer joinBackendPid)
+      throws InterruptedException {
+    assertThat(snapshotBackendPid).isNotNull();
+    assertThat(joinBackendPid).isNotNull();
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    while (System.nanoTime() < deadline) {
+      Boolean blockedBySnapshot =
+          dsl.resultQuery(
+                  "SELECT CAST(? AS integer) = ANY(pg_blocking_pids(CAST(? AS integer)))",
+                  snapshotBackendPid,
+                  joinBackendPid)
+              .fetchOne(0, Boolean.class);
+      if (Boolean.TRUE.equals(blockedBySnapshot)) {
+        return;
+      }
+      Thread.sleep(10);
+    }
+    throw new AssertionError(
+        "JOIN backend did not enter a PostgreSQL lock wait on the snapshot owner transaction");
   }
 
   private void assertJoinAuthorityFailureRemainsPending(JoinFixture fixture) {
