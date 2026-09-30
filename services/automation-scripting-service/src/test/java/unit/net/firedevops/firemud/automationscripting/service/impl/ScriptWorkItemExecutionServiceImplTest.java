@@ -1684,8 +1684,8 @@ class ScriptWorkItemExecutionServiceImplTest {
         .thenAnswer(
             invocation -> {
               assertThat(transactionActive).isFalse();
-              // The indexed row was already attempted even though its processing transaction
-              // rolled back. Filter it from this invocation while its sibling remains eligible.
+              // The durable scan returns both rows. Claiming rejects the indexed row because it
+              // is no longer PENDING_EVALUATION, while its sibling remains eligible.
               return List.of(indexed, fallback);
             });
     Mockito.doAnswer(

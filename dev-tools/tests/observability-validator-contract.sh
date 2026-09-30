@@ -116,29 +116,25 @@ for canary_alert in "${canary_alerts[@]}"; do
   fi
 done
 
-dead_letter_retention_alert_rule="$(awk '
-  /^[[:space:]]*- alert: AutomationDeadLetterRetentionBlocked$/ { in_rule = 1 }
+dead_letter_retention_recording_rule="$(awk '
+  /^[[:space:]]*- record: automation_retention_dead_letter_blocked_rows:max$/ {
+    in_rule = 1
+    print
+    next
+  }
+  in_rule && /^[[:space:]]*- (alert|record):/ { exit }
   in_rule { print }
-  in_rule && /^[[:space:]]*- alert:/ && $0 !~ /AutomationDeadLetterRetentionBlocked/ { exit }
 ' "$ROOT_DIR/k8s/monitoring/prometheus-rules-firemud.yaml")"
-if [[ -z "${dead_letter_retention_alert_rule//[[:space:]]/}" ]]; then
-  echo "shared Prometheus rules are missing AutomationDeadLetterRetentionBlocked" >&2
+if [[ -z "${dead_letter_retention_recording_rule//[[:space:]]/}" ]]; then
+  echo "shared Prometheus rules are missing the dead-letter retention recording rule" >&2
   exit 1
 fi
-if ! grep -Fqx -- "          expr: automation_retention_dead_letter_blocked_rows > 0" <<<"$dead_letter_retention_alert_rule"; then
-  echo "AutomationDeadLetterRetentionBlocked must use the distinct dead-letter blocked-row gauge with a > 0 threshold" >&2
+if ! grep -Fqx -- "          expr: max by (namespace, service) (automation_retention_dead_letter_blocked_rows)" <<<"$dead_letter_retention_recording_rule"; then
+  echo "dead-letter retention recording rule must deduplicate the distinct blocked-row gauge by namespace and service" >&2
   exit 1
 fi
-if ! grep -Fqx -- "          for: 5m" <<<"$dead_letter_retention_alert_rule"; then
-  echo "AutomationDeadLetterRetentionBlocked must retain its five-minute hold" >&2
-  exit 1
-fi
-if ! grep -Fqx -- "            severity: P2" <<<"$dead_letter_retention_alert_rule"; then
-  echo "AutomationDeadLetterRetentionBlocked must use severity P2" >&2
-  exit 1
-fi
-if grep -Fq -- "expr: automation_retention_blocked_rows" <<<"$dead_letter_retention_alert_rule"; then
-  echo "AutomationDeadLetterRetentionBlocked must not use the aggregate retention gauge" >&2
+if grep -Fq -- "- alert:" <<<"$dead_letter_retention_recording_rule"; then
+  echo "dead-letter retention diagnostic must remain a recording rule, not an alert" >&2
   exit 1
 fi
 

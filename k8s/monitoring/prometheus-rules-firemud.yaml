@@ -258,19 +258,10 @@ spec:
             summary: Player-facing reopen was attempted without complete convergence
             description: A controller-authoritative recovery release was attempted before cold-start convergence completed. Keep traffic quarantined and investigate the operation evidence and participant dispositions immediately.
 
-    - name: firemud.alerts.automation
+    - name: firemud.recording.automation
       rules:
-        - alert: AutomationDeadLetterRetentionBlocked
-          expr: automation_retention_dead_letter_blocked_rows > 0
-          for: 5m
-          labels:
-            service: automation-scripting-service
-            severity: P2
-            owner: automation
-            runbook: design/architecture/system-architecture-scripting-quotas-and-operations.md#auditability--metrics
-          annotations:
-            summary: Automation dead-letter retention is blocked
-            description: One or more dead-letter rows remain blocked from retention cleanup. Because cleanup intentionally fails closed until recovery-aware whole-bundle evidence exists, this is an expected steady-state, non-paging diagnostic; inspect recovery-aware evidence when available and do not delete dead-letter rows by age or row cap alone.
+        - record: automation_retention_dead_letter_blocked_rows:max
+          expr: max by (namespace, service) (automation_retention_dead_letter_blocked_rows)
 
     - name: firemud.alerts.observability
       rules:

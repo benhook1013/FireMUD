@@ -1855,7 +1855,7 @@ class ScriptWorkItemServiceImplTest {
         .thenReturn(2L, 2L, 2L, 0L, 0L, 0L);
     when(workItemRepository.countTerminalRowsBlockedByReplayReceipts(
             Mockito.anyString(), Mockito.any()))
-        .thenReturn(1L, 2L, 3L, 0L, 0L, 0L);
+        .thenReturn(1L, 2L, 4L, 0L, 0L, 0L);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     ScriptWorkItemService service =
         service(
@@ -1879,7 +1879,7 @@ class ScriptWorkItemServiceImplTest {
         .isEqualTo(2.0);
     assertThat(
             meterRegistry.get("automation_retention_replay_receipt_blocked_rows").gauge().value())
-        .isEqualTo(6.0);
+        .isEqualTo(7.0);
 
     service.cleanupTerminalWorkItems();
     assertThat(meterRegistry.get("automation_retention_blocked_rows").gauge().value()).isZero();
