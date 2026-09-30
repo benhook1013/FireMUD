@@ -151,7 +151,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.automationQueueService = automationQueueService;
   }
 
-  public ScriptWorkItemServiceImpl(
+  ScriptWorkItemServiceImpl(
       ScriptWorkItemRepository workItemRepository,
       ScriptEventAuditRepository auditRepository,
       ScriptEventIngressAuditRepository ingressAuditRepository,

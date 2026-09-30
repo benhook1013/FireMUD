@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeRequestHistory;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
+import net.firedevops.firemud.automationscripting.service.impl.ScriptDeadLetterReplayTransactionBoundary;
 import net.firedevops.firemud.automationscripting.service.impl.ScriptWorkItemExecutionServiceImpl;
 import net.firedevops.firemud.automationscripting.service.impl.ScriptWorkItemServiceImpl;
 import org.flywaydb.core.Flyway;
@@ -286,7 +287,8 @@ class PluginRuntimeLifecycleFenceIntegrationTest {
             null,
             new SimpleMeterRegistry(),
             null,
-            null);
+            null,
+            new ScriptDeadLetterReplayTransactionBoundary());
     DataSourceTransactionManager transactionManager =
         new DataSourceTransactionManager(timeoutDataSource);
     ScriptWorkItemExecutionServiceImpl executionService =

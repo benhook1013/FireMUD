@@ -137,7 +137,10 @@ class ScriptWorkItemServiceImplTest {
   static class ReplayTransactionTestConfiguration {
     @Bean
     DataSource dataSource() {
-      return new EmbeddedDatabaseBuilder().setType(EmbeddedDatabaseType.H2).build();
+      return new EmbeddedDatabaseBuilder()
+          .generateUniqueName(true)
+          .setType(EmbeddedDatabaseType.H2)
+          .build();
     }
 
     @Bean
@@ -149,6 +152,15 @@ class ScriptWorkItemServiceImplTest {
     ScriptDeadLetterReplayTransactionBoundary replayTransactionBoundary() {
       return new ScriptDeadLetterReplayTransactionBoundary();
     }
+  }
+
+  @Test
+  void publicConstructorsRequireAnExplicitReplayTransactionBoundary() {
+    assertThat(ScriptWorkItemServiceImpl.class.getConstructors())
+        .allSatisfy(
+            constructor ->
+                assertThat(constructor.getParameterTypes())
+                    .contains(ScriptDeadLetterReplayTransactionBoundary.class));
   }
 
   @Test
