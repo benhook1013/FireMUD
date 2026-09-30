@@ -4834,7 +4834,7 @@ for service in (
     ).get("spec", {}).get("strategy", {})
     if base_strategy.get("type") != "Recreate":
         fail(f"Kustomize base Deployment/{service} must use non-rolling Recreate strategy")
-for service in publication_services + ("social-groups-service",):
+for service in distinct_workload_services:
     assert_distinct_workload_service(service, base_deployments, "Kustomize base")
 PY
 

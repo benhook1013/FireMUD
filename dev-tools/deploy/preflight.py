@@ -153,11 +153,9 @@ ACCOUNT_GAME_SESSION_GRPC_WORKLOADS = (
 SHARED_TRUST_GRPC_WORKLOADS = (
     *PUBLICATION_GRPC_WORKLOADS,
     "social-groups-service",
-)
-GRPC_WORKLOAD_SECRET_CONSUMERS = (
-    *SHARED_TRUST_GRPC_WORKLOADS,
     *ACCOUNT_GAME_SESSION_GRPC_WORKLOADS,
 )
+GRPC_WORKLOAD_SECRET_CONSUMERS = SHARED_TRUST_GRPC_WORKLOADS
 GRPC_WORKLOAD_LEAF_SECRET_KEYS = {"tls.crt", "tls.key", "ca.crt"}
 PUBLICATION_GRPC_TRUST_SECRET_NAME = "firemud-grpc-tls"
 PUBLICATION_GRPC_TRUST_SECRET_KEYS = {"ca.crt"}
@@ -950,7 +948,7 @@ def publication_workload_secret_requirements(
     expected: dict[str, Any],
     documents: list[dict[str, Any]],
 ) -> tuple[tuple[str, str, set[str]], ...]:
-    """Resolve workload leaf Secrets and the shared publication CA trust Secret."""
+    """Resolve workload leaf Secrets and the shared gRPC CA trust Secret."""
     expected_namespace = secret_binding_namespace(
         get(expected, "internalBindings.postgres.credentialsRef")
     )
@@ -977,7 +975,6 @@ def publication_workload_secret_requirements(
     leaf_secret_names: list[str] = []
     for workload in GRPC_WORKLOAD_SECRET_CONSUMERS:
         is_publication_workload = workload in PUBLICATION_GRPC_WORKLOADS
-        uses_shared_trust = workload in SHARED_TRUST_GRPC_WORKLOADS
         workload_label = (
             "publication workload" if is_publication_workload else "gRPC workload"
         )
@@ -1024,51 +1021,38 @@ def publication_workload_secret_requirements(
             raise ValueError(
                 f"Expected exactly one grpc-tls volume for {workload_label} {workload}; found {len(grpc_volumes)}"
             )
-        if uses_shared_trust and len(trust_volumes) != 1:
+        if len(trust_volumes) != 1:
             raise ValueError(
                 f"Expected exactly one grpc-trust volume for {workload_label} {workload}; found {len(trust_volumes)}"
-            )
-        if not uses_shared_trust and trust_volumes:
-            raise ValueError(
-                f"Rendered {workload_label} {workload} must mount its CA from the leaf Secret, not grpc-trust"
             )
         grpc_volume = grpc_volumes[0]
         secret = grpc_volume.get("secret")
         secret_name = secret.get("secretName") if isinstance(secret, dict) else None
         expected_leaf_items = {("tls.crt", "tls.crt"), ("tls.key", "tls.key")}
         leaf_items = secret.get("items") if isinstance(secret, dict) else None
-        if uses_shared_trust:
-            leaf_projection_is_valid = (
-                isinstance(leaf_items, list)
-                and len(leaf_items) == len(expected_leaf_items)
-                and all(
-                    isinstance(item, dict)
-                    and set(item) == {"key", "path"}
-                    and isinstance(item.get("key"), str)
-                    and isinstance(item.get("path"), str)
-                    for item in leaf_items
-                )
-                and {
-                    (item["key"], item["path"])
-                    for item in leaf_items
-                    if isinstance(item, dict)
-                }
-                == expected_leaf_items
+        leaf_projection_is_valid = (
+            isinstance(leaf_items, list)
+            and len(leaf_items) == len(expected_leaf_items)
+            and all(
+                isinstance(item, dict)
+                and set(item) == {"key", "path"}
+                and isinstance(item.get("key"), str)
+                and isinstance(item.get("path"), str)
+                for item in leaf_items
             )
-        else:
-            # The Account and Game Session Kustomize volumes intentionally project the
-            # complete cert-manager Secret, including ca.crt, into /tls.
-            leaf_projection_is_valid = isinstance(secret, dict) and "items" not in secret
+            and {
+                (item["key"], item["path"])
+                for item in leaf_items
+                if isinstance(item, dict)
+            }
+            == expected_leaf_items
+        )
         if (
             not isinstance(secret, dict)
             or not isinstance(secret_name, str)
             or not secret_name.strip()
             or secret_name != secret_name.strip()
-            or not set(secret).issubset(
-                {"secretName", "defaultMode", "items"}
-                if uses_shared_trust
-                else {"secretName", "defaultMode"}
-            )
+            or not set(secret).issubset({"secretName", "defaultMode", "items"})
             or set(grpc_volume) != {"name", "secret"}
             or not leaf_projection_is_valid
         ):
@@ -1092,39 +1076,38 @@ def publication_workload_secret_requirements(
                 f"{expected_leaf_secret_name}; found {secret_name}"
             )
 
-        if uses_shared_trust:
-            trust_volume = trust_volumes[0]
-            trust_secret = trust_volume.get("secret")
-            trust_secret_name = (
-                trust_secret.get("secretName") if isinstance(trust_secret, dict) else None
+        trust_volume = trust_volumes[0]
+        trust_secret = trust_volume.get("secret")
+        trust_secret_name = (
+            trust_secret.get("secretName") if isinstance(trust_secret, dict) else None
+        )
+        expected_trust_items = {("ca.crt", "ca.crt")}
+        trust_items = trust_secret.get("items") if isinstance(trust_secret, dict) else None
+        if (
+            not isinstance(trust_secret, dict)
+            or trust_secret_name != PUBLICATION_GRPC_TRUST_SECRET_NAME
+            or not set(trust_secret).issubset({"secretName", "defaultMode", "items"})
+            or set(trust_volume) != {"name", "secret"}
+            or not isinstance(trust_items, list)
+            or len(trust_items) != len(expected_trust_items)
+            or any(
+                not isinstance(item, dict)
+                or set(item) != {"key", "path"}
+                or not isinstance(item.get("key"), str)
+                or not isinstance(item.get("path"), str)
+                for item in trust_items
             )
-            expected_trust_items = {("ca.crt", "ca.crt")}
-            trust_items = trust_secret.get("items") if isinstance(trust_secret, dict) else None
-            if (
-                not isinstance(trust_secret, dict)
-                or trust_secret_name != PUBLICATION_GRPC_TRUST_SECRET_NAME
-                or not set(trust_secret).issubset({"secretName", "defaultMode", "items"})
-                or set(trust_volume) != {"name", "secret"}
-                or not isinstance(trust_items, list)
-                or len(trust_items) != len(expected_trust_items)
-                or any(
-                    not isinstance(item, dict)
-                    or set(item) != {"key", "path"}
-                    or not isinstance(item.get("key"), str)
-                    or not isinstance(item.get("path"), str)
-                    for item in trust_items
-                )
-                or {
-                    (item["key"], item["path"])
-                    for item in trust_items
-                    if isinstance(item, dict)
-                }
-                != expected_trust_items
-            ):
-                raise ValueError(
-                    f"Rendered {workload_label} {workload} requires the shared CA-only "
-                    f"Secret {PUBLICATION_GRPC_TRUST_SECRET_NAME} in its grpc-trust volume"
-                )
+            or {
+                (item["key"], item["path"])
+                for item in trust_items
+                if isinstance(item, dict)
+            }
+            != expected_trust_items
+        ):
+            raise ValueError(
+                f"Rendered {workload_label} {workload} requires the shared CA-only "
+                f"Secret {PUBLICATION_GRPC_TRUST_SECRET_NAME} in its grpc-trust volume"
+            )
 
         containers = pod_spec.get("containers")
         if not isinstance(containers, list):
@@ -1196,9 +1179,7 @@ def publication_workload_secret_requirements(
         expected_grpc_paths = {
             "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/tls.crt",
             "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
-            "FIREMUD_GRPC_CA_CERT_PATH": (
-                "/grpc-trust/ca.crt" if uses_shared_trust else "/tls/ca.crt"
-            ),
+            "FIREMUD_GRPC_CA_CERT_PATH": "/grpc-trust/ca.crt",
         }
         grpc_paths: dict[str, str] = {}
         for name in GRPC_TLS_PATH_NAMES:
@@ -1241,9 +1222,8 @@ def publication_workload_secret_requirements(
 
         expected_mounts = {
             "grpc-tls": "/tls",
+            "grpc-trust": "/grpc-trust",
         }
-        if uses_shared_trust:
-            expected_mounts["grpc-trust"] = "/grpc-trust"
         validated_mounts: dict[str, dict[str, Any]] = {}
         for volume_name, mount_path in expected_mounts.items():
             mounts = [mount for mount in volume_mounts if mount.get("name") == volume_name]
@@ -1263,7 +1243,6 @@ def publication_workload_secret_requirements(
                 )
             validated_mounts[volume_name] = mount
 
-        ca_trust_mount = "/grpc-trust" if uses_shared_trust else "/tls"
         if any(
             not path_is_under_mount(path, "/tls")
             for path in (
@@ -1271,7 +1250,7 @@ def publication_workload_secret_requirements(
                 grpc_paths["FIREMUD_GRPC_PRIVATE_KEY_PATH"],
             )
         ) or not path_is_under_mount(
-            grpc_paths["FIREMUD_GRPC_CA_CERT_PATH"], ca_trust_mount
+            grpc_paths["FIREMUD_GRPC_CA_CERT_PATH"], "/grpc-trust"
         ):
             raise ValueError(
                 f"Rendered {workload_label} {workload} gRPC TLS paths do not match its leaf/trust mount layout"
