@@ -24,6 +24,7 @@ import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociatio
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityResponse;
+import org.jooq.exception.TooManyRowsException;
 import org.junit.jupiter.api.Test;
 
 class TenantIdentityGrpcServiceTest {
@@ -161,6 +162,18 @@ class TenantIdentityGrpcServiceTest {
 
     assertEquals(Status.Code.FAILED_PRECONDITION, status(observer));
     assertNull(observer.value);
+  }
+
+  @Test
+  void duplicateRetainedLegacyTenantKeyFailsAsPrecondition() {
+    when(repository.findTenantIdentityByLegacyTenantId("legacy-game-7"))
+        .thenThrow(new TooManyRowsException("duplicate retained tenant key"));
+
+    TestObserver observer = call("legacy-game-7", ACCOUNT_PEER);
+
+    assertEquals(Status.Code.FAILED_PRECONDITION, status(observer));
+    assertNull(observer.value);
+    assertFalse(observer.completed);
   }
 
   private TestObserver call(String sourceKey, String peerUri) {

@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociatio
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
+import org.jooq.exception.TooManyRowsException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.grpc.server.service.GrpcService;
 
@@ -57,10 +58,10 @@ public class TenantIdentityGrpcService
     Optional<GameTenantIdentity> resolved;
     try {
       resolved = gameRepository.findTenantIdentityByLegacyTenantId(sourceKey);
-    } catch (IllegalStateException ex) {
+    } catch (IllegalStateException | TooManyRowsException ex) {
       responseObserver.onError(
           Status.FAILED_PRECONDITION
-              .withDescription("Game Design tenant identity provenance is invalid")
+              .withDescription("Game Design tenant identity is ambiguous or provenance is invalid")
               .asRuntimeException());
       return;
     }
