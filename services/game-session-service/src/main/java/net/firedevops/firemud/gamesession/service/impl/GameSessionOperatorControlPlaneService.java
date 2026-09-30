@@ -82,48 +82,55 @@ final class GameSessionOperatorControlPlaneService {
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     requireCoherentPinForRead(instance);
-    return GetPinnedScriptPatchVersionResponse.newBuilder()
-        .setPinnedScriptPatchVersion(
-            instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-        .setScriptPinEpoch(instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
-        .setPinnedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
-        .setPinnedBy(
-            instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
-        .setControlPlaneRequestId(
-            instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                ? ""
-                : instance.getScriptPatchPinnedControlPlaneRequestId())
-        .setPublication(
-            scriptPatchPublicationLink(
-                instance.getTenantId(),
-                instance.getScriptPatchVersion(),
-                instance.getScriptPatchBaseVersionId()))
-        .build();
+    var response =
+        GetPinnedScriptPatchVersionResponse.newBuilder()
+            .setPinnedScriptPatchVersion(
+                instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+            .setScriptPinEpoch(
+                instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
+            .setPinnedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
+            .setPinnedBy(
+                instance.getScriptPatchPinnedBy() == null ? "" : instance.getScriptPatchPinnedBy())
+            .setControlPlaneRequestId(
+                instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                    ? ""
+                    : instance.getScriptPatchPinnedControlPlaneRequestId());
+    if (instance.getScriptPatchVersion() != null && !instance.getScriptPatchVersion().isBlank()) {
+      response.setPublication(
+          scriptPatchPublicationLink(
+              instance.getTenantId(),
+              instance.getScriptPatchVersion(),
+              instance.getScriptPatchBaseVersionId()));
+    }
+    return response.build();
   }
 
   GetGameSessionPinConvergenceResponse getGameSessionPinConvergence(
       long tenantId, long gameInstanceId) {
     GameInstance instance = getOwnedInstance(tenantId, gameInstanceId);
     requireCoherentPinForRead(instance);
-    return GetGameSessionPinConvergenceResponse.newBuilder()
-        .setTenantId(Long.toString(instance.getTenantId()))
-        .setGameInstanceId(Long.toString(instance.getId()))
-        .setObservedPinnedScriptPatchVersion(
-            instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
-        .setObservedScriptPinEpoch(
-            instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
-        .setLastObservedControlPlaneRequestId(
-            instance.getScriptPatchPinnedControlPlaneRequestId() == null
-                ? ""
-                : instance.getScriptPatchPinnedControlPlaneRequestId())
-        .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
-        .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()))
-        .setPublication(
-            scriptPatchPublicationLink(
-                instance.getTenantId(),
-                instance.getScriptPatchVersion(),
-                instance.getScriptPatchBaseVersionId()))
-        .build();
+    var response =
+        GetGameSessionPinConvergenceResponse.newBuilder()
+            .setTenantId(Long.toString(instance.getTenantId()))
+            .setGameInstanceId(Long.toString(instance.getId()))
+            .setObservedPinnedScriptPatchVersion(
+                instance.getScriptPatchVersion() == null ? "" : instance.getScriptPatchVersion())
+            .setObservedScriptPinEpoch(
+                instance.getScriptPinEpoch() == null ? 0L : instance.getScriptPinEpoch())
+            .setLastObservedControlPlaneRequestId(
+                instance.getScriptPatchPinnedControlPlaneRequestId() == null
+                    ? ""
+                    : instance.getScriptPatchPinnedControlPlaneRequestId())
+            .setObservedAtMs(toEpochMillis(instance.getScriptPatchPinnedAt()))
+            .setIsStale(isPinConvergenceStale(instance.getScriptPatchPinnedAt()));
+    if (instance.getScriptPatchVersion() != null && !instance.getScriptPatchVersion().isBlank()) {
+      response.setPublication(
+          scriptPatchPublicationLink(
+              instance.getTenantId(),
+              instance.getScriptPatchVersion(),
+              instance.getScriptPatchBaseVersionId()));
+    }
+    return response.build();
   }
 
   SetPinnedScriptPatchVersionResponse setPinnedScriptPatchVersion(

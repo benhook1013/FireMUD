@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import java.util.Map;
@@ -78,6 +80,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mapstruct.factory.Mappers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.SimpleTransactionStatus;
@@ -2693,6 +2697,21 @@ class AccountServiceImplTest {
   }
 
   @Test
+  void getTenantEntitlementsForRuntimeTreatsStoreFailureAsUnavailable() {
+    DataAccessResourceFailureException cause =
+        new DataAccessResourceFailureException("subscription store unavailable");
+    when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.getTenantEntitlementsForRuntime(7L, "req-entitlement-store-failure"));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    assertEquals(cause, exception.getCause());
+  }
+
+  @Test
   void issueConnectTokenReturnsShortLivedConnectToken() {
     Account account = new Account();
     account.setId(11L);
@@ -4926,8 +4945,28 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("Username Reminder"),
             org.mockito.ArgumentMatchers.anyString());
 
-    service.sendUsernameReminder(
-        new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest("demo@example.com"));
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(AccountServiceImpl.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      service.sendUsernameReminder(
+          new net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest(
+              "demo@example.com"));
+      assertTrue(
+          appender.list.stream()
+              .anyMatch(
+                  event ->
+                      "Recovery email delivery failed; cause=RuntimeException"
+                          .equals(event.getFormattedMessage())));
+      assertFalse(
+          appender.list.stream()
+              .anyMatch(event -> event.getFormattedMessage().contains("SMTP failure")));
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
 
     org.mockito.Mockito.verify(emailService)
         .sendEmail(

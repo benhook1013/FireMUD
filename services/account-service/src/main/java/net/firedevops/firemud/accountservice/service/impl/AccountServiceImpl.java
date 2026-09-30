@@ -91,6 +91,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -1305,8 +1306,15 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.runtime_entitlements")
   public RuntimeEntitlementsDto getTenantEntitlementsForRuntime(Long tenantId, String requestId) {
-    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions =
-        subscriptionRepository.findByTenantId(tenantId);
+    List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
+    try {
+      subscriptions = subscriptionRepository.findByTenantId(tenantId);
+    } catch (DataAccessException ex) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE",
+          "Tenant entitlement authority is unavailable; retry later",
+          ex);
+    }
     if (subscriptions.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
@@ -2273,7 +2281,9 @@ public class AccountServiceImpl implements AccountService {
     try {
       delivery.run();
     } catch (RuntimeException ex) {
-      logger.warn("Recovery email delivery failed");
+      // Keep the public recovery response neutral and do not log the recipient, token, or SMTP
+      // exception message; the exception class is enough to identify the failing dependency.
+      logger.warn("Recovery email delivery failed; cause={}", ex.getClass().getSimpleName());
     }
   }
 

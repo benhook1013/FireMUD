@@ -8,6 +8,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
@@ -16,6 +17,7 @@ import net.firedevops.firemud.automationscripting.model.ScriptDefinitionIdentity
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.Record1;
 import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -25,6 +27,90 @@ import org.jooq.tools.jdbc.MockResult;
 import org.junit.jupiter.api.Test;
 
 class ScriptDefinitionRepositoryTest {
+  @Test
+  void retainedPatchBaseGuardUsesOneNullSafeExistsQuery() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return existsResult(resultDsl, false);
+        };
+    ScriptDefinitionRepository repository = repository(provider);
+
+    repository.requireExistingScriptPatchRowsMatchBase("0001", "patch-1", 7L);
+
+    assertThat(sql.get())
+        .contains("exists", "tenant_id", "version", "base_version_id", "is distinct from");
+  }
+
+  @Test
+  void retainedPatchBaseGuardMapsExistsMismatchToConflict() {
+    ScriptDefinitionRepository repository = repositoryReturningExists(true);
+
+    assertThatThrownBy(() -> repository.requireExistingScriptPatchRowsMatchBase("1", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+  }
+
+  @Test
+  void retainedPatchBaseGuardAcceptsFalseExistsResult() {
+    ScriptDefinitionRepository repository = repositoryReturningExists(false);
+
+    repository.requireExistingScriptPatchRowsMatchBase("1", "patch-1", 7L);
+  }
+
+  @Test
+  void patchBaseBindingCanonicalizesTenantForInsertAndLookup() {
+    AtomicReference<Object[]> insertBindings = new AtomicReference<>();
+    AtomicReference<Object[]> lookupBindings = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    Field<Long> baseVersionId = DSL.field("base_version_id", Long.class);
+    MockDataProvider provider =
+        context -> {
+          if (context.sql().trim().toLowerCase(Locale.ROOT).startsWith("insert")) {
+            insertBindings.set(context.bindings());
+            return new MockResult[] {new MockResult(1)};
+          }
+          lookupBindings.set(context.bindings());
+          Record1<Long> row = resultDsl.newRecord(baseVersionId);
+          row.set(baseVersionId, 7L);
+          Result<Record1<Long>> result = resultDsl.newResult(baseVersionId);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+
+    ScriptDefinitionRepository repository = repository(provider);
+
+    repository.bindScriptPatchBaseVersionId("0001", "patch-1", 7L);
+
+    assertThat(insertBindings.get()).containsExactly("1", "patch-1", 7L);
+    assertThat(lookupBindings.get()).containsExactly("1", "patch-1");
+  }
+
+  @Test
+  void patchBaseTenantValidationFailsClosedBeforeDatabaseAccess() {
+    AtomicBoolean databaseAccessed = new AtomicBoolean();
+    MockDataProvider provider =
+        context -> {
+          databaseAccessed.set(true);
+          return new MockResult[] {new MockResult(0)};
+        };
+    ScriptDefinitionRepository repository = repository(provider);
+
+    assertThatThrownBy(() -> repository.bindScriptPatchBaseVersionId("0", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be positive");
+    assertThatThrownBy(() -> repository.findScriptPatchBaseVersionId("not-a-number", "patch-1"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be numeric");
+    assertThatThrownBy(() -> repository.requireExistingScriptPatchRowsMatchBase("0", "patch-1", 7L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("tenantId must be positive");
+
+    assertThat(databaseAccessed).isFalse();
+  }
+
   @Test
   void identityInsertReturnsDurableWinnerAndReportsCreation() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
@@ -110,7 +196,7 @@ class ScriptDefinitionRepositoryTest {
     assertThat(persisted.getRowVersion()).isEqualTo(9);
     assertThat(saveResult.created()).isFalse();
     assertThat(updateSql.get().toLowerCase(Locale.ROOT))
-        .contains("is distinct from", "row_version", "where");
+        .contains("is distinct from", "is not distinct from", "row_version", "where");
     assertExpectedRowVersionBinding(updateSql.get(), updateBindings.get(), 9);
   }
 
@@ -164,7 +250,7 @@ class ScriptDefinitionRepositoryTest {
   }
 
   @Test
-  void existingIdIdentityMutationIsRejectedByCasAndLeavesOriginalRowUntouched() {
+  void existingIdBaseIdentityMutationReportsExistingAndRequestedBaseVersions() {
     AtomicReference<String> updateSql = new AtomicReference<>();
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
@@ -175,17 +261,21 @@ class ScriptDefinitionRepositoryTest {
             return new MockResult[] {new MockResult(0)};
           }
           var result = resultDsl.newResult(SCRIPTS);
-          result.add(scriptRecord(17L, "{\"original\":true}", 4));
+          ScriptsRecord existing = scriptRecord(17L, "{\"original\":true}", 4);
+          existing.setBaseVersionId(11L);
+          result.add(existing);
           return new MockResult[] {new MockResult(1, result)};
         };
     ScriptDefinitionRepository repository = repository(provider);
     ScriptDefinition changedIdentity = script(17L, "{\"replacement\":true}");
-    changedIdentity.setName("renamed");
+    changedIdentity.setBaseVersionId(12L);
     changedIdentity.setRowVersion(4);
 
     assertThatThrownBy(() -> repository.save(changedIdentity))
         .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
-        .hasMessageStartingWith("SCRIPT_DEFINITION_CONFLICT: ");
+        .hasMessageContaining("existing=(tenantId=1, version=v1, baseVersionId=11, name=script-1)")
+        .hasMessageContaining(
+            "requested=(tenantId=1, version=v1, baseVersionId=12, name=script-1)");
 
     assertThat(updateSql.get().toLowerCase(Locale.ROOT))
         .contains("tenant_id", "version", "name", "row_version")
@@ -195,6 +285,11 @@ class ScriptDefinitionRepositoryTest {
   private static ScriptDefinitionRepository repository(MockDataProvider provider) {
     DSLContext dsl = DSL.using(new MockConnection(provider), SQLDialect.POSTGRES);
     return new ScriptDefinitionRepository(dsl);
+  }
+
+  private static ScriptDefinitionRepository repositoryReturningExists(boolean exists) {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    return repository(context -> existsResult(resultDsl, exists));
   }
 
   private static ScriptDefinition script(Long id, String definition) {
@@ -234,6 +329,15 @@ class ScriptDefinitionRepositoryTest {
 
   private static MockResult[] rowResult(DSLContext resultDsl, ScriptsRecord row) {
     Result<ScriptsRecord> result = resultDsl.newResult(SCRIPTS);
+    result.add(row);
+    return new MockResult[] {new MockResult(1, result)};
+  }
+
+  private static MockResult[] existsResult(DSLContext resultDsl, boolean exists) {
+    Field<Boolean> existsField = DSL.field("exists", Boolean.class);
+    Record1<Boolean> row = resultDsl.newRecord(existsField);
+    row.set(existsField, exists);
+    Result<Record1<Boolean>> result = resultDsl.newResult(existsField);
     result.add(row);
     return new MockResult[] {new MockResult(1, result)};
   }

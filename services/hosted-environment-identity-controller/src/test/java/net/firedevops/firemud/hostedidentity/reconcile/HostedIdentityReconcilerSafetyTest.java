@@ -211,6 +211,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             any(Secret.class),
             anyString(),
+            anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
     Map<String, SecretProjectionService.ProjectionResult> acknowledgedProjections =
@@ -243,7 +244,7 @@ class HostedIdentityReconcilerSafetyTest {
         status.getGrpcPublication().keySet());
     assertTrue(status.getGrpcPublication().values().stream().allMatch(java.util.Objects::nonNull));
     assertEquals(
-        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 7,
+        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.size() + 8,
         acknowledgedProjections.size());
     assertEquals(
         "awaiting-acceptance",
@@ -278,7 +279,8 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             any(Secret.class),
             org.mockito.ArgumentMatchers.eq("b".repeat(64)),
-            org.mockito.ArgumentMatchers.eq("c".repeat(64)));
+            org.mockito.ArgumentMatchers.eq("c".repeat(64)),
+            org.mockito.ArgumentMatchers.eq("d".repeat(64)));
   }
 
   @Test
@@ -323,67 +325,71 @@ class HostedIdentityReconcilerSafetyTest {
   }
 
   @Test
-  void staleGameSessionServedLeafBlocksControllerReadiness() {
-    var expected =
-        new RuntimeProfileService.RuntimeProfile(
-            "uid",
-            "a".repeat(40),
-            "a".repeat(40),
-            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
-            32016,
-            true);
-    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
-    when(fixture.batch.tcpProxyBridge())
-        .thenReturn(
-            DeploymentHeadGateFixture.material(
-                fixture.plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
-    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
-    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
-        mock(NonNamespaceOperation.class);
-    Resource<Secret> absent = mock(Resource.class);
-    when(fixture.client.secrets()).thenReturn(secrets);
-    when(secrets.inNamespace(fixture.plan.runtimeNamespace())).thenReturn(runtimeSecrets);
-    when(runtimeSecrets.withName(fixture.plan.tcpProxyBridgeSecretName())).thenReturn(absent);
-    when(absent.get()).thenReturn(null);
-    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), anyMap(), any()))
-        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
-    when(fixture.probes.probe(
-            any(),
-            anyString(),
-            anyInt(),
-            anyString(),
-            anyString(),
-            org.mockito.ArgumentMatchers.isNull(),
-            anyString(),
-            any(Secret.class),
-            anyString(),
-            anyString()))
-        .thenReturn(
-            new ServedEnvironmentProbe.ProbeResult(
-                false, "grpc-game-session-leaf-fingerprint-mismatch"));
+  void staleGameSessionOrSocialGroupsServedLeafBlocksControllerReadiness() {
+    for (String[] staleLeaf :
+        new String[][] {{"game-session-service", "c"}, {"social-groups-service", "d"}}) {
+      var expected =
+          new RuntimeProfileService.RuntimeProfile(
+              "uid",
+              "a".repeat(40),
+              "a".repeat(40),
+              HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+              32016,
+              true);
+      DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+      String failureReason = "grpc-" + staleLeaf[0] + "-leaf-fingerprint-mismatch";
+      when(fixture.batch.tcpProxyBridge())
+          .thenReturn(
+              DeploymentHeadGateFixture.material(
+                  fixture.plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
+      MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+      NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
+          mock(NonNamespaceOperation.class);
+      Resource<Secret> absent = mock(Resource.class);
+      when(fixture.client.secrets()).thenReturn(secrets);
+      when(secrets.inNamespace(fixture.plan.runtimeNamespace())).thenReturn(runtimeSecrets);
+      when(runtimeSecrets.withName(fixture.plan.tcpProxyBridgeSecretName())).thenReturn(absent);
+      when(absent.get()).thenReturn(null);
+      when(fixture.rollout.sync(
+              any(), any(), anyString(), anyString(), anyString(), anyMap(), any()))
+          .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+      when(fixture.probes.probe(
+              any(),
+              anyString(),
+              anyInt(),
+              anyString(),
+              anyString(),
+              org.mockito.ArgumentMatchers.isNull(),
+              anyString(),
+              any(Secret.class),
+              org.mockito.ArgumentMatchers.eq("b".repeat(64)),
+              org.mockito.ArgumentMatchers.eq("c".repeat(64)),
+              org.mockito.ArgumentMatchers.eq("d".repeat(64))))
+          .thenReturn(new ServedEnvironmentProbe.ProbeResult(false, failureReason));
 
-    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+      UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
 
-    HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
-    assertEquals(HostedEnvironmentIdentityStatus.Phase.Verifying, status.getPhase());
-    assertEquals("ServedProbePending", status.getConditions().get(0).getReason());
-    assertEquals(
-        "grpc-game-session-leaf-fingerprint-mismatch", status.getConditions().get(0).getMessage());
-    verify(fixture.probes)
-        .probe(
-            any(),
-            anyString(),
-            anyInt(),
-            anyString(),
-            anyString(),
-            org.mockito.ArgumentMatchers.isNull(),
-            anyString(),
-            any(Secret.class),
-            org.mockito.ArgumentMatchers.eq("b".repeat(64)),
-            org.mockito.ArgumentMatchers.eq("c".repeat(64)));
-    verify(fixture.projections, never())
-        .acknowledge(
-            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
+      HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
+      assertEquals(HostedEnvironmentIdentityStatus.Phase.Verifying, status.getPhase());
+      assertEquals("ServedProbePending", status.getConditions().get(0).getReason());
+      assertEquals(failureReason, status.getConditions().get(0).getMessage());
+      verify(fixture.probes)
+          .probe(
+              any(),
+              anyString(),
+              anyInt(),
+              anyString(),
+              anyString(),
+              org.mockito.ArgumentMatchers.isNull(),
+              anyString(),
+              any(Secret.class),
+              org.mockito.ArgumentMatchers.eq("b".repeat(64)),
+              org.mockito.ArgumentMatchers.eq("c".repeat(64)),
+              org.mockito.ArgumentMatchers.eq("d".repeat(64)));
+      verify(fixture.projections, never())
+          .acknowledge(
+              any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
+    }
   }
 
   @Test
@@ -590,6 +596,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             any(Secret.class),
             anyString(),
+            anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
 
@@ -647,6 +654,7 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
+            anyString(),
             anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
@@ -868,6 +876,7 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
+            anyString(),
             anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
@@ -1641,7 +1650,8 @@ class HostedIdentityReconcilerSafetyTest {
     for (String role :
         List.of(
             HostedIdentityContract.GRPC_ACCOUNT_ROLE,
-            HostedIdentityContract.GRPC_GAME_SESSION_ROLE)) {
+            HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE)) {
       for (SourceProgressCase rollbackCase : rollbackCases) {
         DeploymentHeadGateFixture fixture =
             new DeploymentHeadGateFixture(
@@ -1677,8 +1687,10 @@ class HostedIdentityReconcilerSafetyTest {
                 "replacement-" + role + "-" + rollbackCase.failure());
         if (HostedIdentityContract.GRPC_ACCOUNT_ROLE.equals(role)) {
           when(fixture.batch.grpcAccount()).thenReturn(olderSource);
-        } else {
+        } else if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
           when(fixture.batch.grpcGameSession()).thenReturn(olderSource);
+        } else {
+          when(fixture.batch.grpcSocialGroups()).thenReturn(olderSource);
         }
 
         UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
@@ -1719,13 +1731,19 @@ class HostedIdentityReconcilerSafetyTest {
     assertNull(
         HostedIdentityReconciler.previousRole(
             resource, HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
+    assertNull(
+        HostedIdentityReconciler.previousRole(
+            resource, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE));
 
     HostedEnvironmentIdentityStatus.RoleStatus account =
         roleStatus("account-revision", 4L, 2L, "a".repeat(64));
     HostedEnvironmentIdentityStatus.RoleStatus gameSession =
         roleStatus("game-session-revision", 5L, 3L, "b".repeat(64));
+    HostedEnvironmentIdentityStatus.RoleStatus socialGroups =
+        roleStatus("social-groups-revision", 6L, 4L, "c".repeat(64));
     status.setGrpcAccountService(account);
     status.setGrpcGameSessionService(gameSession);
+    status.setGrpcSocialGroupsService(socialGroups);
     resource.setStatus(status);
 
     HostedEnvironmentIdentityStatus.RoleStatus accountReadback =
@@ -1733,6 +1751,9 @@ class HostedIdentityReconcilerSafetyTest {
     HostedEnvironmentIdentityStatus.RoleStatus gameSessionReadback =
         HostedIdentityReconciler.previousRole(
             resource, HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+    HostedEnvironmentIdentityStatus.RoleStatus socialGroupsReadback =
+        HostedIdentityReconciler.previousRole(
+            resource, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
     assertNotSame(account, accountReadback);
     assertNotSame(gameSession, gameSessionReadback);
     assertEquals(account.getRevision(), accountReadback.getRevision());
@@ -1744,6 +1765,12 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals(
         gameSession.getSourceObjectGeneration(), gameSessionReadback.getSourceObjectGeneration());
     assertEquals(gameSession.getSpkiSha256(), gameSessionReadback.getSpkiSha256());
+    assertNotSame(socialGroups, socialGroupsReadback);
+    assertEquals(socialGroups.getRevision(), socialGroupsReadback.getRevision());
+    assertEquals(socialGroups.getSourceGeneration(), socialGroupsReadback.getSourceGeneration());
+    assertEquals(
+        socialGroups.getSourceObjectGeneration(), socialGroupsReadback.getSourceObjectGeneration());
+    assertEquals(socialGroups.getSpkiSha256(), socialGroupsReadback.getSpkiSha256());
   }
 
   @Test
@@ -1948,6 +1975,7 @@ class HostedIdentityReconcilerSafetyTest {
     Map<?, ?> publicationSchema = schemaMap(statusProperties.get("grpcPublication"));
     assertEquals(consumerSchema, statusProperties.get("grpcAccountService"));
     assertEquals(consumerSchema, statusProperties.get("grpcGameSessionService"));
+    assertEquals(consumerSchema, statusProperties.get("grpcSocialGroupsService"));
     assertEquals(
         consumerSchema,
         publicationSchema.get("additionalProperties"),
@@ -2291,6 +2319,7 @@ class HostedIdentityReconcilerSafetyTest {
             anyString(),
             any(Secret.class),
             anyString(),
+            anyString(),
             anyString()))
         .thenReturn(
             new ServedEnvironmentProbe.ProbeResult(false, "material-or-leaf-fingerprint-missing"));
@@ -2330,8 +2359,10 @@ class HostedIdentityReconcilerSafetyTest {
     assertEquals("5".repeat(64), status.getGrpc().getSpkiSha256());
     assertEquals("b".repeat(64), status.getGrpcAccountService().getSpkiSha256());
     assertEquals("c".repeat(64), status.getGrpcGameSessionService().getSpkiSha256());
+    assertEquals("d".repeat(64), status.getGrpcSocialGroupsService().getSpkiSha256());
     assertEquals(1L, status.getGrpcAccountService().getSourceGeneration());
     assertEquals(1L, status.getGrpcGameSessionService().getSourceGeneration());
+    assertEquals(1L, status.getGrpcSocialGroupsService().getSourceGeneration());
     ArgumentCaptor<String> gatewayRevision = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<Map<String, String>> workloadIdentityRevisions =
         ArgumentCaptor.forClass(Map.class);
@@ -2361,7 +2392,9 @@ class HostedIdentityReconcilerSafetyTest {
             HostedIdentityContract.GRPC_ACCOUNT_ROLE,
             "revision-" + HostedIdentityContract.GRPC_ACCOUNT_ROLE,
             HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
-            "revision-" + HostedIdentityContract.GRPC_GAME_SESSION_ROLE),
+            "revision-" + HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+            "revision-" + HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE),
         workloadIdentityRevisions.getValue());
     verify(fixture.runtime, times(2))
         .validateTcpProxyService(fixture.client, fixture.plan, expected);
@@ -2457,6 +2490,8 @@ class HostedIdentityReconcilerSafetyTest {
       status.setGrpcAccountService(roleStatus);
     } else if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
       status.setGrpcGameSessionService(roleStatus);
+    } else if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
+      status.setGrpcSocialGroupsService(roleStatus);
     } else {
       throw new IllegalArgumentException("unsupported workload identity role: " + role);
     }
@@ -2469,6 +2504,9 @@ class HostedIdentityReconcilerSafetyTest {
     }
     if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
       return status.getGrpcGameSessionService();
+    }
+    if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
+      return status.getGrpcSocialGroupsService();
     }
     throw new IllegalArgumentException("unsupported workload identity role: " + role);
   }
@@ -2557,6 +2595,8 @@ class HostedIdentityReconcilerSafetyTest {
           .thenReturn(material(plan, HostedIdentityContract.GRPC_ACCOUNT_ROLE, "b"));
       when(batch.grpcGameSession())
           .thenReturn(material(plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE, "c"));
+      when(batch.grpcSocialGroups())
+          .thenReturn(material(plan, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE, "d"));
       when(batch.grpcPublication(anyString()))
           .thenAnswer(
               invocation -> {

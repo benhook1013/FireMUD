@@ -4,6 +4,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -110,30 +111,27 @@ public class ScriptDesignDigestServiceImpl implements ScriptDesignDigestService 
     if (retainedBaseVersionId.longValue() != requestedBaseVersionId) {
       throw new IllegalArgumentException("script_patch_base_version_mismatch");
     }
-    List<Map<String, Object>> scripts =
-        repository
-            .findByTenantIdAndScriptVersionOrderByNameAsc(tenantKey, scriptPatchVersion)
-            .stream()
-            .peek(
-                script ->
-                    requireStoredBase(script.getBaseVersionId(), retainedBaseVersionId, "script"))
-            .map(
-                script ->
-                    canonicalMap(
-                        Map.of(
-                            "name", normalize(script.getName()),
-                            "version", normalize(script.getScriptVersion()),
-                            "baseVersionId", retainedBaseVersionId,
-                            "definition", normalize(script.getDefinition()))))
-            .toList();
-    List<Map<String, Object>> bindings =
+    List<Map<String, Object>> scripts = new ArrayList<>();
+    for (var script :
+        repository.findByTenantIdAndScriptVersionOrderByNameAsc(tenantKey, scriptPatchVersion)) {
+      requireStoredBase(script.getBaseVersionId(), retainedBaseVersionId, "script");
+      scripts.add(
+          canonicalMap(
+              Map.of(
+                  "name", normalize(script.getName()),
+                  "version", normalize(script.getScriptVersion()),
+                  "baseVersionId", retainedBaseVersionId,
+                  "definition", normalize(script.getDefinition()))));
+    }
+    List<ScriptEventBinding> storedBindings =
         bindingRepository
             .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
-                tenantKey, scriptPatchVersion)
-            .stream()
-            .peek(
-                binding ->
-                    requireStoredBase(binding.getBaseVersionId(), retainedBaseVersionId, "binding"))
+                tenantKey, scriptPatchVersion);
+    for (ScriptEventBinding binding : storedBindings) {
+      requireStoredBase(binding.getBaseVersionId(), retainedBaseVersionId, "binding");
+    }
+    List<Map<String, Object>> bindings =
+        storedBindings.stream()
             .sorted(BINDING_DIGEST_ORDER)
             .map(binding -> bindingDigest(binding, retainedBaseVersionId))
             .toList();

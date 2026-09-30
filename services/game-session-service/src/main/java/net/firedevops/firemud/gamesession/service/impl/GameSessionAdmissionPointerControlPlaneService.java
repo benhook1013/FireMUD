@@ -86,37 +86,9 @@ final class GameSessionAdmissionPointerControlPlaneService {
           "admission-pointer updates are temporarily disabled until catalog revision "
               + "preconditions are supported");
     }
-    if (currentPointer == null) {
-      throw new AdmissionPointerVersionMismatchException(
-          "admission-pointer creation is temporarily disabled until catalog revision and "
-              + "stable realm/namespace identity preconditions are supported");
-    }
-    if (!request.hasExpectedPointerVersion() || request.getExpectedPointerVersion() != 0L) {
-      throw new AdmissionPointerVersionMismatchException(
-          "new admission-pointer creation requires an explicit expected_pointer_version of 0");
-    }
-    validatePreparedUpgradeForPointerChange(request, tenantId, targetGameInstanceId);
-    gameplayAdmissionPointerAuthorityService.upsertPointer(
-        new GameplayAdmissionPointerMutation(
-            request.getWorldSlug(),
-            request.getWorldDisplayName(),
-            request.getRealmSlug(),
-            request.getRealmDisplayName(),
-            tenantId,
-            targetGameInstanceId,
-            request.getVisible(),
-            request.getPublicProductionRealm(),
-            request.getRequiresCharacterSelection(),
-            request.getStateScope(),
-            request.getCharacterCreationPolicy(),
-            request.getActorPrincipal(),
-            request.getReason(),
-            request.getControlPlaneRequestId(),
-            request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
-            normalizeBlank(request.getPreparedVersionUpgradeId())));
-    return SetAdmissionPointerResponse.newBuilder()
-        .setPointer(latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug()))
-        .build();
+    throw new AdmissionPointerVersionMismatchException(
+        "admission-pointer creation is temporarily disabled until catalog revision and "
+            + "stable realm/namespace identity preconditions are supported");
   }
 
   ExecutePreparedVersionCutoverResponse executePreparedVersionCutover(
@@ -215,21 +187,6 @@ final class GameSessionAdmissionPointerControlPlaneService {
       builder.setPreparedVersionUpgradeId(entry.preparedVersionUpgradeId());
     }
     return builder.build();
-  }
-
-  private void validatePreparedUpgradeForPointerChange(
-      SetAdmissionPointerRequest request, long tenantId, long targetGameInstanceId) {
-    GameplayAdmissionPointerSnapshot currentPointer =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
-            .orElse(null);
-    validatePreparedUpgradeForPointerChange(
-        request.getWorldSlug(),
-        request.getRealmSlug(),
-        tenantId,
-        targetGameInstanceId,
-        request.getPreparedVersionUpgradeId(),
-        currentPointer);
   }
 
   private void validatePreparedUpgradeForPointerChange(

@@ -41,7 +41,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
-class WorldInstanceActivationServiceImplTest {
+class WorldLifecycleCommandServiceImplTest {
   private WorldInstanceRepository worldInstanceRepository;
   private RegionInstanceRepository regionInstanceRepository;
   private ZoneRepository zoneRepository;
