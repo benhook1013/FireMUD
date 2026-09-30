@@ -3,7 +3,9 @@ package db.migration;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.net.JarURLConnection;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.jar.JarFile;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.flywaydb.core.api.MigrationVersion;
@@ -23,23 +26,19 @@ class V8__enforce_tenant_public_realm_cardinalityTest {
   void keepsNormalizedVersionsUniqueAndCardinalityGuardAfterTheV7AuditMigration()
       throws IOException, URISyntaxException {
     var auditMigrationUrl =
-        getClass().getClassLoader().getResource("db/migration/V7__audit_gameplay_catalog_revision.sql");
+        getClass()
+            .getClassLoader()
+            .getResource("db/migration/V7__audit_gameplay_catalog_revision.sql");
     assertThat(auditMigrationUrl).isNotNull();
 
     Map<MigrationVersion, List<String>> namesByVersion = new TreeMap<>();
-    try (var migrationFiles = Files.list(Path.of(auditMigrationUrl.toURI()).getParent())) {
-      migrationFiles
-          .filter(path -> path.getFileName().toString().endsWith(".sql"))
-          .forEach(
-              path -> {
-                String name = path.getFileName().toString();
-                Matcher matcher = MIGRATION_FILE.matcher(name);
-                assertThat(matcher.matches()).as("migration filename %s", name).isTrue();
-                MigrationVersion version = MigrationVersion.fromVersion(matcher.group(1));
-                namesByVersion
-                    .computeIfAbsent(version, ignored -> new java.util.ArrayList<>())
-                    .add(name);
-              });
+    for (String name : migrationNames(auditMigrationUrl)) {
+      Matcher matcher = MIGRATION_FILE.matcher(name);
+      assertThat(matcher.matches()).as("migration filename %s", name).isTrue();
+      MigrationVersion version = MigrationVersion.fromVersion(matcher.group(1));
+      namesByVersion
+          .computeIfAbsent(version, ignored -> new java.util.ArrayList<>())
+          .add(name);
     }
 
     assertThat(namesByVersion.values()).allSatisfy(names -> assertThat(names).hasSize(1));
@@ -75,6 +74,36 @@ class V8__enforce_tenant_public_realm_cardinalityTest {
       assertThat(stream).as("migration resource %s", name).isNotNull();
       return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     }
+  }
+
+  private static List<String> migrationNames(URL migrationResourceUrl)
+      throws IOException, URISyntaxException {
+    if ("file".equals(migrationResourceUrl.getProtocol())) {
+      try (var migrationFiles = Files.list(Path.of(migrationResourceUrl.toURI()).getParent())) {
+        return migrationFiles
+            .map(path -> path.getFileName().toString())
+            .filter(name -> name.endsWith(".sql"))
+            .toList();
+      }
+    }
+
+    if ("jar".equals(migrationResourceUrl.getProtocol())) {
+      var connection = (JarURLConnection) migrationResourceUrl.openConnection();
+      connection.setUseCaches(false);
+      String migrationDirectory =
+          connection.getEntryName().substring(0, connection.getEntryName().lastIndexOf('/') + 1);
+      try (JarFile jarFile = connection.getJarFile()) {
+        return jarFile.stream()
+            .map(entry -> entry.getName())
+            .filter(name -> name.startsWith(migrationDirectory))
+            .map(name -> name.substring(migrationDirectory.length()))
+            .filter(name -> !name.isEmpty() && !name.contains("/") && name.endsWith(".sql"))
+            .toList();
+      }
+    }
+
+    throw new IllegalStateException(
+        "Unsupported migration resource URL protocol: " + migrationResourceUrl.getProtocol());
   }
 
   private static String normalizeSql(String sql) {

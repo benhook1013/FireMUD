@@ -2916,8 +2916,7 @@ class PlayCommandHandlerTest {
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     Mockito.doReturn(
-            roster(
-                actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)))
+            roster(actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)))
         .when(entityManagementClient)
         .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
 
@@ -2979,8 +2978,7 @@ class PlayCommandHandlerTest {
             .build();
     Mockito.doReturn(roster(foreign))
         .when(entityManagementClient)
-        .listCharactersByAccount(
-            "22", "123", "2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount("22", "123", "2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -3078,8 +3076,7 @@ class PlayCommandHandlerTest {
 
     assertIdentityUnavailableWithoutMutation(result);
     Mockito.verify(entityManagementClient)
-        .listCharactersByAccount(
-            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionAuthenticationService, never())

@@ -259,7 +259,7 @@ class WorldsCommandHandlerTest {
             2L,
             1L,
             true,
-            true,
+            false,
             false,
             "SHARED",
             "ALLOW_NEW",
@@ -277,6 +277,21 @@ class WorldsCommandHandlerTest {
                 .setConnectScopeId("scope")
                 .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build());
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq("demo"),
+                Mockito.eq("preview"),
+                Mockito.anyString()))
+        .thenReturn(grant("demo", "preview", true));
+    Mockito.when(
+            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(true));
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
@@ -284,7 +299,13 @@ class WorldsCommandHandlerTest {
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
-    localHandler.browseRealms("7", authenticatedSession(), "demo");
+    assertThat(localHandler.browseRealms("7", authenticatedSession(), "demo"))
+        .isInstanceOfSatisfying(
+            WorldsCommandHandler.RealmBrowseResult.Success.class,
+            success ->
+                assertThat(success.output().realms())
+                    .extracting(RealmBrowseViewOutput.RealmEntry::ordinal)
+                    .containsExactly(1, 2));
     Mockito.clearInvocations(accountClient, entityManagementClient);
     worlds.set(
         List.of(
