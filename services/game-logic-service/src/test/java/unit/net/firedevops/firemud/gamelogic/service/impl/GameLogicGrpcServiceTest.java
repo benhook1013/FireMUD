@@ -326,8 +326,7 @@ class GameLogicGrpcServiceTest {
     GameLogicGrpcService service = newDigestService(digestService);
     AtomicReference<GetDraftDesignDigestResponse> response = new AtomicReference<>();
 
-    runAsGameDesign(
-        () -> response.set(invokeDigest(service, fullDigestRequest("1", "7"))));
+    runAsGameDesign(() -> response.set(invokeDigest(service, fullDigestRequest("1", "7"))));
 
     assertTrue(response.get().hasError());
     assertEquals("INTERNAL", response.get().getError().getCode());

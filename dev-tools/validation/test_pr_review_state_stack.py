@@ -1112,6 +1112,41 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
         self.assertEqual(completion_status(ReviewState(ordered_prs=(1,)), Channel.CLI, history), ReviewStatus.READY)
 
+    def test_unanchored_or_uncorrected_accepted_result_resets_taper_streak(self):
+        dry_before = tuple(
+            Evidence(1, "h", f"before-{index}", completed=True, attributable=True, anchored=True, corrected_state=True)
+            for index in range(2)
+        )
+        dry_after = Evidence(1, "h", "after", completed=True, attributable=True, anchored=True, corrected_state=True)
+        accepted_variants = (
+            Evidence(
+                1,
+                "h",
+                "accepted-unanchored",
+                completed=True,
+                attributable=True,
+                anchored=False,
+                corrected_state=True,
+                accepted=1,
+            ),
+            Evidence(
+                1,
+                "h",
+                "accepted-uncorrected",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=False,
+                accepted=1,
+            ),
+        )
+
+        self.assertTrue(taper_satisfied(Channel.CLI, (*dry_before, dry_after), 3))
+        for accepted in accepted_variants:
+            with self.subTest(checkpoint=accepted.checkpoint):
+                history = (*dry_before, accepted, dry_after)
+                self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+
     def test_completed_taper_survives_later_fixes_and_review_identity_changes(self):
         state = ReviewState(ordered_prs=(1,))
         dry_rounds = tuple(
@@ -1139,25 +1174,27 @@ class ReviewStateStackTest(unittest.TestCase):
         history = (*dry_rounds, later_fix)
 
         self.assertTrue(taper_satisfied(Channel.CLI, history, 3))
-        held = select_review_target(
+        decision = select_review_target(
             state,
             Channel.CLI,
             (1,),
             {1: history},
             reconciliation_by_pr={1: ReconciliationStatus.PATCH_CHANGED},
         )
-        self.assertEqual(held.status, ReviewStatus.JUDGMENT_REQUIRED)
-        self.assertTrue(held.to_dict()["taper_complete"])
+        self.assertEqual(decision.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(decision.target)
+        self.assertTrue(decision.to_dict()["taper_complete"])
 
-        topology_held = select_review_target(
+        topology_decision = select_review_target(
             state,
             Channel.CLI,
             (1,),
             {1: history},
             reconciliation_by_pr={1: ReconciliationStatus.PARENT_MOVED},
         )
-        self.assertEqual(topology_held.status, ReviewStatus.PARENT_MOVED)
-        self.assertTrue(topology_held.to_dict()["taper_complete"])
+        self.assertEqual(topology_decision.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(topology_decision.target)
+        self.assertTrue(topology_decision.to_dict()["taper_complete"])
 
         hosted_dry = Evidence(
             1,
@@ -1238,7 +1275,7 @@ class ReviewStateStackTest(unittest.TestCase):
         three_fresh_dry = (*two_fresh_dry, dataclasses.replace(first_fresh_dry, checkpoint="fresh-dry-3"))
         self.assertTrue(taper_satisfied_for_state(state, Channel.CLI, three_fresh_dry))
 
-    def test_latest_exact_judgment_resolves_changed_patch_identity_hold(self):
+    def test_latest_exact_reopen_reopens_taper_while_retain_preserves_it(self):
         history = (
             Evidence(
                 1,
@@ -1279,14 +1316,11 @@ class ReviewStateStackTest(unittest.TestCase):
                         self.assertEqual(decision.status, ReviewStatus.READY)
                         self.assertEqual(decision.target, 1)
                         self.assertFalse(decision.to_dict()["taper_complete"])
-                    elif reconciliation == ReconciliationStatus.PATCH_CHANGED:
-                        self.assertEqual(decision.status, ReviewStatus.READY)
-                        self.assertEqual(decision.target, 1)
                     else:
                         self.assertEqual(decision.status, ReviewStatus.COMPLETE)
                         self.assertIsNone(decision.target)
 
-    def test_cli_streak_break_includes_newer_round_and_keeps_hosted_policy_unchanged(self):
+    def test_cli_taper_counts_across_heads_despite_identity_marker(self):
         history = (
             Evidence(1, "old", "c1", completed=True, attributable=True, anchored=True, corrected_state=True),
             Evidence(1, "old", "c2", completed=True, attributable=True, anchored=True, corrected_state=True),
@@ -1302,7 +1336,7 @@ class ReviewStateStackTest(unittest.TestCase):
             ),
             Evidence(1, "new", "c4", completed=True, attributable=True, anchored=True, corrected_state=True),
         )
-        self.assertFalse(taper_satisfied(Channel.CLI, history, 3))
+        self.assertTrue(taper_satisfied(Channel.CLI, history, 3))
         self.assertTrue(
             taper_satisfied(
                 Channel.CLI,
@@ -1325,7 +1359,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertTrue(taper_satisfied(Channel.HOSTED, hosted_history, 3))
 
-    def test_cli_prior_uncorrected_rounds_require_proven_links_to_the_current_review(self):
+    def test_cli_prior_uncorrected_rounds_count_without_proven_links(self):
         history = (
             Evidence(
                 1,
@@ -1360,7 +1394,7 @@ class ReviewStateStackTest(unittest.TestCase):
             history[1],
             history[2],
         )
-        self.assertFalse(taper_satisfied(Channel.CLI, unproven_history, 3))
+        self.assertTrue(taper_satisfied(Channel.CLI, unproven_history, 3))
 
     def test_non_counting_and_unattributable_rounds_cannot_fill_cross_head_taper(self):
         first = Evidence(1, "old", "c1", completed=True, attributable=True, anchored=True, corrected_state=True)
@@ -1489,7 +1523,7 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         self.assertFalse(taper_satisfied(Channel.CLI, (correction,), 3))
 
-    def test_cross_channel_change_requires_exact_bound_judgment_and_provisional_never_tapers(self):
+    def test_completed_taper_skips_cross_channel_identity_and_provisional_never_tapers(self):
         evidence = tuple(
             Evidence(
                 1,
@@ -1505,7 +1539,8 @@ class ReviewStateStackTest(unittest.TestCase):
         )
         state = ReviewState(ordered_prs=(1,))
         target = select_review_target(state, Channel.CLI, (1,), {1: evidence}, other_channel_heads={1: "old"})
-        self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(target.target)
         judged = ReviewState(
             ordered_prs=(1,), judgments=(Judgment(1, "cli", "retain", "h", "c2", "retain exact checkpoint", "p"),)
         )
@@ -1551,7 +1586,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertTrue(target.provisional)
         self.assertTrue(taper_satisfied(Channel.CLI, history, 3))
 
-    def test_provisional_history_does_not_override_equivalent_history_judgment(self):
+    def test_provisional_history_does_not_reopen_completed_equivalent_history_taper(self):
         reviewed = tuple(
             Evidence(
                 1,
@@ -1595,7 +1630,8 @@ class ReviewStateStackTest(unittest.TestCase):
             {1: history},
             reconciliation_by_pr={1: ReconciliationStatus.EQUIVALENT_HISTORY},
         )
-        self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(target.target)
 
         judged = ReviewState(
             ordered_prs=(1,),
@@ -1611,7 +1647,7 @@ class ReviewStateStackTest(unittest.TestCase):
             ReviewStatus.COMPLETE,
         )
 
-    def test_equivalent_history_retain_does_not_count_an_older_patch(self):
+    def test_equivalent_history_taper_counts_results_across_patches(self):
         history = (
             Evidence(
                 1,
@@ -1655,7 +1691,7 @@ class ReviewStateStackTest(unittest.TestCase):
                 history,
                 reconciliation=ReconciliationStatus.EQUIVALENT_HISTORY,
             ),
-            ReviewStatus.READY,
+            ReviewStatus.COMPLETE,
         )
 
     def test_all_provisional_history_is_ready_after_reconciliation(self):
@@ -1683,7 +1719,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(target.status, ReviewStatus.READY)
         self.assertFalse(target.provisional)
 
-    def test_judgment_cannot_apply_to_another_pr_with_same_head_and_checkpoint(self):
+    def test_completed_taper_skips_cross_pr_judgment_identity_gate(self):
         patch_id = "shared-patch"
         history = tuple(
             Evidence(
@@ -1709,7 +1745,8 @@ class ReviewStateStackTest(unittest.TestCase):
             {2: history},
             other_channel_heads={2: "old"},
         )
-        self.assertEqual(target.status, ReviewStatus.JUDGMENT_REQUIRED)
+        self.assertEqual(target.status, ReviewStatus.COMPLETE)
+        self.assertIsNone(target.target)
 
         correctly_bound = dataclasses.replace(
             state,
@@ -1723,6 +1760,26 @@ class ReviewStateStackTest(unittest.TestCase):
             other_channel_heads={2: "old"},
         )
         self.assertEqual(target.status, ReviewStatus.COMPLETE)
+
+    def test_incomplete_channel_remains_selected_before_later_completed_taper(self):
+        incomplete = tuple(
+            Evidence(1, "h1", f"c{i}", anchored=True, completed=True, attributable=True, corrected_state=True)
+            for i in range(2)
+        )
+        complete = tuple(
+            Evidence(2, "h2", f"d{i}", anchored=True, completed=True, attributable=True, corrected_state=True)
+            for i in range(3)
+        )
+        target = select_review_target(
+            ReviewState(ordered_prs=(1, 2)),
+            Channel.CLI,
+            (1, 2),
+            {1: incomplete, 2: complete},
+        )
+
+        self.assertEqual(target.target, 1)
+        self.assertEqual(target.status, ReviewStatus.READY)
+        self.assertFalse(target.to_dict()["taper_complete"])
 
 
 if __name__ == "__main__":

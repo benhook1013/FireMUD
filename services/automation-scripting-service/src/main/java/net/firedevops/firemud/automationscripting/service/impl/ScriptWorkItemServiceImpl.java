@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,11 +31,13 @@ import net.firedevops.firemud.automationscripting.repository.ScriptEventIngressA
 import net.firedevops.firemud.automationscripting.repository.ScriptHandoffEventRepository;
 import net.firedevops.firemud.automationscripting.repository.ScriptWorkItemRepository;
 import net.firedevops.firemud.automationscripting.service.AutomationAdmissionStateService;
+import net.firedevops.firemud.automationscripting.service.AutomationQueueService;
 import net.firedevops.firemud.automationscripting.service.PluginRuntimeStateService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchInstanceRolloutProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchPinProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptPatchReadinessProjectionService;
 import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
+import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
 import net.firedevops.firemud.common.security.RequestIdValidation;
@@ -43,6 +46,8 @@ import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionRespon
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,6 +57,13 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected dependencies are internal Spring collaborators")
 public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
+  static final class ReplayIdempotencyConflictException extends RuntimeException {
+    ReplayIdempotencyConflictException(String message) {
+      super(message);
+    }
+  }
+
+  private static final Logger LOGGER = LoggerFactory.getLogger(ScriptWorkItemServiceImpl.class);
   private static final String PARTICIPANT_KEY_AUTOMATION_SCRIPTING = "AUTOMATION_SCRIPTING";
   private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_EVALUATING = "EVALUATING";
@@ -64,8 +76,12 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       List.of(STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
   private static final List<String> DRAIN_RELEVANT_STATUSES =
       List.of(STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT);
-  private static final int CANCELLATION_PAGE_SIZE = 100;
+  private static final int REPLAY_CONTROL_PLANE_REQUEST_ID_MAX_LENGTH = 128;
+  private static final int REPLAY_ACTOR_PRINCIPAL_MAX_LENGTH = 256;
+  private static final int REPLAY_REASON_MAX_LENGTH = 256;
   private final AtomicLong retentionBlockedRows = new AtomicLong();
+  private final AtomicLong retentionDeadLetterBlockedRows = new AtomicLong();
+  private final AtomicLong retentionReplayReceiptBlockedRows = new AtomicLong();
   private final MeterRegistry meterRegistry;
 
   private final ScriptWorkItemRepository workItemRepository;
@@ -80,8 +96,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   private final GameDesignControlPlaneClient gameDesignControlPlaneClient;
   private final ScriptPatchReadinessProjectionService readinessProjectionService;
   private final ScriptDeadLetterReplayRepository replayRepository;
+  private final ScriptDeadLetterReplayTransactionBoundary replayTransactionBoundary;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final ScriptDefinitionRepository scriptDefinitionRepository;
+  private final AutomationQueueService automationQueueService;
 
   @org.springframework.beans.factory.annotation.Autowired
   public ScriptWorkItemServiceImpl(
@@ -99,7 +117,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       ScriptDeadLetterReplayRepository replayRepository,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       MeterRegistry meterRegistry,
-      ScriptDefinitionRepository scriptDefinitionRepository) {
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      AutomationQueueService automationQueueService,
+      ScriptDeadLetterReplayTransactionBoundary replayTransactionBoundary) {
     this.workItemRepository = workItemRepository;
     this.auditRepository = auditRepository;
     this.ingressAuditRepository = ingressAuditRepository;
@@ -112,11 +132,96 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     this.gameDesignControlPlaneClient = gameDesignControlPlaneClient;
     this.readinessProjectionService = readinessProjectionService;
     this.replayRepository = replayRepository;
+    this.replayTransactionBoundary = replayTransactionBoundary;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.meterRegistry = meterRegistry;
     Gauge.builder("automation_retention_blocked_rows", retentionBlockedRows, AtomicLong::get)
         .register(meterRegistry);
+    Gauge.builder(
+            "automation_retention_dead_letter_blocked_rows",
+            retentionDeadLetterBlockedRows,
+            AtomicLong::get)
+        .register(meterRegistry);
+    Gauge.builder(
+            "automation_retention_replay_receipt_blocked_rows",
+            retentionReplayReceiptBlockedRows,
+            AtomicLong::get)
+        .register(meterRegistry);
     this.scriptDefinitionRepository = scriptDefinitionRepository;
+    this.automationQueueService = automationQueueService;
+  }
+
+  ScriptWorkItemServiceImpl(
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptDeadLetterReplayRepository replayRepository,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      MeterRegistry meterRegistry,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      AutomationQueueService automationQueueService) {
+    this(
+        workItemRepository,
+        auditRepository,
+        ingressAuditRepository,
+        handoffEventRepository,
+        outboxProperties,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        gameDesignControlPlaneClient,
+        readinessProjectionService,
+        replayRepository,
+        gameSessionControlPlaneClient,
+        meterRegistry,
+        scriptDefinitionRepository,
+        automationQueueService,
+        new ScriptDeadLetterReplayTransactionBoundary());
+  }
+
+  ScriptWorkItemServiceImpl(
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptEventIngressAuditRepository ingressAuditRepository,
+      ScriptHandoffEventRepository handoffEventRepository,
+      ScriptOutboxProperties outboxProperties,
+      AutomationAdmissionStateService automationAdmissionStateService,
+      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      PluginRuntimeStateService pluginRuntimeStateService,
+      GameDesignControlPlaneClient gameDesignControlPlaneClient,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptDeadLetterReplayRepository replayRepository,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      MeterRegistry meterRegistry,
+      ScriptDefinitionRepository scriptDefinitionRepository) {
+    this(
+        workItemRepository,
+        auditRepository,
+        ingressAuditRepository,
+        handoffEventRepository,
+        outboxProperties,
+        automationAdmissionStateService,
+        scriptPatchPinProjectionService,
+        rolloutProjectionService,
+        pluginRuntimeStateService,
+        gameDesignControlPlaneClient,
+        readinessProjectionService,
+        replayRepository,
+        gameSessionControlPlaneClient,
+        meterRegistry,
+        scriptDefinitionRepository,
+        null,
+        new ScriptDeadLetterReplayTransactionBoundary());
   }
 
   @Override
@@ -141,7 +246,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         return canceled;
       }
       canceled += cancelCandidates(candidates, command.reason());
-      if (candidates.size() < CANCELLATION_PAGE_SIZE) {
+      if (candidates.size() < ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE) {
         return canceled;
       }
     }
@@ -171,7 +276,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         return canceled;
       }
       canceled += cancelCandidates(candidates, command.reason());
-      if (candidates.size() < CANCELLATION_PAGE_SIZE) {
+      if (candidates.size() < ScriptWorkItemRepository.CANCELLATION_PAGE_SIZE) {
         return canceled;
       }
     }
@@ -251,6 +356,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             STATUS_CANCELED,
             now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS));
     long deadLetteredDeleted = 0L;
+    long deadLetteredBlocked =
+        workItemRepository.countTerminalRowsBlockedByEvidence(
+            STATUS_DEAD_LETTERED,
+            now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
     long blocked =
         workItemRepository.countTerminalRowsBlockedByEvidence(
                 STATUS_HANDED_OFF,
@@ -258,10 +367,20 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             + workItemRepository.countTerminalRowsBlockedByEvidence(
                 STATUS_CANCELED,
                 now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS))
-            + workItemRepository.countTerminalRowsBlockedByEvidence(
+            + deadLetteredBlocked;
+    long replayReceiptBlocked =
+        workItemRepository.countTerminalRowsBlockedByReplayReceipts(
+                STATUS_HANDED_OFF,
+                now.minus(outboxProperties.getHandedOffRetentionDays(), ChronoUnit.DAYS))
+            + workItemRepository.countTerminalRowsBlockedByReplayReceipts(
+                STATUS_CANCELED,
+                now.minus(outboxProperties.getCanceledRetentionDays(), ChronoUnit.DAYS))
+            + workItemRepository.countTerminalRowsBlockedByReplayReceipts(
                 STATUS_DEAD_LETTERED,
                 now.minus(outboxProperties.getDeadLetterMaxAgeSeconds(), ChronoUnit.SECONDS));
+    retentionDeadLetterBlockedRows.set(deadLetteredBlocked);
     retentionBlockedRows.set(blocked);
+    retentionReplayReceiptBlockedRows.set(replayReceiptBlocked);
     return new TerminalCleanupResult(handedOffDeleted, canceledDeleted, deadLetteredDeleted);
   }
 
@@ -289,11 +408,12 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   public List<PatchStatusSummary> listPatchStatuses(
       String tenantId, ScriptPatchStatus status, long changedAfterMs, long changedBeforeMs) {
     requireText(tenantId, "tenant_id");
+    PublicationMetadataCache publicationMetadataCache = new PublicationMetadataCache();
     return readinessProjectionService.listProjections(tenantId).stream()
         .map(
             readiness -> {
               PublicationMetadata metadata =
-                  publicationMetadata(
+                  publicationMetadataCache.get(
                       tenantId, readiness.baseVersionId(), readiness.scriptPatchVersion());
               return PatchStatusSummary.fromProjection(
                   readiness,
@@ -414,7 +534,8 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             scriptPatchVersion,
             projectionPinEpoch(scriptPinEpoch),
             projectionPinRequestId(scriptPinEpoch, lastObservedControlPlaneRequestId));
-    return projection.map(summary -> withPublication(tenantId, summary));
+    return projection.map(
+        summary -> withPublication(tenantId, summary, new PublicationMetadataCache()));
   }
 
   @Override
@@ -441,7 +562,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             rolloutStatus,
             changedAfterMs,
             changedBeforeMs);
-    return projections.stream().map(summary -> withPublication(tenantId, summary)).toList();
+    PublicationMetadataCache publicationMetadataCache = new PublicationMetadataCache();
+    return projections.stream()
+        .map(summary -> withPublication(tenantId, summary, publicationMetadataCache))
+        .toList();
   }
 
   @Override
@@ -470,7 +594,10 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             changedAfterMs,
             changedBeforeMs,
             limit);
-    return events.stream().map(summary -> withPublication(tenantId, summary)).toList();
+    PublicationMetadataCache publicationMetadataCache = new PublicationMetadataCache();
+    return events.stream()
+        .map(summary -> withPublication(tenantId, summary, publicationMetadataCache))
+        .toList();
   }
 
   @Override
@@ -505,6 +632,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     int boundedLimit = limit <= 0 ? 100 : Math.min(limit, 500);
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(worldSlug, realmSlug, pointerVersion);
+    PublicationMetadataCache publicationMetadataCache = new PublicationMetadataCache();
     return handoffEventRepository
         .findEvents(
             normalizedTenantId,
@@ -533,7 +661,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             PageRequest.of(0, boundedLimit))
         .stream()
         .map(ScriptWorkItemServiceImpl::toHandoffSummary)
-        .map(summary -> withPublication(normalizedTenantId, summary))
+        .map(summary -> withPublication(normalizedTenantId, summary, publicationMetadataCache))
         .toList();
   }
 
@@ -546,6 +674,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     int boundedLimit = Math.min(Math.max(limit <= 0 ? 50 : limit, 1), 500);
     String normalizedGameInstanceId = normalizeText(gameInstanceId);
     String normalizedScriptPatchVersion = normalizeText(scriptPatchVersion);
+    PublicationMetadataCache publicationMetadataCache = new PublicationMetadataCache();
     return workItemRepository
         .findDeadLettersByTenantIdAndFiltersOrderByUpdatedAtDescIdDesc(
             normalizedTenantId,
@@ -555,22 +684,111 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             PageRequest.of(0, boundedLimit))
         .stream()
         .map(ScriptWorkItemServiceImpl::toDeadLetterSummary)
-        .map(summary -> withPublication(normalizedTenantId, summary))
+        .map(summary -> withPublication(normalizedTenantId, summary, publicationMetadataCache))
         .toList();
   }
 
   @Override
-  @Transactional
   public ReplayResult replayDeadLetters(ReplayDeadLettersCommand command) {
+    return replayTransactionBoundary.withoutTransaction(
+        () -> replayDeadLettersWithoutTransaction(command));
+  }
+
+  private ReplayResult replayDeadLettersWithoutTransaction(ReplayDeadLettersCommand command) {
     validateReplayCommand(command);
     String normalizedTenantId = normalizeText(command.tenantId());
     requireText(normalizedTenantId, "tenant_id");
-    int boundedLimit = command.workItemIds().size();
     Instant now = Instant.now();
     String reason = normalizeReplayReason(command.reason());
     String fingerprint = replayRequestFingerprint(command);
-    ScriptDeadLetterReplayRepository.ReplayRequest durableRequest = null;
     Map<Long, ScriptDeadLetterReplayRepository.ReplayItem> priorResults = Map.of();
+    if (replayRepository != null) {
+      Optional<ScriptDeadLetterReplayRepository.ReplayRequest> priorRequest =
+          replayRepository.findRequest(
+              normalizedTenantId, normalizeText(command.controlPlaneRequestId()));
+      if (priorRequest.isPresent()
+          && !fingerprint.equals(priorRequest.orElseThrow().requestFingerprint())) {
+        throw new ReplayIdempotencyConflictException(
+            "control_plane_request_id already records a different replay request");
+      }
+      if (priorRequest.isPresent()) {
+        ScriptDeadLetterReplayRepository.ReplayRequest request = priorRequest.orElseThrow();
+        priorResults =
+            replayRepository.findResults(normalizedTenantId, request.id()).stream()
+                .collect(
+                    Collectors.toMap(
+                        ScriptDeadLetterReplayRepository.ReplayItem::requestedWorkItemId,
+                        item -> item));
+        if ("COMPLETED".equals(request.status())) {
+          return replayResultFromDurable(command, request, priorResults);
+        }
+      }
+    }
+    // Authority reads must happen before any work-item row is locked. The initial lookup is a
+    // tenant-scoped snapshot only; every mutation below re-reads and revalidates its current row.
+    List<ScriptWorkItem> candidates = selectReplayCandidates(command, normalizedTenantId);
+    Map<Long, ScriptWorkItem> byId =
+        candidates.stream().collect(Collectors.toMap(ScriptWorkItem::getId, item -> item));
+    Map<Long, ReplayPreflight> preflights = new HashMap<>();
+    for (String requestedId : command.workItemIds()) {
+      long requestedLongId = parseWorkItemId(requestedId);
+      if (priorResults.containsKey(requestedLongId)) {
+        continue;
+      }
+      ScriptWorkItem item = byId.get(requestedLongId);
+      if (item == null) {
+        preflights.put(requestedLongId, ReplayPreflight.notFound());
+        continue;
+      }
+      OriginalFailureEvidence originalFailure = originalFailureEvidence(item);
+      String preflightRejection = replayPreflightRejection(item, originalFailure);
+      preflights.put(
+          requestedLongId, new ReplayPreflight(item, originalFailure, preflightRejection));
+    }
+
+    Map<Long, ScriptDeadLetterReplayRepository.ReplayItem> completedPreflightResults = priorResults;
+    ReplayTransactionOutcome transactionOutcome =
+        replayTransactionBoundary.inTransaction(
+            () ->
+                replayDeadLettersInTransaction(
+                    command,
+                    normalizedTenantId,
+                    now,
+                    reason,
+                    fingerprint,
+                    completedPreflightResults,
+                    preflights));
+    for (ScriptWorkItem claimedItem : transactionOutcome.claimedItems()) {
+      // This refresh can consult Game Session when its local pin projection is stale. Keep that
+      // authority read outside the durable replay transaction. Projection reads retry the refresh
+      // from durable work-item state if this post-commit refresh fails.
+      refreshRolloutProjectionAfterReplayCommit(claimedItem);
+    }
+    return transactionOutcome.result();
+  }
+
+  private void refreshRolloutProjectionAfterReplayCommit(ScriptWorkItem item) {
+    try {
+      rolloutProjectionService.refreshForWorkItem(item);
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Replay committed for work item {}, but rollout projection refresh failed; a later "
+              + "projection read will retry from durable work-item state",
+          item.getId(),
+          ex);
+    }
+  }
+
+  private ReplayTransactionOutcome replayDeadLettersInTransaction(
+      ReplayDeadLettersCommand command,
+      String normalizedTenantId,
+      Instant now,
+      String reason,
+      String fingerprint,
+      Map<Long, ScriptDeadLetterReplayRepository.ReplayItem> preflightResults,
+      Map<Long, ReplayPreflight> preflights) {
+    ScriptDeadLetterReplayRepository.ReplayRequest durableRequest = null;
+    Map<Long, ScriptDeadLetterReplayRepository.ReplayItem> priorResults = preflightResults;
     if (replayRepository != null) {
       durableRequest =
           replayRepository.insertOrGet(
@@ -581,38 +799,58 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
               reason,
               now);
       if (!fingerprint.equals(durableRequest.requestFingerprint())) {
-        throw new IllegalArgumentException(
+        throw new ReplayIdempotencyConflictException(
             "control_plane_request_id already records a different replay request");
       }
       priorResults =
-          replayRepository.findResults(durableRequest.id()).stream()
+          replayRepository.findResults(normalizedTenantId, durableRequest.id()).stream()
               .collect(
                   Collectors.toMap(
                       ScriptDeadLetterReplayRepository.ReplayItem::requestedWorkItemId,
                       item -> item));
       if ("COMPLETED".equals(durableRequest.status())) {
-        return replayResultFromDurable(command, durableRequest, priorResults);
+        return new ReplayTransactionOutcome(
+            replayResultFromDurable(command, durableRequest, priorResults), List.of());
       }
     }
-    List<ScriptWorkItem> candidates =
-        selectReplayCandidates(command, normalizedTenantId, boundedLimit);
-    Map<Long, ScriptWorkItem> byId =
-        candidates.stream().collect(Collectors.toMap(ScriptWorkItem::getId, item -> item));
+    Map<Long, ScriptDeadLetterReplayRepository.ReplayItem> existingResults = priorResults;
+
+    // Phase two deliberately contains no authority RPCs. Acquire every candidate lock in the
+    // canonical ID order so concurrent requests cannot deadlock while claiming overlapping batches.
+    Map<Long, ScriptWorkItem> lockedById = new HashMap<>();
+    List<ScriptWorkItem> claimedItems = new ArrayList<>();
+    command.workItemIds().stream()
+        .map(ScriptWorkItemServiceImpl::parseWorkItemId)
+        .sorted()
+        .forEach(
+            requestedLongId -> {
+              if (existingResults.containsKey(requestedLongId)) {
+                return;
+              }
+              ReplayPreflight preflight = preflights.get(requestedLongId);
+              if (preflight == null || preflight.snapshot() == null) {
+                return;
+              }
+              workItemRepository
+                  .findByTenantIdAndIdForUpdate(normalizedTenantId, requestedLongId)
+                  .ifPresent(item -> lockedById.put(requestedLongId, item));
+            });
+
+    // Emit and persist outcomes in caller order, while using only the already locked current rows.
     List<ReplayItemResult> results = new ArrayList<>();
-    Map<RuntimeScopeKey, Optional<GetGameInstanceRuntimeStateResponse>> runtimeStateCache =
-        new HashMap<>();
     for (String requestedId : command.workItemIds()) {
       long requestedLongId = parseWorkItemId(requestedId);
-      ScriptDeadLetterReplayRepository.ReplayItem prior = priorResults.get(requestedLongId);
+      ScriptDeadLetterReplayRepository.ReplayItem prior = existingResults.get(requestedLongId);
       if (prior != null) {
         results.add(toReplayItemResult(requestedId, prior));
         continue;
       }
-      ScriptWorkItem item = byId.get(requestedLongId);
-      if (item == null) {
+      ReplayPreflight preflight = preflights.get(requestedLongId);
+      if (preflight == null || preflight.snapshot() == null) {
         results.add(new ReplayItemResult(requestedId, "rejected", "not_found_or_not_owned", 0L));
         persistReplayResult(
             durableRequest,
+            normalizedTenantId,
             requestedLongId,
             "rejected",
             "not_found_or_not_owned",
@@ -621,61 +859,61 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             now);
         continue;
       }
-      // Read the mutable failure evidence before the claim changes the work-item status. The
-      // immutable replay result is the generation-bound receipt that survives later execution
-      // updates to both the work item and its audit row.
-      OriginalFailureEvidence originalFailure = originalFailureEvidence(item);
-      if (!STATUS_DEAD_LETTERED.equals(item.getStatus())) {
-        String reasonForCurrentStatus =
-            switch (blankToEmpty(item.getStatus())) {
-              case STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT ->
-                  "recovery_in_progress";
-              default -> "work_item_not_dead_lettered";
-            };
-        results.add(
-            new ReplayItemResult(
-                requestedId, "rejected", reasonForCurrentStatus, item.getFailureGeneration()));
+
+      ScriptWorkItem item = lockedById.get(requestedLongId);
+      if (item == null) {
+        results.add(new ReplayItemResult(requestedId, "rejected", "not_found_or_not_owned", 0L));
         persistReplayResult(
             durableRequest,
+            normalizedTenantId,
             requestedLongId,
             "rejected",
-            reasonForCurrentStatus,
+            "not_found_or_not_owned",
+            null,
+            OriginalFailureEvidence.EMPTY,
+            now);
+        continue;
+      }
+      OriginalFailureEvidence originalFailure = originalFailureEvidence(item);
+      if (item.getRowVersion() != preflight.snapshot().getRowVersion()
+          || item.getFailureGeneration() != preflight.snapshot().getFailureGeneration()) {
+        String currentStateRejection = replayCurrentStateRejection(item);
+        if (currentStateRejection == null) {
+          currentStateRejection = "recovery_in_progress";
+        }
+        results.add(
+            new ReplayItemResult(
+                requestedId, "rejected", currentStateRejection, item.getFailureGeneration()));
+        persistReplayResult(
+            durableRequest,
+            normalizedTenantId,
+            requestedLongId,
+            "rejected",
+            currentStateRejection,
             item,
             originalFailure,
             now);
         continue;
       }
-      String replayRejection = replayEligibilityReason(item, runtimeStateCache);
-      if (replayRejection != null) {
+
+      String currentStatusRejection = replayCurrentStateRejection(item);
+      String replayRejection =
+          currentStatusRejection == null ? preflight.rejectionReason() : currentStatusRejection;
+      if (replayRejection == null && !preflight.originalFailure().equals(originalFailure)) {
+        // Audit evidence is mutable independently of the work-item row. Do not accept a successful
+        // preflight when the current failure evidence no longer proves the same retryable class.
+        replayRejection = "stage_evidence_unavailable";
+      }
+      if (replayRejection != null && !replayRejection.isBlank()) {
         results.add(
             new ReplayItemResult(
                 requestedId, "rejected", replayRejection, item.getFailureGeneration()));
         persistReplayResult(
             durableRequest,
+            normalizedTenantId,
             requestedLongId,
             "rejected",
             replayRejection,
-            item,
-            originalFailure,
-            now);
-        continue;
-      }
-      if (!originalFailure.isComplete()) {
-        // A dead-letter row without both immutable failure dimensions cannot be safely replayed:
-        // accepting it would lose the original stage/reason as soon as later execution updates
-        // the mutable work item or audit row. Keep the row untouched and persist only the bounded
-        // rejection receipt.
-        results.add(
-            new ReplayItemResult(
-                requestedId,
-                "rejected",
-                "stage_evidence_unavailable",
-                item.getFailureGeneration()));
-        persistReplayResult(
-            durableRequest,
-            requestedLongId,
-            "rejected",
-            "stage_evidence_unavailable",
             item,
             originalFailure,
             now);
@@ -694,6 +932,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                 requestedId, "rejected", "recovery_in_progress", item.getFailureGeneration()));
         persistReplayResult(
             durableRequest,
+            normalizedTenantId,
             requestedLongId,
             "rejected",
             "recovery_in_progress",
@@ -703,34 +942,47 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         continue;
       }
       item = claimed.orElseThrow();
+      claimedItems.add(item);
       refreshReadinessProjectionIfNeeded(item);
-      rolloutProjectionService.refreshForWorkItem(item);
+      AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, item, LOGGER);
       results.add(
           new ReplayItemResult(requestedId, "retried_evaluation", "", item.getFailureGeneration()));
       persistReplayResult(
-          durableRequest, requestedLongId, "retried_evaluation", "", item, originalFailure, now);
+          durableRequest,
+          normalizedTenantId,
+          requestedLongId,
+          "retried_evaluation",
+          "",
+          item,
+          originalFailure,
+          now);
     }
     ReplayCounts counts = replayCounts(results);
     if (durableRequest != null) {
       boolean completionWon =
-          replayRepository.complete(durableRequest.id(), counts.replayed(), counts.rejected(), now);
+          replayRepository.complete(
+              normalizedTenantId, durableRequest.id(), counts.replayed(), counts.rejected(), now);
       if (!completionWon) {
         Optional<ScriptDeadLetterReplayRepository.ReplayRequest> completedRequest =
             replayRepository.findRequest(
                 normalizedTenantId, normalizeText(command.controlPlaneRequestId()));
         if (completedRequest.filter(request -> "COMPLETED".equals(request.status())).isPresent()) {
-          return replayResultFromDurable(
-              command,
-              completedRequest.orElseThrow(),
-              replayRepository.findResults(durableRequest.id()).stream()
-                  .collect(
-                      Collectors.toMap(
-                          ScriptDeadLetterReplayRepository.ReplayItem::requestedWorkItemId,
-                          item -> item)));
+          return new ReplayTransactionOutcome(
+              replayResultFromDurable(
+                  command,
+                  completedRequest.orElseThrow(),
+                  replayRepository.findResults(normalizedTenantId, durableRequest.id()).stream()
+                      .collect(
+                          Collectors.toMap(
+                              ScriptDeadLetterReplayRepository.ReplayItem::requestedWorkItemId,
+                              item -> item))),
+              List.of());
         }
       }
     }
-    return new ReplayResult(counts.replayed(), counts.rejected(), results, fingerprint);
+    return new ReplayTransactionOutcome(
+        new ReplayResult(counts.replayed(), counts.rejected(), results, fingerprint),
+        List.copyOf(claimedItems));
   }
 
   private static void validateReplayCommand(ReplayDeadLettersCommand command) {
@@ -761,12 +1013,23 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         || command.limit() != 0) {
       throw new IllegalArgumentException("replay_filters_require_preview");
     }
-    if (blankToEmpty(command.controlPlaneRequestId()).isBlank()) {
+    String controlPlaneRequestId = normalizeText(command.controlPlaneRequestId());
+    if (controlPlaneRequestId.isBlank()) {
       throw new IllegalArgumentException("control_plane_request_id is required");
     }
+    requireReplayTextLength(
+        controlPlaneRequestId,
+        REPLAY_CONTROL_PLANE_REQUEST_ID_MAX_LENGTH,
+        "control_plane_request_id");
+    requireReplayTextLength(
+        normalizeText(command.actorPrincipal()),
+        REPLAY_ACTOR_PRINCIPAL_MAX_LENGTH,
+        "actor_principal");
+    requireReplayTextLength(
+        normalizeReplayReason(command.reason()), REPLAY_REASON_MAX_LENGTH, "reason");
   }
 
-  private static String replayRequestFingerprint(ReplayDeadLettersCommand command) {
+  static String replayRequestFingerprint(ReplayDeadLettersCommand command) {
     List<String> normalizedWorkItemIds =
         command.workItemIds().stream()
             // Work-item IDs are numeric identities.  Canonicalize accepted alternate spellings
@@ -805,7 +1068,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private PatchInstanceRolloutSummary withPublication(
-      String tenantId, PatchInstanceRolloutSummary summary) {
+      String tenantId,
+      PatchInstanceRolloutSummary summary,
+      PublicationMetadataCache publicationMetadataCache) {
     return new PatchInstanceRolloutSummary(
         summary.tenantId(),
         summary.gameInstanceId(),
@@ -818,7 +1083,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.projectionAsOfMs(),
         summary.projectionLagMs(),
         summary.projectionStale(),
-        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
+        publicationMetadataCache.get(tenantId, summary.scriptPatchVersion()).publication());
   }
 
   private static void requireNonNegativeScriptPinEpoch(long scriptPinEpoch) {
@@ -845,7 +1110,9 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private PatchInstanceRolloutEventSummary withPublication(
-      String tenantId, PatchInstanceRolloutEventSummary summary) {
+      String tenantId,
+      PatchInstanceRolloutEventSummary summary,
+      PublicationMetadataCache publicationMetadataCache) {
     return new PatchInstanceRolloutEventSummary(
         summary.eventId(),
         summary.tenantId(),
@@ -857,10 +1124,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.statusReason(),
         summary.observedAtMs(),
         summary.projectionAsOfMs(),
-        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication());
+        publicationMetadataCache.get(tenantId, summary.scriptPatchVersion()).publication());
   }
 
-  private DeadLetterSummary withPublication(String tenantId, DeadLetterSummary summary) {
+  private DeadLetterSummary withPublication(
+      String tenantId,
+      DeadLetterSummary summary,
+      PublicationMetadataCache publicationMetadataCache) {
     PluginRuntimeStateService.PluginPublicationLink pluginPublication =
         pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
     return new DeadLetterSummary(
@@ -884,6 +1154,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.pluginVersionId(),
         summary.eventType(),
         summary.scriptPatchVersion(),
+        summary.scriptPatchBaseVersionId(),
         summary.scriptPinEpoch(),
         summary.scriptPinControlPlaneRequestId(),
         summary.scriptEventId(),
@@ -891,11 +1162,16 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.reason(),
         summary.createdAtMs(),
         summary.updatedAtMs(),
-        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication(),
+        publicationMetadataCache
+            .get(tenantId, summary.scriptPatchBaseVersionId(), summary.scriptPatchVersion())
+            .publication(),
         pluginPublication);
   }
 
-  private HandoffEventSummary withPublication(String tenantId, HandoffEventSummary summary) {
+  private HandoffEventSummary withPublication(
+      String tenantId,
+      HandoffEventSummary summary,
+      PublicationMetadataCache publicationMetadataCache) {
     PluginRuntimeStateService.PluginPublicationLink pluginPublication =
         pluginPublicationLink(tenantId, summary.pluginId(), summary.pluginVersionId());
     return new HandoffEventSummary(
@@ -931,7 +1207,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         summary.handoffOutcome(),
         summary.handoffReason(),
         summary.observedAtMs(),
-        publicationMetadata(tenantId, summary.scriptPatchVersion()).publication(),
+        publicationMetadataCache.get(tenantId, summary.scriptPatchVersion()).publication(),
         pluginPublication);
   }
 
@@ -950,6 +1226,27 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
     return publicationMetadata(tenantId, retainedBaseVersionId, scriptPatchVersion);
   }
+
+  private final class PublicationMetadataCache {
+    private final Map<PublicationMetadataKey, PublicationMetadata> entries = new HashMap<>();
+
+    private PublicationMetadata get(String tenantId, String scriptPatchVersion) {
+      PublicationMetadataKey key = new PublicationMetadataKey(tenantId, scriptPatchVersion, null);
+      return entries.computeIfAbsent(
+          key, ignored -> publicationMetadata(tenantId, scriptPatchVersion));
+    }
+
+    private PublicationMetadata get(
+        String tenantId, long baseVersionId, String scriptPatchVersion) {
+      PublicationMetadataKey key =
+          new PublicationMetadataKey(tenantId, scriptPatchVersion, baseVersionId);
+      return entries.computeIfAbsent(
+          key, ignored -> publicationMetadata(tenantId, baseVersionId, scriptPatchVersion));
+    }
+  }
+
+  private record PublicationMetadataKey(
+      String tenantId, String scriptPatchVersion, Long baseVersionId) {}
 
   private PublicationMetadata publicationMetadata(
       String tenantId, long requestedBaseVersionId, String scriptPatchVersion) {
@@ -1096,6 +1393,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         blankToEmpty(item.getPluginVersionId()),
         item.getEventType(),
         item.getScriptPatchVersion(),
+        item.getScriptPatchBaseVersionId() == null ? 0L : item.getScriptPatchBaseVersionId(),
         item.getScriptPinEpoch(),
         blankToEmpty(item.getScriptPinControlPlaneRequestId()),
         item.getScriptEventId(),
@@ -1149,41 +1447,61 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private List<ScriptWorkItem> selectReplayCandidates(
-      ReplayDeadLettersCommand command, String normalizedTenantId, int boundedLimit) {
-    if (command.workItemIds() != null && !command.workItemIds().isEmpty()) {
-      return command.workItemIds().stream()
-          .limit(boundedLimit)
-          .map(ScriptWorkItemServiceImpl::parseWorkItemId)
-          .map(workItemRepository::findById)
-          .flatMap(Optional::stream)
-          .filter(item -> normalizedTenantId.equals(item.getTenantId()))
-          .filter(item -> matchesReplayFilters(item, command))
-          .toList();
+      ReplayDeadLettersCommand command, String normalizedTenantId) {
+    List<Long> requestedIds =
+        command.workItemIds().stream()
+            .map(ScriptWorkItemServiceImpl::parseWorkItemId)
+            .sorted()
+            .toList();
+    Map<Long, ScriptWorkItem> snapshotsById =
+        workItemRepository
+            .findByTenantIdAndIdInOrderByIdAsc(normalizedTenantId, requestedIds)
+            .stream()
+            .filter(item -> normalizedTenantId.equals(item.getTenantId()))
+            .collect(Collectors.toMap(ScriptWorkItem::getId, item -> item));
+    return requestedIds.stream().map(snapshotsById::get).filter(Objects::nonNull).toList();
+  }
+
+  private String replayPreflightRejection(
+      ScriptWorkItem item, OriginalFailureEvidence originalFailure) {
+    String currentStatusRejection = replayCurrentStateRejection(item);
+    if (currentStatusRejection != null) {
+      return currentStatusRejection;
     }
-    return workItemRepository
-        .findByTenantIdAndStatusOrderByUpdatedAtDescIdDesc(
-            normalizedTenantId, STATUS_DEAD_LETTERED, PageRequest.of(0, boundedLimit))
-        .stream()
-        .filter(item -> matchesReplayFilters(item, command))
-        .toList();
+    // Use a separate cache per candidate. Reusing an authority result across a batch would make
+    // the later candidate depend on an unboundedly older authority read.
+    String authorityRejection = replayEligibilityReason(item, new HashMap<>());
+    if (authorityRejection != null) {
+      return authorityRejection;
+    }
+    if (!originalFailure.isRetryableForEvaluationReplay()) {
+      // Only persisted failure classes known to be retryable may re-enter the DSL. A missing,
+      // unknown, contradictory, or deterministic logical outcome stays dead-lettered; accepting
+      // it would lose the original outcome as later execution updates the mutable audit row.
+      return "stage_evidence_unavailable";
+    }
+    if (!"ADMISSION".equals(originalFailure.stage())
+        && !"DSL_EVAL".equals(originalFailure.stage())) {
+      // The current work-item row has no committed evaluated-output/child ledger. A handoff
+      // failure may have accepted earlier siblings, so re-entering the DSL would invent new
+      // output rather than resume the original children. Keep this generation dead-lettered.
+      return "stage_evidence_unavailable";
+    }
+    return null;
   }
 
-  private boolean matchesReplayFilters(ScriptWorkItem item, ReplayDeadLettersCommand command) {
-    String normalizedGameInstanceId = normalizeText(command.gameInstanceId());
-    String normalizedRegionId = normalizeText(command.regionId());
-    return (normalizedGameInstanceId.isBlank()
-            || item.getGameInstanceId().equals(normalizedGameInstanceId))
-        && (normalizedRegionId.isBlank() || item.getRegionId().equals(normalizedRegionId))
-        && (command.scriptPatchVersion() == null
-            || command.scriptPatchVersion().isBlank()
-            || item.getScriptPatchVersion().equals(command.scriptPatchVersion()))
-        && (command.createdAfterMs() <= 0
-            || item.getCreatedAt().toEpochMilli() >= command.createdAfterMs())
-        && (command.createdBeforeMs() <= 0
-            || item.getCreatedAt().toEpochMilli() <= command.createdBeforeMs());
+  private static String replayCurrentStateRejection(ScriptWorkItem item) {
+    if (STATUS_DEAD_LETTERED.equals(item.getStatus())) {
+      return null;
+    }
+    return switch (blankToEmpty(item.getStatus())) {
+      case STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT ->
+          "recovery_in_progress";
+      default -> "work_item_not_dead_lettered";
+    };
   }
 
-  private String replayEligibilityReason(
+  String replayEligibilityReason(
       ScriptWorkItem item,
       Map<RuntimeScopeKey, Optional<GetGameInstanceRuntimeStateResponse>> runtimeStateCache) {
     if ("onLoad".equals(item.getEventType())) {
@@ -1198,18 +1516,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
     }
     RuntimeScopeKey runtimeScopeKey =
         new RuntimeScopeKey(item.getTenantId(), item.getGameInstanceId(), item.getRegionId());
+    // Transient read failures must escape so this transactional request can be retried by ID;
+    // missing or incoherent authority responses below remain durable fail-closed rejections.
     Optional<GetGameInstanceRuntimeStateResponse> cachedRuntime =
         runtimeStateCache.computeIfAbsent(
             runtimeScopeKey,
-            ignored -> {
-              try {
-                return Optional.ofNullable(
+            ignored ->
+                Optional.ofNullable(
                     gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-                        item.getTenantId(), item.getGameInstanceId(), item.getRegionId()));
-              } catch (RuntimeException ex) {
-                return Optional.empty();
-              }
-            });
+                        item.getTenantId(), item.getGameInstanceId(), item.getRegionId())));
     if (cachedRuntime.isEmpty()) {
       return "script_pin_authority_unavailable";
     }
@@ -1231,18 +1546,27 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       return "plugin_lifecycle_collaborator_unavailable";
     }
     String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(item.getPluginId());
-    var plugin =
+    Optional<PluginRuntimeStateService.PluginRuntimeStatus> plugin =
         pluginRuntimeStateService.getStatus(item.getTenantId(), item.getGameInstanceId(), pluginId);
+    if (plugin == null || plugin.isEmpty()) {
+      return "authority_unavailable";
+    }
+    PluginRuntimeStateService.PluginRuntimeStatus pluginStatus = plugin.orElseThrow();
+    if (pluginStatus.pluginState() == null
+        || pluginStatus.pluginState() == PluginState.PLUGIN_STATE_UNSPECIFIED) {
+      return "authority_unavailable";
+    }
     return ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
         item,
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::activePluginVersionId).orElse(""),
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginState).orElse(null),
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::pluginActivationEpoch).orElse(0L),
-        plugin.map(PluginRuntimeStateService.PluginRuntimeStatus::lifecycleRevision).orElse(0L));
+        pluginStatus.activePluginVersionId(),
+        pluginStatus.pluginState(),
+        pluginStatus.pluginActivationEpoch(),
+        pluginStatus.lifecycleRevision());
   }
 
   private void persistReplayResult(
       ScriptDeadLetterReplayRepository.ReplayRequest request,
+      String tenantId,
       long requestedWorkItemId,
       String outcome,
       String rejectionReason,
@@ -1253,6 +1577,7 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
       return;
     }
     replayRepository.saveResult(
+        tenantId,
         request.id(),
         requestedWorkItemId,
         item == null ? null : item.getId(),
@@ -1284,14 +1609,11 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
                       || auditReason.equals(workItemReason);
               return new OriginalFailureEvidence(
                   blankToEmpty(audit.getFinalStage()),
-                  firstNonBlank(auditReason, workItemReason),
+                  auditReason,
+                  blankToEmpty(audit.getFinalOutcome()),
                   consistent);
             })
-        .orElse(new OriginalFailureEvidence("", workItemReason, true));
-  }
-
-  private static String firstNonBlank(String preferred, String fallback) {
-    return preferred != null && !preferred.isBlank() ? preferred : blankToEmpty(fallback);
+        .orElse(new OriginalFailureEvidence("", workItemReason, "", true));
   }
 
   private ReplayResult replayResultFromDurable(
@@ -1327,6 +1649,15 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private record ReplayCounts(long replayed, long rejected) {}
+
+  private record ReplayTransactionOutcome(ReplayResult result, List<ScriptWorkItem> claimedItems) {}
+
+  private record ReplayPreflight(
+      ScriptWorkItem snapshot, OriginalFailureEvidence originalFailure, String rejectionReason) {
+    private static ReplayPreflight notFound() {
+      return new ReplayPreflight(null, OriginalFailureEvidence.EMPTY, "not_found_or_not_owned");
+    }
+  }
 
   private static ReplayItemResult toReplayItemResult(
       String requestedId, ScriptDeadLetterReplayRepository.ReplayItem stored) {
@@ -1389,18 +1720,29 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             });
   }
 
-  private record RuntimeScopeKey(String tenantId, String gameInstanceId, String regionId) {}
+  record RuntimeScopeKey(String tenantId, String gameInstanceId, String regionId) {}
 
-  private record OriginalFailureEvidence(String stage, String reason, boolean consistent) {
-    private static final OriginalFailureEvidence EMPTY = new OriginalFailureEvidence("", "", true);
+  private record OriginalFailureEvidence(
+      String stage, String reason, String outcome, boolean consistent) {
+    private static final OriginalFailureEvidence EMPTY =
+        new OriginalFailureEvidence("", "", "", true);
 
     private OriginalFailureEvidence {
       stage = blankToEmpty(stage);
       reason = blankToEmpty(reason);
+      outcome = blankToEmpty(outcome);
     }
 
-    private boolean isComplete() {
-      return consistent && !stage.isBlank() && !reason.isBlank();
+    private boolean isRetryableForEvaluationReplay() {
+      if (!consistent || stage.isBlank() || reason.isBlank() || outcome.isBlank()) {
+        return false;
+      }
+      return ("ADMISSION".equals(stage)
+              && "authority_unavailable_exhausted".equals(outcome)
+              && "authority_unavailable_exhausted".equals(reason))
+          || (("ADMISSION".equals(stage) || "DSL_EVAL".equals(stage))
+              && "infrastructure_error".equals(outcome)
+              && "authority_unavailable".equals(reason));
     }
   }
 
@@ -1410,6 +1752,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
 
   private static String normalizeReplayReason(String reason) {
     return reason == null || reason.isBlank() ? "operator_replay" : reason.strip();
+  }
+
+  private static void requireReplayTextLength(String value, int maxLength, String fieldName) {
+    if (value.length() > maxLength) {
+      throw new IllegalArgumentException(
+          fieldName + " must be at most " + maxLength + " characters");
+    }
   }
 
   private static void requireText(String value, String fieldName) {

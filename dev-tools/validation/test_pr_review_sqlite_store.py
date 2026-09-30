@@ -127,6 +127,56 @@ class SqliteStateStoreTest(unittest.TestCase):
             },
         )
 
+    def test_writer_five_fences_every_new_optional_stop_context_and_preserves_old_state(self) -> None:
+        for missing in ("stop_checkpoint", "merge_base", "patch_id", "stop_merge_base", "stop_patch_id"):
+            with self.subTest(missing=missing):
+                database = self.root / f"{missing}.sqlite3"
+                older = SqliteStateStore(database, writer_build=4)
+                initial = self.representative_state()
+                older.update(lambda _, initial=initial: initial)
+                current = SqliteStateStore(database)
+                self.assertEqual(current.load(), initial)
+                stop_values = {
+                    "pr": 2828,
+                    "channel": "cli",
+                    "head": "a" * 40,
+                    "parent_identity": "develop",
+                    "parent_head": "b" * 40,
+                    "merge_base": "c" * 40,
+                    "patch_id": "patch",
+                    "baseline_checkpoints": (),
+                    "reason": "no further requests",
+                    "stop_basis": "direct_human",
+                    "stop_checkpoint": "review-1",
+                    "stop_reviewed_head": "a" * 40,
+                    "stop_reviewed_patch_id": "patch",
+                    "stop_head": "a" * 40,
+                    "stop_parent_identity": "develop",
+                    "stop_parent_head": "b" * 40,
+                    "stop_merge_base": "c" * 40,
+                    "stop_patch_id": "patch",
+                    "stop_reason": "no further requests",
+                }
+                stop_values[missing] = None
+                if missing == "stop_checkpoint":
+                    stop_values.update(stop_reviewed_head=None, stop_reviewed_patch_id=None)
+                allocation = ReviewAllocation(**stop_values)
+                updated = current.update(
+                    lambda state, allocation=allocation: dataclasses.replace(
+                        state, allocations={**state.allocations, "2828:cli": allocation}
+                    )
+                )
+                self.assertEqual(current.load(), updated)
+                self.assertEqual(current.status()["min_writer_build"], 5)
+                with self.assertRaisesRegex(StateError, "requires writer build 5"):
+                    older.update(lambda state: state)
+                restored = self.root / f"restored-{missing}.sqlite3"
+                with sqlite3.connect(database) as source, sqlite3.connect(restored) as target:
+                    source.backup(target)
+                self.assertEqual(SqliteStateStore(restored).load(), updated)
+                with self.assertRaisesRegex(StateError, "requires writer build 5"):
+                    SqliteStateStore(restored, writer_build=4).load()
+
     def test_legacy_import_round_trips_all_validated_state_semantics(self) -> None:
         original = self.representative_state()
         source = self.root / "legacy.json"
@@ -147,7 +197,7 @@ class SqliteStateStoreTest(unittest.TestCase):
         source = self.root / "legacy.json"
         source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
         source_bytes = source.read_bytes()
-        target = self.root / "sqlite" / "review-state.sqlite3"
+        target = source.with_suffix(".sqlite3")
         old_store = StateStore(source)
 
         migrated_store = SqliteStateStore.migrate_legacy_json(source, target)
@@ -183,7 +233,7 @@ class SqliteStateStoreTest(unittest.TestCase):
         source = self.root / "legacy.json"
         source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
         source_bytes = source.read_bytes()
-        target = self.root / "review-state.sqlite3"
+        target = source.with_suffix(".sqlite3")
 
         with (
             patch.object(
@@ -207,12 +257,29 @@ class SqliteStateStoreTest(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertFalse(source.with_name(f"{source.name}.migrated").exists())
 
+    def test_migration_rejects_noncanonical_target_without_creating_artifacts(self) -> None:
+        original = self.representative_state()
+        source = self.root / "legacy.json"
+        source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
+        source_bytes = source.read_bytes()
+        target = self.root / "other" / "review-state.sqlite3"
+
+        with self.assertRaisesRegex(StateError, "canonical sibling path"):
+            SqliteStateStore.migrate_legacy_json(source, target)
+
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertEqual(StateStore(source).load(), original)
+        self.assertFalse(target.parent.exists())
+        self.assertFalse(source.with_suffix(".sqlite3").exists())
+        self.assertFalse(source.with_name(f"{source.name}.migrated").exists())
+        self.assertFalse(source.with_name(".pr-review-stack.lock").exists())
+
     def test_migration_fails_before_cutover_when_atomic_exchange_is_unsupported(self) -> None:
         original = self.representative_state()
         source = self.root / "legacy.json"
         source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
         source_bytes = source.read_bytes()
-        target = self.root / "review-state.sqlite3"
+        target = source.with_suffix(".sqlite3")
 
         with (
             patch(

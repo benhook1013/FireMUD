@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -63,6 +64,23 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
 
     assertEquals("patch-1", state.getPinnedScriptPatchVersion());
     assertEquals(9L, state.getScriptPinEpoch());
+  }
+
+  @Test
+  void runtimeReadOmitsPublicationForUnpinnedInstanceWithoutCallingGameDesign() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            worldLifecycle(
+                1L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
+    GameDesignClient gameDesign = mock(GameDesignClient.class);
+    GameSessionRuntimeControlPlaneReadService service =
+        service(world, "RUNNING", null, null, null, gameDesign);
+
+    var state = service.getGameInstanceRuntimeState(1L, runtimeRequest());
+
+    assertFalse(state.hasPublication());
+    Mockito.verifyNoInteractions(gameDesign);
   }
 
   @Test

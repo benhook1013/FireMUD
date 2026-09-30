@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -16,8 +17,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
-from pr_review import evidence, github, hosted
+from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
+from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
 
 REPO = "owner/repo"
 PR = 42
@@ -472,6 +475,94 @@ class GithubAndEvidenceTests(unittest.TestCase):
             with self.assertRaises(evidence.CaptureInvalid):
                 evidence.load_cli_capture(checkpoint, REPO, PR, Path(directory))
 
+    def test_cli_capture_stdout_parsers_share_successful_event_rules(self):
+        events = (
+            json.dumps({"type": "finding", "message": "before\u2028after"}, ensure_ascii=False),
+            json.dumps(
+                {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
+            ),
+        )
+        stdout = "\r\n".join(events) + "\r\n"
+        parsed = evidence.parse_capture_events(stdout)
+
+        with tempfile.TemporaryDirectory() as directory:
+            stdout_path = Path(directory) / "stdout"
+            stdout_path.write_text(stdout, encoding="utf-8")
+
+            self.assertEqual(evidence._parse_capture_stdout(stdout_path), parsed)
+            self.assertEqual(cli_attempts._parse_successful_stdout(stdout), parsed[0])
+
+    def test_cli_capture_stdout_parsers_reject_the_same_invalid_events(self):
+        complete = {
+            "type": "complete",
+            "status": "review_completed",
+            "findings": 0,
+            "reviewedFiles": ["a"],
+        }
+        malformed_events = (
+            ("invalid JSON", '{"type":"finding"}\nnot-json', "invalid JSON at line 2", "JSON is invalid at line 2"),
+            ("non-object", "[]\n", "non-object event at line 1", "event at line 1 is not an object"),
+            ("missing completion", '{"type":"other"}\n', "no unique successful completion", "no unique successful completion"),
+            (
+                "duplicate completion",
+                json.dumps(complete) + "\n" + json.dumps(complete) + "\n",
+                "no unique successful completion",
+                "no unique successful completion",
+            ),
+            (
+                "finding count mismatch",
+                json.dumps({**complete, "findings": 1}) + "\n",
+                "does not match findings/files",
+                "does not match its findings",
+            ),
+            (
+                "invalid reviewed files",
+                json.dumps({**complete, "reviewedFiles": "a"}) + "\n",
+                "does not match findings/files",
+                "does not match its findings",
+            ),
+        )
+        too_many_findings = [
+            json.dumps({"type": "finding", "message": str(index)})
+            for index in range(evidence.MAX_CAPTURE_FINDINGS + 1)
+        ]
+        over_limit_complete = {
+            "type": "complete",
+            "status": "review_completed",
+            "findings": len(too_many_findings),
+            "reviewedFiles": ["a"],
+        }
+        malformed_events += (
+            (
+                "finding limit",
+                "\n".join([*too_many_findings, json.dumps(over_limit_complete)]) + "\n",
+                "contains too many findings",
+                "contains too many findings",
+            ),
+        )
+
+        for label, stdout, evidence_error, recovery_error in malformed_events:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                stdout_path = Path(directory) / "stdout"
+                stdout_path.write_text(stdout, encoding="utf-8")
+
+                with self.assertRaisesRegex(evidence.EvidenceError, evidence_error):
+                    evidence.parse_capture_events(stdout)
+                with self.assertRaisesRegex(evidence.CaptureInvalid, evidence_error):
+                    evidence._parse_capture_stdout(stdout_path)
+                with self.assertRaisesRegex(cli_attempts._UnrecordableCapture, recovery_error):
+                    cli_attempts._parse_successful_stdout(stdout)
+
+    def test_cli_capture_preserves_unicode_line_separators_inside_json_strings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = self._cli_capture(
+                Path(directory),
+                decision_text="1\trejected\tduplicate finding\n",
+                finding_text="before\u2028middle\u2029after",
+            )
+
+            self.assertEqual(capture.findings[0]["message"], "before\u2028middle\u2029after")
+
     def _cli_capture(
         self,
         common: Path,
@@ -480,6 +571,8 @@ class GithubAndEvidenceTests(unittest.TestCase):
         rejection_text: str | None = None,
         accepted: int = 0,
         routed: int | None = None,
+        records: SqliteReviewRecords | None = None,
+        finding_text: str = "one",
     ):
         run_id = "run.Decision"
         run = common / "coderabbit-review-logs" / run_id
@@ -489,9 +582,12 @@ class GithubAndEvidenceTests(unittest.TestCase):
             encoding="utf-8",
         )
         (run / "stdout").write_text(
-            json.dumps({"type": "finding", "message": "one"})
+            json.dumps({"type": "finding", "message": finding_text}, ensure_ascii=False)
             + "\n"
-            + json.dumps({"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]})
+            + json.dumps(
+                {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]},
+                ensure_ascii=False,
+            )
             + "\n",
             encoding="utf-8",
         )
@@ -514,7 +610,108 @@ class GithubAndEvidenceTests(unittest.TestCase):
             None,
             routed=routed,
         )
-        return evidence.load_cli_capture(checkpoint, REPO, PR, common)
+        return evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_historical_cli_decisions_fall_back_when_records_schema_is_absent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            capture = self._cli_capture(
+                common,
+                decision_text="1\trejected\tpre-cutover decision\n",
+                records=records,
+            )
+            self.assertEqual(capture.decisions, {1: ("rejected", "pre-cutover decision")})
+            decision_path = common / "coderabbit-review-logs" / "run.Decision" / "decisions.tsv"
+            decision_path.write_text("malformed readable decision\n", encoding="utf-8")
+            checkpoint = evidence.Checkpoint(
+                1, "2026-09-23T00:00:00Z", "CLI", 1, 0, HEAD[:12], 1,
+                False, None, "run.Decision", None,
+            )
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "malformed at line 1"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_cli_capture_reports_records_schema_mismatch_with_migration_guidance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1"
+                )
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "run records migrate"):
+                self._cli_capture(
+                    common,
+                    decision_text="1\trejected\tpre-cutover decision\n",
+                    records=records,
+                )
+
+    def test_cli_discovery_propagates_unsupported_v5_records_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1"
+                )
+
+            run_id = "run.UnsupportedV5"
+            run = common / "coderabbit-review-logs" / run_id
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "run records migrate"):
+                evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+    def test_cli_discovery_propagates_controller_schema_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            with sqlite3.connect(database) as connection:
+                connection.execute(f"PRAGMA user_version = {SQLITE_SCHEMA_VERSION + 1}")
+
+            run_id = "run.ControllerSchema"
+            run = common / "coderabbit-review-logs" / run_id
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "run records migrate"):
+                evidence.discover_cli_captures(REPO, PR, common, records=records)
 
     def _hosted_capture_snapshot(self, common: Path) -> Path:
         review_id = 99
@@ -626,6 +823,44 @@ class GithubAndEvidenceTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(evidence.CaptureInvalid, "complete linked"):
                 evidence.load_cli_capture(checkpoint, REPO, PR, common)
+
+    def test_cli_discovery_resolves_common_dir_and_records_store_once(self):
+        class EmptyRecords:
+            @staticmethod
+            def cli_source_decisions(_run_id):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            captures_root = common / "coderabbit-review-logs"
+            for run_id in ("run.One", "run.Two"):
+                run = captures_root / run_id
+                run.mkdir(parents=True)
+                (run / "metadata").write_text(
+                    f"run_id={run_id}\nrepository={REPO}\npull_request={PR}\n"
+                    f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                    encoding="utf-8",
+                )
+                (run / "stdout").write_text(
+                    json.dumps(
+                        {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            with (
+                patch.object(evidence, "git_common_dir", return_value=common) as resolve_common,
+                patch.object(sqlite_review_records, "SqliteReviewRecords", return_value=EmptyRecords()) as make_records,
+            ):
+                captures = evidence.discover_cli_captures(REPO, PR)
+
+            self.assertEqual(resolve_common.call_count, 1)
+            self.assertEqual(make_records.call_count, 1)
+            self.assertEqual({capture.metadata["run_id"] for capture in captures}, {"run.One", "run.Two"})
+            self.assertTrue(all(capture.source_identity for capture in captures))
 
     def test_cli_duration_evidence_fails_closed_and_valid_duration_checks_capture(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -803,6 +1038,129 @@ class GithubAndEvidenceTests(unittest.TestCase):
 
 
 class HostedEvidenceTests(unittest.TestCase):
+    def test_prepost_recovery_ignores_missing_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            selected_state = common / "firemud" / "pr-review-stack.json"
+            selected_state.mkdir(parents=True)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            path = hosted.default_trigger_record_path(REPO, PR, common)
+
+            records.bootstrap()
+            hosted._finish_recovered_attempt(path, REPO, PR, {"sqlite_attempt_id": "missing-attempt"})
+            attempt_id = "malformed-hosted-metadata"
+            records.start_attempt(
+                attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
+            )
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                    ("{", attempt_id),
+                )
+            with self.assertRaisesRegex(ReviewRecordsError, "metadata is malformed"):
+                hosted._finish_recovered_attempt(
+                    path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD}
+                )
+
+    def test_prepost_recovery_preserves_reservation_for_incompatible_records_schema(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            selected_state = common / "firemud" / "pr-review-stack.json"
+            selected_state.mkdir(parents=True)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            attempt_id = "schema-migration-required"
+            records.start_attempt(
+                attempt_id=attempt_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
+            )
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE review_records_metadata SET records_schema_version = 5 WHERE singleton = 1"
+                )
+
+            path = hosted.default_trigger_record_path(REPO, PR, common)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": REPO,
+                        "pr_number": PR,
+                        "head_sha": HEAD,
+                        "sqlite_attempt_id": attempt_id,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 30,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[path]),
+                self.assertRaisesRegex(
+                    sqlite_review_records.RecordsSchemaIncompatible,
+                    "unsupported review-records schema version 5",
+                ),
+            ):
+                hosted.recover_prepost_reservation(
+                    path,
+                    REPO,
+                    PR,
+                    HEAD,
+                    "operator verified no POST was issued",
+                    True,
+                    lambda: review_payload(),
+                )
+
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posting")
+
+    def test_prepost_recovery_rejects_mismatched_and_conflicting_attempts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            selected_state = common / "firemud" / "pr-review-stack.json"
+            selected_state.mkdir(parents=True)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            path = hosted.default_trigger_record_path(REPO, PR, common)
+
+            mismatched_attempts = (
+                ("mismatched-hosted-pr", PR + 1, "hosted", HEAD),
+                ("mismatched-hosted-channel", PR, "cli", HEAD),
+                ("mismatched-hosted-head", PR, "hosted", BASE),
+            )
+            for attempt_id, source_pr, channel, candidate_sha in mismatched_attempts:
+                records.start_attempt(
+                    attempt_id=attempt_id,
+                    source_pr=source_pr,
+                    channel=channel,
+                    candidate_sha=candidate_sha,
+                )
+                with self.subTest(attempt_id=attempt_id), self.assertRaisesRegex(
+                    ValueError, "does not match the recovered reservation"
+                ):
+                    hosted._finish_recovered_attempt(
+                        path, REPO, PR, {"sqlite_attempt_id": attempt_id, "head_sha": HEAD}
+                    )
+
+            terminal_id = "completed-hosted-attempt"
+            records.start_attempt(
+                attempt_id=terminal_id, source_pr=PR, channel="hosted", candidate_sha=HEAD
+            )
+            records.finish_attempt(terminal_id, state="completed")
+            with self.assertRaisesRegex(ValueError, "conflicts with confirmed no-POST recovery"):
+                hosted._finish_recovered_attempt(
+                    path, REPO, PR, {"sqlite_attempt_id": terminal_id, "head_sha": HEAD}
+                )
+
     def test_wrong_target_assertion_happens_before_request_preparation(self):
         with self.assertRaises(ValueError):
             hosted.prepare_full_trigger(PR, PR + 1)
@@ -932,19 +1290,107 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state.state, "rate_limited")
         self.assertNotEqual(state.state, "completed")
 
-    def test_missing_hosted_evidence_cannot_count_as_completion(self):
+    def test_finished_reply_with_empty_complete_history_is_clean_completion(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         finished = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
         state = hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), trigger_record())
-        self.assertEqual(state.state, "ambiguous")
+        self.assertEqual(state.state, "completed")
         self.assertTrue(state.terminal)
-        self.assertFalse(state.attributed)
+        self.assertTrue(state.attributed)
         self.assertEqual(state.response_id, 11)
         self.assertEqual(state.response_url, "https://example.test/comments/11")
-        self.assertIn("without a head-attributed result", state.reason)
-        self.assertNotEqual(state.state, "completed")
+        self.assertEqual(state.duration_seconds, 60)
         checkpoint = evidence.Checkpoint(1, "2026-09-23T00:03:00Z", "Hosted", 0, 0, HEAD[:7], 1, False, None, None, 99)
         self.assertEqual(evidence.hosted_checkpoint_evidence(checkpoint, [], HEAD)["status"], "missing")
+
+        missing_threads = review_payload([trigger, finished])
+        del missing_threads["data"]["repository"]["pullRequest"]["reviewThreads"]
+        self.assertEqual(hosted.trigger_state(REPO, PR, missing_threads, trigger_record()).state, "ambiguous")
+
+        inline = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "A late finding",
+            "createdAt": "2026-09-23T00:02:30Z",
+            "updatedAt": "2026-09-23T00:02:30Z",
+        }
+        contradicted = review_payload([trigger, finished], threads=[{"comments": {"nodes": [inline]}}])
+        self.assertEqual(hosted.trigger_state(REPO, PR, contradicted, trigger_record()).state, "ambiguous")
+
+        duplicate_trigger = review_payload([trigger, {**trigger}, finished])
+        self.assertEqual(
+            hosted.trigger_state(REPO, PR, duplicate_trigger, trigger_record()).state,
+            "unattributed",
+        )
+
+        bool_record = trigger_record()
+        bool_record["trigger"]["id"] = True
+        with self.assertRaisesRegex(ValueError, "invalid full-review identity"):
+            hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), bool_record)
+
+    def test_active_acknowledgement_does_not_hide_clean_finished_result(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        acknowledgement = comment(11, "coderabbitai", "Full review triggered", "2026-09-23T00:01:08Z")
+        finished = comment(12, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+        state = hosted.trigger_state(REPO, PR, review_payload([trigger, acknowledgement, finished]), trigger_record())
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_id, 12)
+
+        summary = comment(
+            13,
+            "coderabbitai[bot]",
+            "No actionable comments were generated in the recent review.\n"
+            f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+            "2026-09-23T00:02:10Z",
+        )
+        with_summary = hosted.trigger_state(
+            REPO, PR, review_payload([trigger, acknowledgement, finished, summary]), trigger_record()
+        )
+        self.assertEqual(with_summary.state, "completed")
+
+    def test_manual_preceding_command_requires_its_own_audited_result(self):
+        first = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        unrelated = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+        second = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        payload = review_payload([first, unrelated, second])
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            self.assertTrue(hosted.unresolved_preceding_full_trigger(REPO, PR, payload, 12, common))
+            record_path = hosted.default_trigger_record_path(REPO, PR, common)
+            record_path.parent.mkdir(parents=True, exist_ok=True)
+            record_path.write_text(json.dumps(trigger_record()), encoding="utf-8")
+            self.assertFalse(hosted.unresolved_preceding_full_trigger(REPO, PR, payload, 12, common))
+
+            edited = {**unrelated, "createdAt": "2026-09-23T00:01:30Z", "updatedAt": "2026-09-23T00:03:30Z"}
+            self.assertTrue(
+                hosted.unresolved_preceding_full_trigger(
+                    REPO, PR, review_payload([first, edited, second]), 12, common
+                )
+            )
+
+    def test_retired_inflight_predecessor_cannot_supply_successor_zero_reply(self):
+        old_trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        new_trigger = comment(12, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        late_finish = comment(13, "coderabbitai", "Full review finished.", "2026-09-23T00:04:00Z")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            current = hosted.default_trigger_record_path(REPO, PR, common)
+            current.parent.mkdir(parents=True, exist_ok=True)
+            old_record = trigger_record("d" * 40)
+            old_record["status"] = "retired"
+            old_record["retirement"] = {"observed_live_state": "awaiting_response"}
+            (current.parent / "trigger-10.json").write_text(json.dumps(old_record), encoding="utf-8")
+            new_record = trigger_record()
+            new_record["trigger"].update(
+                {"id": 12, "created_at": "2026-09-23T00:03:00Z", "url": new_trigger["url"]}
+            )
+            current.write_text(json.dumps(new_record), encoding="utf-8")
+            payload = review_payload([old_trigger, new_trigger, late_finish])
+            state = hosted.trigger_state(REPO, PR, payload, new_record, current)
+            self.assertEqual(state.state, "ambiguous")
+            self.assertFalse(state.terminal)
+            self.assertEqual(state.response_id, 13)
+            self.assertTrue(hosted.unresolved_preceding_full_trigger(REPO, PR, payload, 12, common))
 
     def test_finished_reply_without_zero_sentence_requires_clean_exact_head_summary_and_empty_history(self):
         trigger_at = "2026-09-23T00:01:00Z"
@@ -1022,9 +1468,8 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(incomplete_state.response_id, 11)
         self.assertIn("incomplete file coverage", incomplete_state.reason)
 
-        for invalid_summary in (stale, mismatched_head):
-            with self.subTest(summary=invalid_summary["body"]):
-                self.assertEqual(state_for(invalid_summary).state, "ambiguous")
+        self.assertEqual(state_for(stale).state, "completed")
+        self.assertEqual(state_for(mismatched_head).state, "ambiguous")
         self.assertEqual(
             state_for(threads=[{"comments": {"nodes": [inline_finding]}}]).state,
             "ambiguous",
@@ -1161,6 +1606,51 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertTrue(hosted._summary_has_explicit_incompleteness(nonquantitative_incomplete["body"]))
         self.assertEqual(state_for(nonquantitative_incomplete).state, "ambiguous")
 
+    def test_legacy_zero_sentence_cannot_hide_inline_finding_or_cross_later_trigger(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:01:30Z")
+        summary = comment(
+            12,
+            "coderabbitai[bot]",
+            "No actionable comments were generated in the recent review.\n"
+            f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+            "2026-09-23T00:01:45Z",
+        )
+        thread_comment = comment(13, "coderabbitai[bot]", "A real finding", "2026-09-23T00:01:50Z")
+        conflicted = review_payload(
+            [trigger, reply, summary], threads=[{"comments": {"nodes": [thread_comment]}}]
+        )
+        self.assertEqual(hosted.trigger_state(REPO, PR, conflicted, trigger_record()).state, "ambiguous")
+
+        later = comment(14, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:00Z")
+        late_summary = {**summary, "createdAt": "2026-09-23T00:02:30Z", "updatedAt": "2026-09-23T00:02:30Z"}
+        late_reply = {**reply, "updatedAt": "2026-09-23T00:02:10Z"}
+        cross_trigger = review_payload([trigger, late_reply, later, late_summary])
+        self.assertEqual(hosted.trigger_state(REPO, PR, cross_trigger, trigger_record()).state, "ambiguous")
+
+    def test_legacy_zero_sentence_edit_is_not_attributed_as_a_new_summary(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:02:00Z")
+        old_summary = comment(
+            12,
+            "coderabbitai[bot]",
+            "No actionable comments were generated in the recent review.\n"
+            f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+            "2026-09-22T23:59:00Z",
+        )
+        old_summary["updatedAt"] = "2026-09-23T00:02:30Z"
+        payload = review_payload([old_summary, trigger, reply])
+        self.assertIsNone(
+            hosted._zero_finding_summary(
+                payload,
+                HEAD,
+                hosted.parse_timestamp(trigger["createdAt"]),
+                11,
+                None,
+            )
+        )
+        self.assertEqual(hosted.trigger_state(REPO, PR, payload, trigger_record()).state, "completed")
+
     def test_matching_completed_review_is_attributable_and_has_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
         summary = comment(
@@ -1205,6 +1695,45 @@ class HostedEvidenceTests(unittest.TestCase):
         self.assertEqual(state_after_next_trigger.state, "ambiguous")
         self.assertEqual(state_after_next_trigger.response_id, 11)
         self.assertIsNone(state_after_next_trigger.duration_seconds)
+
+    def test_finished_reply_edited_after_next_trigger_keeps_ambiguous_response_identity(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:01:08Z")
+        reply["updatedAt"] = "2026-09-23T00:03:00Z"
+        next_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:02:00Z")
+
+        state = hosted.trigger_state(
+            REPO,
+            PR,
+            review_payload([trigger, reply, next_trigger]),
+            trigger_record(),
+        )
+
+        self.assertEqual(state.state, "ambiguous")
+        self.assertEqual(state.response_id, 11)
+        self.assertEqual(state.response_created_at, "2026-09-23T00:01:08Z")
+        self.assertIsNone(state.duration_seconds)
+
+    def test_exact_head_review_survives_later_finished_reply_edit(self):
+        trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
+        reply = comment(11, "coderabbitai", "Full review finished.", "2026-09-23T00:01:08Z")
+        reply["updatedAt"] = "2026-09-23T00:04:00Z"
+        next_trigger = comment(13, "owner", hosted.FULL_COMMAND, "2026-09-23T00:03:00Z")
+        review = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai"},
+            "body": "**Actionable comments posted: 1**",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:00Z",
+            "commit": {"oid": HEAD},
+        }
+
+        state = hosted.trigger_state(
+            REPO, PR, review_payload([trigger, reply, next_trigger], [review]), trigger_record()
+        )
+
+        self.assertEqual(state.state, "completed")
+        self.assertEqual(state.response_id, 12)
 
     def test_direct_terminal_finished_reply_keeps_creation_time_duration(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")
@@ -1653,6 +2182,11 @@ class HostedEvidenceTests(unittest.TestCase):
             "commit": {"oid": "d" * 40},
         }
         record = trigger_record()
+        observed = hosted.trigger_state(
+            REPO, PR, review_payload([trigger], [mismatched_review], head=current_head), record
+        )
+        self.assertEqual(observed.state, "ambiguous")
+        self.assertFalse(observed.terminal)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trigger.json"
             path.write_text(json.dumps(record), encoding="utf-8")

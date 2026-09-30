@@ -80,6 +80,8 @@ import org.springframework.grpc.server.service.GrpcService;
 public final class GameSessionControlPlaneGrpcService
     extends GameSessionControlPlaneServiceGrpc.GameSessionControlPlaneServiceImplBase {
   private static final String AUTOMATION_SCRIPTING_SERVICE = "automation-scripting-service";
+  private static final String AUTOMATION_ADMISSION_RECEIVER_FENCE_UNAVAILABLE =
+      "automation_admission_receiver_fence_unavailable";
   private static final Logger logger =
       LoggerFactory.getLogger(GameSessionControlPlaneGrpcService.class);
   private final GameSessionCommandControlPlaneService commandControlPlaneService;
@@ -143,6 +145,15 @@ public final class GameSessionControlPlaneGrpcService
 
   private ErrorDetail notFoundError(String operation, RuntimeException ex) {
     return GrpcAppErrors.error(meterRegistry, logger, operation, "NOT_FOUND", ex.getMessage());
+  }
+
+  private ErrorDetail automationAdmissionReceiverFenceUnavailable(String operation) {
+    return GrpcAppErrors.error(
+        meterRegistry,
+        logger,
+        operation,
+        "FAILED_PRECONDITION",
+        AUTOMATION_ADMISSION_RECEIVER_FENCE_UNAVAILABLE);
   }
 
   @Override
@@ -461,8 +472,9 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAutomationScriptingInternalService("ScheduleRemoteFollowup");
       responseObserver.onNext(
-          remoteControlPlaneService.scheduleRemoteFollowup(
-              parseTenantId(request.getTenantId()), request));
+          ScheduleRemoteFollowupResponse.newBuilder()
+              .setError(automationAdmissionReceiverFenceUnavailable("ScheduleRemoteFollowup"))
+              .build());
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -1048,7 +1060,12 @@ public final class GameSessionControlPlaneGrpcService
     try {
       requireAutomationScriptingInternalService("EnqueueAutomationCommandIfAbsent");
       EnqueueAutomationCommandIfAbsentResponse response =
-          commandControlPlaneService.enqueueAutomationCommandIfAbsent(request);
+          EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+              .setAccepted(false)
+              .setAdmissionOutcome("REJECTED")
+              .setError(
+                  automationAdmissionReceiverFenceUnavailable("EnqueueAutomationCommandIfAbsent"))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {

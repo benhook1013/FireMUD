@@ -18,6 +18,8 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptPatchPinProjectionRepository {
+  private static final long PIN_PROJECTION_LOCK_NAMESPACE = 0x534350494eL;
+
   private final DSLContext dsl;
 
   public ScriptPatchPinProjectionRepository(DSLContext dsl) {
@@ -34,6 +36,16 @@ public class ScriptPatchPinProjectionRepository {
                 .eq(tenantId)
                 .and(SCRIPT_PATCH_PIN_PROJECTIONS.GAME_INSTANCE_ID.eq(gameInstanceId)))
         .fetchOptional(this::toEntity);
+  }
+
+  /** Serializes pin projection refresh and schedule reconciliation for one instance. */
+  public void lockPinProjectionScope(String tenantId, String gameInstanceId) {
+    String scope =
+        tenantId.length() + ":" + tenantId + gameInstanceId.length() + ":" + gameInstanceId;
+    dsl.fetch(
+        "select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(?, ?))",
+        scope,
+        PIN_PROJECTION_LOCK_NAMESPACE);
   }
 
   public List<ScriptPatchPinProjection> findByTenantIdAndObservedPinnedScriptPatchVersion(
