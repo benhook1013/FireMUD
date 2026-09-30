@@ -806,24 +806,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void verifyEmail(
       net.firedevops.firemud.account.v1.VerifyEmailRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse> responseObserver) {
-    try {
-      accountService.verifyEmail(
-          new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(request.getToken()));
-      var response =
-          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
-              .setSuccess(true)
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      var response =
-          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("VerifyEmail", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
+            .setSuccess(false)
+            .setError(
+                appError(
+                    "VerifyEmail",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(

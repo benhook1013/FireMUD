@@ -8,6 +8,20 @@ WORKLOAD_NAMESPACE="local"
 WORKLOAD_DIR="$CERT_DIR/workloads"
 RUNTIME_DIR="$CERT_DIR/local-runtime"
 
+refuse_symlink_path() {
+  local path="$1"
+  local description="$2"
+  local current_path="$path"
+
+  while [[ "$current_path" != "." && "$current_path" != "/" ]]; do
+    [[ ! -L "$current_path" ]] || {
+      echo "refusing symlinked $description: $path" >&2
+      exit 1
+    }
+    current_path="$(dirname -- "$current_path")"
+  done
+}
+
 required_files=(
   "$CERT_DIR/ca.crt"
   "$CERT_DIR/ca.key"
@@ -19,6 +33,31 @@ required_files=(
   "$CERT_DIR/server.crt"
   "$CERT_DIR/server.key"
 )
+
+refuse_symlink_path "$CERT_DIR" "certificate directory"
+for file in "${required_files[@]}"; do
+  refuse_symlink_path "$file" "certificate material"
+done
+
+refuse_symlink_path "$WORKLOAD_DIR" "workload certificate directory"
+for workload in account-service game-session-service social-groups-service; do
+  refuse_symlink_path "$WORKLOAD_DIR/$workload.crt" "workload certificate output"
+  refuse_symlink_path "$WORKLOAD_DIR/$workload.key" "workload private-key output"
+done
+
+refuse_symlink_path "$RUNTIME_DIR" "local Compose runtime projection"
+if [[ -d "$WORKLOAD_DIR" ]]; then
+  while IFS= read -r -d '' symlink_path; do
+    echo "refusing symlinked workload certificate path: $symlink_path" >&2
+    exit 1
+  done < <(find -P "$WORKLOAD_DIR" -mindepth 1 -maxdepth 1 -type l -print0)
+fi
+if [[ -d "$RUNTIME_DIR" ]]; then
+  while IFS= read -r -d '' symlink_path; do
+    echo "refusing symlink in local Compose runtime projection: $symlink_path" >&2
+    exit 1
+  done < <(find -P "$RUNTIME_DIR" -mindepth 1 -type l -print0)
+fi
 
 missing=0
 for file in "${required_files[@]}"; do
