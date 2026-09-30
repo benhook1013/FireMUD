@@ -11,9 +11,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigInteger;
 import java.net.URI;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -983,16 +986,29 @@ class GameSessionWebSocketHandlerIntegrationTest {
   void websocketFirstPartySignedCompleteContextFailsClosedWithoutMutation() throws Exception {
     KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519");
     KeyPair gatewayKeyPair = generator.generateKeyPair();
+    long verifiedAt = Instant.now(Clock.systemUTC()).getEpochSecond();
+    long issuedAt = verifiedAt - 1L;
+    java.util.Map<String, Object> sourceClaims =
+        new java.util.LinkedHashMap<>(
+            SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims());
+    sourceClaims.put("iat", BigInteger.valueOf(issuedAt));
+    sourceClaims.put("exp", BigInteger.valueOf(issuedAt + 30L));
     java.util.Map<String, Object> contextClaims =
         GatewayConnectContextCodec.projectVerifiedAccountGameplayConnectClaims(
-            SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims(),
-            SelectedTargetConnectContextTestVectors.GATEWAY_VERIFIED_AT,
-            "gateway-request-runtime-disabled");
+            sourceClaims, verifiedAt, "gateway-request-runtime-disabled");
     String signedContext =
         GatewayConnectContextSignature.sign(
             new ObjectMapper().writeValueAsBytes(contextClaims),
             SelectedTargetConnectContextTestVectors.GATEWAY_KID,
             gatewayKeyPair.getPrivate());
+    assertThat(
+            GatewayConnectContextCodec.verifyAndDecode(
+                signedContext,
+                java.util.Map.of(
+                    SelectedTargetConnectContextTestVectors.GATEWAY_KID,
+                    gatewayKeyPair.getPublic()),
+                Clock.systemUTC()))
+        .isNotNull();
     GameplayWebSocketDriver.CloseEvent closeEvent;
     try (GameplayWebSocketDriver client =
         GameplayWebSocketDriver.connect(
