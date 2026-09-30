@@ -21,6 +21,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
+import net.firedevops.firemud.gamedesign.client.EntityManagementClient;
+import net.firedevops.firemud.gamedesign.client.GameLogicClient;
+import net.firedevops.firemud.gamedesign.client.WorldManagementClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -229,6 +232,94 @@ class VersionServiceImplTest {
         .verify(publishAttemptService)
         .markScriptPatchSucceeded(binding.derivedWorkflowIdentity());
     verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
+  }
+
+  @Test
+  void unsupportedAutomationDigestScopeBlocksScriptPatchBeforeNotification() {
+    Game game = new Game();
+    game.setId(1L);
+    game.setTenantId("tenant-1");
+    when(gameRepository.findByTenantIdForUpdate("tenant-1")).thenReturn(game);
+
+    Version latest = new Version();
+    latest.setId(9L);
+    latest.setTenantId("tenant-1");
+    latest.setVersionNumber(7);
+    when(versionRepository.findTopByTenantIdOrderByVersionNumberDesc("tenant-1"))
+        .thenReturn(Optional.of(latest));
+
+    Version savedDraft = scriptPatchVersion(11L, 8, 3L, VersionLifecycleState.DRAFT, "notes");
+    when(versionRepository.save(any(Version.class))).thenReturn(savedDraft);
+    PublicationDigestRequestBinding binding =
+        PublicationDigestRequestBinding.patch("tenant-1", "3", "patch-2", PUBLISH_REQUEST_ID);
+    PublishAttempt pendingAttempt =
+        scriptPatchAttempt(binding, PublishAttemptStatus.PENDING, 11L, 8, 3L);
+    when(publishAttemptService.findByPublishWorkflowId(binding.derivedWorkflowIdentity()))
+        .thenReturn(Optional.empty(), Optional.of(pendingAttempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 11L))
+        .thenReturn(Optional.of(savedDraft));
+    when(scriptingClient.getDraftDesignDigestForScriptPatch(
+            any(PublicationDigestRequestBinding.class)))
+        .thenReturn(
+            new PublishParticipantDigestDto(
+                "AUTOMATION_SCRIPTING",
+                "patch-2",
+                3L,
+                null,
+                null,
+                null,
+                "UNSUPPORTED_SCOPE",
+                "script-patch digest scope is unsupported"));
+    when(controlPlaneDigestService.getDigestForScriptPatch(any(VersionDto.class)))
+        .thenReturn(
+            new DesignControlPlaneDigestDto(
+                "tenant-1", "patch-2", "commit-1", "control-plane-digest", 1));
+
+    PublishGateServiceImpl realPublishGate =
+        new PublishGateServiceImpl(
+            controlPlaneDigestService,
+            org.mockito.Mockito.mock(WorldManagementClient.class),
+            org.mockito.Mockito.mock(EntityManagementClient.class),
+            org.mockito.Mockito.mock(GameLogicClient.class),
+            scriptingClient);
+    VersionServiceImpl composedService = serviceWithPublishGate(realPublishGate);
+
+    PublishGateFailureException thrown =
+        assertThrows(
+            PublishGateFailureException.class,
+            () ->
+                composedService.publishScriptPatchVersion(
+                    "tenant-1", 3L, "patch-2", "notes", PUBLISH_REQUEST_ID));
+
+    assertEquals(PublishGateFailureCode.PARTICIPANT_UNAVAILABLE, thrown.failureCode());
+    assertEquals("UNSUPPORTED_SCOPE", thrown.participantFailureCode());
+    String workflowId = "publish-script-patch:tenant-1:publish-request:" + PUBLISH_REQUEST_ID;
+    ArgumentCaptor<PublicationDigestRequestBinding> bindingCaptor =
+        ArgumentCaptor.forClass(PublicationDigestRequestBinding.class);
+    verify(scriptingClient).getDraftDesignDigestForScriptPatch(bindingCaptor.capture());
+    PublicationDigestRequestBinding observedBinding = bindingCaptor.getValue();
+    assertEquals(binding.tenantId(), observedBinding.tenantId());
+    assertEquals(binding.scopeKind(), observedBinding.scopeKind());
+    assertEquals(binding.baseVersionId(), observedBinding.baseVersionId());
+    assertEquals(binding.scriptPatchVersion(), observedBinding.scriptPatchVersion());
+    assertEquals(binding.publishRequestId(), observedBinding.publishRequestId());
+    assertEquals(binding.derivedWorkflowIdentity(), observedBinding.derivedWorkflowIdentity());
+    assertEquals(binding.requestDigest(), observedBinding.requestDigest());
+    verify(scriptingClient, org.mockito.Mockito.never())
+        .notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", List.of());
+    verify(publishAttemptService)
+        .markScriptPatchFailed(
+            org.mockito.ArgumentMatchers.eq(workflowId),
+            org.mockito.ArgumentMatchers.eq(PublishGateFailureCode.PARTICIPANT_UNAVAILABLE.name()),
+            org.mockito.ArgumentMatchers.contains("script-patch digest scope is unsupported"));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .markScriptPatchSucceeded(any(String.class));
+    verify(publishAttemptService, org.mockito.Mockito.never())
+        .recordScriptPatchParticipantDigests(any(String.class), any(List.class));
+    verify(versionRepository, times(1)).save(any(Version.class));
+    verify(versionRepository).delete(savedDraft);
+    verify(recordedParticipantDigestService, org.mockito.Mockito.never())
         .recordVerifiedDigests(any(String.class), any(), any(String.class), any(List.class));
   }
 
@@ -1020,6 +1111,26 @@ class VersionServiceImplTest {
         pluginBundleStorageService,
         publishCommandService,
         Optional.of(temporalPublishOrchestrator));
+  }
+
+  private VersionServiceImpl serviceWithPublishGate(PublishGateService gate) {
+    return new VersionServiceImpl(
+        versionRepository,
+        gameRepository,
+        publishedPluginVersionRepository,
+        pluginVersionStatusEventRepository,
+        Mappers.getMapper(VersionMapper.class),
+        scriptingClient,
+        publishAttemptService,
+        gate,
+        controlPlaneDigestService,
+        versionAssetArtifactService,
+        publishedReleaseBundleService,
+        recordedParticipantDigestService,
+        pluginBundleIntakeService,
+        pluginBundleStorageService,
+        publishCommandService,
+        Optional.empty());
   }
 
   @Test
