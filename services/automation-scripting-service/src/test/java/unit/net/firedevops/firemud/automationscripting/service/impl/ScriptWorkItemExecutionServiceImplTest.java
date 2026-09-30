@@ -1901,12 +1901,12 @@ class ScriptWorkItemExecutionServiceImplTest {
               int completedTransactionId = currentTransactionId.get();
               assertThat(transactionActive.compareAndSet(true, false)).isTrue();
               currentTransactionId.set(0);
-              if (completedTransactionId == 4) {
+              if (completedTransactionId == 3) {
                 throw new UnexpectedRollbackException("simulated finalization rollback");
               }
               if (completedTransactionId == 1) {
                 committedStatuses.put(indexed.getId(), indexed.getStatus());
-              } else if (completedTransactionId == 5 || completedTransactionId == 6) {
+              } else if (completedTransactionId == 4 || completedTransactionId == 5) {
                 committedStatuses.put(fallback.getId(), fallback.getStatus());
               }
               return null;
@@ -1993,9 +1993,9 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.claimedCount()).isEqualTo(2);
     assertThat(result.completedCount()).isEqualTo(1);
     assertThat(result.failedCount()).isEqualTo(1);
-    assertThat(claimTransactionIds).containsExactly(1, 5);
-    assertThat(evaluationTransactionIds).containsExactly(2, 6);
-    assertThat(nextTransactionId).hasValue(6);
+    assertThat(claimTransactionIds).containsExactly(1, 4);
+    assertThat(evaluationTransactionIds).containsExactly(2, 5);
+    assertThat(nextTransactionId).hasValue(5);
     assertThat(remoteEffectAccepted).isTrue();
     assertThat(committedStatuses)
         .containsEntry(indexed.getId(), "EVALUATING")
@@ -2757,119 +2757,147 @@ class ScriptWorkItemExecutionServiceImplTest {
 
   @Test
   void evaluationCommitsBeforeHandoffLoopStarts() {
-    List<String> operations = new ArrayList<>();
-    RecordingExecutionTransactionManager transactionManager =
-        new RecordingExecutionTransactionManager(operations);
-    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
-    ScriptDefinitionRepository definitionRepository =
-        Mockito.mock(ScriptDefinitionRepository.class);
-    ScriptGameplayCommandHandoffService handoffService =
-        Mockito.mock(ScriptGameplayCommandHandoffService.class);
-    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
-    ScriptWorkItem item = workItem();
-    ScriptDefinition definition = scriptDefinition();
-    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
-    GameSessionControlPlaneClient gameSessionClient =
-        Mockito.mock(GameSessionControlPlaneClient.class);
-    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
-        .thenAnswer(
-            invocation -> {
-              operations.add(
-                  "runtime:" + TransactionSynchronizationManager.isActualTransactionActive());
-              return runtimeStateResponse();
-            });
-    item.setStatus("PENDING_EVALUATION");
-    when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
-            Mockito.eq("PENDING_EVALUATION"),
-            Mockito.any(Instant.class),
-            Mockito.any(Pageable.class)))
-        .thenReturn(List.of(item));
-    Mockito.doAnswer(
-            invocation -> {
-              ScriptWorkItem candidate =
-                  invocation.<List<Long>>getArgument(0).contains(item.getId()) ? item : null;
-              if (candidate == null || !"PENDING_EVALUATION".equals(candidate.getStatus())) {
-                return List.of();
-              }
-              candidate.setStatus("EVALUATING");
-              return List.of(candidate);
-            })
-        .when(workItemService)
-        .claimPendingForEvaluation(Mockito.anyList(), Mockito.eq(1));
-    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
-        .thenReturn(Optional.of(definition));
-    when(workItemRepository.save(Mockito.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    Mockito.doAnswer(
-            invocation -> {
-              operations.add(
-                  "begin-fanout:" + TransactionSynchronizationManager.isActualTransactionActive());
-              return null;
-            })
-        .when(handoffService)
-        .beginAggregateFanout(Mockito.eq(item));
-    Mockito.doAnswer(
-            invocation -> {
-              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-              operations.add(
-                  "handoff:" + TransactionSynchronizationManager.isActualTransactionActive());
-              return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  true, "ENQUEUED", "command-1", "", "", "");
-            })
-        .when(handoffService)
-        .handoff(Mockito.eq(item), Mockito.any());
-    Mockito.doAnswer(
-            invocation -> {
-              operations.add(
-                  "end-fanout:" + TransactionSynchronizationManager.isActualTransactionActive());
-              return null;
-            })
-        .when(handoffService)
-        .endAggregateFanout(Mockito.eq(item));
+    for (boolean retryStatePresent : List.of(false, true)) {
+      List<String> operations = new ArrayList<>();
+      RecordingExecutionTransactionManager transactionManager =
+          new RecordingExecutionTransactionManager(operations);
+      ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+      ScriptDefinitionRepository definitionRepository =
+          Mockito.mock(ScriptDefinitionRepository.class);
+      ScriptGameplayCommandHandoffService handoffService =
+          Mockito.mock(ScriptGameplayCommandHandoffService.class);
+      ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+      ScriptWorkItem item = workItem();
+      ScriptDefinition definition = scriptDefinition();
+      definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+      GameSessionControlPlaneClient gameSessionClient =
+          Mockito.mock(GameSessionControlPlaneClient.class);
+      if (retryStatePresent) {
+        item.setAuthorityUnavailableSince(Instant.parse("2026-09-01T00:00:00Z"));
+        item.setAuthorityUnavailableCount(2);
+        item.setNextEligibleAt(Instant.parse("2026-09-01T00:01:00Z"));
+      }
+      when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+          .thenAnswer(
+              invocation -> {
+                operations.add(
+                    "runtime:" + TransactionSynchronizationManager.isActualTransactionActive());
+                return runtimeStateResponse();
+              });
+      item.setStatus("PENDING_EVALUATION");
+      when(workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+              Mockito.eq("PENDING_EVALUATION"),
+              Mockito.any(Instant.class),
+              Mockito.any(Pageable.class)))
+          .thenReturn(List.of(item));
+      Mockito.doAnswer(
+              invocation -> {
+                ScriptWorkItem candidate =
+                    invocation.<List<Long>>getArgument(0).contains(item.getId()) ? item : null;
+                if (candidate == null || !"PENDING_EVALUATION".equals(candidate.getStatus())) {
+                  return List.of();
+                }
+                candidate.setStatus("EVALUATING");
+                return List.of(candidate);
+              })
+          .when(workItemService)
+          .claimPendingForEvaluation(Mockito.anyList(), Mockito.eq(1));
+      when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+          .thenReturn(Optional.of(definition));
+      when(workItemRepository.save(Mockito.any()))
+          .thenAnswer(invocation -> invocation.getArgument(0));
+      Mockito.doAnswer(
+              invocation -> {
+                operations.add(
+                    "begin-fanout:"
+                        + TransactionSynchronizationManager.isActualTransactionActive());
+                return null;
+              })
+          .when(handoffService)
+          .beginAggregateFanout(Mockito.eq(item));
+      Mockito.doAnswer(
+              invocation -> {
+                assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+                assertThat(item.getAuthorityUnavailableSince()).isNull();
+                assertThat(item.getAuthorityUnavailableCount()).isZero();
+                assertThat(item.getNextEligibleAt()).isNull();
+                operations.add(
+                    "handoff:" + TransactionSynchronizationManager.isActualTransactionActive());
+                return new ScriptGameplayCommandHandoffService.HandoffResult(
+                    true, "ENQUEUED", "command-1", "", "", "");
+              })
+          .when(handoffService)
+          .handoff(Mockito.eq(item), Mockito.any());
+      Mockito.doAnswer(
+              invocation -> {
+                operations.add(
+                    "end-fanout:" + TransactionSynchronizationManager.isActualTransactionActive());
+                return null;
+              })
+          .when(handoffService)
+          .endAggregateFanout(Mockito.eq(item));
 
-    ScriptWorkItemExecutionService service =
-        new ScriptWorkItemExecutionServiceImpl(
-            null,
-            workItemService,
-            definitionRepository,
-            handoffService,
-            workItemRepository,
-            Mockito.mock(ScriptEventAuditRepository.class),
-            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
-            new ScriptOutputProperties(),
-            allowingTenantBudgetService(),
-            allowingDryRunCapacityService(),
-            null,
-            null,
-            new ObjectMapper(),
-            new SimpleMeterRegistry(),
-            gameSessionClient,
-            null,
-            transactionManager);
+      ScriptWorkItemExecutionService service =
+          new ScriptWorkItemExecutionServiceImpl(
+              null,
+              workItemService,
+              definitionRepository,
+              handoffService,
+              workItemRepository,
+              Mockito.mock(ScriptEventAuditRepository.class),
+              Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+              new ScriptOutputProperties(),
+              allowingTenantBudgetService(),
+              allowingDryRunCapacityService(),
+              null,
+              null,
+              new ObjectMapper(),
+              new SimpleMeterRegistry(),
+              gameSessionClient,
+              null,
+              transactionManager);
 
-    TransactionSynchronizationManager.setActualTransactionActive(false);
-    try {
-      ScriptWorkItemExecutionService.ExecutionBatchResult result =
-          service.processPendingWorkItems(1);
-
-      assertThat(result.completedCount()).isEqualTo(1);
-      assertThat(operations)
-          .containsExactly(
-              "tx-begin:0",
-              "tx-commit-1",
-              "runtime:false",
-              "tx-begin:0",
-              "tx-commit-2",
-              "runtime:false",
-              "begin-fanout:false",
-              "tx-begin:0",
-              "tx-commit-3",
-              "handoff:false",
-              "end-fanout:false",
-              "tx-begin:0",
-              "tx-commit-4");
-    } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
+      try {
+        ScriptWorkItemExecutionService.ExecutionBatchResult result =
+            service.processPendingWorkItems(1);
+
+        assertThat(result.completedCount()).isEqualTo(1);
+        assertThat(operations)
+            .containsExactlyElementsOf(
+                retryStatePresent
+                    ? List.of(
+                        "tx-begin:0",
+                        "tx-commit-1",
+                        "runtime:false",
+                        "tx-begin:0",
+                        "tx-commit-2",
+                        "runtime:false",
+                        "begin-fanout:false",
+                        "tx-begin:0",
+                        "tx-commit-3",
+                        "handoff:false",
+                        "end-fanout:false",
+                        "tx-begin:0",
+                        "tx-commit-4")
+                    : List.of(
+                        "tx-begin:0",
+                        "tx-commit-1",
+                        "runtime:false",
+                        "tx-begin:0",
+                        "tx-commit-2",
+                        "runtime:false",
+                        "begin-fanout:false",
+                        "handoff:false",
+                        "end-fanout:false",
+                        "tx-begin:0",
+                        "tx-commit-3"));
+        assertThat(item.getAuthorityUnavailableSince()).isNull();
+        assertThat(item.getAuthorityUnavailableCount()).isZero();
+        assertThat(item.getNextEligibleAt()).isNull();
+      } finally {
+        TransactionSynchronizationManager.setActualTransactionActive(false);
+      }
     }
   }
 

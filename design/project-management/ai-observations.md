@@ -153,3 +153,10 @@ Entry format:
   - Observation: a message to a completed agent queues context but does not start a new turn; this was an orchestration error, not a model-capacity or review-provider failure.
   - Expected pattern: use the bounded follow-up task operation for a continuation and verify that it started before awaiting its result. Preserve completed work and never restart a provider review to compensate.
   - Outcome: the existing helper was explicitly resumed with the scoped correction; no active review or useful implementation was interrupted.
+
+- `2026-09-30`: Separate request preparation latency from provider review duration
+  - Context: the canonical Hosted request for #2909 at `e39956a56` spent about five minutes in its operator process before returning the posted trigger `5919007416`; its eventual provider response was separately rate-limited.
+  - Observation: recorded provider durations exclude preparation, so they cannot explain the whole cadence. The exact slow command phase is not established; neither a silent process nor elapsed time proves a deadlock or an active provider review.
+  - Expected pattern: measure preparation phases before optimizing and retain independent live head, ancestry, request, and cooldown safety checks. Do not replace live cooldown verification with an unsupported age cutoff or a stored terminal label.
+  - Outcome: the canonical request posted without bypassing safety; the authoritative retry deadline remains owned by one silent timer sentinel. No speculative performance rewrite was added.
+  - Reconsideration trigger: use a bounded timing investigation when preparation repeatedly threatens eligible review windows or an authorized controller performance pass is undertaken.

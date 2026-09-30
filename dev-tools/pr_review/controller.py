@@ -5768,7 +5768,15 @@ class ReviewController:
         try:
             _, reconciliation = self._reconciliation(state, evidence_prs=set())
             parent_link = reconciliation.links.get(pr)
-        except (ControllerError, KeyError, OSError, ValueError, subprocess.SubprocessError):
+        except (
+            ControllerError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            subprocess.SubprocessError,
+        ):
             pass
         current = AnchorFacts(
             pr,

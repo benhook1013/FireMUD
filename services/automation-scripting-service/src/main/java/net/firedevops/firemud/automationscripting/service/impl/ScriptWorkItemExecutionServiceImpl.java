@@ -603,6 +603,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void commitPostEvaluationFenceState(ScriptWorkItem workItem) {
+    if (!hasAuthorityUnavailableRetryState(workItem)) {
+      return;
+    }
     if (transactionTemplate == null) {
       clearAuthorityUnavailableRetryState(workItem);
       return;
@@ -1173,15 +1176,19 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   /** Clears an outage budget after a fresh fence read succeeds. */
   private void clearAuthorityUnavailableRetryState(ScriptWorkItem workItem) {
-    if (workItem.getAuthorityUnavailableSince() == null
-        && workItem.getAuthorityUnavailableCount() == 0
-        && workItem.getNextEligibleAt() == null) {
+    if (!hasAuthorityUnavailableRetryState(workItem)) {
       return;
     }
     workItem.setAuthorityUnavailableSince(null);
     workItem.setAuthorityUnavailableCount(0);
     workItem.setNextEligibleAt(null);
     workItemRepository.save(workItem);
+  }
+
+  private static boolean hasAuthorityUnavailableRetryState(ScriptWorkItem workItem) {
+    return workItem.getAuthorityUnavailableSince() != null
+        || workItem.getAuthorityUnavailableCount() != 0
+        || workItem.getNextEligibleAt() != null;
   }
 
   private static boolean isRepositoryUnavailable(Throwable exception) {
