@@ -19,6 +19,8 @@ final class ScriptHandoffOutcomeSupport {
   static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
   static final String REASON_INVALID_ARGUMENT = "invalid_argument";
   static final String REASON_REMOTE_RESPONSE_INVALID = "remote_response_invalid";
+  static final String REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE =
+      "script_patch_base_version_unavailable";
   static final String REASON_RUNTIME_PAUSED = "runtime_paused";
   static final String REASON_RUNTIME_REGION_SCOPE_ADVANCED = "runtime_region_scope_advanced";
   static final String REASON_IDEMPOTENCY_CONFLICT = "idempotency_conflict";
@@ -86,6 +88,7 @@ final class ScriptHandoffOutcomeSupport {
       case "RUNTIME_REGION_SCOPE_ADVANCED" -> REASON_RUNTIME_SCOPE_CHANGED;
       case "INVALID_ARGUMENT" -> REASON_INVALID_ARGUMENT;
       case "REMOTE_RESPONSE_INVALID" -> REASON_REMOTE_RESPONSE_INVALID;
+      case "SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE" -> REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE;
       case "RUNTIME_PAUSED" -> REASON_RUNTIME_PAUSED;
       case "QUEUE_UNAVAILABLE" -> REASON_AUTHORITY_UNAVAILABLE;
       default -> REASON_UNCLASSIFIED_HANDOFF_ERROR;

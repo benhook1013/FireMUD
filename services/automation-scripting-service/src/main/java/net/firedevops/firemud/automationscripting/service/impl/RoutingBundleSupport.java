@@ -72,18 +72,28 @@ final class RoutingBundleSupport {
     return normalize(pointer.getWorldSlug(), pointer.getRealmSlug(), pointer.getPointerVersion());
   }
 
+  static String normalizePlayableStateScope(String playableStateScope) {
+    return canonicalPlayableStateScope(playableStateScope);
+  }
+
+  static String normalizePlayableStateScope(PlayableStateScope playableStateScope) {
+    if (playableStateScope == null) {
+      return "";
+    }
+    return switch (playableStateScope) {
+      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+      case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
+    };
+  }
+
   private static boolean samePlayableStateScope(
       String pointerScope, PlayableStateScope runtimeScope) {
     if (runtimeScope == null) {
       return false;
     }
     String normalizedPointerScope = canonicalPlayableStateScope(pointerScope);
-    String normalizedRuntimeScope =
-        switch (runtimeScope) {
-          case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
-          case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
-          case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED -> "";
-        };
+    String normalizedRuntimeScope = normalizePlayableStateScope(runtimeScope);
     return !normalizedRuntimeScope.isBlank()
         && normalizedRuntimeScope.equals(normalizedPointerScope);
   }

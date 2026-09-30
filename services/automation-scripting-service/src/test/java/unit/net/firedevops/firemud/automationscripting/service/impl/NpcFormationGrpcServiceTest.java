@@ -316,6 +316,7 @@ class NpcFormationGrpcServiceTest {
         Mockito.mock(ScriptEventIngressService.class),
         Mockito.mock(ScriptWorkItemRepository.class),
         npcService,
-        new SimpleMeterRegistry(), "");
+        new SimpleMeterRegistry(),
+        "");
   }
 }

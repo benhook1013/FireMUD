@@ -24,6 +24,8 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
@@ -689,6 +691,57 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+  }
+
+  @Test
+  void retainedPointerWithUnknownStateScopeCannotBindOrSpawn() {
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    when(pointerAuthority.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    22L,
+                    1L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "LEGACY_UNKNOWN",
+                    "ALLOW_NEW")));
+    PlayCommandHandler pointerBackedHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(pointerAuthority),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        pointerBackedHandler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
+    Mockito.verify(entityManagementClient, never())
+        .findCharacterByName(Mockito.any(), Mockito.any(), Mockito.anyString());
+    Mockito.verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
   }
 
   @Test
