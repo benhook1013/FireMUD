@@ -306,7 +306,7 @@ public class AccountMembershipAuthorityEventProducer {
    * Reads one same-fence runtime membership result from the proved active-positive or never-joined
    * sequence-zero path.
    *
-   * <p>This deliberately has no inactive, unpaired, or synthesized fallback. The caller owns the
+   * <p>This deliberately has no inactive, unproved, or synthesized fallback. The caller owns the
    * Account transaction and the RPC remains unavailable until its consumer validates this whole
    * evidence bundle.
    */
