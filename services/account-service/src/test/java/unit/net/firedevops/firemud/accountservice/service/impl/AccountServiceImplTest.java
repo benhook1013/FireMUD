@@ -447,10 +447,13 @@ class AccountServiceImplTest {
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
     JoinPublicProductionResult retried =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
-    ConnectTokenResult onboardingToken =
-        service.issueConnectToken(
-            bootstrap.bootstrapToken(),
-            new ConnectTokenRequest(connectScopeId, "first-play-after-join"));
+    AuthenticationException onboardingTokenUnavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "first-play-after-join")));
 
     assertTrue(first.success());
     assertEquals("JOINED", first.outcomeCode());
@@ -458,7 +461,7 @@ class AccountServiceImplTest {
     assertEquals(2L, first.membershipVersion());
     assertTrue(retried.success());
     assertTrue(retried.replayed());
-    assertNotNull(onboardingToken.connectToken());
+    assertEquals("AUTH_UNAVAILABLE", onboardingTokenUnavailable.getCode());
     assertEquals(REALM_ID, retainedScope.get().realmId().toString());
     assertEquals(
         first,
@@ -1826,7 +1829,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void allAccountMintPathsUseCanonicalIssuerAndRetainTheirClaims() {
+  void accountJwtMintPathsRemainCanonicalAndConnectTokenFailsClosedWithoutAuthorityTuple() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1858,12 +1861,20 @@ class AccountServiceImplTest {
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.of(membership(account, 7L)));
-    ConnectTokenResult connectToken =
-        service.issueConnectToken(
-            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "issuer-proof"));
-    assertCanonicalIssuerAndClaims(connectToken.connectToken(), "gameplay-connect", 11L);
-    assertEquals(7L, parseClaims(connectToken.connectToken()).get("tenantId", Long.class));
-    assertEquals(17L, parseClaims(connectToken.connectToken()).get("pointerVersion", Long.class));
+    AuthenticationException connectTokenUnavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new ConnectTokenRequest(connectScopeId, "issuer-proof")));
+    assertEquals("AUTH_UNAVAILABLE", connectTokenUnavailable.getCode());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
 
     Account otpAccount = new Account();
     otpAccount.setId(12L);
@@ -2674,7 +2685,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void issueConnectTokenReturnsShortLivedConnectToken() {
+  void issueConnectTokenFailsClosedWithoutCompleteSelectedTargetAuthorityEvidence() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2694,32 +2705,28 @@ class AccountServiceImplTest {
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
-    ConnectTokenResult result =
-        service.issueConnectToken(
-            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-3"));
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-3")));
 
-    assertEquals(11L, result.accountId());
-    assertEquals(7L, result.tenantId());
-    assertEquals(44L, result.gameInstanceId());
-    assertEquals(connectScopeId, result.connectScopeId());
-    assertNotNull(result.connectToken());
-    assertNotNull(result.jti());
-    assertEquals("req-3", result.requestId());
-    assertNotNull(result.issuedAt());
-    assertNotNull(result.expiresAt());
-    assertTrue(!result.replayed());
-    var connectTokenClaims =
-        new JwtUtil("mysecretkey123456789012345678901", 30000L)
-            .parseToken(result.connectToken())
-            .getPayload();
-    assertEquals("gameplay-connect", connectTokenClaims.getAudience().iterator().next());
-    assertEquals(17L, ((Number) connectTokenClaims.get("pointerVersion")).longValue());
-    org.mockito.Mockito.verify(sessionService)
-        .storeSession(
+    assertEquals("AUTH_UNAVAILABLE", unavailable.getCode());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeConnectTokenReplay(
             org.mockito.ArgumentMatchers.eq(7L),
             org.mockito.ArgumentMatchers.eq(11L),
+            org.mockito.ArgumentMatchers.eq(connectScopeId),
+            org.mockito.ArgumentMatchers.eq("req-3"),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.eq(30000L));
+            org.mockito.ArgumentMatchers.anyLong());
     org.mockito.Mockito.verifyNoInteractions(accountRealmAccessGrantRepository);
   }
 
@@ -2894,12 +2901,13 @@ class AccountServiceImplTest {
                     !replay.success() && "ENTITLEMENT_UNAVAILABLE".equals(replay.errorCode())),
             org.mockito.ArgumentMatchers.anyLong());
 
-    ConnectTokenResult retried = service.issueConnectToken(bootstrap.bootstrapToken(), request);
+    AuthenticationException contextUnavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.issueConnectToken(bootstrap.bootstrapToken(), request));
 
-    assertEquals("req-entitlement-retry", retried.requestId());
-    assertNotNull(retried.connectToken());
-    assertFalse(retried.replayed());
-    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(1))
+    assertEquals("AUTH_UNAVAILABLE", contextUnavailable.getCode());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
         .storeConnectTokenReplay(
             org.mockito.ArgumentMatchers.eq(7L),
             org.mockito.ArgumentMatchers.eq(11L),
@@ -3077,62 +3085,33 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void issueConnectTokenReplaysSameTokenWhenPublicScopeStillMatchesPointer() {
+  void issueConnectTokenDoesNotReplayCachedLegacySuccess() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-        .thenReturn(Optional.of(membership(account, 7L)));
-    Subscription active = new Subscription();
-    active.setId(22L);
-    active.setTenantId(7L);
-    active.setStatus("active");
-    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
-
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
-    ConnectTokenResult firstResult =
-        service.issueConnectToken(
-            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-replay-1"));
-
+    ConnectTokenResult legacyCachedResult =
+        new ConnectTokenResult(
+            11L,
+            7L,
+            44L,
+            "production",
+            connectScopeId,
+            "legacy-cached-token",
+            "legacy-jti",
+            "req-replay-1",
+            "2026-09-30T00:00:00Z",
+            "2026-09-30T00:00:30Z",
+            false);
     when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, "req-replay-1"))
-        .thenReturn(Optional.of(new SessionService.ConnectTokenReplay(true, firstResult, "", "")));
-
-    ConnectTokenResult replayed =
-        service.issueConnectToken(
-            bootstrap.bootstrapToken(), new ConnectTokenRequest(connectScopeId, "req-replay-1"));
-
-    assertEquals(firstResult.connectToken(), replayed.connectToken());
-    assertEquals(firstResult.issuedAt(), replayed.issuedAt());
-    assertEquals(firstResult.expiresAt(), replayed.expiresAt());
-    assertEquals(firstResult.requestId(), replayed.requestId());
-    assertTrue(replayed.replayed());
-
-    when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
-            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
-                .setWorldSlug("demo")
-                .setWorldDisplayName("Demo World")
-                .setRealmSlug("production")
-                .setRealmDisplayName("Live Realm")
-                .setTenantId("7")
-                .setGameInstanceId("99")
-                .setRealmId(REALM_ID)
-                .setPlayableStateNamespaceId("production-namespace-7")
-                .setCatalogRevision(23L)
-                .setPointerVersion(18L)
-                .setVisible(true)
-                .setPublicProductionRealm(true)
-                .setRequiresCharacterSelection(false)
-                .setStateScope("SHARED")
-                .setCharacterCreationPolicy("ALLOW_NEW")
-                .build());
+            Optional.of(new SessionService.ConnectTokenReplay(true, legacyCachedResult, "", "")));
 
     AuthenticationException staleReplayException =
         assertThrows(
@@ -3142,11 +3121,25 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(),
                     new ConnectTokenRequest(connectScopeId, "req-replay-1")));
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", staleReplayException.getCode());
+    assertEquals("AUTH_UNAVAILABLE", staleReplayException.getCode());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.anyLong());
   }
 
   @Test
-  void issueConnectTokenRejectsCachedSuccessForNonPublicRealm() {
+  void issueConnectTokenRejectsCachedLegacySuccessForNonPublicRealm() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -3177,7 +3170,7 @@ class AccountServiceImplTest {
                     context.bootstrapToken(),
                     new ConnectTokenRequest(context.connectScopeId(), "req-private-cached")));
 
-    assertEquals("REALM_ACCESS_DENIED", exception.getCode());
+    assertEquals("AUTH_UNAVAILABLE", exception.getCode());
     org.mockito.Mockito.verify(accountRealmAccessGrantRepository, org.mockito.Mockito.never())
         .existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(11L, 7L, "demo", "preview");
   }

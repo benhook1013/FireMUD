@@ -2,17 +2,14 @@ package net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import java.net.URI;
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
 import net.firedevops.firemud.gamesession.testsupport.GameplayEntityAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplaySocialAssertions;
-import net.firedevops.firemud.gamesession.testsupport.GameplayStructuredCommandAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
 import net.firedevops.firemud.socialgroups.v1.ChatType;
@@ -36,7 +33,6 @@ class CommunicationWebSocketCrossServiceTest {
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
-  private static final String FIRST_PARTY_CONNECT_SECRET = "cross-service-connect-context-secret";
   private static final String SORA_EMAIL = "sora@example.com";
   private static final String NYX_EMAIL = "nyx@example.com";
 
@@ -300,9 +296,8 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketFriendsMissingPolicyRedactsPresenceWithoutDisconnecting() throws Exception {
+  void websocketFriendsDetailRedactsMissingPolicyPresenceWithoutDisconnecting() throws Exception {
     ensureTestServicesStarted();
-    long sessionId = prepareGameInstance();
     FriendPresenceEntry missingPolicyPresence =
         FriendPresenceEntry.newBuilder()
             .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
@@ -318,37 +313,7 @@ class CommunicationWebSocketCrossServiceTest {
             .setRealmDisplayName("Live Realm")
             .setActivityState(FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
             .build();
-    socialStub().setFriendPresenceEntries(List.of(missingPolicyPresence));
-
-    try (GameplayWebSocketDriver client =
-        openFirstPartyGameplayClient("friends-missing-policy-first-party")) {
-      int baseline = client.responses().size();
-      client.send("FRIENDS");
-      JsonNode friends = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode friendsPayload = requirePayload(friends, "friends_view");
-      assertThat(friendsPayload.path("friends")).hasSize(1);
-      JsonNode entry = friendsPayload.path("friends").get(0);
-      assertThat(entry.path("friendAccountId").asLong()).isEqualTo(SORA_ACCOUNT_ID);
-      assertThat(entry.path("displayName").asText()).isEqualTo("Friend #" + SORA_ACCOUNT_ID);
-      for (String field :
-          List.of(
-              "online",
-              "worldSlug",
-              "worldDisplayName",
-              "realmSlug",
-              "realmDisplayName",
-              "characterName",
-              "playableStateScope",
-              "pointerVersion",
-              "activityState",
-              "lastSeenAtEpochMs",
-              "recentDisposition",
-              "visibilityPolicy")) {
-        assertThat(entry.has(field)).as("redacted field %s", field).isFalse();
-      }
-    }
-
-    sessionId = prepareGameInstance();
+    long sessionId = prepareGameInstance();
     socialStub().setFriendPresenceEntries(List.of(missingPolicyPresence));
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-missing-policy-detail")) {
@@ -494,300 +459,6 @@ class CommunicationWebSocketCrossServiceTest {
         Long.toString(TENANT_ID),
         Long.toString(ACCOUNT_ID),
         FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE);
-  }
-
-  @Test
-  void websocketFirstPartyBareLoginFailsClosedBeforeGameplayAdmission() throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-
-    try (GameplayWebSocketDriver client = openFirstPartyClient("bare-login-unavailable")) {
-      client.send("LOGIN");
-      JsonNode login = awaitStructuredCommand(client, 0, "LOGIN");
-      GameplayStructuredCommandAssertions.requireStructuredCommand(
-          login, "LOGIN", "login", "META", "SESSION");
-      assertThat(login.path("accepted").asBoolean()).isFalse();
-      assertThat(login.path("errorCode").asText()).isEqualTo("AUTH_UNAVAILABLE");
-
-      int baseline = client.responses().size();
-      client.send("PLAY demo");
-      JsonNode play = awaitStructuredCommand(client, baseline, "PLAY");
-      assertThat(play.path("accepted").asBoolean()).isFalse();
-      assertThat(play.path("errorCode").asText()).isEqualTo("LOGIN_REQUIRED");
-    }
-  }
-
-  @Test
-  void websocketFirstPartySayUsesStructuredCommunicationMetadata() throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-
-    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("say-first-party")) {
-      int baseline = client.responses().size();
-      client.send("SAY hello travelers");
-      JsonNode say = awaitStructuredCommand(client, baseline, "SAY");
-      GameplayStructuredCommandAssertions.requireStructuredCommand(
-          say, "SAY", "say", "SOCIAL", "COMMUNICATION");
-      assertThat(say.path("accepted").asBoolean()).isTrue();
-    }
-  }
-
-  @Test
-  void websocketFirstPartyConfiguredAuthoredAliasDoesNotBypassAdmittedDefinitions()
-      throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-
-    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("authored-first-party")) {
-      int baseline = client.responses().size();
-      client.send("SALUTE captain");
-      JsonNode unknown = awaitStructuredCommand(client, baseline, "UNKNOWN");
-      assertThat(unknown.path("accepted").asBoolean()).isFalse();
-      assertThat(unknown.path("errorCode").asText()).isEqualTo("UNKNOWN_COMMAND");
-    }
-  }
-
-  @Test
-  void websocketFirstPartyFriendsViewsUseStructuredCanonicalPayloads() throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-
-    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("friends-first-party")) {
-      int baseline = client.responses().size();
-      client.send("FRIENDS");
-      JsonNode friends = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode friendsPayload = requirePayload(friends, "friends_view");
-      assertThat(friends.path("accepted").asBoolean()).isTrue();
-      assertThat(friendsPayload.path("filter").asText()).isEqualTo("ALL");
-      assertThat(friendsPayload.path("friends").get(0).path("friendAccountId").asLong())
-          .isEqualTo(SORA_ACCOUNT_ID);
-      assertThat(friendsPayload.path("friends").get(0).path("playableStateScope").asText())
-          .isEqualTo("SHARED");
-
-      baseline = client.responses().size();
-      client.send("FRIENDS SHOW #1");
-      JsonNode detail = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode detailPayload = requirePayload(detail, "friend_detail_view");
-      assertThat(detailPayload.path("friend").path("ordinal").asInt()).isEqualTo(1);
-      assertThat(detailPayload.path("friend").path("friendAccountId").asLong())
-          .isEqualTo(SORA_ACCOUNT_ID);
-
-      baseline = client.responses().size();
-      client.send("FRIENDS SUMMARY");
-      JsonNode summary = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode summaryPayload = requirePayload(summary, "friend_roster_summary_view");
-      assertThat(summaryPayload.path("totalCount").asInt()).isEqualTo(1);
-      assertThat(summaryPayload.path("onlineCount").asInt()).isEqualTo(1);
-      assertThat(summaryPayload.path("sharedCount").asInt()).isEqualTo(1);
-    }
-  }
-
-  @Test
-  void websocketFirstPartyFriendsVisibilityUsesStructuredPolicyPayloads() throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-
-    try (GameplayWebSocketDriver client =
-        openFirstPartyGameplayClient("friends-visibility-first-party")) {
-      int baseline = client.responses().size();
-      client.send("FRIENDS VISIBILITY");
-      JsonNode visibility = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode visibilityPayload = requirePayload(visibility, "friend_presence_policy_view");
-      assertThat(visibilityPayload.path("currentPolicy").asText()).isEqualTo("FRIENDS_ONLY");
-
-      baseline = client.responses().size();
-      client.send("FRIENDS VISIBILITY PRIVATE");
-      JsonNode updated = awaitStructuredCommand(client, baseline, "FRIENDS");
-      requirePayload(updated, "notice");
-      JsonNode updatedPolicy = requirePayload(updated, "friend_presence_policy_view");
-      assertThat(updatedPolicy.path("currentPolicy").asText()).isEqualTo("PRIVATE");
-    }
-
-    GameplaySocialAssertions.assertGetVisibilityRequest(
-        socialStub().lastGetVisibilityRequest(),
-        Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID));
-    GameplaySocialAssertions.assertUpdateVisibilityRequest(
-        socialStub().lastUpdateVisibilityRequest(),
-        Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PRIVATE);
-  }
-
-  @Test
-  void websocketFirstPartyFriendsMutationsUseStructuredCanonicalPayloads() throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-
-    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("friends-add-first-party")) {
-      int baseline = client.responses().size();
-      client.send("FRIENDS ADD 77");
-      JsonNode added = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode addPayload = requirePayload(added, "friend_mutation_result");
-      assertThat(addPayload.path("action").asText()).isEqualTo("ADD");
-      assertThat(addPayload.path("friendAccountId").asLong()).isEqualTo(77L);
-      assertThat(addPayload.path("displayName").asText()).isEqualTo("Friend #77");
-    }
-
-    prepareGameInstance();
-    try (GameplayWebSocketDriver client =
-        openFirstPartyGameplayClient("friends-remove-name-first-party")) {
-      int baseline = client.responses().size();
-      client.send("FRIENDS REMOVE Sora");
-      JsonNode removedByName = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode removeByNamePayload = requirePayload(removedByName, "friend_mutation_result");
-      assertThat(removeByNamePayload.path("action").asText()).isEqualTo("REMOVE");
-      assertThat(removeByNamePayload.path("friendAccountId").asLong()).isEqualTo(SORA_ACCOUNT_ID);
-      assertThat(removeByNamePayload.path("displayName").asText()).isEqualTo("Sora");
-      assertThat(removeByNamePayload.path("characterName").asText()).isEqualTo("Sora");
-    }
-
-    prepareGameInstance();
-    try (GameplayWebSocketDriver client =
-        openFirstPartyGameplayClient("friends-remove-ordinal-first-party")) {
-      int baseline = client.responses().size();
-      client.send("FRIENDS REMOVE #1");
-      JsonNode removedByOrdinal = awaitStructuredCommand(client, baseline, "FRIENDS");
-      JsonNode removeByOrdinalPayload = requirePayload(removedByOrdinal, "friend_mutation_result");
-      assertThat(removeByOrdinalPayload.path("action").asText()).isEqualTo("REMOVE");
-      assertThat(removeByOrdinalPayload.path("friendAccountId").asLong())
-          .isEqualTo(SORA_ACCOUNT_ID);
-      assertThat(removeByOrdinalPayload.path("ordinal").asInt()).isEqualTo(1);
-    }
-  }
-
-  @Test
-  void websocketFirstPartyInventoryViewsExposeTypedItemMetadata() throws Exception {
-    ensureTestServicesStarted();
-    prepareGameInstance();
-
-    try (GameplayWebSocketDriver client = openFirstPartyGameplayClient("inventory-first-party")) {
-      int baseline = client.responses().size();
-      client.send("GET Torch");
-      JsonNode pickup = awaitStructuredCommand(client, baseline, "GET");
-      assertThat(pickup.path("accepted").asBoolean())
-          .withFailMessage(pickup.toPrettyString())
-          .isTrue();
-      JsonNode pickupMutation =
-          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
-              client, baseline, "item_mutation_result");
-      assertThat(pickupMutation.path("action").asText()).isEqualTo("GET");
-      assertThat(pickupMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
-      assertThat(pickupMutation.path("source").path("kind").asText()).isEqualTo("ROOM_GROUND");
-      assertThat(pickupMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
-      List<JsonNode> pickupViews =
-          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayloads(
-              client, baseline, "inventory_view", 2);
-      assertThat(pickupViews).hasSize(2);
-      JsonNode carriedInventory = requireInventoryViewBySource(pickupViews, "INVENTORY");
-      assertThat(carriedInventory.path("entries")).hasSize(3);
-      JsonNode pickedUpTorch = requireInventoryEntryByVisibleRef(carriedInventory, "torch#1");
-      assertThat(pickedUpTorch.path("itemName").asText()).isEqualTo("Torch");
-      JsonNode roomGroundInventory = requireInventoryViewBySource(pickupViews, "ROOM_GROUND");
-      assertThat(roomGroundInventory.path("entries")).hasSize(1);
-      assertThat(roomGroundInventory.path("entries").get(0).path("visibleRef").asText())
-          .isEqualTo("backpack#1");
-      assertThat(roomGroundInventory.path("entries").get(0).path("itemName").asText())
-          .isEqualTo("Backpack");
-
-      baseline = client.responses().size();
-      client.send("CONTAINER Backpack");
-      JsonNode container = awaitStructuredCommand(client, baseline, "CONTAINER");
-      assertThat(container.path("accepted").asBoolean())
-          .withFailMessage(container.toPrettyString())
-          .isTrue();
-      JsonNode containerPayload = requirePayload(container, "inventory_view");
-      assertThat(containerPayload.path("source").asText()).isEqualTo("CONTAINER");
-      assertThat(containerPayload.path("context").path("displayName").asText())
-          .isEqualTo("Backpack");
-      assertThat(containerPayload.path("context").path("containerInstanceId").asText())
-          .isEqualTo("container-backpack-1");
-      assertThat(containerPayload.path("entries")).hasSize(1);
-      assertThat(containerPayload.path("entries").get(0).path("itemName").asText())
-          .isEqualTo("Ration");
-      assertThat(containerPayload.path("entries").get(0).path("visibleRef").asText())
-          .isEqualTo("ration#1");
-
-      baseline = client.responses().size();
-      client.send("PUT Torch INTO Backpack");
-      JsonNode put = awaitStructuredCommand(client, baseline, "PUT");
-      assertThat(put.path("accepted").asBoolean()).withFailMessage(put.toPrettyString()).isTrue();
-      JsonNode putMutation =
-          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
-              client, baseline, "item_mutation_result");
-      assertThat(putMutation.path("action").asText()).isEqualTo("PUT");
-      assertThat(putMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
-      assertThat(putMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
-      assertThat(putMutation.path("target").path("kind").asText()).isEqualTo("CONTAINER");
-      assertThat(putMutation.path("target").path("containerInstanceId").asText())
-          .isEqualTo("container-backpack-1");
-      assertThat(putMutation.path("target").path("visibleRef").asText()).isEqualTo("backpack#1");
-
-      baseline = client.responses().size();
-      client.send("TAKE Torch FROM Backpack");
-      JsonNode take = awaitStructuredCommand(client, baseline, "TAKE");
-      assertThat(take.path("accepted").asBoolean()).withFailMessage(take.toPrettyString()).isTrue();
-      JsonNode takeMutation =
-          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
-              client, baseline, "item_mutation_result");
-      assertThat(takeMutation.path("action").asText()).isEqualTo("TAKE");
-      assertThat(takeMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
-      assertThat(takeMutation.path("source").path("kind").asText()).isEqualTo("CONTAINER");
-      assertThat(takeMutation.path("source").path("containerInstanceId").asText())
-          .isEqualTo("container-backpack-1");
-      assertThat(takeMutation.path("source").path("visibleRef").asText()).isEqualTo("backpack#1");
-      assertThat(takeMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
-
-      baseline = client.responses().size();
-      client.send("DROP Torch");
-      JsonNode drop = awaitStructuredCommand(client, baseline, "DROP");
-      assertThat(drop.path("accepted").asBoolean()).withFailMessage(drop.toPrettyString()).isTrue();
-      JsonNode dropMutation =
-          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
-              client, baseline, "item_mutation_result");
-      assertThat(dropMutation.path("action").asText()).isEqualTo("DROP");
-      assertThat(dropMutation.path("item").path("visibleRef").asText()).isEqualTo("torch#1");
-      assertThat(dropMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
-      assertThat(dropMutation.path("target").path("kind").asText()).isEqualTo("ROOM_GROUND");
-
-      baseline = client.responses().size();
-      client.send("WEAR Leather Cap");
-      JsonNode wear = awaitStructuredCommand(client, baseline, "WEAR");
-      assertThat(wear.path("accepted").asBoolean()).withFailMessage(wear.toPrettyString()).isTrue();
-      JsonNode wearMutation =
-          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
-              client, baseline, "item_mutation_result");
-      assertThat(wearMutation.path("action").asText()).isEqualTo("WEAR");
-      assertThat(wearMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
-      assertThat(wearMutation.path("source").path("kind").asText()).isEqualTo("INVENTORY");
-      assertThat(wearMutation.path("target").path("kind").asText()).isEqualTo("EQUIPMENT");
-      assertThat(wearMutation.path("target").path("slot").asText()).isEqualTo("HEAD");
-
-      baseline = client.responses().size();
-      client.send("REMOVE HEAD");
-      JsonNode remove = awaitStructuredCommand(client, baseline, "REMOVE");
-      assertThat(remove.path("accepted").asBoolean())
-          .withFailMessage(remove.toPrettyString())
-          .isTrue();
-      JsonNode removeMutation =
-          GameplayStructuredCommandAssertions.awaitFirstPartyPlayerOutputPayload(
-              client, baseline, "item_mutation_result");
-      assertThat(removeMutation.path("action").asText()).isEqualTo("REMOVE");
-      assertThat(removeMutation.path("item").path("visibleRef").asText()).isEqualTo("cap#1");
-      assertThat(removeMutation.path("source").path("kind").asText()).isEqualTo("EQUIPMENT");
-      assertThat(removeMutation.path("source").path("slot").asText()).isEqualTo("HEAD");
-      assertThat(removeMutation.path("target").path("kind").asText()).isEqualTo("INVENTORY");
-
-      baseline = client.responses().size();
-      client.send("EQUIPMENT");
-      JsonNode equipment = awaitStructuredCommand(client, baseline, "EQUIPMENT");
-      assertThat(equipment.path("accepted").asBoolean())
-          .withFailMessage(equipment.toPrettyString())
-          .isTrue();
-      JsonNode equipmentPayload = requirePayload(equipment, "inventory_view");
-      assertThat(equipmentPayload.path("source").asText()).isEqualTo("EQUIPMENT");
-      assertThat(equipmentPayload.path("entries")).isEmpty();
-    }
   }
 
   @Test
@@ -973,8 +644,6 @@ class CommunicationWebSocketCrossServiceTest {
               .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
-              .withGameSessionProps(
-                  Map.of("firemud.gateway.connect-context.jwt-secret", FIRST_PARTY_CONNECT_SECRET))
               .withInitialFriendPresenceResponse(
                   net.firedevops.firemud.socialgroups.v1.ListFriendPresenceResponse.newBuilder()
                       .addPresences(
@@ -1064,101 +733,8 @@ class CommunicationWebSocketCrossServiceTest {
         READY_LOOK_TEXT);
   }
 
-  private GameplayWebSocketDriver openFirstPartyGameplayClient(String transportSessionId)
-      throws Exception {
-    GameplayWebSocketDriver client = openFirstPartyClient(transportSessionId);
-    client.send("LOGIN");
-    JsonNode login = awaitStructuredCommand(client, 0, "LOGIN");
-    GameplayStructuredCommandAssertions.requireStructuredCommand(
-        login, "LOGIN", "login", "META", "SESSION");
-    assertThat(login.path("accepted").asBoolean()).isFalse();
-    assertThat(login.path("errorCode").asText()).isEqualTo("AUTH_UNAVAILABLE");
-
-    client.send("LOGIN emberline@example.com swordfish");
-    JsonNode credentialLogin = awaitStructuredCommand(client, 1, "LOGIN");
-    GameplayStructuredCommandAssertions.requireStructuredCommand(
-        credentialLogin, "LOGIN", "login", "META", "SESSION");
-    assertThat(credentialLogin.path("accepted").asBoolean())
-        .withFailMessage(credentialLogin.toPrettyString())
-        .isTrue();
-    client.send("PLAY demo");
-    JsonNode play = awaitStructuredCommand(client, 2, "PLAY");
-    GameplayStructuredCommandAssertions.requireStructuredCommand(
-        play, "PLAY", "play", "META", "SESSION");
-    assertThat(play.path("accepted").asBoolean()).withFailMessage(play.toPrettyString()).isTrue();
-    int readinessBaseline = client.responses().size();
-    client.send("LOOK");
-    JsonNode look = awaitStructuredCommand(client, readinessBaseline, "LOOK");
-    assertThat(look.path("accepted").asBoolean()).withFailMessage(look.toPrettyString()).isTrue();
-    return client;
-  }
-
   private URI gameSessionWebSocketUrl() {
     return URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
-  }
-
-  private GameplayWebSocketDriver openFirstPartyClient(String transportSessionId) {
-    return GameplayWebSocketDriver.connectFirstPartyWeb(
-        URI.create("ws://localhost:" + gameSession().port() + "/ws/game"),
-        COMMAND_WAIT,
-        transportSessionId,
-        FIRST_PARTY_CONNECT_SECRET,
-        Long.toString(ACCOUNT_ID),
-        Map.of(
-            "accountId",
-            Long.toString(ACCOUNT_ID),
-            "tenantId",
-            Long.toString(TENANT_ID),
-            "worldSlug",
-            "demo",
-            "realmSlug",
-            "production",
-            "gameInstanceId",
-            Long.toString(DEMO_WORLD_INSTANCE_ID),
-            "pointerVersion",
-            "1",
-            "connectScopeId",
-            "scope-" + transportSessionId,
-            "connectTokenJti",
-            "connect-jti-" + transportSessionId,
-            "connectRequestId",
-            "connect-req-" + transportSessionId,
-            "gatewayRequestId",
-            "gateway-req-" + transportSessionId));
-  }
-
-  private JsonNode awaitStructuredCommand(
-      GameplayWebSocketDriver client, int responseBaseline, String commandType) throws Exception {
-    return GameplayStructuredCommandAssertions.awaitStructuredCommand(
-        client, responseBaseline, commandType);
-  }
-
-  private JsonNode requirePayload(JsonNode envelope, String payloadType) {
-    return GameplayStructuredCommandAssertions.requirePayload(envelope, payloadType);
-  }
-
-  private List<JsonNode> requirePayloads(JsonNode envelope, String payloadType) {
-    return GameplayStructuredCommandAssertions.requirePayloads(envelope, payloadType);
-  }
-
-  private JsonNode requireInventoryViewBySource(List<JsonNode> payloads, String source) {
-    return payloads.stream()
-        .filter(payload -> source.equals(payload.path("source").asText()))
-        .findFirst()
-        .orElseThrow(
-            () ->
-                new AssertionError(
-                    "Missing inventory_view source=" + source + " in payloads: " + payloads));
-  }
-
-  private JsonNode requireInventoryEntryByVisibleRef(JsonNode inventory, String visibleRef) {
-    for (JsonNode entry : inventory.path("entries")) {
-      if (visibleRef.equals(entry.path("visibleRef").asText())) {
-        return entry;
-      }
-    }
-    throw new AssertionError(
-        "Missing inventory entry visibleRef=" + visibleRef + " in view: " + inventory);
   }
 
   private static CrossServiceAppHarness.GameSessionHolder gameSession() {
