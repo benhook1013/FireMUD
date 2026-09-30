@@ -194,6 +194,62 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(item.getStatus()).isEqualTo("HANDED_OFF");
     Mockito.verify(definitionRepository)
         .findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
+    verify(workItemRepository, Mockito.times(1)).save(item);
+  }
+
+  @Test
+  void authorityUnavailableBudgetSurvivesAdmissionFenceBeforeHandoffFence() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    Instant outageSince = Instant.now().minus(Duration.ofSeconds(1));
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            runtimeStateResponse(),
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").build())
+                .build());
+    ScriptWorkItem item = workItem();
+    item.setAuthorityUnavailableSince(outageSince);
+    item.setAuthorityUnavailableCount(9);
+    item.setNextEligibleAt(outageSince.plusSeconds(30));
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenReturn(Optional.of(definition));
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        fenceExecutionService(
+            workItemService,
+            workItemRepository,
+            auditRepository,
+            definitionRepository,
+            handoffService,
+            null,
+            gameSessionClient,
+            Mockito.mock(PluginRuntimeStateRepository.class));
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("authority_unavailable_exhausted");
+    assertThat(item.getAuthorityUnavailableSince()).isEqualTo(outageSince);
+    assertThat(item.getAuthorityUnavailableCount()).isEqualTo(10);
+    assertThat(item.getNextEligibleAt()).isNull();
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("authority_unavailable_exhausted");
+    verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
   }
 
   @Test

@@ -650,7 +650,6 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       }
       return false;
     }
-    clearAuthorityUnavailableRetryState(workItem);
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
@@ -1448,6 +1447,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
     workItem.setStatus(STATUS_HANDED_OFF);
     workItem.setCancelReason(null);
+    workItem.setAuthorityUnavailableSince(null);
+    workItem.setAuthorityUnavailableCount(0);
     workItem.setNextEligibleAt(null);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
