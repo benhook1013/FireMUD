@@ -108,7 +108,7 @@ Successful reconnect after a normal disconnect:
 ```text
 OK LOGIN Logged in as demo@example.com
 OK PLAY Entered world: demo
-<fresh LOOK or prompt output follows>
+<fresh LOOK follows, then one prompt only when the effective reconnect-prompt settings permit>
 ```
 
 Stale or expired resumable state where a fresh `PLAY` can still be admitted should not force the player to type the same command twice. The normal outcome is still a successful fresh entry:
@@ -116,7 +116,7 @@ Stale or expired resumable state where a fresh `PLAY` can still be admitted shou
 ```text
 OK LOGIN Logged in as demo@example.com
 OK PLAY Entered world: demo
-<fresh LOOK or prompt output follows>
+<fresh LOOK follows, then one prompt only when the effective reconnect-prompt settings permit>
 ```
 
 Only failures that genuinely require player or client action should surface as errors, for example access revocation, missing entitlements, or backend unavailability.

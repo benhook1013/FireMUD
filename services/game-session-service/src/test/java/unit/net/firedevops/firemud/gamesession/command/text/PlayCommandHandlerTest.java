@@ -224,6 +224,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "play demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.reconnectRedrawRecommended()).isFalse();
     assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo");
     Mockito.verify(sessionContextService)
         .save(
@@ -2466,17 +2467,33 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void staleRoomContextFallsBackToFreshEntry() {
+  void roomlessRetainedActorFallsBackToFreshEntryAndRequestsRedraw() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, null, "jwt-token");
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "demo",
+            1L,
+            null,
+            "jwt-token",
+            null,
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 123L))
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.reconnectRedrawRecommended()).isTrue();
     assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo");
     Mockito.verify(sessionContextService)
         .save(
@@ -2503,7 +2520,11 @@ class PlayCommandHandlerTest {
                     "reason",
                     "stale_or_missing_context")
                 .count())
-        .isEqualTo(0.0);
+        .isEqualTo(1.0);
+    Mockito.verify(sessionAuthenticationService).resolveByGameplayIdentity(22L, 1L, 7001L);
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             new SessionContext(
@@ -2543,6 +2564,98 @@ class PlayCommandHandlerTest {
                 "SHARED"),
             "play_entry",
             "play-spawn:1:1:7001:1");
+  }
+
+  @Test
+  void roomlessRetainedActorMissingFromRosterCannotBeSilentlyReplaced() {
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            null,
+            "jwt-token",
+            null,
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertIdentityUnavailableWithoutMutation(result);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(sessionAuthenticationService, never())
+        .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  @Test
+  void roomlessRetainedActorMayChangeThroughExplicitCharacterSelection() {
+    SessionContext context =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            null,
+            "jwt-token",
+            null,
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    stubOwnedRoster(
+        "1",
+        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+        actor("7002", "Sora", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7002L))
+        .thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("demo", "production", "Sora"),
+                "PLAY demo production Sora"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(result.reconnectRedrawRecommended()).isFalse();
+    Mockito.verify(sessionContextService)
+        .save(
+            new SessionContext(
+                1L,
+                22L,
+                123L,
+                "demo@example.com",
+                7002L,
+                "Sora",
+                1L,
+                gameLogicProperties.getDefaultRoomId(),
+                "jwt-token",
+                null,
+                1L,
+                "demo",
+                "production",
+                1L,
+                "SHARED"));
   }
 
   private static String joinedOutputText(List<PlayerOutput> outputs) {

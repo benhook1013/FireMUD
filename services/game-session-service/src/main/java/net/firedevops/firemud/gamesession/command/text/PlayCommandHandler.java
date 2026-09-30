@@ -405,7 +405,7 @@ public class PlayCommandHandler {
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), character, ex);
         }
         boolean retainedTargetMatchesSelection =
-            context.hasGameplayRegionBinding()
+            context.hasGameplayIdentity()
                 && context.tenantId() == selectedRealm.tenantId()
                 && context.gameInstanceId() == selectedRealm.gameInstanceId()
                 && (!StringUtils.hasText(context.worldSlug())
@@ -454,8 +454,9 @@ public class PlayCommandHandler {
                 true);
           }
 
-          maybeRecordFreshEntryFallback(
-              context, selectedRealm, characterName, gameInstanceId, characterId);
+          boolean freshEntryFallback =
+              maybeRecordFreshEntryFallback(
+                  context, selectedRealm, characterName, gameInstanceId, characterId);
 
           Optional<SessionContext> existingBinding =
               sessionAuthenticationService
@@ -503,7 +504,7 @@ public class PlayCommandHandler {
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
               List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), character)),
-              resumedOrTookOver);
+              resumedOrTookOver || freshEntryFallback);
         }
       }
     }

@@ -1097,11 +1097,20 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
-  void resumedPlayRefreshesLookWhenNoRetainedBufferExists() throws Exception {
+  void genericReconnectPlayEmitsFreshLookAndConfiguredPromptWithoutRetainedBufferReads()
+      throws Exception {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext binding =
         new SessionContext(
             41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    PresentationProperties presentation =
+        new PresentationProperties(
+            "en-NZ",
+            PresentationProperties.ColorMode.NONE,
+            false,
+            new PresentationProperties.Prompt(true, true, 150L));
+    PlayerOutput freshLook = PlayerOutput.message("Fresh room view");
+    PlayerOutput prompt = PlayerOutput.prompt("fresh prompt");
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1117,10 +1126,21 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq("en-NZ"),
-            any(PresentationProperties.class),
+            eq(presentation),
             any()))
         .thenReturn("OK PLAY");
-    when(screenBufferService.get(22L, 7L, 7001L)).thenReturn(Optional.empty());
+    when(settingsResolver.presentation(binding)).thenReturn(presentation);
+    when(lookHandler.describePlayerOutput(
+            "41",
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .RECONNECT_REFRESH))
+        .thenReturn(freshLook);
+    when(promptComposer.compose(binding)).thenReturn(Optional.of(prompt));
+    when(outputProjector.projectPlayerOutput(session, freshLook, "en-NZ", presentation))
+        .thenReturn("Fresh room view");
+    when(outputProjector.projectPlayerOutput(session, prompt, "en-NZ", presentation))
+        .thenReturn("fresh prompt");
 
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
@@ -1130,6 +1150,13 @@ class GameSessionWebSocketHandlerTest {
             true,
             net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                 .RECONNECT_REFRESH);
+    verify(outputProjector).projectPlayerOutput(session, freshLook, "en-NZ", presentation);
+    verify(promptComposer).compose(binding);
+    verify(outputProjector).projectPlayerOutput(session, prompt, "en-NZ", presentation);
+    verify(promptBurstCoordinator).recordPromptEmission("41");
+    verify(session).sendMessage(new TextMessage("Fresh room view"));
+    verify(session).sendMessage(new TextMessage("fresh prompt"));
+    Mockito.verifyNoInteractions(screenBufferService);
   }
 
   @ParameterizedTest
