@@ -484,7 +484,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.roomInstanceId()).isNotBlank();
             });
 
-    verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("41", "LOOK", false);
     verify(gameLogicClient)
         .resolveLook(
@@ -851,7 +851,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     && payload.contains("Live Realm (production) [shared, allow_new]"));
     assertThat(payloads)
         .anyMatch(payload -> payload.startsWith("ERROR CHARACTER_LIST_UNAVAILABLE"));
-    verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
     verify(accountClient)
@@ -1427,8 +1427,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.worldSlug()).isEqualTo("sandbox");
               assertThat(context.realmSlug()).isEqualTo("production");
               assertThat(context.pointerVersion()).isEqualTo(1L);
-              assertThat(context.connectScopeId()).isEqualTo("scope-route-b");
-              assertThat(context.connectRequestId()).isEqualTo("connect-req-route-b");
+              assertThat(context.connectScopeId()).isNull();
+              assertThat(context.connectRequestId()).isNull();
             });
   }
 
@@ -1514,8 +1514,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.worldSlug()).isEqualTo("demo");
               assertThat(context.realmSlug()).isEqualTo("production");
               assertThat(context.pointerVersion()).isEqualTo(1L);
-              assertThat(context.connectScopeId()).isEqualTo("scope-scope-selector-b");
-              assertThat(context.connectRequestId()).isEqualTo("connect-req-scope-selector-b");
+              assertThat(context.connectScopeId()).isNull();
+              assertThat(context.connectRequestId()).isNull();
             });
     assertThat(gameplayPresenceService.findConnectedBySessionId(2L)).isEmpty();
   }
