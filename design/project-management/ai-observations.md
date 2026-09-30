@@ -164,3 +164,8 @@ Entry format:
   - Context: Account counter-exhaustion tests belong to #2876, whose test-result inspector is diagnostic-only; the strict required-suite/case interface exists only in its later descendant.
   - Observation: inspection before publication caught an unsupported strict CI step in the older ancestor. The uncommitted step was removed and the required execution gate placed in #2911, preserving source-test ownership without copying future tooling into the ancestor. Local PostgreSQL skips remain explicitly unproved.
   - Expected pattern: verify a workflow command against that exact branch's tooling version, not the latest tail; gate composed runtime proof where the required tool exists, then keep owning-PR and composed-descendant proof distinct.
+
+- `2026-10-01`: Observe the earliest actual transaction in PostgreSQL contention proof
+  - Context: the complete Account snapshot/first-JOIN test held the Account row `FOR UPDATE` and waited for JOIN's explicit Account-lock spy. JOIN first inserts its PENDING intent, whose foreign-key check can already wait on that same row.
+  - Observation: exact CI timed out at the later spy, not at a source invariant. Instrumenting the actual intent-insert backend before the real insert retained the exact `pg_blocking_pids` correlation and complete before/after DTO assertions; corrected CI `36778631119` executed the race once successfully. Worker exceptions are surfaced rather than hidden behind a latch timeout.
+  - Expected pattern: trace earlier foreign-key and deferred-trigger work before selecting a concurrency signal; prove the exact blocked backend/owner relation and do not fix a misplaced signal by extending timeouts or changing production transaction order.
