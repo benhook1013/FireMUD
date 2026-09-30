@@ -151,3 +151,8 @@ Entry format:
   - Context: a #2881 push yielded asynchronously and later returned a generic remote rejection. Dependent PR-body and CI operations were issued before consuming that result, so CI run `36703184951` targeted the old published head instead of the prepared correction.
   - Observation: the rejection's cause was not reported. Fresh remote readback confirmed no head change; a non-force retry then published the correction. The stale-head run was explicitly cancelled and excluded from proof.
   - Expected pattern: finish the push, verify the exact published SHA, and only then describe it as published or dispatch its CI. Independent operations may run concurrently; operations depending on publication must remain ordered even when tool calls yield.
+
+- `2026-10-01`: Fixture names do not establish exclusive ownership
+  - Context: #2911 removed unreachable legacy HMAC first-party success fixtures. A Redis value store named for first-party context also served normal gameplay presence; its mock/stubs were removed with the obsolete cases.
+  - Observation: local Docker-backed integration cases skipped, so compilation and module checks did not expose the lost shared support. Exact-head CI ran the cases and all 16 WebSocket scenarios failed at a null value-operations collaborator, before the intended assertions. The fixture support was restored without restoring HMAC admission; executed correction proof remains required.
+  - Expected pattern: trace every consumer of a shared fixture before removing it, use neutral names for shared support, and preserve an exact executed integration gate when cleanup affects skipped local tests. A green compiled/skipped gate is not proof that fixture dependencies were retained.

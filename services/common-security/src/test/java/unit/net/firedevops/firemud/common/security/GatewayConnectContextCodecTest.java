@@ -335,6 +335,137 @@ class GatewayConnectContextCodecTest {
   }
 
   @Test
+  void matchesPublicAndPrivateSourceExactlyAndAllowsShorterGatewayExpiry() throws Exception {
+    Map<String, Object> publicSource =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    String publicSourceBefore = json.writeValueAsString(publicSource);
+    Map<String, Object> publicPayload = projectContext(publicSource);
+    publicPayload.put(
+        "expiresAt",
+        BigInteger.valueOf(SelectedTargetConnectContextTestVectors.SOURCE_ISSUED_AT + 20L));
+    String publicEnvelope = sign(publicPayload);
+    GatewayConnectContext publicContext = verify(publicEnvelope);
+    String publicClaimsBefore = json.writeValueAsString(publicContext.claims());
+    byte[] publicSignedPayloadBefore = publicContext.signedPayload();
+
+    GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesGatewayContext(
+        publicSource, publicContext);
+
+    assertEquals(publicSourceBefore, json.writeValueAsString(publicSource));
+    assertEquals(publicEnvelope, publicContext.signedEnvelope());
+    assertEquals(publicClaimsBefore, json.writeValueAsString(publicContext.claims()));
+    assertArrayEquals(publicSignedPayloadBefore, publicContext.signedPayload());
+    assertEquals(
+        SelectedTargetConnectContextTestVectors.SOURCE_ISSUED_AT + 20L,
+        publicContext.integer("expiresAt").longValueExact());
+
+    Map<String, Object> privateSource =
+        SelectedTargetConnectContextTestVectors.privateSourceConnectTokenClaims();
+    String privateSourceBefore = json.writeValueAsString(privateSource);
+    Map<String, Object> privatePayload = projectContext(privateSource);
+    GatewayConnectContext privateContext = verify(sign(privatePayload));
+
+    GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesGatewayContext(
+        privateSource, privateContext);
+
+    assertEquals(privateSourceBefore, json.writeValueAsString(privateSource));
+    assertEquals(privatePayload, privateContext.claims());
+  }
+
+  @Test
+  void rejectsChangedAccountTargetAuthorityMapsCountersLifecycleAndMappedClaims() throws Exception {
+    Map<String, Object> publicSource =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    GatewayConnectContext publicContext = verify(sign(projectContext(publicSource)));
+
+    Map<String, Object> changedTarget =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    changedTarget.put("realmId", "018f8f0a-8c1d-7f9a-ad6a-bf4a312c0d8e");
+    assertSourceMismatch(changedTarget, publicContext);
+
+    Map<String, Object> changedMembershipMap =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    changedMembershipMap.put(
+        "membershipVersion",
+        Map.of(
+            SelectedTargetConnectContextTestVectors.TENANT_ID,
+            SelectedTargetConnectContextTestVectors.LARGE_COUNTER.add(BigInteger.ONE)));
+    assertSourceMismatch(changedMembershipMap, publicContext);
+
+    Map<String, Object> changedAuthorityCounter =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    @SuppressWarnings("unchecked")
+    Map<String, Object> changedAuthorityTuple =
+        new LinkedHashMap<>((Map<String, Object>) changedAuthorityCounter.get("authorityTuple"));
+    changedAuthorityTuple.put(
+        "membershipAuthorityGeneration",
+        Map.of(
+            SelectedTargetConnectContextTestVectors.TENANT_ID,
+            SelectedTargetConnectContextTestVectors.LARGE_COUNTER.add(BigInteger.ONE)));
+    changedAuthorityCounter.put("authorityTuple", changedAuthorityTuple);
+    assertSourceMismatch(changedAuthorityCounter, publicContext);
+
+    Map<String, Object> changedRequestId =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    changedRequestId.put("requestId", "another-connect-request");
+    assertSourceMismatch(changedRequestId, publicContext);
+
+    Map<String, Object> changedJti =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    changedJti.put("jti", "another-connect-token-jti");
+    assertSourceMismatch(changedJti, publicContext);
+
+    Map<String, Object> changedIssuedAt =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    changedIssuedAt.put(
+        "iat", BigInteger.valueOf(SelectedTargetConnectContextTestVectors.SOURCE_ISSUED_AT + 1L));
+    changedIssuedAt.put(
+        "exp", BigInteger.valueOf(SelectedTargetConnectContextTestVectors.SOURCE_ISSUED_AT + 31L));
+    assertSourceMismatch(changedIssuedAt, publicContext);
+
+    Map<String, Object> privateSource =
+        SelectedTargetConnectContextTestVectors.privateSourceConnectTokenClaims();
+    GatewayConnectContext privateContext = verify(sign(projectContext(privateSource)));
+
+    Map<String, Object> changedLifecycle =
+        SelectedTargetConnectContextTestVectors.privateSourceConnectTokenClaims();
+    String newLifecycle = "018f8f0a-8c1d-7f9a-ad6a-bf4a312c0d8e";
+    changedLifecycle.put("playtestLifecycleId", newLifecycle);
+    @SuppressWarnings("unchecked")
+    Map<String, Object> lifecycleTuple =
+        new LinkedHashMap<>((Map<String, Object>) changedLifecycle.get("authorityTuple"));
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> originalGrants =
+        (List<Map<String, Object>>) lifecycleTuple.get("privateRealmGrantVersions");
+    Map<String, Object> changedGrant = new LinkedHashMap<>(originalGrants.getFirst());
+    changedGrant.put("playtestLifecycleId", newLifecycle);
+    lifecycleTuple.put("privateRealmGrantVersions", List.of(changedGrant));
+    changedLifecycle.put("authorityTuple", lifecycleTuple);
+    assertSourceMismatch(changedLifecycle, privateContext);
+
+    Map<String, Object> changedLifecycleGeneration =
+        SelectedTargetConnectContextTestVectors.privateSourceConnectTokenClaims();
+    changedLifecycleGeneration.put("playtestStateGeneration", BigInteger.valueOf(4));
+    assertSourceMismatch(changedLifecycleGeneration, privateContext);
+  }
+
+  @Test
+  void rejectsGatewayExpiryBeyondTheVerifiedAccountSourceDeadline() throws Exception {
+    Map<String, Object> source = SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    long issuedAt = SelectedTargetConnectContextTestVectors.SOURCE_ISSUED_AT;
+    source.put("exp", BigInteger.valueOf(issuedAt + 10L));
+    Map<String, Object> contextPayload = projectContext(source);
+    contextPayload.put("expiresAt", BigInteger.valueOf(issuedAt + 11L));
+    GatewayConnectContext validlySignedContext = verify(sign(contextPayload));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesGatewayContext(
+                source, validlySignedContext));
+  }
+
+  @Test
   void rejectsMillisecondTimesExpiredContextAndClockSkewLifetimeExtension() throws Exception {
     Map<String, Object> milliseconds = validContext();
     milliseconds.put("issuedAt", 1_700_000_000_000L);
@@ -408,6 +539,15 @@ class GatewayConnectContextCodecTest {
 
   private void assertRejected(Map<String, Object> claims) throws Exception {
     assertThrows(IllegalArgumentException.class, () -> verify(sign(claims)));
+  }
+
+  private void assertSourceMismatch(
+      Map<String, Object> sourceClaims, GatewayConnectContext verifiedContext) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesGatewayContext(
+                sourceClaims, verifiedContext));
   }
 
   private static BigInteger nested(

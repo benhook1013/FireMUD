@@ -159,6 +159,53 @@ public final class GatewayConnectContextCodec {
   }
 
   /**
+   * Requires exact correspondence between already-verified Account gameplay-connect claims and an
+   * already signature-verified immutable Gateway context. This is only an original-assertion
+   * correspondence check: callers must verify the Account JWT signature/profile before passing its
+   * claims, and must separately enforce current time, current Account authority, durable operation,
+   * and retry/recovery policy. This method neither verifies a JWT nor grants Account authorization.
+   *
+   * <p>The Account claim map is copied and validated at the Gateway context's original {@code
+   * verifiedAt}; neither input is normalized in place. Gateway may choose an earlier {@code
+   * expiresAt} than the maximum source-bounded deadline, but may not extend it.
+   */
+  public static void requireVerifiedAccountSourceMatchesGatewayContext(
+      Map<String, ?> verifiedSourceClaims, GatewayConnectContext verifiedGatewayContext) {
+    if (verifiedGatewayContext == null) {
+      throw invalid("verified Gateway context is required");
+    }
+
+    Map<String, Object> context = verifiedGatewayContext.claims();
+    BigInteger verifiedAt = requirePositiveInteger(context, "verifiedAt");
+    long gatewayVerifiedAt;
+    try {
+      gatewayVerifiedAt = verifiedAt.longValueExact();
+      Instant originalVerificationTime = Instant.ofEpochSecond(gatewayVerifiedAt);
+      validate(context, originalVerificationTime);
+      Map<String, Object> expected =
+          new LinkedHashMap<>(
+              projectVerifiedAccountGameplayConnectClaims(
+                  verifiedSourceClaims,
+                  gatewayVerifiedAt,
+                  requireText(context, "gatewayRequestId")));
+
+      BigInteger latestPermittedExpiry = requirePositiveInteger(expected, "expiresAt");
+      if (requirePositiveInteger(context, "expiresAt").compareTo(latestPermittedExpiry) > 0) {
+        throw invalid("Gateway context expiry extends beyond the Account source token");
+      }
+      // Compare the complete registered projection, not a second field allowlist that could miss
+      // a future source-carried field. Only the independently shortened Gateway deadline differs.
+      expected.put("expiresAt", context.get("expiresAt"));
+      if (!expected.equals(context)) {
+        throw invalid("Gateway context does not exactly preserve the Account source evidence");
+      }
+    } catch (ArithmeticException | java.time.DateTimeException ex) {
+      throw invalid(
+          "Gateway context verification time is outside the supported epoch-second range");
+    }
+  }
+
+  /**
    * Verifies a compact Gateway Ed25519 JWS, then validates its complete semantic schema and time
    * window. Expiration has no skew grace: skew cannot extend the signed lifetime.
    */

@@ -72,6 +72,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SetOperations;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -159,6 +160,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
+  @MockitoBean private ValueOperations<String, Object> redisValueOperations;
+
   @MockitoBean private SetOperations<String, Object> redisSetOperations;
 
   @Autowired private SessionContextService sessionContextService;
@@ -175,18 +178,37 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Autowired
   private GameplayAdmissionPointerEventRepository gameplayAdmissionPointerEventRepository;
 
+  private final ConcurrentMap<String, Object> redisValueStore = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, java.util.LinkedHashSet<Object>> redisSetStore =
       new ConcurrentHashMap<>();
 
   @BeforeEach
   void setUp() {
+    redisValueStore.clear();
     redisSetStore.clear();
     sessionContextService.deleteBySessionId(22L, 41L);
     sessionContextService.deleteBySessionId(22L, 42L);
     sessionContextService.deleteBySessionId(22L, 1L);
     sessionContextService.deleteBySessionId(22L, 2L);
     resetAdmissionPointers();
+    when(redisTemplate.opsForValue()).thenReturn(redisValueOperations);
     when(redisTemplate.opsForSet()).thenReturn(redisSetOperations);
+    when(redisValueOperations.get(org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(invocation -> redisValueStore.get(invocation.getArgument(0)));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              redisValueStore.put(invocation.getArgument(0), invocation.getArgument(1));
+              return null;
+            })
+        .when(redisValueOperations)
+        .set(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(java.time.Duration.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> redisValueStore.remove(invocation.getArgument(0)) != null)
+        .when(redisTemplate)
+        .delete(org.mockito.ArgumentMatchers.anyString());
     when(gameInstanceRepository.save(org.mockito.ArgumentMatchers.any(GameInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     org.mockito.Mockito.doAnswer(
