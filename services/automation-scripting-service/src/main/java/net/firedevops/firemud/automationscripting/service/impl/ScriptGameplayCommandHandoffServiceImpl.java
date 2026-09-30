@@ -275,10 +275,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
           ex);
       return retryablePreparationResult();
     }
+    WorkItemIntentState intentState = WorkItemIntentState.capture(workItem);
     HandoffPreparation preparation;
     try {
       preparation = executeIntentTransaction(workItem, command, dispatchId, preflight);
     } catch (RuntimeException ex) {
+      restoreWorkItemAfterFailedIntentTransaction(workItem, intentState);
       LOGGER.warn(
           "Unable to prepare script handoff for workItemId={} commandOrdinal={}",
           workItem.getId(),
@@ -322,6 +324,20 @@ public class ScriptGameplayCommandHandoffServiceImpl
           command.ordinal(),
           ex);
       return reconciliationRequiredResult(ex);
+    }
+  }
+
+  private static void restoreWorkItemAfterFailedIntentTransaction(
+      ScriptWorkItem workItem, WorkItemIntentState intentState) {
+    workItem.setStatus(intentState.status());
+    workItem.setUpdatedAt(intentState.updatedAt());
+    workItem.setRowVersion(intentState.rowVersion());
+  }
+
+  private record WorkItemIntentState(String status, Instant updatedAt, int rowVersion) {
+    private static WorkItemIntentState capture(ScriptWorkItem workItem) {
+      return new WorkItemIntentState(
+          workItem.getStatus(), workItem.getUpdatedAt(), workItem.getRowVersion());
     }
   }
 

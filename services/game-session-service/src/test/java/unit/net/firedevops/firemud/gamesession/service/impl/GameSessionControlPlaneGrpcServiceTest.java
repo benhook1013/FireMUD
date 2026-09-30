@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.fail;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -3601,8 +3600,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -3670,8 +3669,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     stubLockedGameInstance(gameInstanceRepository, instance);
     GameplayCommandRepository commandRepository = Mockito.mock(GameplayCommandRepository.class);
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             Mockito.mock(RuntimeRegionStatusRepository.class),
@@ -3715,8 +3714,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -3761,8 +3760,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -3812,8 +3811,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .when(pointerAuthority)
         .listByRuntimeTarget(1L, 7L);
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -3891,8 +3890,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "SHARED",
                     "NONE")));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -3957,8 +3956,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "SHARED",
                     "NONE")));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4005,8 +4004,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 13L));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4053,8 +4052,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     status.setRegionId("region-2");
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(status);
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4099,8 +4098,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(Optional.empty());
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(true, 12L));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4145,8 +4144,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4182,8 +4181,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4216,8 +4215,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     RuntimeRegionStatusRepository runtimeRepository = runtimeRepository(runtimeStatus(false, 12L));
     TickService tickService = Mockito.mock(TickService.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4262,8 +4261,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(runtimeRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(staleInstanceStatus));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4319,8 +4318,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.when(runtimeRepository.findByTenantIdAndGameInstanceId(1L, 7L))
         .thenReturn(Optional.of(staleInstanceStatus));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             runtimeRepository,
@@ -4656,8 +4655,8 @@ class GameSessionControlPlaneGrpcServiceTest {
                     1L, 7L, "region-1", 12L, "dispatch-1"))
         .thenReturn(Optional.of(existing));
     TickService tickService = Mockito.mock(TickService.class);
-    GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
+    ControlPlaneTestFixture service =
+        controlPlaneFixture(
             gameInstanceRepository,
             commandRepository,
             Mockito.mock(RuntimeRegionStatusRepository.class),
@@ -7035,8 +7034,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenReturn(
             new RemoteFollowupRuntimeService.ScheduleOutcome("coord-1", "followup-1", true, true));
     setAutomationScriptingInternalContext();
-    GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(null, null, null, null, null, runtimeService, gameDesignClient());
+    ControlPlaneTestFixture service =
+        remoteControlPlaneFixture(null, null, null, null, null, runtimeService, gameDesignClient());
 
     AtomicReference<ScheduleRemoteFollowupResponse> responseRef = new AtomicReference<>();
     invokeDormantRemoteFollowupImplementation(
@@ -7363,8 +7362,8 @@ class GameSessionControlPlaneGrpcServiceTest {
   void scheduleRemoteFollowupImplementationRejectsPartialRoutingBundle() {
     RemoteFollowupRuntimeService runtimeService = Mockito.mock(RemoteFollowupRuntimeService.class);
     setAutomationScriptingInternalContext();
-    GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(null, null, null, null, null, runtimeService, gameDesignClient());
+    ControlPlaneTestFixture service =
+        remoteControlPlaneFixture(null, null, null, null, null, runtimeService, gameDesignClient());
 
     IllegalArgumentException error =
         assertThrows(
@@ -7388,8 +7387,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupRuntimeService runtimeService = Mockito.mock(RemoteFollowupRuntimeService.class);
     setAutomationScriptingInternalContext();
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(
+    ControlPlaneTestFixture service =
+        remoteControlPlaneFixture(
             null, null, null, null, null, runtimeService, gameDesignClient(), meterRegistry);
 
     IllegalArgumentException error =
@@ -7411,8 +7410,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     RemoteFollowupRuntimeService runtimeService = Mockito.mock(RemoteFollowupRuntimeService.class);
     setAutomationScriptingInternalContext();
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(
+    ControlPlaneTestFixture service =
+        remoteControlPlaneFixture(
             null, null, null, null, null, runtimeService, gameDesignClient(), meterRegistry);
 
     IllegalArgumentException error =
@@ -7434,8 +7433,8 @@ class GameSessionControlPlaneGrpcServiceTest {
         .thenThrow(new IllegalArgumentException("payload kind is required"));
     setAutomationScriptingInternalContext();
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    GameSessionControlPlaneGrpcService service =
-        remoteControlPlaneService(
+    ControlPlaneTestFixture service =
+        remoteControlPlaneFixture(
             null, null, null, null, null, runtimeService, gameDesignClient(), meterRegistry);
 
     IllegalArgumentException error =
@@ -8490,6 +8489,45 @@ class GameSessionControlPlaneGrpcServiceTest {
       BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
       TickService tickService,
       MeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties,
+      AutomationScriptingControlPlaneClient automationScriptingControlPlaneClient,
+      WorldManagementClient worldManagementClient) {
+    return controlPlaneFixture(
+            gameInstanceRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            remoteFollowupRepository,
+            remoteCommandCoordinatorRepository,
+            remoteFollowupResultRepository,
+            remoteFollowupRuntimeService,
+            gameplayAdmissionPointerAuthorityService,
+            instanceCutoverCompatibilityService,
+            versionUpgradePreparationService,
+            gameDesignClient,
+            builtInTextCommandAliasResolver,
+            tickService,
+            meterRegistry,
+            gameSessionProperties,
+            automationScriptingControlPlaneClient,
+            worldManagementClient)
+        .service();
+  }
+
+  private static GameSessionControlPlaneGrpcService controlPlaneService(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      GameDesignClient gameDesignClient,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry,
       GameSessionProperties gameSessionProperties) {
     return controlPlaneService(
         gameInstanceRepository,
@@ -8508,6 +8546,42 @@ class GameSessionControlPlaneGrpcServiceTest {
         meterRegistry,
         gameSessionProperties,
         null);
+  }
+
+  private static ControlPlaneTestFixture controlPlaneFixture(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      GameDesignClient gameDesignClient,
+      BuiltInTextCommandAliasResolver builtInTextCommandAliasResolver,
+      TickService tickService,
+      MeterRegistry meterRegistry,
+      GameSessionProperties gameSessionProperties) {
+    return controlPlaneFixture(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        remoteFollowupRuntimeService,
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        gameDesignClient,
+        builtInTextCommandAliasResolver,
+        tickService,
+        meterRegistry,
+        gameSessionProperties,
+        null,
+        worldManagementClient());
   }
 
   private static GameSessionControlPlaneGrpcService controlPlaneService(
@@ -8547,7 +8621,7 @@ class GameSessionControlPlaneGrpcServiceTest {
         worldManagementClient());
   }
 
-  private static GameSessionControlPlaneGrpcService controlPlaneService(
+  private static ControlPlaneTestFixture controlPlaneFixture(
       GameInstanceRepository gameInstanceRepository,
       GameplayCommandRepository gameplayCommandRepository,
       RuntimeRegionStatusRepository runtimeRegionStatusRepository,
@@ -8617,14 +8691,17 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameSessionVersionUpgradeControlPlaneService versionUpgradeControlPlaneService =
         new GameSessionVersionUpgradeControlPlaneService(
             instanceCutoverCompatibilityService, versionUpgradePreparationService);
-    return new GameSessionControlPlaneGrpcService(
-        commandControlPlaneService,
-        remoteControlPlaneService,
-        runtimeControlPlaneReadService,
-        admissionPointerControlPlaneService,
-        operatorControlPlaneService,
-        versionUpgradeControlPlaneService,
-        meterRegistry);
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            commandControlPlaneService,
+            remoteControlPlaneService,
+            runtimeControlPlaneReadService,
+            admissionPointerControlPlaneService,
+            operatorControlPlaneService,
+            versionUpgradeControlPlaneService,
+            meterRegistry);
+    return new ControlPlaneTestFixture(
+        service, commandControlPlaneService, remoteControlPlaneService);
   }
 
   private static TransactionOperations immediateTransactionOperations() {
@@ -8813,6 +8890,40 @@ class GameSessionControlPlaneGrpcServiceTest {
         meterRegistry,
         gameSessionProperties);
   }
+
+  private static ControlPlaneTestFixture controlPlaneFixture(
+      GameInstanceRepository gameInstanceRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      InstanceCutoverCompatibilityService instanceCutoverCompatibilityService,
+      VersionUpgradePreparationService versionUpgradePreparationService,
+      TickService tickService,
+      MeterRegistry meterRegistry) {
+    return controlPlaneFixture(
+        gameInstanceRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        Mockito.mock(RemoteFollowupRepository.class),
+        Mockito.mock(RemoteCommandCoordinatorRepository.class),
+        Mockito.mock(RemoteFollowupResultRepository.class),
+        Mockito.mock(RemoteFollowupRuntimeService.class),
+        gameplayAdmissionPointerAuthorityService,
+        instanceCutoverCompatibilityService,
+        versionUpgradePreparationService,
+        null,
+        BuiltInTextCommandAliasResolver.unsupported(),
+        tickService,
+        meterRegistry,
+        new GameSessionProperties(),
+        null,
+        worldManagementClient());
+  }
+
+  private record ControlPlaneTestFixture(
+      GameSessionControlPlaneGrpcService service,
+      GameSessionCommandControlPlaneService commandService,
+      GameSessionRemoteControlPlaneService remoteService) {}
 
   private static EnqueueAutomationCommandIfAbsentRequest automationRequest() {
     return EnqueueAutomationCommandIfAbsentRequest.newBuilder()
@@ -9109,7 +9220,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
   // Keep lower-level behavior coverage while the authenticated gRPC boundary fails closed.
   private static void invokeDormantAutomationAdmissionImplementation(
-      GameSessionControlPlaneGrpcService service,
+      ControlPlaneTestFixture service,
       EnqueueAutomationCommandIfAbsentRequest request,
       StreamObserver<EnqueueAutomationCommandIfAbsentResponse> responseObserver) {
     responseObserver.onNext(dormantAutomationAdmissionResponse(service, request));
@@ -9117,15 +9228,12 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   private static EnqueueAutomationCommandIfAbsentResponse dormantAutomationAdmissionResponse(
-      GameSessionControlPlaneGrpcService service, EnqueueAutomationCommandIfAbsentRequest request) {
-    GameSessionCommandControlPlaneService implementation =
-        controlPlaneComponent(
-            service, "commandControlPlaneService", GameSessionCommandControlPlaneService.class);
-    return implementation.enqueueAutomationCommandIfAbsent(request);
+      ControlPlaneTestFixture service, EnqueueAutomationCommandIfAbsentRequest request) {
+    return service.commandService().enqueueAutomationCommandIfAbsent(request);
   }
 
   private static void invokeDormantRemoteFollowupImplementation(
-      GameSessionControlPlaneGrpcService service,
+      ControlPlaneTestFixture service,
       ScheduleRemoteFollowupRequest request,
       StreamObserver<ScheduleRemoteFollowupResponse> responseObserver) {
     responseObserver.onNext(dormantRemoteFollowupResponse(service, request));
@@ -9133,22 +9241,10 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   private static ScheduleRemoteFollowupResponse dormantRemoteFollowupResponse(
-      GameSessionControlPlaneGrpcService service, ScheduleRemoteFollowupRequest request) {
-    GameSessionRemoteControlPlaneService implementation =
-        controlPlaneComponent(
-            service, "remoteControlPlaneService", GameSessionRemoteControlPlaneService.class);
-    return implementation.scheduleRemoteFollowup(Long.parseLong(request.getTenantId()), request);
-  }
-
-  private static <T> T controlPlaneComponent(
-      GameSessionControlPlaneGrpcService service, String fieldName, Class<T> componentType) {
-    try {
-      Field field = GameSessionControlPlaneGrpcService.class.getDeclaredField(fieldName);
-      field.setAccessible(true);
-      return componentType.cast(field.get(service));
-    } catch (ReflectiveOperationException ex) {
-      throw new AssertionError("Could not access retained control-plane implementation", ex);
-    }
+      ControlPlaneTestFixture service, ScheduleRemoteFollowupRequest request) {
+    return service
+        .remoteService()
+        .scheduleRemoteFollowup(Long.parseLong(request.getTenantId()), request);
   }
 
   private static GameplayCommandRepository commandRepositorySavingArgument() {
@@ -9301,7 +9397,47 @@ class GameSessionControlPlaneGrpcServiceTest {
         new SimpleMeterRegistry());
   }
 
+  private static ControlPlaneTestFixture remoteControlPlaneFixture(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameDesignClient gameDesignClient) {
+    return remoteControlPlaneFixture(
+        remoteFollowupRepository,
+        remoteCommandCoordinatorRepository,
+        remoteFollowupResultRepository,
+        gameplayCommandRepository,
+        runtimeRegionStatusRepository,
+        remoteFollowupRuntimeService,
+        gameDesignClient,
+        new SimpleMeterRegistry());
+  }
+
   private static GameSessionControlPlaneGrpcService remoteControlPlaneService(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameDesignClient gameDesignClient,
+      MeterRegistry meterRegistry) {
+    return remoteControlPlaneFixture(
+            remoteFollowupRepository,
+            remoteCommandCoordinatorRepository,
+            remoteFollowupResultRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            remoteFollowupRuntimeService,
+            gameDesignClient,
+            meterRegistry)
+        .service();
+  }
+
+  private static ControlPlaneTestFixture remoteControlPlaneFixture(
       RemoteFollowupRepository remoteFollowupRepository,
       RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
       RemoteFollowupResultRepository remoteFollowupResultRepository,
@@ -9333,7 +9469,7 @@ class GameSessionControlPlaneGrpcServiceTest {
                       gameInstanceId % 2 == 0 ? "ISOLATED" : "SHARED",
                       "interactive"));
             });
-    return remoteControlPlaneService(
+    return remoteControlPlaneFixture(
         remoteFollowupRepository,
         remoteCommandCoordinatorRepository,
         remoteFollowupResultRepository,
@@ -9376,6 +9512,29 @@ class GameSessionControlPlaneGrpcServiceTest {
       GameDesignClient gameDesignClient,
       GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
       MeterRegistry meterRegistry) {
+    return remoteControlPlaneFixture(
+            remoteFollowupRepository,
+            remoteCommandCoordinatorRepository,
+            remoteFollowupResultRepository,
+            gameplayCommandRepository,
+            runtimeRegionStatusRepository,
+            remoteFollowupRuntimeService,
+            gameDesignClient,
+            gameplayAdmissionPointerAuthorityService,
+            meterRegistry)
+        .service();
+  }
+
+  private static ControlPlaneTestFixture remoteControlPlaneFixture(
+      RemoteFollowupRepository remoteFollowupRepository,
+      RemoteCommandCoordinatorRepository remoteCommandCoordinatorRepository,
+      RemoteFollowupResultRepository remoteFollowupResultRepository,
+      GameplayCommandRepository gameplayCommandRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      RemoteFollowupRuntimeService remoteFollowupRuntimeService,
+      GameDesignClient gameDesignClient,
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
+      MeterRegistry meterRegistry) {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     Mockito.when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
@@ -9387,7 +9546,7 @@ class GameSessionControlPlaneGrpcServiceTest {
               instance.setVersionId(99L);
               return Optional.of(instance);
             });
-    return controlPlaneService(
+    return controlPlaneFixture(
         gameInstanceRepository,
         gameplayCommandRepository == null
             ? Mockito.mock(GameplayCommandRepository.class)
