@@ -556,10 +556,7 @@ public final class GameSessionGrpcService
       WorldView world =
           gameplayWorldCatalog
               .resolveWorldFromAuthoritySnapshot(worldSelector)
-              .orElseThrow(
-                  () ->
-                      new CatalogRevisionUnavailableException(
-                          "Authoritative gameplay world selection is unavailable"));
+              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.visibleRealms(world).stream()
               .map(realm -> toGameplayRealm(world.slug(), realm))
