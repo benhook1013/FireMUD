@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -106,6 +107,32 @@ def fixture_payload_for_allocation() -> dict[str, object]:
         }
     }
     return payload
+
+
+def canonical_state_snapshot(path: Path) -> tuple[object, ...] | None:
+    """Capture canonical JSON state or the post-cutover directory without writes."""
+
+    if not path.exists() and not path.is_symlink():
+        return None
+
+    def entry_snapshot(entry: Path) -> tuple[object, ...]:
+        mode = stat.S_IMODE(entry.lstat().st_mode)
+        if entry.is_symlink():
+            return ("symlink", mode, os.readlink(entry))
+        if entry.is_dir():
+            return ("directory", mode)
+        if entry.is_file():
+            return ("file", mode, entry.read_bytes())
+        return ("other", mode)
+
+    root_snapshot = entry_snapshot(path)
+    if path.is_dir() and not path.is_symlink():
+        contents = tuple(
+            (entry.relative_to(path).as_posix(), entry_snapshot(entry))
+            for entry in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix())
+        )
+        return ("directory", root_snapshot[1], contents)
+    return root_snapshot
 
 
 class AcceptanceCliTest(unittest.TestCase):
@@ -217,6 +244,8 @@ class AcceptanceCliTest(unittest.TestCase):
         args = cli._parser().parse_args(["status", "--pr", "1", "--json"])
         with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
             "pr_review.cli.status_module.status", return_value=report
+        ), patch(
+            "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
         ):
             result, code = cli._dispatch(args)
 
@@ -233,6 +262,8 @@ class AcceptanceCliTest(unittest.TestCase):
         }
         with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
             "pr_review.cli.status_module.status", return_value={**report, "reasons": [], "ready": True}
+        ), patch(
+            "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
         ):
             result, code = cli._dispatch(args)
 
@@ -242,7 +273,7 @@ class AcceptanceCliTest(unittest.TestCase):
 
     def test_public_commands_use_isolated_state_and_simulated_review_adapters(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "fixture.json"
@@ -299,7 +330,7 @@ class AcceptanceCliTest(unittest.TestCase):
             persisted = json.loads(isolated.read_text(encoding="utf-8"))
             self.assertEqual(persisted["ordered_prs"], [1, 2])
             self.assertEqual(persisted["judgments"][0]["pr"], 1)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_controller_seeds_initial_stack_only_for_new_state(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -336,7 +367,7 @@ class AcceptanceCliTest(unittest.TestCase):
 
     def test_second_identical_provisional_cli_run_uses_isolated_evidence_to_fail(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "unreconciled.json"
@@ -371,11 +402,11 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(json.loads(isolated.read_text(encoding="utf-8"))["ordered_prs"], [1])
             sidecar = root / "state.json.fixture-evidence.json"
             self.assertEqual(len(json.loads(sidecar.read_text(encoding="utf-8"))["evidence"]), 1)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_legacy_transition_and_fresh_reviews_are_isolated_and_no_quota(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "legacy.json"
@@ -441,11 +472,11 @@ class AcceptanceCliTest(unittest.TestCase):
             evidence = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
             self.assertEqual(evidence["policy"]["cli"][0]["checkpoint"], "legacy-cli")
             self.assertEqual(json.loads(isolated.read_text(encoding="utf-8"))["legacy_transitions"][0]["pr"], 1)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_legacy_reauthorization_after_fix_head_is_explicit_and_no_quota(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "legacy-reauthorization.json"
@@ -599,11 +630,11 @@ class AcceptanceCliTest(unittest.TestCase):
             evidence = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
             self.assertEqual(evidence["policy"]["hosted"][1]["checkpoint"], "modern-hosted")
             self.assertEqual(len(json.loads(isolated.read_text(encoding="utf-8"))["legacy_transitions"]), 2)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_missing_hosted_fingerprint_retirement_is_audited_and_no_quota(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "missing-hosted-retirement.json"
@@ -708,7 +739,7 @@ class AcceptanceCliTest(unittest.TestCase):
                 run = self.run_cli(fixture, isolated, "run", channel, "--expect-pr", "1")
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertIn("quota_consumed=False", run.stdout)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_missing_hosted_fingerprint_fixture_audit_classifies_present_blockers(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -147,7 +147,7 @@ class SqliteStateStoreTest(unittest.TestCase):
         source = self.root / "legacy.json"
         source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
         source_bytes = source.read_bytes()
-        target = self.root / "sqlite" / "review-state.sqlite3"
+        target = source.with_suffix(".sqlite3")
         old_store = StateStore(source)
 
         migrated_store = SqliteStateStore.migrate_legacy_json(source, target)
@@ -183,7 +183,7 @@ class SqliteStateStoreTest(unittest.TestCase):
         source = self.root / "legacy.json"
         source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
         source_bytes = source.read_bytes()
-        target = self.root / "review-state.sqlite3"
+        target = source.with_suffix(".sqlite3")
 
         with (
             patch.object(
@@ -207,12 +207,29 @@ class SqliteStateStoreTest(unittest.TestCase):
         self.assertFalse(target.exists())
         self.assertFalse(source.with_name(f"{source.name}.migrated").exists())
 
+    def test_migration_rejects_noncanonical_target_without_creating_artifacts(self) -> None:
+        original = self.representative_state()
+        source = self.root / "legacy.json"
+        source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
+        source_bytes = source.read_bytes()
+        target = self.root / "other" / "review-state.sqlite3"
+
+        with self.assertRaisesRegex(StateError, "canonical sibling path"):
+            SqliteStateStore.migrate_legacy_json(source, target)
+
+        self.assertEqual(source.read_bytes(), source_bytes)
+        self.assertEqual(StateStore(source).load(), original)
+        self.assertFalse(target.parent.exists())
+        self.assertFalse(source.with_suffix(".sqlite3").exists())
+        self.assertFalse(source.with_name(f"{source.name}.migrated").exists())
+        self.assertFalse(source.with_name(".pr-review-stack.lock").exists())
+
     def test_migration_fails_before_cutover_when_atomic_exchange_is_unsupported(self) -> None:
         original = self.representative_state()
         source = self.root / "legacy.json"
         source.write_text(json.dumps(original.to_dict(), indent=2), encoding="utf-8")
         source_bytes = source.read_bytes()
-        target = self.root / "review-state.sqlite3"
+        target = source.with_suffix(".sqlite3")
 
         with (
             patch(

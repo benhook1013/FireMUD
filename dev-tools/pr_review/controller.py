@@ -19,7 +19,9 @@ import dataclasses
 import fcntl
 import re
 import subprocess
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -596,10 +598,11 @@ class ReviewController:
         anchor: AnchorFacts,
         *,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Return only observations not captured by the exact legacy transition."""
 
-        history = self._cached_history(pr, channel, history_cache)
+        history = self._cached_history(pr, channel, history_cache, phase_timings=phase_timings)
         transition = self._legacy_transition_for(state, pr, anchor)
         if transition is None:
             return [self._clear_untrusted_non_counting(value) for value in history]
@@ -618,6 +621,7 @@ class ReviewController:
         reconciliation: stack.Reconciliation,
         *,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Project exact legacy observations as non-counting policy history.
 
@@ -627,7 +631,7 @@ class ReviewController:
         deliberately left visible to policy and can still block review.
         """
 
-        history = self._cached_history(pr, channel, history_cache)
+        history = self._cached_history(pr, channel, history_cache, phase_timings=phase_timings)
         selected = set(
             reconciliation.legacy_transition_fingerprints.get(pr, {}).get(channel.value, ())
         )
@@ -647,6 +651,8 @@ class ReviewController:
         pr: int,
         channel: policy.Channel,
         history_cache: dict[tuple[int, str], list[Any]] | None,
+        *,
+        phase_timings: dict[str, float] | None = None,
     ) -> list[Any]:
         """Read one channel history once during a composed status invocation."""
 
@@ -654,7 +660,14 @@ class ReviewController:
             return _history(self._evidence_provider, pr, channel)
         key = (pr, channel.value)
         if key not in history_cache:
-            history_cache[key] = _history(self._evidence_provider, pr, channel)
+            started = time.perf_counter() if phase_timings is not None else 0.0
+            try:
+                history_cache[key] = _history(self._evidence_provider, pr, channel)
+            finally:
+                if phase_timings is not None:
+                    phase_timings["deep_evidence_history_ms"] = phase_timings.get(
+                        "deep_evidence_history_ms", 0.0
+                    ) + (time.perf_counter() - started) * 1000
         return history_cache[key]
 
     @staticmethod
@@ -1057,8 +1070,10 @@ class ReviewController:
         refresh_prs: set[int] | None = None,
         evidence_prs: set[int] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        remote_head_snapshot: Mapping[str, str] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> tuple[dict[int, LivePullRequest], stack.Reconciliation]:
-        remote_heads = self.git.remote_heads()
+        remote_heads = remote_head_snapshot if remote_head_snapshot is not None else self.git.remote_heads()
         live, snapshots, default_tip = self._live_snapshots(
             state,
             remote_heads,
@@ -1165,7 +1180,15 @@ class ReviewController:
             if not self._current_branches_match(state, live, baseline, pr, remote_heads):
                 continue
             try:
-                current = self._anchor(pr, live[pr], link)
+                anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                try:
+                    current = self._anchor(pr, live[pr], link)
+                finally:
+                    if phase_timings is not None:
+                        phase_timings["local_anchors_ms"] = (
+                            phase_timings.get("local_anchors_ms", 0.0)
+                            + (time.perf_counter() - anchor_started) * 1000
+                        )
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                 anchor_failures[pr] = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                 continue
@@ -1194,7 +1217,12 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(
                     self._counting_history_for_anchor(
-                        state, pr, channel, current, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        current,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                 )
                 if latest is not None:
@@ -1331,7 +1359,14 @@ class ReviewController:
             current = anchors.get(pr)
             if current is None:
                 try:
-                    current = self._anchor(pr, live[pr], link)
+                    anchor_started = time.perf_counter() if phase_timings is not None else 0.0
+                    try:
+                        current = self._anchor(pr, live[pr], link)
+                    finally:
+                        if phase_timings is not None:
+                            phase_timings["local_anchors_ms"] = phase_timings.get(
+                                "local_anchors_ms", 0.0
+                            ) + (time.perf_counter() - anchor_started) * 1000
                 except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as error:
                     reason = f"could not compute current Git anchor: {type(error).__name__}: {error}"
                     anchor_failures[pr] = reason
@@ -1343,7 +1378,12 @@ class ReviewController:
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
                 latest = _latest_review(
                     self._counting_history_for_anchor(
-                        state, pr, channel, current, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        current,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                 )
                 if latest is None:
@@ -2042,12 +2082,20 @@ class ReviewController:
         return cli_path, hosted_path
 
     @contextlib.contextmanager
-    def _stop_review_locks(self, pr: int):
+    def _stop_review_locks(self, pr: int, channel: str):
         """Prevent the stop decision from racing an active channel review."""
 
         handles = []
         try:
-            for path in self._stop_lock_paths(pr):
+            lock_paths = self._stop_lock_paths(pr)
+            # Hosted request locks are scoped to one PR.  A Hosted stop must
+            # not be coupled to the repository-wide CLI lock, which may be
+            # held by an unrelated PR.  CLI stops retain both locks because a
+            # CLI run owns the repository-wide lock and the target request
+            # lock while it performs its preflight.
+            if channel == policy.Channel.HOSTED.value:
+                lock_paths = (lock_paths[1],)
+            for path in lock_paths:
                 path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 handle = path.open("a+")
                 handles.append(handle)
@@ -2671,60 +2719,9 @@ class ReviewController:
 
         if allocation.stop_basis is None:
             return invalid("the allocation has no canonical stop decision")
-        if current is None or reconciliation in {
-            stack.ReconciliationStatus.PARENT_MOVED,
-            stack.ReconciliationStatus.UNRECONCILED,
-        }:
-            return invalid("the stopped stack identity is no longer coherent")
-        equivalent_retain = self._has_stop_retain_judgment(
-            state,
-            allocation.pr,
-            allocation.channel,
-            allocation.stop_checkpoint,
-            allocation.stop_reviewed_head,
-            current.patch_id,
-            reconciliation,
-        )
-        if current.patch_id != allocation.stop_patch_id or (
-            current.child_head != allocation.stop_head and not equivalent_retain
-        ):
-            return invalid("the stopped head or owned patch changed after the decision")
-        topology_matches = (
-            current.parent_identity == allocation.stop_parent_identity
-            and current.parent_head == allocation.stop_parent_head
-            and current.merge_base == allocation.stop_merge_base
-        )
-        if not topology_matches and not equivalent_retain:
-            return invalid("parent reconciliation needs an explicit unchanged-patch retain judgment")
-        if self._stop_summary_fingerprints(state, allocation.pr) != allocation.stop_summary_disposition_fingerprints:
-            return invalid("new summary-finding decisions require a fresh review-stop judgment")
-        if reconciliation_result is None:
-            return invalid("the complete reconciled stack identity is unavailable")
-        try:
-            latest, _, _ = self._check_stop_evidence(
-                state,
-                allocation.pr,
-                policy.Channel(allocation.channel),
-                current,
-                reconciliation_result,
-                checkpoint_pin=allocation.stop_checkpoint,
-                allow_historical_unmatched=allocation.stop_basis == "direct_human",
-                allow_historical_terminal_ambiguity=allocation.stop_basis == "direct_human",
-                retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
-                ambiguity_reason=allocation.retained_ambiguous_reason,
-                acknowledge_over_ceiling=self._stop_reason_acknowledges_over_ceiling(
-                    allocation.stop_reason
-                ),
-                stop_audit_cache=stop_audit_cache,
-                history_cache=history_cache,
-            )
-        except ControllerError as exc:
-            return invalid(str(exc))
-        if (
-            _field(latest, "head", "reviewed_head") != allocation.stop_reviewed_head
-            or _field(latest, "patch_id", "patch_identity") != allocation.stop_reviewed_patch_id
-        ):
-            return invalid("the recorded review checkpoint identity changed")
+        # decide_stop audits the evidence and exact live identity before it
+        # persists this decision. Re-reading live topology or review evidence
+        # here would make an audited human stop expire as heads move.
         return {
             "status": "STOPPED",
             "reason": "review discovery explicitly stopped; merge readiness remains separate",
@@ -2966,7 +2963,7 @@ class ReviewController:
         results: list[dict[str, Any]] = []
         in_flight_ids: dict[str, str] = {}
         seen_checkpoints: set[str] = set(baseline_checkpoints)
-        for value in history:
+        for history_index, value in enumerate(history):
             checkpoint = _field(value, "checkpoint", "checkpoint_id")
             channel = _field(value, "channel")
             if channel not in (None, allocation.channel):
@@ -3129,7 +3126,14 @@ class ReviewController:
                     "error": "post-baseline completed review has an incomplete or changed stack anchor",
                 }
             seen_checkpoints.add(checkpoint)
-            results.append({"checkpoint": checkpoint, "head": head, "accepted": accepted})
+            results.append(
+                {
+                    "checkpoint": checkpoint,
+                    "head": head,
+                    "accepted": accepted,
+                    "history_index": history_index,
+                }
+            )
 
         return {
             "baseline": baseline,
@@ -3139,6 +3143,45 @@ class ReviewController:
             "in_flight_heads": list(in_flight_ids.values()),
             "error": None,
         }
+
+    @staticmethod
+    def _bounded_allocation_taper_baseline(
+        allocation: ReviewAllocation,
+        snapshot: Mapping[str, Any],
+        history: Sequence[Any] | None = None,
+    ) -> tuple[str, ...]:
+        """Start an active streak at explicit reopen or after an accepted tranche result."""
+
+        results = snapshot.get("results", ())
+        last_accepted = max(
+            (
+                result.get("history_index", index)
+                for index, result in enumerate(results)
+                if result["accepted"] > 0
+            ),
+            default=-1,
+        )
+        if last_accepted < 0:
+            return allocation.baseline_checkpoints if allocation.reopens_taper else ()
+        if history is not None:
+            checkpoints = (
+                _field(value, "checkpoint", "checkpoint_id")
+                for value in history[: last_accepted + 1]
+            )
+        else:
+            checkpoints = (
+                result["checkpoint"]
+                for index, result in enumerate(results)
+                if result.get("history_index", index) <= last_accepted
+            )
+        return tuple(
+            dict.fromkeys(
+                (
+                    *allocation.baseline_checkpoints,
+                    *(checkpoint for checkpoint in checkpoints if isinstance(checkpoint, str) and checkpoint),
+                )
+            )
+        )
 
     def _bounded_allocation_progress(
         self,
@@ -3151,10 +3194,11 @@ class ReviewController:
         reconciliation_result: stack.Reconciliation | None,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None,
         history_cache: dict[tuple[int, str], list[Any]] | None,
+        bounded_evidence: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         cap = allocation.max_additional_completed
         minimum = allocation.min_additional_completed or 0
-        snapshot = self._bounded_allocation_evidence(allocation, history)
+        snapshot = bounded_evidence or self._bounded_allocation_evidence(allocation, history)
         used = len(snapshot["results"])
         in_flight = snapshot["in_flight"]
         latest = snapshot["results"][-1] if snapshot["results"] else None
@@ -3164,8 +3208,10 @@ class ReviewController:
             state,
             allocation.channel,
             history,
-            baseline_checkpoints=(
-                allocation.baseline_checkpoints if allocation.reopens_taper else ()
+            baseline_checkpoints=self._bounded_allocation_taper_baseline(
+                allocation,
+                snapshot,
+                history,
             ),
         )
 
@@ -3357,6 +3403,7 @@ class ReviewController:
         reconciliation_result: stack.Reconciliation | None = None,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        bounded_evidence: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Derive consumption from immutable evidence; never persist a live observation."""
 
@@ -3389,7 +3436,7 @@ class ReviewController:
                 "controlling_reason": reason,
             }
 
-        if allocation.stop_basis == "direct_human":
+        if allocation.stop_basis is not None:
             if state is None:
                 return result("INVALID", "the persisted review-stop state is unavailable")
             return self._stop_progress(
@@ -3413,6 +3460,7 @@ class ReviewController:
                 reconciliation_result=reconciliation_result,
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
+                bounded_evidence=bounded_evidence,
             )
 
         if current is None or reconciliation in {
@@ -3512,48 +3560,6 @@ class ReviewController:
             for item in history
         ):
             return result("EXHAUSTED_PENDING", "accepted findings need a published corrected head", checkpoint, accepted)
-        if allocation.stop_basis == "allocated":
-            if state is None or reconciliation_result is None:
-                return result("INVALID", "the persisted review-stop state is unavailable", checkpoint, accepted)
-            if allocation.stop_checkpoint != checkpoint:
-                return result("INVALID", "the consumed checkpoint no longer matches the recorded stop", checkpoint, accepted)
-            if (
-                current.child_head != allocation.stop_head
-                or current.patch_id != allocation.stop_patch_id
-                or current.parent_identity != allocation.stop_parent_identity
-                or current.parent_head != allocation.stop_parent_head
-                or current.merge_base != allocation.stop_merge_base
-            ):
-                return result("INVALID", "the stopped head or stack identity changed", checkpoint, accepted)
-            if self._stop_summary_fingerprints(state, allocation.pr) != allocation.stop_summary_disposition_fingerprints:
-                return result("INVALID", "new summary-finding decisions require a fresh stop judgment", checkpoint, accepted)
-            try:
-                latest, _, _ = self._check_stop_evidence(
-                    state,
-                    allocation.pr,
-                    policy.Channel(allocation.channel),
-                    current,
-                    reconciliation_result,
-                    checkpoint_pin=allocation.stop_checkpoint,
-                    retained_ambiguous_fingerprints=allocation.retained_ambiguous_fingerprints,
-                    ambiguity_reason=allocation.retained_ambiguous_reason,
-                    stop_audit_cache=stop_audit_cache,
-                    history_cache=history_cache,
-                )
-            except ControllerError as error:
-                return result("INVALID", str(error), checkpoint, accepted)
-            if (
-                _field(latest, "head", "reviewed_head") != allocation.stop_reviewed_head
-                or _field(latest, "patch_id", "patch_identity") != allocation.stop_reviewed_patch_id
-            ):
-                return result("INVALID", "the stopped review checkpoint identity changed", checkpoint, accepted)
-            return {
-                **result("STOPPED", "review discovery explicitly stopped; merge readiness remains separate", checkpoint, accepted),
-                "stop_reviewed_head": allocation.stop_reviewed_head,
-                "stop_head": allocation.stop_head,
-                "stop_reason": allocation.stop_reason,
-                "retained_ambiguous_fingerprints": list(allocation.retained_ambiguous_fingerprints),
-            }
         if allocation.handoff_checkpoint is None:
             return result("EXHAUSTED_PENDING", "review allocation exhausted; an explicit stop decision is required", checkpoint, accepted)
         if allocation.handoff_checkpoint != checkpoint or allocation.handoff_head != current.child_head:
@@ -3571,6 +3577,7 @@ class ReviewController:
         pr_numbers: Sequence[int] | None = None,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
+        bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] | None = None,
     ) -> dict[int, dict[str, Any]]:
         views: dict[int, dict[str, Any]] = {}
         selected_prs = state.ordered_prs if pr_numbers is None else pr_numbers
@@ -3578,6 +3585,16 @@ class ReviewController:
             allocation = state.allocations.get(f"{pr}:{channel.value}")
             if allocation is None or live[pr].merged:
                 continue
+            cache_key = (pr, channel.value)
+            bounded_snapshot = (
+                bounded_evidence_cache.get(cache_key)
+                if bounded_evidence_cache is not None
+                else None
+            )
+            if bounded_snapshot is None:
+                bounded_snapshot = self._bounded_allocation_evidence(allocation, histories[pr])
+                if bounded_evidence_cache is not None:
+                    bounded_evidence_cache[cache_key] = bounded_snapshot
             try:
                 current = self._anchor(pr, live[pr], reconciliation.links[pr])
             except (ControllerError, OSError, subprocess.SubprocessError, ValueError):
@@ -3591,6 +3608,7 @@ class ReviewController:
                 reconciliation_result=reconciliation,
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
+                bounded_evidence=bounded_snapshot,
             )
             default_one_result = (
                 allocation.min_additional_completed is None
@@ -3619,8 +3637,10 @@ class ReviewController:
                 state,
                 channel,
                 histories[pr],
-                baseline_checkpoints=(
-                    allocation.baseline_checkpoints if allocation.reopens_taper else ()
+                baseline_checkpoints=self._bounded_allocation_taper_baseline(
+                    allocation,
+                    bounded_snapshot,
+                    histories[pr],
                 ),
             )
             view["taper_complete"] = policy.taper_satisfied(
@@ -3642,6 +3662,7 @@ class ReviewController:
         candidate_prs: Sequence[int],
         *,
         allocation_reopen_prs: Iterable[int] = (),
+        bounded_evidence_cache: Mapping[tuple[int, str], Mapping[str, Any]] | None = None,
     ) -> policy.ChannelDecision:
         """Apply the same authoritative selector to already fetched status evidence."""
 
@@ -3665,17 +3686,43 @@ class ReviewController:
                 if isinstance(value, str):
                     other_heads[pr] = value
         channel_allocations = allocations
-        taper_history_by_pr = {
-            pr: policy.fresh_taper_history(
-                state,
-                channel,
-                histories[channel].get(pr, ()),
-                baseline_checkpoints=state.allocations[f"{pr}:{channel.value}"].baseline_checkpoints,
+        taper_history_by_pr: dict[int, Sequence[policy.Evidence]] = {}
+        active_review_prs = {
+            pr
+            for pr in candidate_prs
+            if any(
+                _field(value, "active_review") is True
+                or _field(value, "active_reservation") is True
+                for value in histories[channel].get(pr, ())
             )
-            for pr, view in channel_allocations.items()
-            if view.get("reopens_taper") is True
-            and f"{pr}:{channel.value}" in state.allocations
         }
+        for pr, view in channel_allocations.items():
+            allocation = state.allocations.get(f"{pr}:{channel.value}")
+            if allocation is None:
+                continue
+            bounded_snapshot = (
+                bounded_evidence_cache.get((pr, channel.value))
+                if bounded_evidence_cache is not None
+                else None
+            )
+            if bounded_snapshot is None:
+                bounded_snapshot = ReviewController._bounded_allocation_evidence(
+                    allocation,
+                    histories[channel].get(pr, ()),
+                )
+            if view.get("reopens_taper") is True or any(
+                result["accepted"] > 0 for result in bounded_snapshot["results"]
+            ):
+                taper_history_by_pr[pr] = policy.fresh_taper_history(
+                    state,
+                    channel,
+                    histories[channel].get(pr, ()),
+                    baseline_checkpoints=ReviewController._bounded_allocation_taper_baseline(
+                        allocation,
+                        bounded_snapshot,
+                        histories[channel].get(pr, ()),
+                    ),
+                )
         decision = policy.select_review_target(
             state,
             channel,
@@ -3725,12 +3772,20 @@ class ReviewController:
                     and (view.get("remaining") is None or view.get("remaining", 0) > 0)
                 )
                 or (
+                    view["status"] == "CAP_ACTIVE"
+                    and view.get("selection_control") == "taper"
+                    and view.get("completed_count", 0) > 0
+                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
+                )
+                or (
                     view.get("reopens_taper") is True
                     and view["status"] in {"PROMISED", "CAP_ACTIVE"}
                     and (view.get("remaining") is None or view.get("remaining", 0) > 0)
                 )
+                or view["status"] == "PROMISED"
             },
             taper_history_by_pr=taper_history_by_pr,
+            active_review_prs=active_review_prs,
         )
         if (
             channel == policy.Channel.CLI
@@ -3754,15 +3809,16 @@ class ReviewController:
         reconciliation: stack.Reconciliation,
         histories: Mapping[policy.Channel, Mapping[int, Sequence[Any]]],
         allocations: Mapping[int, Mapping[str, Any]],
+        *,
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
+        history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> policy.ChannelDecision:
         """Let an audited bounded Hosted allocation reopen its exact old/new-head mismatch."""
 
         if (
             channel != policy.Channel.HOSTED
-            or decision.status not in {
-                policy.ReviewStatus.READY,
-                policy.ReviewStatus.JUDGMENT_REQUIRED,
-            }
+            or decision.status
+            not in {policy.ReviewStatus.JUDGMENT_REQUIRED, policy.ReviewStatus.READY}
             or decision.target is None
         ):
             return decision
@@ -3781,11 +3837,19 @@ class ReviewController:
         ):
             return decision
 
+        def judgment_hold(reason: str) -> policy.ChannelDecision:
+            return dataclasses.replace(
+                decision,
+                status=policy.ReviewStatus.JUDGMENT_REQUIRED,
+                reason=reason,
+            )
+
         item = live.get(pr)
-        link = reconciliation.links.get(pr)
-        if item is None or link is None:
-            return decision
-        current = self._anchor(pr, item, link)
+        if item is None:
+            return judgment_hold("cross-channel review evidence has no live pull-request identity")
+        current = self._reconciled_anchor(pr, item, reconciliation)
+        if current is None:
+            return judgment_hold("cross-channel review evidence has no reconciled current stack anchor")
         hosted_latest = _latest_review(histories[policy.Channel.HOSTED].get(pr, ()))
         cli_latest = _latest_review(histories[policy.Channel.CLI].get(pr, ()))
         if hosted_latest is None or cli_latest is None:
@@ -3798,13 +3862,6 @@ class ReviewController:
             and cli_head == current.child_head
         ):
             return decision
-
-        def judgment_hold(reason: str) -> policy.ChannelDecision:
-            return dataclasses.replace(
-                decision,
-                status=policy.ReviewStatus.JUDGMENT_REQUIRED,
-                reason=reason,
-            )
 
         if not (
             allocation.head.casefold() == current.child_head.casefold()
@@ -3859,12 +3916,14 @@ class ReviewController:
                 current,
                 reconciliation,
                 checkpoint_pin=None,
+                stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
             )
-        except ControllerError as error:
+        except (ControllerError, ValueError, OSError, subprocess.SubprocessError) as error:
             return dataclasses.replace(
                 decision,
                 status=policy.ReviewStatus.HELD,
-                reason=str(error),
+                reason=f"cross-channel review evidence could not be verified: {error}",
             )
         return dataclasses.replace(
             decision,
@@ -3923,6 +3982,9 @@ class ReviewController:
         candidate_prs: Sequence[int],
         *,
         selection_complete: bool,
+        bounded_evidence_cache: Mapping[tuple[int, str], Mapping[str, Any]],
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]],
+        history_cache: dict[tuple[int, str], list[Any]],
     ) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}
         for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
@@ -3934,6 +3996,7 @@ class ReviewController:
                 histories,
                 allocations[channel],
                 candidate_prs,
+                bounded_evidence_cache=bounded_evidence_cache,
             )
             decision = self._reopen_hosted_cross_channel_judgment(
                 state,
@@ -3943,8 +4006,10 @@ class ReviewController:
                 reconciliation,
                 histories,
                 allocations[channel],
+                stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
             )
-            if decision.target is None and not selection_complete:
+            if (decision.target is None or decision.deferred_terminal) and not selection_complete:
                 result[channel.value] = {
                     "channel": channel.value,
                     "pr": None,
@@ -3969,18 +4034,21 @@ class ReviewController:
         state = self._state()
         if not state.ordered_prs:
             raise ControllerError("review stack is empty")
-        live, reconciliation = self._reconciliation(state)
+        history_cache: dict[tuple[int, str], list[Any]] = {}
+        stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+        bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
+        live, reconciliation = self._reconciliation(state, history_cache=history_cache)
         for pr in state.ordered_prs:
             problem = self._head_repository_problem(live[pr])
             if problem:
                 raise ControllerError(f"PR #{pr} {problem}")
         history = {
-            pr: self._policy_history(state, pr, selected, reconciliation)
+            pr: self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
             for pr in state.ordered_prs
         }
         other = policy.Channel.CLI if selected == policy.Channel.HOSTED else policy.Channel.HOSTED
         other_history = {
-            pr: self._policy_history(state, pr, other, reconciliation)
+            pr: self._policy_history(state, pr, other, reconciliation, history_cache=history_cache)
             for pr in state.ordered_prs
         }
         cli_history = history if selected == policy.Channel.CLI else other_history
@@ -4004,7 +4072,16 @@ class ReviewController:
             history = projected_cli_history
         else:
             other_history = projected_cli_history
-        allocations = self._allocation_views(state, live, reconciliation, selected, history)
+        allocations = self._allocation_views(
+            state,
+            live,
+            reconciliation,
+            selected,
+            history,
+            stop_audit_cache=stop_audit_cache,
+            history_cache=history_cache,
+            bounded_evidence_cache=bounded_evidence_cache,
+        )
         candidate_histories = {selected: history, other: other_history}
         decision = self._select_review_decision(
             state,
@@ -4019,6 +4096,7 @@ class ReviewController:
                 if allow_completed_allocation and expected_pr is not None
                 else ()
             ),
+            bounded_evidence_cache=bounded_evidence_cache,
         )
         decision = self._reopen_hosted_cross_channel_judgment(
             state,
@@ -4028,6 +4106,8 @@ class ReviewController:
             reconciliation,
             candidate_histories,
             allocations,
+            stop_audit_cache=stop_audit_cache,
+            history_cache=history_cache,
         )
         completed_allocation_override = False
         if decision.target is None:
@@ -4087,7 +4167,7 @@ class ReviewController:
             selected,
             pr,
             policy.ReviewStatus.READY if completed_allocation_override else decision.status,
-            "explicit allocation reopens a fresh taper after completion"
+            "explicit allocation reopens review selection after completion"
             if completed_allocation_override
             else decision.reason,
             selected_target,
@@ -4271,6 +4351,8 @@ class ReviewController:
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         review_target_prs: Sequence[int] | None = None,
         review_target_selection_complete: bool = False,
+        remote_head_snapshot: Mapping[str, str] | None = None,
+        phase_timings: dict[str, float] | None = None,
     ) -> dict[str, Any]:
         if history_cache is None:
             history_cache = {}
@@ -4288,7 +4370,14 @@ class ReviewController:
         if live_identity_cache is not None:
             for pr in evidence_prs or ():
                 if pr not in live_identity_cache:
-                    live_identity_cache[pr] = self._require_github().pull_request(pr)
+                    identity_started = time.perf_counter() if phase_timings is not None else 0.0
+                    try:
+                        live_identity_cache[pr] = self._require_github().pull_request(pr)
+                    finally:
+                        if phase_timings is not None:
+                            phase_timings["deep_pr_identity_ms"] = phase_timings.get(
+                                "deep_pr_identity_ms", 0.0
+                            ) + (time.perf_counter() - identity_started) * 1000
             selected_live_identities = dict(live_identities or {})
             selected_live_identities.update(live_identity_cache)
             refresh_prs = set()
@@ -4298,13 +4387,20 @@ class ReviewController:
             refresh_prs=refresh_prs,
             evidence_prs=evidence_prs,
             history_cache=history_cache,
+            remote_head_snapshot=remote_head_snapshot,
+            phase_timings=phase_timings,
         )
         values: list[dict[str, Any]] = []
         histories = {
             channel: {
                 pr: (
                     self._policy_history(
-                        state, pr, channel, reconciliation, history_cache=history_cache
+                        state,
+                        pr,
+                        channel,
+                        reconciliation,
+                        history_cache=history_cache,
+                        phase_timings=phase_timings,
                     )
                     if evidence_prs is None or pr in evidence_prs
                     else []
@@ -4330,6 +4426,7 @@ class ReviewController:
         }
         if stop_audit_cache is None:
             stop_audit_cache = {}
+        bounded_evidence_cache: dict[tuple[int, str], Mapping[str, Any]] = {}
         allocations = {
             channel: self._allocation_views(
                 state,
@@ -4339,6 +4436,7 @@ class ReviewController:
                 histories[channel],
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
+                bounded_evidence_cache=bounded_evidence_cache,
             )
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         }
@@ -4366,10 +4464,28 @@ class ReviewController:
                 }:
                     channel_status[channel.value] = channel_reconciliation.value
                 else:
+                    taper_history = None
+                    allocation = state.allocations.get(f"{pr}:{channel.value}")
+                    bounded_snapshot = bounded_evidence_cache.get((pr, channel.value))
+                    if allocation is not None and bounded_snapshot is not None and (
+                        allocations[channel].get(pr, {}).get("reopens_taper") is True
+                        or any(result["accepted"] > 0 for result in bounded_snapshot["results"])
+                    ):
+                        taper_history = policy.fresh_taper_history(
+                            state,
+                            channel,
+                            histories[channel][pr],
+                            baseline_checkpoints=self._bounded_allocation_taper_baseline(
+                                allocation,
+                                bounded_snapshot,
+                                histories[channel][pr],
+                            ),
+                        )
                     channel_status[channel.value] = policy.completion_status(
                         state,
                         channel,
                         histories[channel][pr],
+                        taper_history=taper_history,
                         reconciliation=channel_reconciliation,
                         other_channel_head=(
                             other_head
@@ -4430,6 +4546,9 @@ class ReviewController:
                 allocations,
                 review_target_prs,
                 selection_complete=review_target_selection_complete,
+                bounded_evidence_cache=bounded_evidence_cache,
+                stop_audit_cache=stop_audit_cache,
+                history_cache=history_cache,
             )
         return report
 
@@ -4606,24 +4725,31 @@ class ReviewController:
         except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
             return self._unknown_overview(state, str(error))
 
+        # Closed PRs remain in the queue for history, but old manual trigger
+        # comments and reservations on them cannot be active review targets.
+        # Deep-reading those records on every display refresh is expensive;
+        # request admission still performs its own fresh repository-wide check.
+        open_prs = tuple(pr for pr in state.ordered_prs if batch_live[pr].state == "OPEN")
         active_targets = {
             allocation.pr
             for allocation in state.allocations.values()
-            if allocation.handoff_checkpoint is None and allocation.stop_basis is None
+            if allocation.pr in open_prs
+            and allocation.handoff_checkpoint is None
+            and allocation.stop_basis is None
         }
         active_scan_status = "unknown"
         active_scan_error = None
         discover_active = getattr(self._evidence_provider, "active_review_targets", None)
         if callable(discover_active):
             try:
-                found = discover_active(state.ordered_prs, raw_identities)
+                found = discover_active(open_prs, raw_identities)
                 active_scan_status = "complete"
             except (ControllerError, OSError, RuntimeError, TypeError, ValueError, KeyError) as error:
                 found = set()
                 active_scan_status = "unknown"
                 active_scan_error = str(error)
             if not isinstance(found, (set, frozenset)) or any(
-                isinstance(pr, bool) or not isinstance(pr, int) or pr not in state.ordered_prs for pr in found
+                isinstance(pr, bool) or not isinstance(pr, int) or pr not in open_prs for pr in found
             ):
                 active_scan_status = "unknown"
                 active_scan_error = "active review target probe returned malformed PR identities"
@@ -4632,11 +4758,11 @@ class ReviewController:
 
         first_four = []
         for pr in state.ordered_prs:
-            if not batch_live[pr].merged:
+            if batch_live[pr].state == "OPEN":
                 first_four.append(pr)
                 if len(first_four) == 4:
                     break
-        candidate_prs = [pr for pr in state.ordered_prs if not batch_live[pr].merged]
+        candidate_prs = [pr for pr in state.ordered_prs if batch_live[pr].state == "OPEN"]
         target_prs = set(first_four) | active_targets
         target_indexes = [state.ordered_prs.index(pr) for pr in target_prs if pr in state.ordered_prs]
         deep_prs = target_prs.intersection(state.ordered_prs)
@@ -4646,6 +4772,7 @@ class ReviewController:
         history_cache: dict[tuple[int, str], list[Any]] = {}
         live_identity_cache: dict[int, Any] = {}
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] = {}
+        phase_timings: dict[str, float] = {}
         target_scan_prs: list[int] = []
         while deep_prs:
             frontier = max(state.ordered_prs.index(pr) for pr in deep_prs)
@@ -4653,15 +4780,42 @@ class ReviewController:
             scoped_state = dataclasses.replace(state, ordered_prs=tuple(scoped_prs))
             target_scan_prs: list[int] = []
             for pr in state.ordered_prs:
-                if batch_live[pr].merged:
+                if batch_live[pr].state != "OPEN":
                     continue
                 if pr not in deep_prs:
                     break
                 target_scan_prs.append(pr)
             target_scan_complete = all(
-                batch_live[pr].merged or pr in deep_prs for pr in state.ordered_prs
+                batch_live[pr].state != "OPEN" or pr in deep_prs for pr in state.ordered_prs
             )
             try:
+                # Deep PR metadata and complete review snapshots are independent
+                # reads. Fetch the newly selected window together instead of
+                # serializing each GitHub round trip. New-request preflight is
+                # separate and still reads fresh evidence at request time.
+                new_deep_prs = [
+                    pr for pr in state.ordered_prs if pr in deep_prs and pr not in live_identity_cache
+                ]
+                if new_deep_prs:
+                    fetch_started = time.perf_counter()
+                    prefetch_payload = getattr(self._evidence_provider, "prefetch_payload", None)
+                    with ThreadPoolExecutor(max_workers=min(8, len(new_deep_prs) * 2)) as pool:
+                        identities = {
+                            pr: pool.submit(self._require_github().pull_request, pr)
+                            for pr in new_deep_prs
+                        }
+                        evidence_reads = (
+                            [pool.submit(prefetch_payload, pr) for pr in new_deep_prs]
+                            if callable(prefetch_payload)
+                            else []
+                        )
+                        for pr in new_deep_prs:
+                            live_identity_cache[pr] = identities[pr].result()
+                        for future in evidence_reads:
+                            future.result()
+                    phase_timings["deep_pr_identity_ms"] = phase_timings.get(
+                        "deep_pr_identity_ms", 0.0
+                    ) + (time.perf_counter() - fetch_started) * 1000
                 scoped_report = self._status_from_state(
                     scoped_state,
                     evidence_prs=deep_prs,
@@ -4671,6 +4825,8 @@ class ReviewController:
                     stop_audit_cache=stop_audit_cache,
                     review_target_prs=target_scan_prs,
                     review_target_selection_complete=target_scan_complete,
+                    remote_head_snapshot=remote_heads,
+                    phase_timings=phase_timings,
                 )
             except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
                 deep_error = str(error)
@@ -4689,6 +4845,42 @@ class ReviewController:
                 break
             deep_prs.update(next_target_prs)
 
+        remote_recheck_error = None
+        remote_affected: set[int] = set()
+        if deep_error is None and deep_prs:
+            try:
+                verified_remote_heads = self.git.remote_heads()
+            except (ControllerError, OSError, subprocess.SubprocessError, RuntimeError, TypeError, ValueError) as error:
+                remote_recheck_error = str(error)
+                remote_affected.update(deep_prs)
+            else:
+                relevant_refs: set[str] = set()
+                for pr in state.ordered_prs:
+                    item = batch_live[pr]
+                    if item.state != "OPEN":
+                        continue
+                    relevant_refs.add(item.base_ref)
+                    if item.head_ref:
+                        relevant_refs.add(item.head_ref)
+                changed_refs = {
+                    ref
+                    for ref in relevant_refs
+                    if remote_heads.get(ref) != verified_remote_heads.get(ref)
+                }
+                for pr in state.ordered_prs:
+                    item = batch_live[pr]
+                    if item.state != "OPEN":
+                        continue
+                    if item.base_ref in changed_refs or item.head_ref in changed_refs:
+                        remote_affected.add(pr)
+            changed = True
+            while changed:
+                changed = False
+                for pr in state.ordered_prs:
+                    if links[pr].parent_pr in remote_affected and pr not in remote_affected:
+                        remote_affected.add(pr)
+                        changed = True
+
         scoped_prs = state.ordered_prs[: frontier + 1] if frontier >= 0 else ()
         if not scoped_prs and deep_error is None:
             # The configured stack may contain only merged PRs; policy selection
@@ -4700,7 +4892,7 @@ class ReviewController:
             for item in (scoped_report or {}).get("prs", [])
             if isinstance(item, Mapping)
         }
-        mismatch: set[int] = set()
+        mismatch: set[int] = set(remote_affected)
         for pr in scoped_prs:
             if pr not in deep_prs:
                 continue
@@ -4732,7 +4924,7 @@ class ReviewController:
                 for pr in target_scan_prs
                 if pr in mismatch
                 or (
-                    not batch_live[pr].merged
+                    batch_live[pr].state == "OPEN"
                     and (
                         batch_live[pr].base_ref != links[pr].parent_ref
                         or batch_live[pr].base_tip.casefold() != links[pr].parent_head.casefold()
@@ -4752,7 +4944,7 @@ class ReviewController:
             parent = links[pr]
             detailed = deep_by_pr.get(pr) if pr in deep_prs else None
             batch_topology_moved = (
-                not item.merged
+                item.state == "OPEN"
                 and (item.base_ref != parent.parent_ref or item.base_tip.casefold() != parent.parent_head.casefold())
             )
             saved_identity_moved = self._saved_identity_moved(state, pr, item, parent)
@@ -4769,7 +4961,11 @@ class ReviewController:
                 )
                 if pr in mismatch or batch_topology_moved:
                     row["reconciliation"] = "UNRECONCILED"
-                    row["reason"] = "live PR identity changed between batch overview and deep reconciliation"
+                    row["reason"] = (
+                        "remote parent or head branch changed during deep reconciliation"
+                        if pr in remote_affected
+                        else "live PR identity changed between batch overview and deep reconciliation"
+                    )
                     row["channels"] = {"hosted": "UNRECONCILED", "cli": "UNRECONCILED"}
                     row["allocations"] = {}
                     row["evidence_status"] = "stale"
@@ -4778,7 +4974,11 @@ class ReviewController:
 
             stale = pr in mismatch or batch_topology_moved or saved_identity_moved
             reason = (
-                "live parent topology or saved review identity moved"
+                (
+                    "remote parent or head branch changed during deep reconciliation"
+                    if pr in remote_affected
+                    else "live parent topology or saved review identity moved"
+                )
                 if stale
                 else "tail review evidence was not deeply checked in this status invocation"
             )
@@ -4817,13 +5017,22 @@ class ReviewController:
                 "unmerged_limit": max(4, len(target_scan_prs)),
                 "batch_status": "complete",
                 "deep_prs": [
-                    pr for pr in state.ordered_prs if pr in deep_prs and not batch_live[pr].merged
+                    pr for pr in state.ordered_prs if pr in deep_prs and batch_live[pr].state == "OPEN"
                 ] if deep_error is None else [],
                 "tail_evidence": "not fetched; identity-only rows are informational and never indicate completion",
                 "active_targets": sorted(active_targets),
                 "active_target_scan": active_scan_status,
+                "timing_ms": {
+                    "deep_pr_fetch": round(
+                        phase_timings.get("deep_pr_identity_ms", 0.0)
+                        + phase_timings.get("deep_evidence_history_ms", 0.0),
+                        1,
+                    ),
+                    "local_anchors": round(phase_timings.get("local_anchors_ms", 0.0), 1),
+                },
                 **({"active_target_error": active_scan_error} if active_scan_error else {}),
                 **({"deep_error": deep_error} if deep_error else {}),
+                **({"remote_head_recheck_error": remote_recheck_error} if remote_recheck_error else {}),
             },
             "prs": values,
             "review_targets": (scoped_report or {}).get("review_targets", self._empty_review_targets(state)),
@@ -4833,9 +5042,18 @@ class ReviewController:
             report["review_targets"] = self._unknown_review_targets(
                 f"deep review evidence is unavailable: {deep_error}"
             )
+        elif remote_recheck_error is not None:
+            report["review_targets"] = self._unknown_review_targets(
+                f"live remote branch heads could not be rechecked after deep reconciliation: {remote_recheck_error}"
+            )
         elif changed_target_pr is not None:
+            changed_reason = (
+                "remote parent or head branch changed during deep reconciliation"
+                if changed_target_pr in remote_affected
+                else "live PR identity changed between batch overview and deep reconciliation"
+            )
             unknown_targets = self._unknown_review_targets(
-                "live PR identity changed between batch overview and deep reconciliation"
+                changed_reason
             )
             positions = {pr: index for index, pr in enumerate(state.ordered_prs)}
             changed_position = positions[changed_target_pr]
@@ -4951,9 +5169,20 @@ class ReviewController:
             for number in eligible_prs
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI)
         ):
+            status_state = state
+            selected_indexes = [
+                index for index, number in enumerate(state.ordered_prs) if number in eligible_prs
+            ]
+            if selected_indexes and len(eligible_prs) != len(state.ordered_prs):
+                # A selected evidence read still needs the selected PR's complete
+                # ancestor identity chain, but it must not ask _live_snapshots
+                # to reconcile unrelated tail PRs without their batched IDs.
+                status_state = dataclasses.replace(
+                    state,
+                    ordered_prs=state.ordered_prs[: max(selected_indexes) + 1],
+                )
             status = self._status_from_state(
-                state,
-                evidence_prs=set(eligible_prs),
+                status_state,
                 history_cache=history_cache,
             )
             canonical_allocations = {
@@ -5070,6 +5299,7 @@ class ReviewController:
         checkpoint: str | None = None,
         min_additional_completed: int | None = None,
         max_additional_completed: int | None = None,
+        fresh_taper: bool = False,
     ) -> dict[str, Any]:
         """Grant, replace, or cancel a one-result or bounded review allocation."""
 
@@ -5081,6 +5311,8 @@ class ReviewController:
             raise ControllerError("allocation channel must be hosted or cli") from exc
         if not isinstance(reason, str) or not reason.strip():
             raise ControllerError("review allocation decisions require a reason")
+        if not isinstance(fresh_taper, bool):
+            raise ControllerError("fresh taper selection must be boolean")
         if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
             raise ControllerError("allocation baseline checkpoint must be a non-empty immutable identity")
         if min_additional_completed is not None and (
@@ -5104,7 +5336,7 @@ class ReviewController:
         bounded_replacement = min_additional_completed is not None or max_additional_completed is not None
         if checkpoint is not None and not bounded_replacement:
             raise ControllerError("--checkpoint requires a minimum or maximum allocation")
-        if action == "cancel" and (checkpoint is not None or bounded_replacement):
+        if action == "cancel" and (checkpoint is not None or bounded_replacement or fresh_taper):
             raise ControllerError("cancel removes the existing allocation without a replacement policy")
         normalized_head = _sha(head, "allocation head")
         state = self._state()
@@ -5149,17 +5381,7 @@ class ReviewController:
         current = self._anchor(pr, item, reconciliation.links[pr])
         history = _history(self._evidence_provider, pr, selected)
         policy_history = self._policy_history(state, pr, selected, reconciliation)
-        prior_taper_baseline = (
-            previous.baseline_checkpoints
-            if previous is not None and previous.reopens_taper
-            else ()
-        )
-        reopens_taper = policy.taper_satisfied_for_state(
-            state,
-            selected,
-            policy_history,
-            baseline_checkpoints=prior_taper_baseline,
-        )
+        reopens_taper = fresh_taper
         def provable_posted_hosted_request(value: Any) -> bool:
             trigger_id = _field(value, "trigger_id")
             return (
@@ -5205,6 +5427,10 @@ class ReviewController:
                     and target.pr == pr
                     and target.status == policy.ReviewStatus.JUDGMENT_REQUIRED
                 ):
+                    if not fresh_taper:
+                        raise ControllerError(
+                            "bounded Hosted allocation after a judgment-required taper must explicitly reopen fresh taper"
+                        )
                     if not stop_evidence_checked:
                         self._check_stop_evidence(
                             state,
@@ -5334,9 +5560,9 @@ class ReviewController:
             raise ControllerError(f"PR #{pr} is not in the configured review stack")
         identity = f"{pr}:{selected.value}"
         previous = state.allocations.get(identity)
-        with self._stop_review_locks(pr):
-            # Refresh everything inside both channel locks so an in-flight review
-            # cannot be mistaken for a terminal result.
+        with self._stop_review_locks(pr, selected.value):
+            # Refresh everything inside the selected channel's lock(s) so an
+            # in-flight review cannot be mistaken for a terminal result.
             state = self._state()
             if pr not in state.ordered_prs:
                 raise ControllerError(f"PR #{pr} is not in the configured review stack")

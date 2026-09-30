@@ -6,7 +6,10 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
 import unittest
+from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -18,9 +21,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as review_cli
-from pr_review import evidence, github, hosted
+from pr_review import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
-from pr_review.controller import ControllerError, StaleReviewTarget
+from pr_review.controller import ControllerError, StaleReviewTarget, _review_activity
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
@@ -30,6 +33,28 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def setUp(self) -> None:
+        def quiet_repository(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 43, "state": "open"}]
+            return []
+
+        endpoint_patcher = patch.object(github, "fetch_api_endpoint", side_effect=quiet_repository)
+        endpoint_patcher.start()
+        self.addCleanup(endpoint_patcher.stop)
+
+    @staticmethod
+    def _rest_issue_comment(comment: Mapping[str, Any]) -> dict[str, Any]:
+        author = comment.get("author")
+        return {
+            "id": comment.get("databaseId"),
+            "user": {"login": author.get("login")} if isinstance(author, Mapping) else None,
+            "body": comment.get("body"),
+            "created_at": comment.get("createdAt"),
+            "updated_at": comment.get("updatedAt"),
+            "html_url": comment.get("url"),
+        }
+
     def test_prepost_abandoned_trigger_audit_requires_the_existing_closure_proof(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "prepost-abandoned-0123456789abcdefabcd.json"
@@ -698,6 +723,21 @@ class RuntimeTest(unittest.TestCase):
             self.assertTrue(completed[0]["attributable"])
             self.assertFalse(completed[0]["anchored"])
             self.assertEqual(completed[0]["accepted"], 0)
+            self.assertIsNone(completed[0]["routed"])
+            self.assertIsNone(_review_activity(history, HEAD)["recent"][0]["routed"])
+
+            payload["data"]["repository"]["pullRequest"]["comments"]["nodes"][0]["body"] = (
+                f"CLI: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files\n"
+                "<!-- firemud-cli-run: run.Legacy -->"
+            )
+            (run / "decisions.tsv").write_text("1\trouted\tbelongs to another PR\n", encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+            ):
+                routed_history = LiveEvidence("owner/repo", live).history(42, "cli")
+            self.assertEqual(_review_activity(routed_history, HEAD)["recent"][0]["routed"], 1)
 
     def test_hosted_request_persists_exact_anchor_and_verified_comment(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 100)
@@ -717,11 +757,27 @@ class RuntimeTest(unittest.TestCase):
             "user": {"login": "maintainer"},
         }
         post_timeout: list[float] = []
+        post_saw_started_attempt: list[bool] = []
+        event_order: list[str] = []
+
+        start_attempt = sqlite_hosted_capture.start_hosted_attempt
+        write_trigger_record = hosted.atomic_write_json
+
+        def start_with_observation(*args, **kwargs):
+            result = start_attempt(*args, **kwargs)
+            event_order.append("sqlite-start")
+            return result
+
+        def write_with_observation(write_path, payload):
+            if payload.get("status") == "posting":
+                event_order.append("reservation")
+            return write_trigger_record(write_path, payload)
 
         def gh_call(args, **kwargs):
             if args == ["gh", "api", "user"]:
                 output = {"login": "maintainer"}
             else:
+                event_order.append("post")
                 post_timeout.append(kwargs["timeout"])
                 expected = [
                     "gh",
@@ -734,11 +790,75 @@ class RuntimeTest(unittest.TestCase):
                 ]
                 if args != expected:
                     raise AssertionError(f"unexpected GitHub command: {args!r}")
+                post_saw_started_attempt.append(
+                    any(item["channel"] == "hosted" and item["state"] == "started" for item in records.attempt_history(42))
+                )
                 output = comment
             return CompletedProcess(args, 0, json.dumps(output), "")
 
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "trigger.json"
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(
+                    sqlite_hosted_capture,
+                    "start_hosted_attempt",
+                    side_effect=start_with_observation,
+                ),
+                patch.object(hosted, "atomic_write_json", side_effect=write_with_observation),
+                patch(
+                    "pr_review.runtime.subprocess.run",
+                    side_effect=gh_call,
+                ),
+            ):
+                result = HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(result["trigger_comment_id"], 123)
+            self.assertEqual(record["anchor"]["child_head"], HEAD)
+            self.assertEqual(record["anchor"]["parent_head"], BASE)
+            self.assertEqual(record["anchor"]["patch_id"], PATCH)
+            self.assertEqual(record["posting_comment_id_floor"], 0)
+            self.assertEqual(len(record["sqlite_attempt_id"]), 32)
+            self.assertEqual(records.attempt_history(42)[0]["state"], "started")
+            self.assertEqual(post_saw_started_attempt, [True])
+            self.assertEqual(event_order, ["sqlite-start", "reservation", "post"])
+            self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+
+    def test_hosted_attempt_start_failure_does_not_block_the_single_post(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 124,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/124",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_calls: list[list[str]] = []
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                output = {"login": "maintainer"}
+            else:
+                post_calls.append(args)
+                output = comment
+            return CompletedProcess(args, 0, json.dumps(output), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
             with (
                 patch.object(live, "pull_request", return_value=snapshot),
                 patch.object(live, "branch_head", return_value=BASE),
@@ -746,18 +866,1016 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(hosted, "default_trigger_record_path", return_value=path),
                 patch.object(evidence, "git_common_dir", return_value=Path(directory)),
                 patch(
-                    "pr_review.runtime.subprocess.run",
-                    side_effect=gh_call,
+                    "pr_review.runtime.sqlite_hosted_capture.start_hosted_attempt",
+                    side_effect=RuntimeError("injected archive failure"),
                 ),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+
+            self.assertEqual(result["status"], "posted")
+            self.assertEqual(len(post_calls), 1)
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(record["status"], "posted")
+            self.assertEqual(len(record["sqlite_attempt_id"]), 32)
+            self.assertTrue(result["sqlite_capture_warnings"])
+            self.assertEqual(records.attempt_history(42), [])
+
+    def test_hosted_reservation_write_failure_marks_attempt_failed_and_never_posts(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        records: sqlite_review_records.SqliteReviewRecords
+        post_calls: list[list[str]] = []
+
+        def gh_call(args, **kwargs):
+            if args != ["gh", "api", "user"]:
+                post_calls.append(args)
+            return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+
+        def fail_reservation(_path, payload):
+            if payload.get("status") == "posting":
+                raise OSError("injected reservation write failure")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            records = self._new_review_records(Path(directory) / "controller.sqlite3")
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch.object(hosted, "atomic_write_json", side_effect=fail_reservation),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "durable Hosted posting reservation"),
+            ):
+                HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+
+            self.assertEqual(post_calls, [])
+            self.assertFalse(path.exists())
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
+            self.assertIsNone(attempts[0]["run_id"])
+
+    def test_next_hosted_request_captures_prior_terminal_attempt_before_archiving(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        prior_record = self._trigger_record(created="2026-09-23T00:00:00Z")
+        prior_record["sqlite_attempt_id"] = "prior-hosted-attempt"
+        payload = self._payload(
+            comments=[],
+            reviews=[
+                {
+                    "databaseId": 901,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+                    "state": "COMMENTED",
+                    "submittedAt": "2026-09-23T00:02:00Z",
+                    "commit": {"oid": HEAD},
+                }
+            ],
+        )
+        post_comment = {
+            "id": 999,
+            "created_at": "2026-09-29T01:00:00Z",
+            "html_url": "https://example.test/999",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_saw_prior_completed: list[bool] = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._bind_trigger(common, payload, prior_record)
+            records = self._new_review_records(common / "controller.sqlite3")
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id="prior-hosted-attempt",
+                source_pr=42,
+                candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+                metadata={"repository": "owner/repo"},
+            )
+
+            def gh_call(args, **kwargs):
+                if args == ["gh", "api", "user"]:
+                    output = {"login": "maintainer"}
+                else:
+                    prior = records.attempt_history(42)[0]
+                    post_saw_prior_completed.append(prior["state"] == "completed")
+                    output = post_comment
+                return CompletedProcess(args, 0, json.dumps(output), "")
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = HostedRunner("owner/repo", live, records=records)(target, expect_pr=42)
+
+            self.assertEqual(result["status"], "posted")
+            self.assertEqual(post_saw_prior_completed, [True])
+            prior = records.attempt_history(42)[0]
+            self.assertEqual(prior["state"], "completed")
+            self.assertEqual(prior["run_id"], "prior-hosted-attempt")
+            self.assertTrue(records.history(42)["runs"][0]["finalized"])
+            self.assertTrue(path.with_name("trigger-10.json").exists())
+
+    def test_status_history_does_not_mutate_hosted_attempt_records(self) -> None:
+        scenarios = (
+            (
+                "rate-limited",
+                [
+                    {
+                        "databaseId": 11,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Review rate limited. Next reviews available in: 20 minutes.",
+                        "createdAt": "2026-09-23T00:01:00Z",
+                        "updatedAt": "2026-09-23T00:01:00Z",
+                    }
+                ],
+                "rate_limited",
+            ),
+            (
+                "ambiguous",
+                [
+                    {
+                        "databaseId": 12,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Full review finished.",
+                        "createdAt": "2026-09-23T00:01:00Z",
+                        "updatedAt": "2026-09-23T00:01:00Z",
+                    },
+                    {
+                        "databaseId": 13,
+                        "author": {"login": "coderabbitai[bot]"},
+                        "body": "Additional provider output without a head-bound result.",
+                        "createdAt": "2026-09-23T00:02:00Z",
+                        "updatedAt": "2026-09-23T00:02:00Z",
+                    },
+                ],
+                "ambiguous",
+            ),
+        )
+
+        for suffix, responses, expected_state in scenarios:
+            with self.subTest(state=expected_state), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._new_review_records(common / "controller.sqlite3")
+                attempt_id = f"hosted-{suffix}"
+                trigger_record = self._trigger_record(created="2026-09-23T00:00:00Z")
+                trigger_record["sqlite_attempt_id"] = attempt_id
+                sqlite_hosted_capture.start_hosted_attempt(
+                    records,
+                    attempt_id=attempt_id,
+                    source_pr=42,
+                    candidate_sha=HEAD,
+                    started_at="2026-09-23T00:00:00Z",
+                )
+                comments = [
+                    *responses,
+                ]
+                payload = self._payload(comments=comments)
+                payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+                self._bind_trigger(common, payload, trigger_record)
+                live = LiveGitHub("owner/repo")
+                snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+                with (
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                    patch.object(live, "pull_request", return_value=snapshot),
+                    patch.object(evidence, "git_common_dir", return_value=common),
+                ):
+                    history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+                attempt = records.attempt_history(42)[0]
+                self.assertEqual(attempt["state"], "started")
+                self.assertIsNone(attempt["run_id"])
+                self.assertEqual(records.history(42)["runs"], [])
+                self.assertIsInstance(history, list)
+
+    @staticmethod
+    def _new_review_records(path: Path) -> sqlite_review_records.SqliteReviewRecords:
+        sqlite_store.SqliteStateStore(path).update(lambda state: state)
+        records = sqlite_review_records.SqliteReviewRecords(path)
+        records.bootstrap()
+        return records
+
+    def test_hosted_request_refuses_latest_untracked_manual_command_before_reserving(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        manual = {
+            "databaseId": 321,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
+        payload = self._payload([manual])
+        calls = []
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=lambda *args, **kwargs: calls.append(args)),
+                self.assertRaisesRegex(ControllerError, "latest public full-review trigger is not tracked privately"),
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [])
+
+    def test_hosted_request_rechecks_target_after_repository_sweep(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE,
+            repository="owner/repo",
+        )
+        manual = {
+            "databaseId": 321,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-24T00:00:00Z",
+        }
+        sweep_finished = False
+        calls = []
+
+        def repository_sweep(*_args):
+            nonlocal sweep_finished
+            sweep_finished = True
+
+        def gh_call(args, **_kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("manual trigger must prevent POST")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            with (
+                patch.object(LiveGitHub, "pull_request", return_value=snapshot),
+                patch.object(LiveGitHub, "branch_head", return_value=BASE),
+                patch.object(
+                    github, "fetch_pull_request",
+                    side_effect=lambda *_: self._payload([manual] if sweep_finished else []),
+                ),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations", side_effect=repository_sweep),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "latest public full-review trigger is not tracked privately"),
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))(target, expect_pr=42)
+            self.assertTrue(sweep_finished)
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
+    def test_hosted_request_allows_tracked_command_and_other_terminal_ambiguous_reply(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        command = {
+            "databaseId": 201,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-24T00:00:00Z",
+            "url": "https://example.test/comments/201",
+        }
+        other_command = {
+            "databaseId": 456,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/456",
+        }
+        record = self._trigger_record(status="retired")
+        record["trigger"].update(
+            {
+                "id": command["databaseId"],
+                "created_at": command["createdAt"],
+                "url": command["url"],
+                "author_login": "maintainer",
+            }
+        )
+        other_record = self._trigger_record(status="posted")
+        other_record.update({"pr_number": 43})
+        other_record["anchor"]["pr"] = 43
+        other_record["trigger"].update(
+            {
+                "id": other_command["databaseId"],
+                "created_at": other_command["createdAt"],
+                "url": other_command["url"],
+                "author_login": "maintainer",
+            }
+        )
+        other_ambiguous_response = {
+            "databaseId": 457,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-23T00:01:00Z",
+        }
+        other_unclassified_output = {
+            "databaseId": 458,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Additional review detail is unavailable.",
+            "createdAt": "2026-09-23T00:00:30Z",
+        }
+        payload42 = self._payload([command])
+        payload43 = self._payload([other_command, other_unclassified_output, other_ambiguous_response])
+        payload43["data"]["repository"]["pullRequest"]["number"] = 43
+        post_comment = {
+            "id": 123,
+            "created_at": "2026-09-24T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+
+        def gh_call(args, **kwargs):
+            result = {"login": "maintainer"} if args == ["gh", "api", "user"] else post_comment
+            return CompletedProcess(args, 0, json.dumps(result), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            target_dir = common / "firemud" / "hosted" / "owner_repo" / "pr-42"
+            target_dir.mkdir(parents=True)
+            path = target_dir / "trigger.json"
+            archived = target_dir / "trigger-201.json"
+            archived.write_text(json.dumps(record), encoding="utf-8")
+            other_dir = common / "firemud" / "hosted" / "owner_repo" / "pr-43"
+            other_dir.mkdir(parents=True)
+            (other_dir / "trigger.json").write_text(json.dumps(other_record), encoding="utf-8")
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(
+                    github,
+                    "fetch_pull_request",
+                    side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
+                ),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
             ):
                 result = HostedRunner("owner/repo", live)(target, expect_pr=42)
-            record = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(result["trigger_comment_id"], 123)
-            self.assertEqual(record["anchor"]["child_head"], HEAD)
-            self.assertEqual(record["anchor"]["parent_head"], BASE)
-            self.assertEqual(record["anchor"]["patch_id"], PATCH)
-            self.assertEqual(record["posting_comment_id_floor"], 0)
-            self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+            self.assertEqual(result["status"], "posted")
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["status"], "posted")
+
+    def test_hosted_request_refuses_another_pr_active_reservation(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        other_command = {
+            "databaseId": 456,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/456",
+        }
+        active_response = {
+            "databaseId": 457,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review triggered. I am reviewing the pull request now.",
+            "createdAt": "2026-09-23T00:01:00Z",
+        }
+        other_record = self._trigger_record(status="posted")
+        other_record.update({"pr_number": 43})
+        other_record["anchor"]["pr"] = 43
+        other_record["trigger"].update(
+            {
+                "id": other_command["databaseId"],
+                "created_at": other_command["createdAt"],
+                "url": other_command["url"],
+                "author_login": "maintainer",
+            }
+        )
+        payload42 = self._payload()
+        payload43 = self._payload([other_command, active_response])
+        payload43["data"]["repository"]["pullRequest"]["number"] = 43
+        calls = []
+
+        def gh_call(args, **kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("another PR has an active Hosted request")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            other_path = common / "firemud" / "hosted" / "owner_repo" / "pr-43" / "trigger.json"
+            other_path.parent.mkdir(parents=True)
+            other_path.write_text(json.dumps(other_record), encoding="utf-8")
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(
+                    github,
+                    "fetch_pull_request",
+                    side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
+                ),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "another Hosted request is unresolved for PR #43: active"),
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
+    def test_hosted_request_refuses_untracked_manual_request_on_another_open_pr(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        manual = {
+            "databaseId": 456,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/456",
+        }
+        payload42 = self._payload()
+        payload43 = self._payload([manual])
+        payload43["data"]["repository"]["pullRequest"]["number"] = 43
+        calls = []
+
+        def gh_call(args, **kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("an unresolved manual Hosted request must prevent POST")
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 43, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(
+                    github,
+                    "fetch_pull_request",
+                    side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr],
+                ),
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #43"),
+            ):
+                HostedRunner("owner/repo", live)(target, expect_pr=42)
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
+    def test_hosted_request_checks_new_manual_command_after_other_prs_terminal_record(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        old_command = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/10",
+        }
+        old_finish = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        new_manual = {
+            "databaseId": 12,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:02:00Z",
+            "url": "https://example.test/comments/12",
+        }
+        payload42 = self._payload()
+        payload43 = self._payload([old_command, old_finish, new_manual])
+        payload43["data"]["repository"]["pullRequest"]["number"] = 43
+        calls = []
+
+        def gh_call(args, **kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("a new manual Hosted request must prevent POST")
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 43, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
+                return [self._rest_issue_comment(comment) for comment in (old_command, old_finish, new_manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            other = common / "firemud" / "hosted" / "owner_repo" / "pr-43" / "trigger.json"
+            other.parent.mkdir(parents=True)
+            record = self._trigger_record()
+            record["pr_number"] = 43
+            record["anchor"]["pr"] = 43
+            other.write_text(json.dumps(record), encoding="utf-8")
+            store = StateStore(common / "state.json")
+            store.save(ReviewState(ordered_prs=(42, 43)))
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", side_effect=lambda _repo, pr: {42: payload42, 43: payload43}[pr]),
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #43"),
+            ):
+                HostedRunner("owner/repo", live, store)(target, expect_pr=42)
+            self.assertFalse(path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
+    def test_hosted_global_scan_skips_full_history_for_quiet_open_pr(self) -> None:
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return []
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        live = LiveGitHub("owner/repo")
+        runner = HostedRunner("owner/repo", live)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(
+                github,
+                "fetch_pull_request",
+                side_effect=AssertionError("quiet PRs must not load review threads"),
+            ) as fetch_full,
+        ):
+            runner._assert_no_other_active_reservations(42, Path(directory))
+        fetch_full.assert_not_called()
+
+    def test_hosted_global_scan_blocks_off_queue_active_manual_request(self) -> None:
+        manual = {
+            "databaseId": 901,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/901",
+        }
+        payload = self._payload([manual])
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
+            self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
+        fetch_full.assert_called_once_with("owner/repo", 99)
+        preceding.assert_called_once_with("owner/repo", 99, payload, 901, Path(directory))
+
+    def test_hosted_global_scan_releases_slot_after_off_queue_manual_adoption(self) -> None:
+        manual = {
+            "databaseId": 905,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-28T10:08:38Z",
+            "url": "https://example.test/comments/905",
+        }
+        completed_review = {
+            "databaseId": 906,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "<!-- walkthrough_start -->\n**Actionable comments posted:** 1",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-28T10:19:19Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([manual], [completed_review])
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+        anchor = {
+            "pr": 99,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 99, common)
+            adopted = hosted.adopt_manual_completed_trigger(
+                "owner/repo",
+                99,
+                manual["databaseId"],
+                HEAD,
+                anchor,
+                lambda: payload,
+                path=record_path,
+                common=common,
+            )
+            self.assertEqual(adopted["status"], "adopted")
+
+            with (
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                    42, common
+                )
+
+            self.assertTrue(record_path.exists())
+            fetch_full.assert_called_once_with("owner/repo", 99)
+
+    def test_hosted_global_scan_blocks_new_manual_request_after_tracked_current_record(self) -> None:
+        old_command = {
+            "databaseId": 910,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/910",
+        }
+        new_command = {
+            "databaseId": 912,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:02:00Z",
+            "url": "https://example.test/comments/912",
+        }
+        completed_review = {
+            "databaseId": 911,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nActionable comments posted: 1\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([old_command, new_command], [completed_review])
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(old_command), self._rest_issue_comment(new_command)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        record = self._trigger_record(created=old_command["createdAt"])
+        record.update({"pr_number": 99})
+        record["anchor"]["pr"] = 99
+        record["trigger"].update(
+            {
+                "id": old_command["databaseId"],
+                "url": old_command["url"],
+                "author_login": "maintainer",
+            }
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = common / "firemud" / "hosted" / "owner_repo" / "pr-99" / "trigger.json"
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(github, "fetch_pull_request", return_value=payload) as fetch_full,
+                patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
+                self.assertRaisesRegex(ControllerError, "another manual Hosted request is unresolved for PR #99"),
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                    42, common
+                )
+        fetch_full.assert_called_once_with("owner/repo", 99)
+        preceding.assert_called_once_with("owner/repo", 99, payload, 912, common)
+
+    def test_hosted_global_scan_uses_reviewed_head_for_historical_manual_request(self) -> None:
+        manual = {
+            "databaseId": 920,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/920",
+        }
+        completed_review = {
+            "databaseId": 921,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nActionable comments posted: 1\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:01:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload([manual], [completed_review], head="d" * 40)
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False) as preceding,
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
+        preceding.assert_called_once_with("owner/repo", 99, payload, 920, Path(directory))
+
+    def test_hosted_global_scan_keeps_active_manual_request_unresolved_without_head_proof(self) -> None:
+        manual = {
+            "databaseId": 922,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/922",
+        }
+        active_reply = {
+            "databaseId": 923,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review triggered. I am reviewing the pull request now.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([manual, active_reply], head="d" * 40)
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(hosted, "unresolved_preceding_full_trigger", return_value=False),
+            self.assertRaisesRegex(
+                ControllerError,
+                r"another manual Hosted request is unresolved for PR #99: its command-time head cannot be verified",
+            ),
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
+
+    def test_hosted_global_scan_releases_slot_for_headless_terminal_manual_status(self) -> None:
+        terminal_responses = (
+            "Review rate limited; next reviews available in 30 minutes",
+            f"This request {hosted.NOOP_MARKER}",
+            "The review failed due to an internal error.",
+        )
+        for index, response_body in enumerate(terminal_responses):
+            with self.subTest(response=response_body):
+                manual = {
+                    "databaseId": 930 + index * 2,
+                    "author": {"login": "maintainer"},
+                    "body": hosted.FULL_COMMAND,
+                    "createdAt": "2026-09-23T00:00:00Z",
+                    "url": f"https://example.test/comments/{930 + index * 2}",
+                }
+                response = {
+                    "databaseId": 931 + index * 2,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": response_body,
+                    "createdAt": "2026-09-23T00:01:00Z",
+                    "updatedAt": "2026-09-23T00:01:00Z",
+                }
+                payload = self._payload([manual, response], head="d" * 40)
+                payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+                def api_endpoint(endpoint: str, manual: Mapping[str, Any] = manual) -> list[dict[str, Any]]:
+                    if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                        return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+                    if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                        return [self._rest_issue_comment(manual)]
+                    raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+                with (
+                    tempfile.TemporaryDirectory() as directory,
+                    patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                    patch.object(github, "fetch_pull_request", return_value=payload),
+                ):
+                    HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                        42, Path(directory)
+                    )
+
+    def test_hosted_global_scan_releases_slot_for_headless_finished_reply_only(self) -> None:
+        manual = {
+            "databaseId": 940,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/940",
+        }
+        finished_reply = {
+            "databaseId": 941,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([manual, finished_reply], head="d" * 40)
+        payload["data"]["repository"]["pullRequest"]["number"] = 99
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 99, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/99/comments?per_page=100":
+                return [self._rest_issue_comment(manual)]
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+            patch.object(github, "fetch_pull_request", return_value=payload),
+        ):
+            HostedRunner("owner/repo", LiveGitHub("owner/repo"))._assert_no_other_active_reservations(
+                42, Path(directory)
+            )
+
+    def test_headless_terminal_manual_status_keeps_incomplete_coverage_blocked(self) -> None:
+        manual = {
+            "databaseId": 950,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": "2026-09-23T00:00:00Z",
+            "url": "https://example.test/comments/950",
+        }
+        failed_incomplete = {
+            "databaseId": 951,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "The review failed with incomplete coverage: 4 of 10 files were reviewed.",
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([manual, failed_incomplete], head="d" * 40)
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertFalse(
+                HostedRunner._manual_terminal_without_head(
+                    "owner/repo", 99, payload, manual, Path(directory)
+                )
+            )
+
+    def test_hosted_repository_admission_lock_serializes_different_pr_posts(self) -> None:
+        snapshots = {
+            number: PullRequestSnapshot(number, "OPEN", "develop", BASE, HEAD, "feature", 1)
+            for number in (42, 43)
+        }
+        targets = {
+            number: ReviewTarget(
+                snapshot,
+                EffectiveParent("develop", BASE),
+                patch_identity=PATCH,
+                merge_base=BASE,
+                repository="owner/repo",
+            )
+            for number, snapshot in snapshots.items()
+        }
+        lives = {number: LiveGitHub("owner/repo") for number in snapshots}
+        payloads = {number: self._payload() for number in snapshots}
+        for number, payload in payloads.items():
+            payload["data"]["repository"]["pullRequest"]["number"] = number
+        comment = {
+            "id": 123,
+            "created_at": "2026-09-24T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_started = threading.Event()
+        release_post = threading.Event()
+        posts = []
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            posts.append(args)
+            post_started.set()
+            if not release_post.wait(timeout=10):
+                raise AssertionError("test did not release the first Hosted POST")
+            return CompletedProcess(args, 0, json.dumps(comment), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            paths = {
+                number: common / "firemud" / "hosted" / "owner_repo" / f"pr-{number}" / "trigger.json"
+                for number in snapshots
+            }
+            with (
+                patch.object(lives[42], "pull_request", return_value=snapshots[42]),
+                patch.object(lives[43], "pull_request", return_value=snapshots[43]),
+                patch.object(lives[42], "branch_head", return_value=BASE),
+                patch.object(lives[43], "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", side_effect=lambda _repo, pr: payloads[pr]),
+                patch.object(hosted, "default_trigger_record_path", side_effect=lambda _repo, pr: paths[pr]),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                first = pool.submit(HostedRunner("owner/repo", lives[42]), targets[42], expect_pr=42)
+                try:
+                    self.assertTrue(post_started.wait(timeout=5), "first Hosted request did not reach POST")
+                    second = pool.submit(HostedRunner("owner/repo", lives[43]), targets[43], expect_pr=43)
+                    with self.assertRaisesRegex(
+                        ControllerError,
+                        "another Hosted request is active for repository owner/repo",
+                    ):
+                        second.result(timeout=5)
+                finally:
+                    release_post.set()
+                self.assertEqual(first.result(timeout=5)["status"], "posted")
+
+            self.assertEqual(len(posts), 1)
+            self.assertTrue(paths[42].exists())
+            self.assertFalse(paths[43].exists())
 
     def test_hosted_request_rejects_more_than_100_files_before_reserving_or_posting(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 101)
@@ -1116,6 +2234,117 @@ class RuntimeTest(unittest.TestCase):
         ):
             return list(LiveEvidence("owner/repo", live).history(42, channel))
 
+    def test_history_uses_complete_review_snapshot_head_without_extra_metadata_read(self):
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", side_effect=AssertionError("redundant metadata read")),
+            patch.object(evidence, "discover_cli_captures", return_value=[]),
+        ):
+            history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+            self.assertEqual(HEAD, history[0]["head"])
+
+    def test_cli_history_resolves_common_dir_and_records_store_once_with_attribution(self):
+        class EmptyRecords:
+            @staticmethod
+            def cli_source_decisions(_run_id):
+                return None
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            captures_root = common / "coderabbit-review-logs"
+            for run_id in ("run.HistoryOne", "run.HistoryTwo"):
+                run = captures_root / run_id
+                run.mkdir(parents=True)
+                (run / "metadata").write_text(
+                    f"run_id={run_id}\nrepository=owner/repo\npull_request=42\n"
+                    f"candidate_sha={HEAD}\ncandidate_files=1\n",
+                    encoding="utf-8",
+                )
+                (run / "stdout").write_text(
+                    json.dumps(
+                        {"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": ["a"]}
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+            payload = self._payload()
+            payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+            live = LiveGitHub("owner/repo")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(evidence, "git_common_dir", return_value=common) as resolve_common,
+                patch.object(sqlite_review_records, "SqliteReviewRecords", return_value=EmptyRecords()) as make_records,
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+
+            self.assertEqual(resolve_common.call_count, 1)
+            self.assertEqual(make_records.call_count, 1)
+            captures = [item for item in history if item["checkpoint"].startswith("pending-capture:")]
+            self.assertEqual(
+                {item["checkpoint"] for item in captures},
+                {"pending-capture:run.HistoryOne", "pending-capture:run.HistoryTwo"},
+            )
+            self.assertTrue(all(not item["completed"] and not item["attributable"] for item in captures))
+            self.assertTrue(all(item["held"] for item in captures))
+            self.assertEqual({item["head"] for item in captures}, {HEAD})
+
+    def test_cli_history_holds_checkpoint_when_capture_context_is_unavailable(self):
+        run_id = "run.ContextUnavailable"
+        checkpoint = {
+            "databaseId": 44,
+            "body": (
+                f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files\n"
+                f"<!-- firemud-cli-run: {run_id} -->"
+            ),
+            "createdAt": "2026-09-23T00:01:00Z",
+            "updatedAt": "2026-09-23T00:01:00Z",
+        }
+        payload = self._payload([checkpoint])
+        live = LiveGitHub("owner/repo")
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(
+                evidence,
+                "resolve_cli_capture_context",
+                side_effect=evidence.EvidenceError("capture context cannot be read"),
+            ),
+            patch.object(evidence, "load_cli_capture") as load_capture,
+            patch.object(evidence, "discover_cli_captures") as discover_captures,
+        ):
+            history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+
+        checkpoint_rows = [item for item in history if item.get("comment_id") == 44]
+        self.assertEqual(len(checkpoint_rows), 1)
+        row = checkpoint_rows[0]
+        self.assertFalse(row["completed"])
+        self.assertFalse(row["attributable"])
+        self.assertTrue(row["held"])
+        self.assertFalse(row["capture_context_available"])
+        self.assertIn("context is unavailable", row["reason"])
+        load_capture.assert_not_called()
+        discover_captures.assert_not_called()
+
+    def test_history_fallback_normalizes_live_snapshot_head(self):
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        payload["data"]["repository"]["pullRequest"]["changedFiles"] = "unknown"
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD.upper(), "feature", 1)
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(evidence, "discover_cli_captures", return_value=[]),
+        ):
+            history = list(LiveEvidence("owner/repo", live).history(42, "cli"))
+        self.assertEqual(HEAD, history[0]["head"])
+
     def test_history_exposes_valid_and_malformed_scope_markers_as_non_counting_events(self):
         valid = {
             "databaseId": 90,
@@ -1348,7 +2577,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
-            f"Hosted: 1 found / 0 accepted · `{HEAD[:12]}` · 1 files · 2m 00s\n"
+            f"Hosted: 1 found / 0 accepted / 1 routed · `{HEAD[:12]}` · 1 files · 2m 00s\n"
             "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 120 -->"
         )
         now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -1386,6 +2615,7 @@ class RuntimeTest(unittest.TestCase):
             record_path.write_text(json.dumps(record), encoding="utf-8")
             history = self._history(common, payload)
             self.assertTrue(any(item.get("completed") and item.get("anchored") for item in history))
+            self.assertEqual(_review_activity(history, HEAD)["recent"][0]["routed"], 1)
 
             mismatched = {**review, "databaseId": 56}
             history = self._history(common, self._payload([trigger, checkpoint], [mismatched]))
@@ -1459,6 +2689,19 @@ class RuntimeTest(unittest.TestCase):
         valid = history_for([trigger, summary, reply, checkpoint])
         self.assertTrue(any(item.get("checkpoint") == "13" and item.get("completed") for item in valid))
 
+        legacy_inline = {
+            "databaseId": 54,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "A late finding",
+            "createdAt": "2026-09-23T00:03:30Z",
+            "updatedAt": "2026-09-23T00:03:30Z",
+        }
+        invalidated = history_for(
+            [trigger, summary, reply, checkpoint],
+            threads=[{"comments": {"nodes": [legacy_inline]}}],
+        )
+        self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in invalidated))
+
         provider_summary = {
             **summary,
             "body": (
@@ -1500,7 +2743,7 @@ class RuntimeTest(unittest.TestCase):
             mismatched_provider_summary,
         ):
             with self.subTest(provider_summary=invalid_summary["body"]):
-                rejected = history_for([trigger, invalid_summary, edited_reply, checkpoint])
+                rejected = history_for([trigger, invalid_summary, edited_reply, edited_duration_checkpoint])
                 self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in rejected))
 
         inline_comment = {
@@ -1511,7 +2754,7 @@ class RuntimeTest(unittest.TestCase):
             "updatedAt": "2026-09-23T00:02:30Z",
         }
         with_inline_output = history_for(
-            [trigger, provider_summary, edited_reply, checkpoint],
+            [trigger, provider_summary, edited_reply, edited_duration_checkpoint],
             threads=[{"comments": {"nodes": [inline_comment]}}],
         )
         self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_inline_output))
@@ -1523,14 +2766,19 @@ class RuntimeTest(unittest.TestCase):
             "createdAt": "2026-09-23T00:02:30Z",
             "updatedAt": "2026-09-23T00:02:30Z",
         }
-        with_issue_output = history_for([trigger, provider_summary, post_trigger_comment, edited_reply, checkpoint])
+        with_issue_output = history_for(
+            [trigger, provider_summary, post_trigger_comment, edited_reply, edited_duration_checkpoint]
+        )
         self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in with_issue_output))
 
         mismatched_summary = {**summary, "body": summary["body"].replace(HEAD, "d" * 40)}
         missing_summary = [trigger, reply, checkpoint]
+        self.assertTrue(any(
+            item.get("checkpoint") == "13" and item.get("completed")
+            for item in history_for(missing_summary)
+        ))
         for invalid_comments in (
             [trigger, mismatched_summary, reply, checkpoint],
-            missing_summary,
             [trigger, summary, {**reply, "author": {"login": "other-user"}}, checkpoint],
             [trigger, summary, {**reply, "body": "Review rate limited; next reviews available in 30 minutes"}, checkpoint],
         ):
@@ -1572,6 +2820,196 @@ class RuntimeTest(unittest.TestCase):
         }
         conflicted = history_for([trigger, summary, reply, checkpoint], [conflicting_review])
         self.assertFalse(any(item.get("checkpoint") == "13" and item.get("completed") for item in conflicted))
+
+    def test_later_explicit_terminal_comment_overrides_immutable_review(self) -> None:
+        trigger_at = "2026-09-27T17:27:32Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-27T17:30:00Z",
+            "commit": {"oid": HEAD},
+        }
+        terminal_comment = {
+            "databaseId": 56,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Review rate limited; next reviews available in 30 minutes",
+            "createdAt": "2026-09-27T17:31:00Z",
+            "updatedAt": "2026-09-27T17:31:00Z",
+        }
+
+        state = hosted.trigger_state(
+            "owner/repo",
+            42,
+            self._payload([trigger, terminal_comment], [review]),
+            self._trigger_record(created=trigger_at),
+        )
+
+        self.assertEqual((state.state, state.response_id), ("rate_limited", 56))
+
+    def test_edited_finished_acknowledgment_cannot_supersede_immutable_review(self) -> None:
+        trigger_at = "2026-09-27T17:27:32Z"
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+            "url": "https://example.test/comments/10",
+        }
+        summary = {
+            "databaseId": 12,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}."
+            ),
+            "createdAt": "2026-09-27T17:31:00Z",
+            "updatedAt": "2026-09-27T17:31:00Z",
+        }
+        acknowledgment = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-27T17:28:00Z",
+            "updatedAt": "2026-09-27T17:34:00Z",
+        }
+        review = {
+            "databaseId": 55,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-27T17:30:00Z",
+            "commit": {"oid": HEAD},
+        }
+
+        state = hosted.trigger_state(
+            "owner/repo",
+            42,
+            self._payload([trigger, summary, acknowledgment], [review]),
+            self._trigger_record(created=trigger_at),
+        )
+
+        self.assertEqual((state.state, state.response_id), ("completed", 55))
+
+    def test_archived_zero_reply_checkpoint_survives_a_later_hosted_review(self) -> None:
+        first_head = "932ff6e0027214d7e5303941de11e52501230220"
+        second_head = "52a" + "8" * 37
+        first_at = "2026-09-27T17:27:32Z"
+        first_trigger = {
+            "databaseId": 5858100193,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": first_at,
+            "updatedAt": first_at,
+            "url": "https://example.test/comments/5858100193",
+        }
+        first_summary = {
+            "databaseId": 5858101150,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": (
+                "No actionable comments were generated in the recent review.\n"
+                "**Actionable comments posted:** 0\n"
+                f"Reviewing files that changed from the base of the PR and between {BASE} and {first_head}."
+            ),
+            "createdAt": "2026-09-27T17:30:00Z",
+            "updatedAt": "2026-09-27T17:30:00Z",
+        }
+        first_reply = {
+            "databaseId": 5858101160,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-27T17:27:40Z",
+            # A later edit must not erase this already-attributed review.
+            "updatedAt": "2026-09-27T21:38:20Z",
+        }
+        first_checkpoint = {
+            "databaseId": 5858176568,
+            "author": {"login": "maintainer"},
+            "body": (
+                f"Hosted: 0 found / 0 accepted / 0 routed · `{first_head[:9]}` · 6 files\n"
+                "<!-- firemud-hosted-review: 5858101160 -->"
+            ),
+            "createdAt": "2026-09-27T17:38:05Z",
+            "updatedAt": "2026-09-27T17:40:22Z",
+        }
+        second_at = "2026-09-27T21:36:08Z"
+        second_trigger = {
+            **first_trigger,
+            "databaseId": 5860038456,
+            "createdAt": second_at,
+            "updatedAt": second_at,
+            "url": "https://example.test/comments/5860038456",
+        }
+        second_checkpoint = {
+            **first_checkpoint,
+            "databaseId": 5860127083,
+            "body": (
+                f"Hosted: 1 found / 1 accepted / 0 routed · `{second_head[:9]}` · 6 files\n"
+                "<!-- firemud-hosted-review: 5332195978 -->"
+            ),
+            "createdAt": "2026-09-27T21:40:00Z",
+            "updatedAt": "2026-09-27T21:40:00Z",
+        }
+        second_review = {
+            "databaseId": 5332195978,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {second_head}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-27T21:39:18Z",
+            "commit": {"oid": second_head},
+        }
+        payload = self._payload(
+            [first_trigger, first_summary, first_reply, first_checkpoint, second_trigger, second_checkpoint],
+            [second_review],
+            head=second_head,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            trigger_dir = hosted.default_trigger_record_path("owner/repo", 42, common).parent
+            trigger_dir.mkdir(parents=True)
+            first_record = self._trigger_record(head=first_head, created=first_at)
+            first_record["status"] = "completed"
+            first_record["trigger"]["id"] = 5858100193
+            first_record["trigger"]["url"] = first_trigger["url"]
+            archived = trigger_dir / "trigger-5858100193.json"
+            archived.write_text(json.dumps(first_record), encoding="utf-8")
+            second_record = self._trigger_record(head=second_head, created=second_at)
+            second_record["trigger"].update(
+                {"id": 5860038456, "url": "https://example.test/comments/5860038456"}
+            )
+            hosted.default_trigger_record_path("owner/repo", 42, common).write_text(
+                json.dumps(second_record), encoding="utf-8"
+            )
+
+            self.assertIsNotNone(
+                hosted._zero_finding_summary(
+                    payload,
+                    first_head,
+                    hosted.parse_timestamp(first_at),
+                    5858101160,
+                    hosted.parse_timestamp(second_at),
+                )
+            )
+            old_state = hosted.trigger_state("owner/repo", 42, payload, first_record, archived)
+            self.assertEqual((old_state.state, old_state.response_id), ("completed", 5858101160))
+
+            history = self._history(common, payload, current_head=second_head)
+
+        checkpoints = {item["checkpoint"]: item for item in history if item.get("completed") is True}
+        self.assertIn("5858176568", checkpoints)
+        self.assertIn("5860127083", checkpoints)
+        self.assertEqual(checkpoints["5858176568"]["accepted"], 0)
+        self.assertEqual(checkpoints["5860127083"]["accepted"], 1)
 
     def test_completed_hosted_trigger_without_checkpoint_is_held(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
@@ -1669,6 +3107,8 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(held[0]["trigger_id"], 10)
         self.assertEqual(held[0]["response_id"], 11)
         self.assertEqual(held[0]["captured_head"], HEAD)
+        self.assertTrue(held[0]["terminal"])
+        self.assertFalse(held[0]["attributable"])
         self.assertRegex(held[0]["fingerprint"], r"^[0-9a-f]{64}$")
 
         state.response_id = None
@@ -2287,6 +3727,182 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(hosted.current_trigger_record_paths("owner/repo", 42, common), [])
             self.assertNotIn(audit_path, hosted.trigger_record_paths("owner/repo", 42, common))
 
+    def test_confirmed_prepost_recovery_finishes_the_linked_sqlite_attempt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            state_directory = common / "firemud" / "pr-review-stack.json"
+            state_directory.mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-attempt"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=42,
+                candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": "owner/repo",
+                        "pr_number": 42,
+                        "head_sha": HEAD,
+                        "sqlite_attempt_id": attempt_id,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result, exit_status = self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+
+            self.assertEqual(exit_status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            attempt = records.attempt_history(42)[0]
+            self.assertEqual(attempt["attempt_id"], attempt_id)
+            self.assertEqual(attempt["state"], "failed")
+            self.assertIsNone(attempt["run_id"])
+            self.assertIn("POST was confirmed not issued", attempt["diagnostic"])
+
+    def test_prepost_recovery_retries_after_sql_failure_without_replacing_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-retry-attempt"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records, attempt_id=attempt_id, source_pr=42, candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            posting = json.loads(path.read_text(encoding="utf-8"))
+            posting["sqlite_attempt_id"] = attempt_id
+            path.write_text(json.dumps(posting), encoding="utf-8")
+            args = self._prepost_recovery_args()
+            first_live_head = "d" * 40
+            first_payload = self._payload()
+            first_payload["data"]["repository"]["pullRequest"]["headRefOid"] = first_live_head
+            with (
+                patch.object(hosted, "_finish_recovered_attempt", side_effect=OSError("temporary SQL failure")),
+                self.assertRaisesRegex(OSError, "temporary SQL failure"),
+            ):
+                self._dispatch_prepost_recovery(path, args, first_payload)
+            audit_path = next(path.parent.glob("prepost-abandoned-*.json"))
+            original_audit = audit_path.read_bytes()
+            self.assertTrue(path.exists())
+            self.assertEqual(records.attempt(attempt_id)["state"], "started")
+
+            retry_payload = self._payload()
+            retry_payload["data"]["repository"]["pullRequest"]["headRefOid"] = "e" * 40
+            result, status = self._dispatch_prepost_recovery(path, args, retry_payload)
+            self.assertEqual(status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertEqual(result["current_head_sha"], "e" * 40)
+            self.assertFalse(path.exists())
+            self.assertEqual(audit_path.read_bytes(), original_audit)
+            self.assertEqual(json.loads(original_audit)["recovery"]["live_head_sha"], first_live_head)
+            self.assertEqual(records.attempt(attempt_id)["state"], "failed")
+
+    def test_prepost_recovery_rejects_a_malformed_archived_live_head(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-invalid-audit-head"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records, attempt_id=attempt_id, source_pr=42, candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            posting = json.loads(path.read_text(encoding="utf-8"))
+            posting["sqlite_attempt_id"] = attempt_id
+            path.write_text(json.dumps(posting), encoding="utf-8")
+            with (
+                patch.object(hosted, "_finish_recovered_attempt", side_effect=OSError("temporary SQL failure")),
+                self.assertRaisesRegex(OSError, "temporary SQL failure"),
+            ):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            audit_path = next(path.parent.glob("prepost-abandoned-*.json"))
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            audit["recovery"]["live_head_sha"] = "not-a-sha"
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "existing pre-POST recovery audit conflicts with the reservation"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertTrue(path.exists())
+            self.assertEqual(records.attempt(attempt_id)["state"], "started")
+
+    def test_confirmed_prepost_recovery_allows_optional_sql_start_to_be_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            self._posting_record(path)
+            posting = json.loads(path.read_text(encoding="utf-8"))
+            posting["sqlite_attempt_id"] = "attempt-that-never-started"
+            path.write_text(json.dumps(posting), encoding="utf-8")
+
+            result, status = self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertEqual(status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertFalse(path.exists())
+            self.assertEqual(records.attempt_history(42), [])
+
+    def test_unconfirmed_prepost_recovery_keeps_the_linked_sqlite_attempt_started(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            state_directory = common / "firemud" / "pr-review-stack.json"
+            state_directory.mkdir(parents=True)
+            records = self._new_review_records(common / "firemud" / "pr-review-stack.sqlite3")
+            attempt_id = "prepost-uncertain"
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=42,
+                candidate_sha=HEAD,
+                started_at="2026-09-23T00:00:00Z",
+            )
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 2,
+                        "status": "posting",
+                        "repository": "owner/repo",
+                        "pr_number": 42,
+                        "head_sha": HEAD,
+                        "sqlite_attempt_id": attempt_id,
+                        "posting_started_at": "2026-09-23T00:00:00Z",
+                        "posting_actor_login": "maintainer",
+                        "posting_comment_id_floor": 0,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = self._prepost_recovery_args(confirmed=False)
+            with (
+                patch.object(
+                    review_cli,
+                    "default_controller",
+                    return_value=SimpleNamespace(repository="owner/repo"),
+                ),
+                patch.object(review_cli, "github") as github_module,
+                self.assertRaisesRegex(review_cli.CliError, "--confirmed-not-posted"),
+            ):
+                review_cli._dispatch(args)
+            github_module.fetch_pull_request.assert_not_called()
+            self.assertEqual(records.attempt_history(42)[0]["state"], "started")
+            self.assertTrue(path.exists())
+
     def test_prepost_audit_write_failure_leaves_active_reservation_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -2327,6 +3943,19 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(audit["status"], "abandoned_prepost")
             self.assertEqual(hosted.current_trigger_record_paths("owner/repo", 42, common), [path])
             self.assertNotIn(audit_paths[0], hosted.trigger_record_paths("owner/repo", 42, common))
+            original_audit = audit_paths[0].read_bytes()
+            conflicting = json.loads(original_audit)
+            conflicting["head_sha"] = "f" * 40
+            audit_paths[0].write_text(json.dumps(conflicting), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "audit conflicts"):
+                self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertTrue(path.exists())
+            audit_paths[0].write_bytes(original_audit)
+            result, status = self._dispatch_prepost_recovery(path, self._prepost_recovery_args())
+            self.assertEqual(status, 0)
+            self.assertEqual(result["status"], "abandoned_no_post")
+            self.assertFalse(path.exists())
+            self.assertEqual(audit_paths[0].read_bytes(), original_audit)
 
     def _posting_record(self, path: Path, *, actor="maintainer", include_identity=True) -> None:
         record = {

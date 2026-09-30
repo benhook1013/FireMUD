@@ -440,6 +440,21 @@ public class ScriptGameplayCommandHandoffServiceImpl
               false, ScriptHandoffOutcomeSupport.REASON_ROLLBACK_EPOCH_ADVANCED, "", "", "", ""),
           false);
     }
+    if (workItem.getScriptPatchBaseVersionId() == null
+        || workItem.getScriptPatchBaseVersionId() <= 0) {
+      Instant now = Instant.now();
+      HandoffResult result =
+          new HandoffResult(
+              false,
+              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+              "",
+              "",
+              "",
+              ScriptHandoffOutcomeSupport.REASON_SCRIPT_PATCH_BASE_VERSION_UNAVAILABLE,
+              "script_patch_base_version_id is required for handoff");
+      applyOutcome(workItem, command, dispatchId, result, now);
+      return new HandoffPreparation(result, false);
+    }
     RuntimeRegionScopeStatus runtimeScopeStatus =
         aggregateSnapshot == null
             ? preflight.runtimeScopeStatus()
@@ -618,22 +633,40 @@ public class ScriptGameplayCommandHandoffServiceImpl
           "existing handoff child identity does not match request");
     }
     return switch (normalize(existing.getHandoffOutcome()).trim().toLowerCase(Locale.ROOT)) {
-      case "enqueued" ->
-          new HandoffResult(
-              true, "ENQUEUED", normalize(existing.getGameSessionCommandId()), "", "", "");
-      case "duplicate_noop" ->
-          new HandoffResult(
-              true, "DUPLICATE_NOOP", normalize(existing.getGameSessionCommandId()), "", "", "");
+      case "enqueued" -> retainedCommandAcceptance(existing, "ENQUEUED");
+      case "duplicate_noop" -> retainedCommandAcceptance(existing, "DUPLICATE_NOOP");
       case "remote_scheduled" ->
-          new HandoffResult(
-              true,
-              ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED,
-              "",
-              normalize(existing.getRemoteCoordinatorId()),
-              normalize(existing.getRemoteFollowupId()),
-              "");
+          normalize(existing.getRemoteCoordinatorId()).isBlank()
+                  || normalize(existing.getRemoteFollowupId()).isBlank()
+              ? retainedAcceptanceUnavailable()
+              : new HandoffResult(
+                  true,
+                  ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_SCHEDULED,
+                  "",
+                  normalize(existing.getRemoteCoordinatorId()),
+                  normalize(existing.getRemoteFollowupId()),
+                  "");
       default -> null;
     };
+  }
+
+  private static HandoffResult retainedCommandAcceptance(
+      ScriptHandoffEvent existing, String outcome) {
+    String commandId = normalize(existing.getGameSessionCommandId());
+    return commandId.isBlank()
+        ? retainedAcceptanceUnavailable()
+        : new HandoffResult(true, outcome, commandId, "", "", "");
+  }
+
+  private static HandoffResult retainedAcceptanceUnavailable() {
+    return new HandoffResult(
+        false,
+        ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+        "",
+        "",
+        "",
+        ScriptHandoffOutcomeSupport.ERROR_REMOTE_RESPONSE_INVALID,
+        "retained accepted handoff lacks durable owner identity");
   }
 
   @Override
@@ -969,10 +1002,15 @@ public class ScriptGameplayCommandHandoffServiceImpl
   private HandoffPreflight preflight(ScriptWorkItem workItem) {
     String admissionFenceReason = admissionFenceReason(workItem);
     RuntimeRegionScopeStatus runtimeScopeStatus =
-        admissionFenceReason == null
+        admissionFenceReason == null && hasValidScriptPatchBaseVersion(workItem)
             ? runtimeRegionScopeStatusOutsideTransaction(workItem)
             : RuntimeRegionScopeStatus.SKIPPED;
     return new HandoffPreflight(admissionFenceReason, runtimeScopeStatus);
+  }
+
+  private static boolean hasValidScriptPatchBaseVersion(ScriptWorkItem workItem) {
+    Long scriptPatchBaseVersionId = workItem.getScriptPatchBaseVersionId();
+    return scriptPatchBaseVersionId != null && scriptPatchBaseVersionId > 0;
   }
 
   private HandoffResult reconcileFailedIntentPreparation(
@@ -1125,6 +1163,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private EnqueueAutomationCommandIfAbsentRequest toRequest(
       ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
+    long scriptPatchBaseVersionId = requireScriptPatchBaseVersionId(workItem);
     RoutingBundleSupport.RoutingBundle routingBundle =
         RoutingBundleSupport.normalize(
             workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
@@ -1139,7 +1178,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptId(workItem.getScriptId())
         .setBindingId(normalize(workItem.getBindingId()))
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
-        .setScriptPatchBaseVersionId(workItem.getScriptPatchBaseVersionId())
+        .setScriptPatchBaseVersionId(scriptPatchBaseVersionId)
         .setScriptPinEpoch(workItem.getScriptPinEpoch())
         .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
         .setPluginId(normalize(workItem.getPluginId()))
@@ -1161,6 +1200,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private ScheduleRemoteFollowupRequest toRemoteScheduleRequest(
       ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
+    long scriptPatchBaseVersionId = requireScriptPatchBaseVersionId(workItem);
     long targetDueTickId = command.dueTickId() > 0 ? command.dueTickId() : 0L;
     long originDeadlineTickId = originDeadlineTickId(workItem, command);
     RoutingBundleSupport.RoutingBundle routingBundle =
@@ -1193,7 +1233,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
         .setScriptPatchVersion(workItem.getScriptPatchVersion())
         .setScriptPinEpoch(workItem.getScriptPinEpoch())
         .setScriptPinControlPlaneRequestId(normalize(workItem.getScriptPinControlPlaneRequestId()))
-        .setScriptPatchBaseVersionId(workItem.getScriptPatchBaseVersionId())
+        .setScriptPatchBaseVersionId(scriptPatchBaseVersionId)
         .setPluginId(normalize(workItem.getPluginId()))
         .setPluginVersionId(normalize(workItem.getPluginVersionId()))
         .setAutomationDispatchId(dispatchId)
@@ -1487,6 +1527,14 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private static long zeroIfNull(Long value) {
     return value == null ? 0L : value;
+  }
+
+  private static long requireScriptPatchBaseVersionId(ScriptWorkItem workItem) {
+    Long scriptPatchBaseVersionId = workItem.getScriptPatchBaseVersionId();
+    if (scriptPatchBaseVersionId == null) {
+      throw new IllegalStateException("script_patch_base_version_id is required for handoff");
+    }
+    return scriptPatchBaseVersionId.longValue();
   }
 
   private static PlayableStateScope toPlayableStateScope(String playableStateScope) {

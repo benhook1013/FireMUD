@@ -85,9 +85,14 @@ public class ScriptDefinitionRepository {
   }
 
   public Optional<Long> findScriptPatchBaseVersionId(String tenantId, String scriptPatchVersion) {
+    String canonicalTenantId =
+        Long.toString(RequestIdValidation.requirePositiveLong(tenantId, "tenantId"));
     return dsl.select(PATCH_BASE_VERSION_ID)
         .from(SCRIPT_PATCH_BASE_BINDINGS)
-        .where(PATCH_BASE_TENANT_ID.eq(tenantId).and(PATCH_BASE_VERSION.eq(scriptPatchVersion)))
+        .where(
+            PATCH_BASE_TENANT_ID
+                .eq(canonicalTenantId)
+                .and(PATCH_BASE_VERSION.eq(scriptPatchVersion)))
         .fetchOptional(PATCH_BASE_VERSION_ID);
   }
 
@@ -97,17 +102,19 @@ public class ScriptDefinitionRepository {
    */
   public void bindScriptPatchBaseVersionId(
       String tenantId, String scriptPatchVersion, long baseVersionId) {
+    String canonicalTenantId =
+        Long.toString(RequestIdValidation.requirePositiveLong(tenantId, "tenantId"));
     if (baseVersionId <= 0L) {
       throw new IllegalArgumentException("base_version_id must be positive");
     }
     dsl.insertInto(SCRIPT_PATCH_BASE_BINDINGS)
         .columns(PATCH_BASE_TENANT_ID, PATCH_BASE_VERSION, PATCH_BASE_VERSION_ID)
-        .values(tenantId, scriptPatchVersion, baseVersionId)
+        .values(canonicalTenantId, scriptPatchVersion, baseVersionId)
         .onConflict(PATCH_BASE_TENANT_ID, PATCH_BASE_VERSION)
         .doNothing()
         .execute();
     Long retainedBaseVersionId =
-        findScriptPatchBaseVersionId(tenantId, scriptPatchVersion).orElse(null);
+        findScriptPatchBaseVersionId(canonicalTenantId, scriptPatchVersion).orElse(null);
     if (retainedBaseVersionId == null) {
       throw new IllegalStateException("script_patch_base_binding_unavailable");
     }
@@ -118,14 +125,14 @@ public class ScriptDefinitionRepository {
 
   public void requireExistingScriptPatchRowsMatchBase(
       String tenantId, String scriptPatchVersion, long baseVersionId) {
-    List<ScriptDefinition> definitions =
-        findByTenantIdAndScriptVersionOrderByNameAsc(
-            RequestIdValidation.requirePositiveLong(tenantId, "tenantId"), scriptPatchVersion);
-    if (definitions.stream()
-        .anyMatch(
-            definition ->
-                definition.getBaseVersionId() == null
-                    || definition.getBaseVersionId() != baseVersionId)) {
+    Long canonicalTenantId = RequestIdValidation.requirePositiveLong(tenantId, "tenantId");
+    if (dsl.fetchExists(
+        SCRIPTS,
+        SCRIPTS
+            .TENANT_ID
+            .eq(canonicalTenantId)
+            .and(SCRIPTS.VERSION.eq(scriptPatchVersion))
+            .and(SCRIPTS.BASE_VERSION_ID.isDistinctFrom(baseVersionId)))) {
       throw new IllegalArgumentException("script_patch_base_version_conflict");
     }
   }
@@ -166,7 +173,7 @@ public class ScriptDefinitionRepository {
                     .and(SCRIPTS.ROW_VERSION.eq(entity.getRowVersion()))
                     .and(SCRIPTS.TENANT_ID.eq(entity.getTenantId()))
                     .and(SCRIPTS.VERSION.eq(entity.getScriptVersion()))
-                    .and(SCRIPTS.BASE_VERSION_ID.eq(entity.getBaseVersionId()))
+                    .and(SCRIPTS.BASE_VERSION_ID.isNotDistinctFrom(entity.getBaseVersionId()))
                     .and(SCRIPTS.NAME.eq(entity.getName())))
             .execute();
     if (updated != 1) {
@@ -211,7 +218,7 @@ public class ScriptDefinitionRepository {
                         SCRIPTS.DEFINITION.isDistinctFrom(DSL.excluded(SCRIPTS.DEFINITION)),
                         SCRIPTS.ROW_VERSION.add(1))
                     .otherwise(SCRIPTS.ROW_VERSION))
-            .where(SCRIPTS.BASE_VERSION_ID.eq(DSL.excluded(SCRIPTS.BASE_VERSION_ID)))
+            .where(SCRIPTS.BASE_VERSION_ID.isNotDistinctFrom(DSL.excluded(SCRIPTS.BASE_VERSION_ID)))
             .returningResult(returningFields)
             .fetchOptional(
                 returned -> {
@@ -281,6 +288,8 @@ public class ScriptDefinitionRepository {
             + requested.getTenantId()
             + ", version="
             + requested.getScriptVersion()
+            + ", baseVersionId="
+            + requested.getBaseVersionId()
             + ", name="
             + requested.getName()
             + ")");

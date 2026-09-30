@@ -17,12 +17,14 @@ import fcntl
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
 import unicodedata
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -30,6 +32,13 @@ from . import evidence, hosted
 from . import github as github_api
 from .git_merge import TestMergeError, test_merge_tree
 from .patch_identity import patch_identity
+from .sqlite_finding_text import _safe_finding_detail
+from .sqlite_provider_imports import _cli_detail, _cli_finding_title
+from .sqlite_review_records import (
+    FindingObservation,
+    ReviewRecordsError,
+    SqliteReviewRecords,
+)
 
 
 class ReviewRunnerError(RuntimeError):
@@ -209,9 +218,10 @@ class ReviewResult:
     duration_seconds: int
     exit_status: int
     capture_dir: Path
+    warning: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "run_id": self.run_id,
             "pull_request": self.pull_request,
             "candidate_sha": self.candidate_sha,
@@ -228,6 +238,9 @@ class ReviewResult:
             "checkpoint_marker": f"<!-- firemud-cli-run: {self.run_id} -->",
             "duration_marker": f"<!-- firemud-review-duration-seconds: {self.duration_seconds} -->",
         }
+        if self.warning:
+            result["warning"] = self.warning
+        return result
 
 
 def _git(
@@ -435,6 +448,38 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _write_capture_complete_marker(capture_dir: Path) -> None:
+    """Durably mark the capture after all provider output and metadata are written."""
+    for name in (
+        "stdout",
+        "stderr",
+        "exit-status",
+        "review-duration-seconds",
+        "metadata",
+        "metadata.json",
+    ):
+        descriptor = os.open(capture_dir / name, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+    directory_descriptor = os.open(capture_dir, os.O_RDONLY | os.O_DIRECTORY)
+    temporary = capture_dir / f".capture-complete.{os.getpid()}.{uuid.uuid4().hex}.tmp"
+    marker = capture_dir / "capture-complete"
+    try:
+        os.fsync(directory_descriptor)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as marker_file:
+            marker_file.write(f"{capture_dir.name}\n".encode("ascii"))
+            marker_file.flush()
+            os.fsync(marker_file.fileno())
+        os.replace(temporary, marker)
+        os.fsync(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
 def _common_dir(
     runner: CommandRunner,
     source_root: Path,
@@ -448,7 +493,7 @@ def _common_dir(
     return path
 
 
-def _assert_no_active_hosted_review(
+def _select_candidate_for_hosted_overlap(
     repo: str,
     pr_number: int,
     common_dir: Path,
@@ -456,12 +501,27 @@ def _assert_no_active_hosted_review(
     published_head_sha: str,
     candidate_sha: str,
     expected_anchor: Mapping[str, Any] | None,
-) -> None:
-    """Allow overlap only for an active Hosted request on the exact same anchor."""
+) -> str:
+    """Select the published head for a proven Hosted overlap, otherwise keep the local candidate."""
 
-    def hold(state: str, count: int = 1) -> ReviewRunnerError:
+    def display_sha(value: Any) -> str:
+        if (
+            isinstance(value, str)
+            and len(value) == 40
+            and all(character in "0123456789abcdefABCDEF" for character in value)
+        ):
+            return value.lower()
+        return "unknown"
+
+    def display_reservation_sha(value: Any) -> str:
+        if isinstance(value, str) and "," in value:
+            return ",".join(display_sha(part) for part in value.split(","))
+        return display_sha(value)
+
+    def hold(state: str, count: int = 1, reservation_sha: Any = None) -> ReviewRunnerError:
         return ReviewRunnerError(
-            f"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state={state}; reservation_count={count}"
+            f"{HOSTED_CLI_OVERLAP_HOLD_REASON}; reservation_state={state}; reservation_count={count}; "
+            f"candidate_sha={display_sha(candidate_sha)}; reservation_sha={display_reservation_sha(reservation_sha)}"
         )
 
     def same_sha(value: Any, expected: str) -> bool:
@@ -494,9 +554,17 @@ def _assert_no_active_hosted_review(
 
     records = hosted.current_trigger_record_paths(repo, pr_number, common=common_dir)
     if not records:
-        return
+        return candidate_sha
     if len(records) > 1:
-        raise hold("multiple_current_reservations", len(records))
+        reservation_shas: list[str] = []
+        for record_path in records:
+            try:
+                reservation = hosted.load_trigger_reservation(record_path, repo, pr_number)
+            except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+                reservation_shas.append("unknown")
+            else:
+                reservation_shas.append(display_sha(reservation.get("head_sha")))
+        raise hold("multiple_current_reservations", len(records), ",".join(reservation_shas))
 
     try:
         payload = github_api.fetch_pull_request(repo, pr_number)
@@ -533,16 +601,15 @@ def _assert_no_active_hosted_review(
                     and state.response_id > 0
                     and same_sha(state.head_sha, published_head_sha)
                     and same_sha(state.current_head_sha, published_head_sha)
-                    and same_sha(candidate_sha, published_head_sha)
                     and same_anchor(record.get("anchor"))
                 )
                 if immutable_active_identity:
-                    continue
-                raise hold("active_unverified")
+                    return published_head_sha
+                raise hold("active_unverified", reservation_sha=state.head_sha)
             if state.state == "awaiting_response":
-                raise hold("awaiting_response")
+                raise hold("awaiting_response", reservation_sha=state.head_sha)
             if state.state in {"ambiguous", "unattributed", "timed_out"} and not terminal_attribution_ambiguity:
-                raise hold(state.state)
+                raise hold(state.state, reservation_sha=state.head_sha)
             if terminal_attribution_ambiguity:
                 continue
             if state.state not in {
@@ -552,11 +619,15 @@ def _assert_no_active_hosted_review(
                 "retired",
                 "rate_limited",
             }:
-                raise hold(state.state)
+                raise hold(state.state, reservation_sha=state.head_sha)
     except ReviewRunnerError:
         raise
     except (OSError, ValueError, KeyError, TypeError, RuntimeError) as error:
-        raise ReviewRunnerError("current Hosted reservation cannot be safely classified") from error
+        raise ReviewRunnerError(
+            "current Hosted reservation cannot be safely classified; "
+            f"candidate_sha={display_sha(candidate_sha)}; reservation_sha=unknown"
+        ) from error
+    return candidate_sha
 
 
 def _ensure_commit(
@@ -763,6 +834,7 @@ def run_cli_review(
     git_timeout_seconds: float = GIT_TIMEOUT_SECONDS,
     review_timeout_seconds: float = CODERABBIT_TIMEOUT_SECONDS,
     monotonic_ns: Callable[[], int] = time.monotonic_ns,
+    records: SqliteReviewRecords | None = None,
 ) -> ReviewResult:
     """Run one isolated committed CLI review for an already-selected target.
 
@@ -802,6 +874,10 @@ def run_cli_review(
     # private metadata, not in the human-facing marker.
     run_id = f"run.{uuid.uuid4().hex}"
     capture_dir = capture_root / run_id
+    attempt_started = False
+    attempt_finished = False
+    provider_result_saved = False
+    attempt_started_at: str | None = None
     candidate_worktree: Path | None = None
     # Keep review anchors out of branch listings: this temporary ref is an
     # implementation detail of the review run, not a user-visible branch.
@@ -871,13 +947,31 @@ def run_cli_review(
             )
             if target.merge_base and _sha(target.merge_base, "selected merge base") != merge_base:
                 raise ReviewRunnerError("candidate merge base changed since target selection")
-            selected_patch_matches = (
-                target.patch_identity == candidate_patch_identity
-                and bool(target.patch_identity)
+            published_merge_base = (
+                merge_base
+                if candidate_sha == child_head
+                else _unique_merge_base(
+                    runner,
+                    source_root,
+                    target.parent.head_sha,
+                    child_head,
+                    timeout=git_timeout_seconds,
+                )
             )
-            selected_merge_base_matches = (
-                bool(target.merge_base)
-                and _sha(target.merge_base, "selected merge base") == merge_base
+            published_patch_identity = (
+                candidate_patch_identity
+                if candidate_sha == child_head
+                else _patch_identity(
+                    runner,
+                    source_root,
+                    published_merge_base,
+                    child_head,
+                    timeout=git_timeout_seconds,
+                )
+            )
+            selected_patch_matches = bool(target.patch_identity) and target.patch_identity == published_patch_identity
+            selected_merge_base_matches = bool(target.merge_base) and (
+                _sha(target.merge_base, "selected merge base") == published_merge_base
             )
             expected_anchor = None
             if selected_patch_matches and selected_merge_base_matches:
@@ -886,10 +980,10 @@ def run_cli_review(
                     "child_head": child_head,
                     "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
                     "parent_head": target.parent.head_sha,
-                    "merge_base": merge_base,
-                    "patch_id": candidate_patch_identity,
+                    "merge_base": published_merge_base,
+                    "patch_id": published_patch_identity,
                 }
-            _assert_no_active_hosted_review(
+            selected_candidate_sha = _select_candidate_for_hosted_overlap(
                 repository,
                 target.snapshot.number,
                 common_dir,
@@ -897,6 +991,20 @@ def run_cli_review(
                 candidate_sha=candidate_sha,
                 expected_anchor=expected_anchor,
             )
+            if selected_candidate_sha != candidate_sha:
+                candidate_sha = selected_candidate_sha
+                merge_base, published_files, candidate_files, child_head, review_context_sha = _validate_target(
+                    target,
+                    live,
+                    live_files,
+                    parent_tip,
+                    candidate_sha,
+                    runner,
+                    source_root,
+                    allow_unreconciled=allow_unreconciled,
+                    git_timeout_seconds=git_timeout_seconds,
+                )
+                candidate_patch_identity = published_patch_identity
             if candidate_sha == child_head:
                 published_status = "published-head"
             else:
@@ -946,6 +1054,7 @@ def run_cli_review(
                 metadata: dict[str, Any] = {
                     "run_id": run_id,
                     "kind": "cli",
+                    "capture_completion_marker": "capture-complete",
                     "pull_request": target.snapshot.number,
                     "candidate_sha": candidate_sha,
                     "child_head_sha": candidate_sha,
@@ -991,6 +1100,26 @@ def run_cli_review(
                 )
                 os.chmod(capture_dir / "metadata", 0o600)
                 _atomic_json(capture_dir / "metadata.json", metadata)
+                records_warning = None
+                if records is not None:
+                    attempt_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                    try:
+                        records.start_attempt(
+                            attempt_id=run_id,
+                            source_pr=target.snapshot.number,
+                            channel="cli",
+                            candidate_sha=candidate_sha,
+                            started_at=attempt_started_at,
+                            metadata=metadata,
+                        )
+                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+                        records = None
+                        records_warning = (
+                            "SQLite attempt and source decisions are missing; the durable CLI capture remains. "
+                            "Record decisions.tsv for this run or use the exact repair path before adjudication"
+                        )
+                    else:
+                        attempt_started = True
                 # Hosted posting and CLI preflight share request.lock. Release it
                 # only after the candidate and durable capture are pinned; the
                 # repository-wide CLI lock remains held through provider execution.
@@ -1036,6 +1165,21 @@ def run_cli_review(
                     _atomic_json(capture_dir / "metadata.json", metadata)
                     with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                         legacy_file.write(f"review_duration_seconds={duration}\n")
+                    _write_capture_complete_marker(capture_dir)
+                    provider_result_saved = True
+                    if records is not None:
+                        try:
+                            records.finish_attempt(
+                                run_id, state="timed_out",
+                                duration_seconds=duration,
+                                diagnostic="CodeRabbit CLI timed out before a complete result",
+                                artifacts={"cli_raw_output": stdout, "cli_diagnostic": stderr,
+                                           "metadata": json.dumps(metadata, sort_keys=True)},
+                            )
+                        except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+                            pass
+                        else:
+                            attempt_finished = True
                     raise ReviewRunnerError(
                         f"CodeRabbit review timed out after {review_timeout_seconds} seconds"
                     ) from error
@@ -1051,6 +1195,96 @@ def run_cli_review(
                 _atomic_json(capture_dir / "metadata.json", metadata)
                 with (capture_dir / "metadata").open("a", encoding="utf-8") as legacy_file:
                     legacy_file.write(f"review_duration_seconds={duration}\n")
+                _write_capture_complete_marker(capture_dir)
+                provider_result_saved = True
+                stdout = process.stdout or ""
+                stderr = process.stderr or ""
+                artifacts = {
+                    "cli_diagnostic": stderr,
+                    "metadata": json.dumps(metadata, sort_keys=True),
+                }
+                try:
+                    parsed_findings, _ = evidence._parse_capture_stdout(capture_dir / "stdout")
+                except evidence.EvidenceError:
+                    result_state = (
+                        "rate_limited"
+                        if "rate limit exceeded" in stderr.casefold()
+                        else "failed"
+                    )
+                    artifacts["cli_raw_output"] = stdout
+                    diagnostic = (
+                        "CodeRabbit CLI was rate limited before a complete result"
+                        if result_state == "rate_limited"
+                        else "CodeRabbit CLI did not return a complete JSON review"
+                    )
+                else:
+                    result_state = (
+                        "completed"
+                        if process.returncode == 0
+                        else "rate_limited"
+                        if "rate limit exceeded" in stderr.casefold()
+                        else "failed"
+                    )
+                    artifacts["cli_events"] = stdout
+                    diagnostic = (
+                        ""
+                        if result_state == "completed"
+                        else "CodeRabbit CLI was rate limited"
+                        if result_state == "rate_limited"
+                        else "CodeRabbit CLI exited nonzero"
+                    )
+                command_exit_status = process.returncode
+                if result_state != "completed" and command_exit_status == 0:
+                    command_exit_status = 1
+                if records is not None:
+                    try:
+                        if result_state == "completed":
+                            completed_at = hosted.utc_now()
+                            observations = []
+                            for index, finding in enumerate(parsed_findings, 1):
+                                instructions = finding.get("codegenInstructions")
+                                title = _cli_finding_title(
+                                    instructions, f"CodeRabbit CLI finding {index}"
+                                )
+                                observations.append(FindingObservation(
+                                    source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                                    title=title,
+                                    detail=_safe_finding_detail(_cli_detail(instructions)),
+                                ))
+                            records.complete_attempt_run(
+                                run_id,
+                                finish={
+                                    "state": result_state,
+                                    "finished_at": completed_at,
+                                    "duration_seconds": duration,
+                                    "exit_status": process.returncode,
+                                    "diagnostic": diagnostic,
+                                    "artifacts": artifacts,
+                                },
+                                run={
+                                    "run_id": run_id,
+                                    "source_pr": target.snapshot.number,
+                                    "channel": "cli",
+                                    "findings": observations,
+                                    "source_head": candidate_sha,
+                                    "reviewer": "CodeRabbit CLI",
+                                    "scope": "broad",
+                                    "started_at": attempt_started_at,
+                                    "finished_at": completed_at,
+                                },
+                                finalize_empty=not observations,
+                            )
+                        else:
+                            records.finish_attempt(
+                                run_id, state=result_state, duration_seconds=duration,
+                                exit_status=process.returncode, diagnostic=diagnostic,
+                                artifacts=artifacts,
+                            )
+                        attempt_finished = True
+                    except (ReviewRecordsError, OSError, sqlite3.DatabaseError):
+                        records_warning = (
+                            "SQLite review record was not saved; the durable CLI capture remains available for recovery"
+                        )
                 return ReviewResult(
                     run_id=run_id,
                     pull_request=target.snapshot.number,
@@ -1062,8 +1296,9 @@ def run_cli_review(
                     published_status=published_status,
                     provisional=allow_unreconciled,
                     duration_seconds=duration,
-                    exit_status=process.returncode,
+                    exit_status=command_exit_status,
                     capture_dir=capture_dir,
+                    warning=records_warning,
                 )
             finally:
                 if candidate_worktree is not None:
@@ -1083,6 +1318,18 @@ def run_cli_review(
         except Exception as error:
             if capture_dir.exists():
                 (capture_dir / "error").write_text(f"{error}\n", encoding="utf-8")
+            if records is not None and attempt_started and not attempt_finished and not provider_result_saved:
+                try:
+                    records.finish_attempt(
+                        run_id, state="failed", diagnostic="CLI setup or capture failed",
+                        artifacts={"cli_diagnostic": str(error)},
+                    )
+                except (ReviewRecordsError, OSError, sqlite3.DatabaseError) as archive_error:
+                    # Keep the original provider failure while surfacing the
+                    # separate archive failure to the caller.
+                    add_note = getattr(error, "add_note", None)
+                    if callable(add_note):
+                        add_note(f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
             if hosted_lock_handle is not None:
