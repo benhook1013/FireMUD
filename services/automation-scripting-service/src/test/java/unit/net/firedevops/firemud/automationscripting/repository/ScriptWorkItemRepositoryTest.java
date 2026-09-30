@@ -70,6 +70,51 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
+  void replayCandidateSnapshotScopesTenantWithoutLockingRows() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findByTenantIdAndIdInOrderByIdAsc("tenant-1", List.of(17L, 18L)))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement -> {
+              assertThat(statement).contains("tenant_id", "id", "order by");
+              assertThat(statement).doesNotContain("for update");
+            });
+  }
+
+  @Test
+  void replayCandidateLockScopesTenantAndIdBeforeClaimCas() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findByTenantIdAndIdForUpdate("tenant-1", 17L)).isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement).contains("tenant_id", "id", "for update"));
+  }
+
+  @Test
   void exactOwnerEvidenceLookupIncludesControlPlaneRequestId() {
     AtomicReference<String> sql = new AtomicReference<>();
     MockDataProvider provider =

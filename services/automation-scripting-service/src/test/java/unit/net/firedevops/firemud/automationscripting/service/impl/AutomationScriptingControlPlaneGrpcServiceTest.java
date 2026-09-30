@@ -2063,6 +2063,43 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void mapsReplayItemResultNullTextFieldsToEmptyStrings() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenReturn(
+            new ScriptWorkItemService.ReplayResult(
+                0L,
+                0L,
+                List.of(new ScriptWorkItemService.ReplayItemResult(null, null, null, null, 9L)),
+                "null-text-fingerprint"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("100")
+            .setControlPlaneRequestId("request-null-text")
+            .setActorPrincipal("1")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().hasError()).isFalse();
+    assertThat(ref.get().getResultsList()).hasSize(1);
+    assertThat(ref.get().getResults(0).getWorkItemId()).isEmpty();
+    assertThat(ref.get().getResults(0).getOutcome()).isEmpty();
+    assertThat(ref.get().getResults(0).getRejectionReason()).isEmpty();
+    assertThat(ref.get().getResults(0).getFailureReason()).isEmpty();
+    assertThat(ref.get().getResults(0).getFailureGeneration()).isEqualTo(9L);
+  }
+
+  @Test
   void rejectsReplayWithBlankActorPrincipalBeforeCallingWorkItemService() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);

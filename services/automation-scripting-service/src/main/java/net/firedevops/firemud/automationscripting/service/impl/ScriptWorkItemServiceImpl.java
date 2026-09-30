@@ -664,12 +664,47 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         return replayResultFromDurable(command, durableRequest, priorResults);
       }
     }
+    // Authority reads must happen before any work-item row is locked. The initial lookup is a
+    // tenant-scoped snapshot only; every mutation below re-reads and revalidates its current row.
     List<ScriptWorkItem> candidates = selectReplayCandidates(command, normalizedTenantId);
     Map<Long, ScriptWorkItem> byId =
         candidates.stream().collect(Collectors.toMap(ScriptWorkItem::getId, item -> item));
+    Map<Long, ReplayPreflight> preflights = new HashMap<>();
+    for (String requestedId : command.workItemIds()) {
+      long requestedLongId = parseWorkItemId(requestedId);
+      if (priorResults.containsKey(requestedLongId)) {
+        continue;
+      }
+      ScriptWorkItem item = byId.get(requestedLongId);
+      if (item == null) {
+        preflights.put(requestedLongId, ReplayPreflight.notFound());
+        continue;
+      }
+      OriginalFailureEvidence originalFailure = originalFailureEvidence(item);
+      String preflightRejection = replayPreflightRejection(item, originalFailure);
+      preflights.put(
+          requestedLongId, new ReplayPreflight(item, originalFailure, preflightRejection));
+    }
+
+    // Phase two deliberately contains no authority RPCs. Acquire every candidate lock in the
+    // canonical ID order so concurrent requests cannot deadlock while claiming overlapping batches.
+    Map<Long, ScriptWorkItem> lockedById = new HashMap<>();
+    command.workItemIds().stream()
+        .map(ScriptWorkItemServiceImpl::parseWorkItemId)
+        .sorted()
+        .forEach(
+            requestedLongId -> {
+              ReplayPreflight preflight = preflights.get(requestedLongId);
+              if (preflight == null || preflight.snapshot() == null) {
+                return;
+              }
+              workItemRepository
+                  .findByTenantIdAndIdForUpdate(normalizedTenantId, requestedLongId)
+                  .ifPresent(item -> lockedById.put(requestedLongId, item));
+            });
+
+    // Emit and persist outcomes in caller order, while using only the already locked current rows.
     List<ReplayItemResult> results = new ArrayList<>();
-    Map<RuntimeScopeKey, Optional<GetGameInstanceRuntimeStateResponse>> runtimeStateCache =
-        new HashMap<>();
     for (String requestedId : command.workItemIds()) {
       long requestedLongId = parseWorkItemId(requestedId);
       ScriptDeadLetterReplayRepository.ReplayItem prior = priorResults.get(requestedLongId);
@@ -677,7 +712,21 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
         results.add(toReplayItemResult(requestedId, prior));
         continue;
       }
-      ScriptWorkItem item = byId.get(requestedLongId);
+      ReplayPreflight preflight = preflights.get(requestedLongId);
+      if (preflight == null || preflight.snapshot() == null) {
+        results.add(new ReplayItemResult(requestedId, "rejected", "not_found_or_not_owned", 0L));
+        persistReplayResult(
+            durableRequest,
+            requestedLongId,
+            "rejected",
+            "not_found_or_not_owned",
+            null,
+            OriginalFailureEvidence.EMPTY,
+            now);
+        continue;
+      }
+
+      ScriptWorkItem item = lockedById.get(requestedLongId);
       if (item == null) {
         results.add(new ReplayItemResult(requestedId, "rejected", "not_found_or_not_owned", 0L));
         persistReplayResult(
@@ -690,81 +739,48 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             now);
         continue;
       }
-      // Read the mutable failure evidence before the claim changes the work-item status. The
-      // immutable replay result is the generation-bound receipt that survives later execution
-      // updates to both the work item and its audit row.
       OriginalFailureEvidence originalFailure = originalFailureEvidence(item);
-      if (!STATUS_DEAD_LETTERED.equals(item.getStatus())) {
-        String reasonForCurrentStatus =
-            switch (blankToEmpty(item.getStatus())) {
-              case STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT ->
-                  "recovery_in_progress";
-              default -> "work_item_not_dead_lettered";
-            };
+      if (item.getRowVersion() != preflight.snapshot().getRowVersion()
+          || item.getFailureGeneration() != preflight.snapshot().getFailureGeneration()) {
+        String currentStateRejection = replayCurrentStateRejection(item);
+        if (currentStateRejection == null) {
+          currentStateRejection = "recovery_in_progress";
+        }
         results.add(
             new ReplayItemResult(
-                requestedId, "rejected", reasonForCurrentStatus, item.getFailureGeneration()));
+                requestedId, "rejected", currentStateRejection, item.getFailureGeneration()));
         persistReplayResult(
             durableRequest,
             requestedLongId,
             "rejected",
-            reasonForCurrentStatus,
+            currentStateRejection,
             item,
             originalFailure,
             now);
         continue;
       }
-      String replayRejection = replayEligibilityReason(item, runtimeStateCache);
-      if (replayRejection != null) {
+
+      String currentStatusRejection = replayCurrentStateRejection(item);
+      String replayRejection =
+          currentStatusRejection == null ? preflight.rejectionReason() : currentStatusRejection;
+      if (replayRejection == null
+          && !preflight.originalFailure().equals(originalFailure)) {
+        // Audit evidence is mutable independently of the work-item row. Do not accept a successful
+        // preflight when the current failure evidence no longer proves the same retryable class.
+        replayRejection = "stage_evidence_unavailable";
+      }
+      if (replayRejection != null && !replayRejection.isBlank()) {
         results.add(
             new ReplayItemResult(
-                requestedId, "rejected", replayRejection, item.getFailureGeneration()));
+                requestedId,
+                "rejected",
+                replayRejection,
+                item.getFailureGeneration()));
         persistReplayResult(
             durableRequest,
             requestedLongId,
             "rejected",
             replayRejection,
-            item,
-            originalFailure,
-            now);
-        continue;
-      }
-      if (!originalFailure.isRetryableForEvaluationReplay()) {
-        // Only persisted failure classes known to be retryable may re-enter the DSL. A missing,
-        // unknown, contradictory, or deterministic logical outcome stays dead-lettered; accepting
-        // it would lose the original outcome as later execution updates the mutable audit row.
-        results.add(
-            new ReplayItemResult(
-                requestedId,
-                "rejected",
-                "stage_evidence_unavailable",
-                item.getFailureGeneration()));
-        persistReplayResult(
-            durableRequest,
-            requestedLongId,
-            "rejected",
-            "stage_evidence_unavailable",
-            item,
-            originalFailure,
-            now);
-        continue;
-      }
-      if (!"ADMISSION".equals(originalFailure.stage())
-          && !"DSL_EVAL".equals(originalFailure.stage())) {
-        // The current work-item row has no committed evaluated-output/child ledger. A handoff
-        // failure may have accepted earlier siblings, so re-entering the DSL would invent new
-        // output rather than resume the original children. Keep this generation dead-lettered.
-        results.add(
-            new ReplayItemResult(
-                requestedId,
-                "rejected",
-                "stage_evidence_unavailable",
-                item.getFailureGeneration()));
-        persistReplayResult(
-            durableRequest,
-            requestedLongId,
-            "rejected",
-            "stage_evidence_unavailable",
             item,
             originalFailure,
             now);
@@ -1291,13 +1307,52 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
             .map(ScriptWorkItemServiceImpl::parseWorkItemId)
             .sorted()
             .toList();
-    Map<Long, ScriptWorkItem> lockedById =
+    Map<Long, ScriptWorkItem> snapshotsById =
         workItemRepository
-            .findByTenantIdAndIdInForUpdateOrderByIdAsc(normalizedTenantId, requestedIds)
+            .findByTenantIdAndIdInOrderByIdAsc(normalizedTenantId, requestedIds)
             .stream()
             .filter(item -> normalizedTenantId.equals(item.getTenantId()))
             .collect(Collectors.toMap(ScriptWorkItem::getId, item -> item));
-    return requestedIds.stream().map(lockedById::get).filter(Objects::nonNull).toList();
+    return requestedIds.stream().map(snapshotsById::get).filter(Objects::nonNull).toList();
+  }
+
+  private String replayPreflightRejection(
+      ScriptWorkItem item, OriginalFailureEvidence originalFailure) {
+    String currentStatusRejection = replayCurrentStateRejection(item);
+    if (currentStatusRejection != null) {
+      return currentStatusRejection;
+    }
+    // Use a separate cache per candidate. Reusing an authority result across a batch would make
+    // the later candidate depend on an unboundedly older authority read.
+    String authorityRejection = replayEligibilityReason(item, new HashMap<>());
+    if (authorityRejection != null) {
+      return authorityRejection;
+    }
+    if (!originalFailure.isRetryableForEvaluationReplay()) {
+      // Only persisted failure classes known to be retryable may re-enter the DSL. A missing,
+      // unknown, contradictory, or deterministic logical outcome stays dead-lettered; accepting
+      // it would lose the original outcome as later execution updates the mutable audit row.
+      return "stage_evidence_unavailable";
+    }
+    if (!"ADMISSION".equals(originalFailure.stage())
+        && !"DSL_EVAL".equals(originalFailure.stage())) {
+      // The current work-item row has no committed evaluated-output/child ledger. A handoff
+      // failure may have accepted earlier siblings, so re-entering the DSL would invent new
+      // output rather than resume the original children. Keep this generation dead-lettered.
+      return "stage_evidence_unavailable";
+    }
+    return null;
+  }
+
+  private static String replayCurrentStateRejection(ScriptWorkItem item) {
+    if (STATUS_DEAD_LETTERED.equals(item.getStatus())) {
+      return null;
+    }
+    return switch (blankToEmpty(item.getStatus())) {
+      case STATUS_PENDING_EVALUATION, STATUS_EVALUATING, STATUS_HANDOFF_IN_FLIGHT ->
+          "recovery_in_progress";
+      default -> "work_item_not_dead_lettered";
+    };
   }
 
   String replayEligibilityReason(
@@ -1446,6 +1501,13 @@ public class ScriptWorkItemServiceImpl implements ScriptWorkItemService {
   }
 
   private record ReplayCounts(long replayed, long rejected) {}
+
+  private record ReplayPreflight(
+      ScriptWorkItem snapshot, OriginalFailureEvidence originalFailure, String rejectionReason) {
+    private static ReplayPreflight notFound() {
+      return new ReplayPreflight(null, OriginalFailureEvidence.EMPTY, "not_found_or_not_owned");
+    }
+  }
 
   private static ReplayItemResult toReplayItemResult(
       String requestedId, ScriptDeadLetterReplayRepository.ReplayItem stored) {

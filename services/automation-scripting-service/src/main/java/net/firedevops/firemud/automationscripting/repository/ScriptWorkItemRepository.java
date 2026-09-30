@@ -605,6 +605,22 @@ public class ScriptWorkItemRepository {
         .fetch(this::toEntity);
   }
 
+  /**
+   * Selects explicitly requested work-item snapshots for one tenant without acquiring row locks.
+   * Callers that use the snapshot for a mutation must re-read the row under a lock before applying
+   * any decision derived from it.
+   */
+  public List<ScriptWorkItem> findByTenantIdAndIdInOrderByIdAsc(
+      String tenantId, Collection<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.ID.in(ids)))
+        .orderBy(SCRIPT_WORK_ITEMS.ID.asc())
+        .fetch(this::toEntity);
+  }
+
   /** Selects explicitly requested work items for one tenant while holding their row locks. */
   public List<ScriptWorkItem> findByTenantIdAndIdInForUpdateOrderByIdAsc(
       String tenantId, Collection<Long> ids) {
@@ -616,6 +632,17 @@ public class ScriptWorkItemRepository {
         .orderBy(SCRIPT_WORK_ITEMS.ID.asc())
         .forUpdate()
         .fetch(this::toEntity);
+  }
+
+  /** Selects one explicitly requested work item for a tenant while holding its row lock. */
+  public Optional<ScriptWorkItem> findByTenantIdAndIdForUpdate(String tenantId, Long id) {
+    if (tenantId == null || id == null) {
+      return Optional.empty();
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.ID.eq(id)))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
   }
 
   public ScriptWorkItem save(ScriptWorkItem entity) {
