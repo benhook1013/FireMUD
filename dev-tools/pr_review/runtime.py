@@ -559,6 +559,7 @@ class LiveEvidence:
         # review findings. Stop mode retains only unmatched records proven to
         # belong to another head as historical; current-head or unknown results
         # remain blockers. No transition fingerprints are reauthorized here.
+        audit_now = datetime.now(timezone.utc)
         audit = self.legacy_transition_reauthorization_audit(
             pr,
             (),
@@ -568,13 +569,13 @@ class LiveEvidence:
                 "live_base_tip": parent_head,
             },
             allow_historical_unmatched=True,
+            now=audit_now,
         )
         payload = self._payload(pr)
         channel_history = {channel: list(self.history(pr, channel)) for channel in ("hosted", "cli")}
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
         terminal_rate_limits: list[dict[str, Any]] = []
-        now = datetime.now(timezone.utc)
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
                 record = hosted.load_trigger_record(path, self.repo, pr)
@@ -627,7 +628,7 @@ class LiveEvidence:
         unmatched_responses = list(audit["unmatched_responses"])
         ambiguous_responses = list(audit["ambiguous_responses"])
         active_terminal_rate_limits = [
-            item for item in terminal_rate_limits if hosted.parse_timestamp(item["cooldown_until"]) > now
+            item for item in terminal_rate_limits if hosted.parse_timestamp(item["cooldown_until"]) > audit_now
         ]
         if len(active_terminal_rate_limits) > active_reservations.count("rate_limited"):
             raise ControllerError("terminal Hosted rate-limit evidence cannot be isolated from other reservations")
@@ -690,6 +691,7 @@ class LiveEvidence:
         expected_anchor: dict[str, Any],
         *,
         allow_historical_unmatched: bool = False,
+        now: datetime | None = None,
     ) -> dict[str, Any]:
         """Audit complete Hosted history, optionally preserving older unmatched results for a stop."""
 
@@ -852,7 +854,8 @@ class LiveEvidence:
                     )
             elif state.state == "rate_limited":
                 reset = hosted.parse_timestamp(state.cooldown_until)
-                if reset is None or reset > datetime.now(timezone.utc):
+                audit_now = now if now is not None else datetime.now(timezone.utc)
+                if reset is None or reset > audit_now:
                     active_reservations.append("rate_limited")
             elif state.state not in {"completed", "noop", "failed", "retired"}:
                 ambiguous_responses.append("unrecognized trigger state")

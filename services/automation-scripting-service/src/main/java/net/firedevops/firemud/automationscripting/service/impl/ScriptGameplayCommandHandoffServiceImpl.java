@@ -286,7 +286,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
           workItem.getId(),
           command.ordinal(),
           ex);
-      return reconcileFailedIntentPreparation(workItem, command, dispatchId);
+      return reconcileFailedIntentPreparation(workItem, command, dispatchId, intentState);
     }
     if (preparation.result() != null) {
       return preparation.result();
@@ -1030,7 +1030,10 @@ public class ScriptGameplayCommandHandoffServiceImpl
   }
 
   private HandoffResult reconcileFailedIntentPreparation(
-      ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
+      ScriptWorkItem workItem,
+      EmittedCommand command,
+      String dispatchId,
+      WorkItemIntentState intentState) {
     try {
       return executeRpcWithoutLocalTransaction(
           () -> {
@@ -1049,10 +1052,15 @@ public class ScriptGameplayCommandHandoffServiceImpl
               return reconciliationRequiredResult(
                   "handoff intent may have committed; reconciliation is required");
             }
-            if (persistedWorkItem.isEmpty()
-                || !"EVALUATING".equals(persistedWorkItem.orElseThrow().getStatus())) {
+            if (persistedWorkItem.isEmpty()) {
               return reconciliationRequiredResult(
                   "handoff preparation outcome could not be confirmed");
+            }
+            ScriptWorkItem persisted = persistedWorkItem.orElseThrow();
+            if (!Objects.equals(persisted.getStatus(), intentState.status())
+                || persisted.getRowVersion() != intentState.rowVersion()) {
+              return reconciliationRequiredResult(
+                  "work item state changed while handoff preparation outcome was uncertain");
             }
             return retryablePreparationResult();
           });

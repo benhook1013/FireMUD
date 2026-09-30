@@ -346,8 +346,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     }
   }
 
-  @Test
-  void failedIntentCommitIsRetryableAndNeverClaimsInFlightOrCallsCommandRpc() {
+  @ParameterizedTest
+  @CsvSource({"PENDING_EVALUATION", "HANDOFF_IN_FLIGHT"})
+  void failedIntentCommitIsRetryableWhenCapturedStateMatchesAndNeverCallsCommandRpc(
+      String capturedStatus) {
     FailingIntentCommitTransactionManager transactionManager =
         new FailingIntentCommitTransactionManager();
     GameSessionControlPlaneClient gameSessionClient =
@@ -363,7 +365,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptWorkItem persistedWorkItem = workItem();
-    persistedWorkItem.setStatus("EVALUATING");
+    persistedWorkItem.setStatus(capturedStatus);
     when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
     List<Integer> savedRowVersions = new ArrayList<>();
     when(workItemRepository.save(Mockito.any()))
@@ -400,6 +402,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               return event;
             });
     ScriptWorkItem item = workItem();
+    item.setStatus(capturedStatus);
     ScriptGameplayCommandHandoffServiceImpl service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -422,10 +425,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
       assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
       assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
-      assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(item.getStatus()).isEqualTo(capturedStatus);
       assertThat(item.getUpdatedAt()).isEqualTo(Instant.EPOCH);
       assertThat(item.getRowVersion()).isZero();
-      assertThat(persistedWorkItem.getStatus()).isEqualTo("EVALUATING");
+      assertThat(persistedWorkItem.getStatus()).isEqualTo(capturedStatus);
       assertThat(persistedWorkItem.getRowVersion()).isZero();
       verify(gameSessionClient).getGameInstanceRuntimeState("1", "7", "region-1");
       verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
@@ -500,8 +503,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(workItemRepository, never()).save(Mockito.any());
   }
 
-  @Test
-  void failedIntentCommitWithDurableInFlightReadbackRequiresReconciliation() {
+  @ParameterizedTest
+  @CsvSource({"PENDING_EVALUATION, 1", "EVALUATING, 0", "HANDOFF_IN_FLIGHT, 1"})
+  void failedIntentCommitWithoutIntentAndChangedStateRequiresReconciliation(
+      String persistedStatus, int persistedRowVersion) {
     FailingIntentCommitTransactionManager transactionManager =
         new FailingIntentCommitTransactionManager();
     GameSessionControlPlaneClient gameSessionClient =
@@ -510,8 +515,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         .thenReturn(currentRuntimeState());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptWorkItem persistedWorkItem = workItem();
-    persistedWorkItem.setStatus("HANDOFF_IN_FLIGHT");
-    persistedWorkItem.setRowVersion(1);
+    persistedWorkItem.setStatus(persistedStatus);
+    persistedWorkItem.setRowVersion(persistedRowVersion);
     when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(
@@ -547,7 +552,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
       assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
-      assertThat(persistedWorkItem.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(persistedWorkItem.getStatus()).isEqualTo(persistedStatus);
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(persistedRowVersion);
       verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
       verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
     } finally {
