@@ -331,6 +331,7 @@ class RuntimeTest(unittest.TestCase):
                 other_pr_history = provider._active_cli_history(43, common, operational_only=True)
 
             self.assertEqual([item["checkpoint"] for item in owner_history], [f"active-cli:{run_id}"])
+            self.assertTrue(owner_history[0]["current_lock_owner"])
             self.assertEqual(other_pr_history, [])
 
     def test_recognized_cli_owner_requires_matching_active_metadata_to_suppress_fallback(self) -> None:
@@ -408,6 +409,7 @@ class RuntimeTest(unittest.TestCase):
                 unrelated_pr_history = provider.request_history(43, "cli")
 
             self.assertEqual([item["checkpoint"] for item in history], [f"active-cli:{run_id}"])
+            self.assertFalse(history[0].get("current_lock_owner", False))
             self.assertEqual([item["checkpoint"] for item in unrelated_pr_history], ["active-cli:unidentified"])
 
     def test_stopped_hosted_projection_preserves_current_cooldown(self) -> None:

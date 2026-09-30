@@ -1429,6 +1429,167 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "accepted findings remain pending"):
             controller.resolve_hosted_target()
 
+    def test_hosted_allocation_clearance_allows_only_verified_active_cli_overlap(self):
+        current_anchor = {
+            "pr": 1,
+            "child_head": HEAD_2,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": f"patch-{HEAD_2[:4]}",
+        }
+        exact_active_cli = {
+            **current_anchor,
+            "head": HEAD_2,
+            "checkpoint": f"active-cli:run.{'a' * 32}",
+            "active_review": True,
+            "held": True,
+            "current_lock_owner": True,
+            "reason": "CLI review is running; its eventual findings still require adjudication",
+        }
+
+        def make_controller(finding_head, cli_observation, *, unresolved_findings=(), pending_hosted_capture=None):
+            histories = {
+                (1, "hosted"): [self.allocation_evidence(checkpoint="hosted-baseline", channel="hosted")],
+                (1, "cli"): [],
+            }
+            evidence = AuditedEvidence(histories)
+            controller = self.grant_bounded_allocation(
+                checkpoint="hosted-baseline",
+                cap=2,
+                minimum=1,
+                evidence=evidence,
+            )
+            evidence[(1, "hosted")].append(
+                self.allocation_evidence(
+                    head=finding_head,
+                    checkpoint="hosted-accepted-result",
+                    accepted=1,
+                    channel="hosted",
+                )
+            )
+            if pending_hosted_capture is not None:
+                evidence[(1, "hosted")].append(pending_hosted_capture)
+            controller.github.values[1] = pr(1, HEAD_2)
+            controller.git.heads["feature-1"] = HEAD_2
+            evidence[(1, "cli")].append(cli_observation)
+            evidence.audit["unresolved_findings"] = list(unresolved_findings)
+            return controller
+
+        cases = [("verified current lock owner", HEAD_1, exact_active_cli, (), None, True)]
+        for field in ("head", "child_head", "parent_identity", "parent_head", "merge_base", "patch_id"):
+            missing_anchor = dict(exact_active_cli)
+            if field == "head":
+                missing_anchor[field] = ""
+            else:
+                missing_anchor.pop(field)
+            cases.append((f"missing {field}", HEAD_1, missing_anchor, (), None, False))
+        cases.extend(
+            (
+                f"mismatched {field}",
+                HEAD_1,
+                {**exact_active_cli, field: value},
+                (),
+                None,
+                False,
+            )
+            for field, value in (
+                ("head", HEAD_1),
+                ("child_head", HEAD_1),
+                ("parent_identity", "another-parent"),
+                ("parent_head", HEAD_3),
+                ("merge_base", HEAD_3),
+                ("patch_id", "different-patch"),
+            )
+        )
+        cases.extend(
+            (
+                ("unrecognized lock owner", HEAD_1, {**exact_active_cli, "current_lock_owner": False}, (), None, False),
+                (
+                    "unknown lock owner",
+                    HEAD_1,
+                    {
+                        "pr": 1,
+                        "head": "",
+                        "checkpoint": "active-cli:unidentified",
+                        "active_review": True,
+                        "held": True,
+                        "reason": "CLI process lock is held; its current reservation cannot be identified",
+                    },
+                    (),
+                    None,
+                    False,
+                ),
+                ("provisional CLI capture", HEAD_1, {**exact_active_cli, "provisional": True}, (), None, False),
+                (
+                    "pending CLI capture",
+                    HEAD_1,
+                    {**exact_active_cli, "checkpoint": "pending-capture:cli-run"},
+                    (),
+                    None,
+                    False,
+                ),
+                ("unpublished accepted finding", HEAD_2, exact_active_cli, (), None, False),
+                (
+                    "unresolved actionable finding",
+                    HEAD_1,
+                    exact_active_cli,
+                    ("current or outdated actionable finding remains open",),
+                    None,
+                    False,
+                ),
+                (
+                    "pending Hosted capture",
+                    HEAD_1,
+                    exact_active_cli,
+                    (),
+                    {
+                        "pr": 1,
+                        "head": HEAD_2,
+                        "checkpoint": "pending-capture:hosted-run",
+                        "held": True,
+                        "reason": "capture requires adjudication",
+                    },
+                    False,
+                ),
+            )
+        )
+
+        for name, finding_head, cli_observation, unresolved_findings, pending_capture, allowed in cases:
+            with self.subTest(name=name):
+                controller = make_controller(
+                    finding_head,
+                    cli_observation,
+                    unresolved_findings=unresolved_findings,
+                    pending_hosted_capture=pending_capture,
+                )
+                allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+                self.assertEqual(allocation["status"], "CAP_ACTIVE" if allowed else "CAP_FINDINGS_PENDING")
+                if allowed:
+                    self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_2)
+                    controller.decide_allocation(
+                        action="cancel",
+                        pr=1,
+                        channel="hosted",
+                        head=HEAD_2,
+                        reason="replace the synthetic allocation",
+                    )
+                    controller.decide_allocation(
+                        action="grant",
+                        pr=1,
+                        channel="hosted",
+                        head=HEAD_2,
+                        checkpoint="hosted-accepted-result",
+                        min_additional_completed=1,
+                        max_additional_completed=2,
+                        fresh_taper=True,
+                        reason="bounded Hosted follow-up after the published correction",
+                    )
+                    self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_2)
+                else:
+                    with self.assertRaises(ControllerError):
+                        controller.resolve_hosted_target()
+
     def test_published_cli_correction_ignores_audited_hosted_rate_limit(self):
         rate_limit = {
             "pr": 1,

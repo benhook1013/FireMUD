@@ -1515,6 +1515,7 @@ class LiveEvidence:
                         "checkpoint": f"active-cli:{run_id}",
                         "active_review": True,
                         "held": True,
+                        "current_lock_owner": exact_owner_metadata,
                         "reason": "CLI review is running; its eventual findings still require adjudication",
                         **self._anchor(anchor_metadata),
                     }

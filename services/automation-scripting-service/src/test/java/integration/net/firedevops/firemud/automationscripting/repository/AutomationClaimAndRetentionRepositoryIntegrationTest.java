@@ -111,10 +111,12 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @AfterEach
   void stopExecutor() {
     executor.shutdownNow();
-    if (upgradeSchema != null) {
+    String schemaToDrop = upgradeSchema;
+    upgradeSchema = null;
+    if (schemaToDrop != null) {
+      String validatedSchema = requireUpgradeSchemaName(schemaToDrop);
       DSL.using(dataSource(null), SQLDialect.POSTGRES)
-          .execute("DROP SCHEMA " + upgradeSchema + " CASCADE");
-      upgradeSchema = null;
+          .execute("DROP SCHEMA IF EXISTS \"" + validatedSchema + "\" CASCADE");
     }
   }
 
@@ -280,6 +282,13 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
     return dataSource;
+  }
+
+  private static String requireUpgradeSchemaName(String schemaName) {
+    if (!schemaName.matches("automation_v4_upgrade_[0-9a-f]{32}")) {
+      throw new IllegalStateException("Unexpected isolated upgrade schema name");
+    }
+    return schemaName;
   }
 
   @Test

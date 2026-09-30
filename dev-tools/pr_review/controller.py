@@ -1028,6 +1028,61 @@ class ReviewController:
         )
 
     @staticmethod
+    def _active_cli_review_overlaps_hosted(
+        observation: Any,
+        expected_pr: int,
+        current_anchor: AnchorFacts | None,
+    ) -> bool:
+        if current_anchor is None or current_anchor.pr != expected_pr:
+            return False
+        checkpoint = _field(observation, "checkpoint", "checkpoint_id")
+        observed_head = _field(observation, "head", "reviewed_head")
+        if not (
+            isinstance(checkpoint, str)
+            and re.fullmatch(r"active-cli:run\.[0-9a-f]{32}", checkpoint) is not None
+            and _field(observation, "current_lock_owner") is True
+            and _field(observation, "active_review") is True
+            and _field(observation, "held") is True
+            and _field(observation, "pr") == expected_pr
+            and isinstance(observed_head, str)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", observed_head) is not None
+            and observed_head.casefold() == current_anchor.child_head.casefold()
+            and _field(observation, "completed") is not True
+            and not any(
+                _field(observation, flag) is True
+                for flag in (
+                    "provisional",
+                    "correction",
+                    "non_counting",
+                    "unstable",
+                    "unreconciled",
+                    "parent_moved",
+                    "rate_limited",
+                    "active_reservation",
+                    "over_ceiling",
+                    "actionable",
+                )
+            )
+        ):
+            return False
+
+        expected = current_anchor.as_dict()
+        for name in ("child_head", "parent_head", "merge_base"):
+            value = _field(observation, name)
+            target = expected[name]
+            if (
+                not isinstance(value, str)
+                or re.fullmatch(r"[0-9a-fA-F]{40}", value) is None
+                or value.casefold() != target.casefold()
+            ):
+                return False
+        return (
+            _field(observation, "child_head").casefold() == observed_head.casefold()
+            and _field(observation, "parent_identity") == expected["parent_identity"]
+            and _field(observation, "patch_id") == expected["patch_id"]
+        )
+
+    @staticmethod
     def _reconciled_anchor(
         pr: int,
         live: LivePullRequest,
@@ -2470,10 +2525,12 @@ class ReviewController:
         acknowledge_over_ceiling: bool = False,
         require_checkpoint_ancestry: bool = True,
         allow_cli_hosted_overlap: bool = False,
+        allow_hosted_cli_overlap: bool = False,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
         allow_exact_hosted_overlap = allow_cli_hosted_overlap and channel == policy.Channel.CLI
+        allow_exact_cli_overlap = allow_hosted_cli_overlap and channel == policy.Channel.HOSTED
         histories = {
             selected: self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
@@ -2528,6 +2585,7 @@ class ReviewController:
             allow_historical_unmatched,
             allow_historical_terminal_ambiguity,
             allow_exact_hosted_overlap,
+            allow_exact_cli_overlap,
         )
         if stop_audit_cache is not None and cache_key in stop_audit_cache:
             audit = stop_audit_cache[cache_key]
@@ -2558,6 +2616,7 @@ class ReviewController:
             for item in audit.get("allowed_active_hosted_reservations", ())
         }
         consumed_active_hosted_reservations: set[tuple[int, int]] = set()
+        consumed_active_cli_overlap = False
         for selected, history in histories.items():
             parsed_history = [policy.Evidence.from_value(value) for value in history]
             valid_review_indexes = [
@@ -2632,6 +2691,15 @@ class ReviewController:
                     )
                 ):
                     consumed_active_hosted_reservations.add(active_hosted_identity)
+                    continue
+                if (
+                    allow_exact_cli_overlap
+                    and selected == policy.Channel.CLI
+                    and self._active_cli_review_overlaps_hosted(value, pr, current)
+                ):
+                    if consumed_active_cli_overlap:
+                        raise ControllerError("review-stop audit found multiple active CLI overlap runs")
+                    consumed_active_cli_overlap = True
                     continue
                 blocker_flags = (
                     "held",
@@ -3323,6 +3391,7 @@ class ReviewController:
                     checkpoint_pin=checkpoint_pin,
                     require_checkpoint_ancestry=False,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
+                    allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                     stop_audit_cache=stop_audit_cache,
                     history_cache=history_cache,
                 )
@@ -3361,6 +3430,7 @@ class ReviewController:
                     checkpoint_pin=stopping_checkpoint,
                     require_checkpoint_ancestry=False,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
+                    allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                     stop_audit_cache=stop_audit_cache,
                     history_cache=history_cache,
                 )
@@ -3403,6 +3473,7 @@ class ReviewController:
                 checkpoint_pin=latest["checkpoint"],
                 require_checkpoint_ancestry=False,
                 allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
+                allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
@@ -5524,6 +5595,7 @@ class ReviewController:
                 checkpoint_pin=None,
                 require_checkpoint_ancestry=not fresh_taper,
                 allow_cli_hosted_overlap=selected == policy.Channel.CLI,
+                allow_hosted_cli_overlap=selected == policy.Channel.HOSTED,
             )
             stop_evidence_checked = True
         if action == "grant":
@@ -5555,6 +5627,7 @@ class ReviewController:
                             checkpoint_pin=None,
                             require_checkpoint_ancestry=not fresh_taper,
                             allow_cli_hosted_overlap=selected == policy.Channel.CLI,
+                            allow_hosted_cli_overlap=selected == policy.Channel.HOSTED,
                         )
                 elif not (
                     bounded_replacement
