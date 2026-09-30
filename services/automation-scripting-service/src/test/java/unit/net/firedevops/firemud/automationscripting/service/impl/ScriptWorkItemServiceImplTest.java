@@ -58,6 +58,7 @@ import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -1174,8 +1175,10 @@ class ScriptWorkItemServiceImplTest {
     preflightOrder.verify(workItemRepository).findByTenantIdAndIdForUpdate("1", workItemId);
   }
 
-  @Test
-  void rejectsReplayWhenSnapshotRowVersionOrFailureGenerationDriftsBeforeClaim() {
+  @ParameterizedTest
+  @CsvSource({"5, 1", "4, 2", "5, 2"})
+  void rejectsReplayWhenSnapshotRowVersionOrFailureGenerationDriftsBeforeClaim(
+      int currentRowVersion, long currentFailureGeneration) {
     long workItemId = 121L;
     ScriptWorkItem snapshot = withRoutingBundle(replayableRuntimeWorkItem(workItemId));
     snapshot.setCancelReason("authority_unavailable");
@@ -1183,8 +1186,8 @@ class ScriptWorkItemServiceImplTest {
     snapshot.setRowVersion(4);
     ScriptWorkItem current = withRoutingBundle(replayableRuntimeWorkItem(workItemId));
     current.setCancelReason("authority_unavailable");
-    current.setFailureGeneration(2L);
-    current.setRowVersion(5);
+    current.setFailureGeneration(currentFailureGeneration);
+    current.setRowVersion(currentRowVersion);
     ScriptEventAudit audit = new ScriptEventAudit();
     audit.setFinalStage("ADMISSION");
     audit.setFinalOutcome("infrastructure_error");
@@ -1233,7 +1236,7 @@ class ScriptWorkItemServiceImplTest {
             replay -> {
               assertThat(replay.outcome()).isEqualTo("rejected");
               assertThat(replay.rejectionReason()).isEqualTo("recovery_in_progress");
-              assertThat(replay.failureGeneration()).isEqualTo(2L);
+              assertThat(replay.failureGeneration()).isEqualTo(currentFailureGeneration);
             });
     verify(workItemRepository, never())
         .claimDeadLetterForReplay(
