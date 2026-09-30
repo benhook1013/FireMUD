@@ -728,11 +728,6 @@ class ReviewController:
                 continue
 
             observed_head = _field(value, "head", "reviewed_head")
-            current_observation = (
-                isinstance(observed_head, str)
-                and re.fullmatch(r"[0-9a-fA-F]{40}", observed_head) is not None
-                and observed_head.casefold() == current_head.casefold()
-            )
             trigger_match = re.fullmatch(r"trigger:([1-9][0-9]*)", checkpoint)
             trigger_id = _field(value, "trigger_id")
             exact_trigger = trigger_match is not None and (
@@ -757,14 +752,11 @@ class ReviewController:
                 # and remains independent of CLI after the PR head advances.
                 continue
 
-            active_response = (
-                _field(value, "reason") == HOSTED_ACTIVE_RESPONSE_REASON
-                and _field(value, "held") is True
-                and _field(value, "unstable") is not True
-                and _field(value, "pr") == expected_pr
-                and current_observation
-                and exact_trigger
-                and ReviewController._hosted_anchor_matches(value, expected_pr, current_anchor)
+            active_response = ReviewController._hosted_active_response_overlaps_cli(
+                value,
+                expected_pr,
+                current_head,
+                current_anchor,
             )
             if active_response:
                 # LiveEvidence emits this exact reason only after trigger_state
@@ -991,6 +983,48 @@ class ReviewController:
             and isinstance(anchor.get("patch_id"), str)
             and bool(anchor.get("patch_id"))
             and anchor.get("patch_id") == expected["patch_id"]
+        )
+
+    @staticmethod
+    def _hosted_active_response_overlaps_cli(
+        observation: Any,
+        expected_pr: int,
+        current_head: str,
+        current_anchor: AnchorFacts | None,
+        *,
+        require_response_identity: bool = False,
+    ) -> bool:
+        checkpoint = _field(observation, "checkpoint", "checkpoint_id")
+        observed_head = _field(observation, "head", "reviewed_head")
+        trigger_match = re.fullmatch(r"trigger:([1-9][0-9]*)", checkpoint) if isinstance(checkpoint, str) else None
+        trigger_id = _field(observation, "trigger_id")
+        exact_trigger = trigger_match is not None and (
+            trigger_id is None or (type(trigger_id) is int and trigger_id == int(trigger_match.group(1)))
+        )
+        if not (
+            _field(observation, "reason") == HOSTED_ACTIVE_RESPONSE_REASON
+            and _field(observation, "held") is True
+            and _field(observation, "unstable") is not True
+            and _field(observation, "pr") == expected_pr
+            and isinstance(observed_head, str)
+            and re.fullmatch(r"[0-9a-fA-F]{40}", observed_head) is not None
+            and observed_head.casefold() == current_head.casefold()
+            and exact_trigger
+            and ReviewController._hosted_anchor_matches(observation, expected_pr, current_anchor)
+        ):
+            return False
+        if not require_response_identity:
+            return True
+        response_id = _field(observation, "response_id")
+        return (
+            type(trigger_id) is int
+            and trigger_id > 0
+            and type(response_id) is int
+            and response_id > 0
+            and _field(observation, "state") == "active"
+            and _field(observation, "active_reservation") is True
+            and _field(observation, "attributable") is True
+            and _field(observation, "terminal") is False
         )
 
     @staticmethod
@@ -2167,6 +2201,7 @@ class ReviewController:
         *,
         allow_historical_unmatched: bool = False,
         allow_historical_terminal_ambiguity: bool = False,
+        allow_cli_hosted_overlap: bool = False,
         acknowledged_over_ceiling_checkpoints: Sequence[str] = (),
     ) -> Mapping[str, Any]:
         provider = self._evidence_provider
@@ -2306,6 +2341,29 @@ class ReviewController:
         normalized_audit = dict(audit)
         normalized_audit["terminal_rate_limits"] = tuple(normalized_rate_limits)
         normalized_audit["historical_terminal_fingerprints"] = tuple(sorted(historical_terminal_fingerprints))
+        allowed_active_hosted_reservations: list[Mapping[str, Any]] = []
+        if allow_cli_hosted_overlap:
+            active_hosted = audit.get("active_hosted_reservations", ())
+            if not isinstance(active_hosted, Sequence) or isinstance(active_hosted, (str, bytes)):
+                raise ControllerError("review-stop audit has malformed active Hosted response evidence")
+            allowed_active_hosted_reservations = [
+                item
+                for item in active_hosted
+                if self._hosted_active_response_overlaps_cli(
+                    item,
+                    pr,
+                    current.child_head,
+                    current,
+                    require_response_identity=True,
+                )
+            ]
+            if len(allowed_active_hosted_reservations) > 1:
+                raise ControllerError("review-stop audit found multiple active Hosted overlap responses")
+            active_identities = [
+                (_field(item, "trigger_id"), _field(item, "response_id")) for item in allowed_active_hosted_reservations
+            ]
+            if len(set(active_identities)) != len(active_identities):
+                raise ControllerError("review-stop audit has duplicate active Hosted response identities")
         for field, description in (
             ("active_reservations", "active review or reservation"),
             ("unmatched_responses", "unmatched review response"),
@@ -2320,6 +2378,13 @@ class ReviewController:
                 if any(not isinstance(value, str) for value in values):
                     raise ControllerError("review-stop audit has malformed unresolved findings")
                 values = [value for value in values if value not in allowed]
+            if field == "active_reservations" and allowed_active_hosted_reservations:
+                if values.count("active") < len(allowed_active_hosted_reservations):
+                    raise ControllerError("active Hosted overlap evidence is not bound to the complete live audit")
+                values = list(values)
+                for _item in allowed_active_hosted_reservations:
+                    values.remove("active")
+                normalized_audit[field] = values
             if field in {"active_reservations", "ambiguous_responses"} and historical_terminal_fingerprints:
                 expected = (
                     ("ambiguous", len(historical_terminal_fingerprints))
@@ -2333,6 +2398,7 @@ class ReviewController:
                     normalized_audit[field] = values
             if values:
                 raise ControllerError(f"review stop is blocked by an {description}")
+        normalized_audit["allowed_active_hosted_reservations"] = tuple(allowed_active_hosted_reservations)
         historical_unmatched = audit.get("historical_unmatched_responses", [])
         if not isinstance(historical_unmatched, Sequence) or isinstance(historical_unmatched, (str, bytes)):
             raise ControllerError("review-stop audit has malformed historical unmatched-response evidence")
@@ -2401,9 +2467,11 @@ class ReviewController:
         ambiguity_reason: str | None = None,
         acknowledge_over_ceiling: bool = False,
         require_checkpoint_ancestry: bool = True,
+        allow_cli_hosted_overlap: bool = False,
         stop_audit_cache: dict[tuple[Any, ...], Mapping[str, Any]] | None = None,
         history_cache: dict[tuple[int, str], list[Any]] | None = None,
     ) -> tuple[Any, tuple[tuple[str, ...], str] | None, dict[policy.Channel, list[Any]]]:
+        allow_exact_hosted_overlap = allow_cli_hosted_overlap and channel == policy.Channel.CLI
         histories = {
             selected: self._policy_history(state, pr, selected, reconciliation, history_cache=history_cache)
             for selected in (policy.Channel.HOSTED, policy.Channel.CLI)
@@ -2457,6 +2525,7 @@ class ReviewController:
             tuple(acknowledged_over_ceiling_checkpoints),
             allow_historical_unmatched,
             allow_historical_terminal_ambiguity,
+            allow_exact_hosted_overlap,
         )
         if stop_audit_cache is not None and cache_key in stop_audit_cache:
             audit = stop_audit_cache[cache_key]
@@ -2467,6 +2536,7 @@ class ReviewController:
                 retained_ambiguous_fingerprints,
                 allow_historical_unmatched=allow_historical_unmatched,
                 allow_historical_terminal_ambiguity=allow_historical_terminal_ambiguity,
+                allow_cli_hosted_overlap=allow_exact_hosted_overlap,
                 acknowledged_over_ceiling_checkpoints=acknowledged_over_ceiling_checkpoints,
             )
             if stop_audit_cache is not None:
@@ -2477,11 +2547,15 @@ class ReviewController:
         non_blocking_ambiguity_fingerprints = set(retained_fingerprints) | set(
             audit.get("historical_terminal_fingerprints", ())
         )
-        non_blocking_rate_limits = (
-            {item["trigger_id"]: item for item in audit.get("terminal_rate_limits", ())}
-            if allow_historical_terminal_ambiguity
-            else {}
-        )
+        # A verified terminal rate limit is a channel cooldown, not unresolved
+        # review evidence. The request selector enforces an active Hosted
+        # cooldown; it must not hold CLI or finding-clearance decisions here.
+        non_blocking_rate_limits = {item["trigger_id"]: item for item in audit.get("terminal_rate_limits", ())}
+        allowed_active_hosted_reservations = {
+            (_field(item, "trigger_id"), _field(item, "response_id"))
+            for item in audit.get("allowed_active_hosted_reservations", ())
+        }
+        consumed_active_hosted_reservations: set[tuple[int, int]] = set()
         for selected, history in histories.items():
             parsed_history = [policy.Evidence.from_value(value) for value in history]
             valid_review_indexes = [
@@ -2542,6 +2616,21 @@ class ReviewController:
                             raise ControllerError(
                                 "accepted findings need a published corrected head before review can stop"
                             )
+                active_hosted_identity = (_field(value, "trigger_id"), _field(value, "response_id"))
+                if (
+                    allow_exact_hosted_overlap
+                    and selected == policy.Channel.HOSTED
+                    and active_hosted_identity in allowed_active_hosted_reservations
+                    and active_hosted_identity not in consumed_active_hosted_reservations
+                    and self._hosted_active_response_overlaps_cli(
+                        value,
+                        pr,
+                        current.child_head,
+                        current,
+                    )
+                ):
+                    consumed_active_hosted_reservations.add(active_hosted_identity)
+                    continue
                 blocker_flags = (
                     "held",
                     "unstable",
@@ -3231,6 +3320,7 @@ class ReviewController:
                     reconciliation_result,
                     checkpoint_pin=checkpoint_pin,
                     require_checkpoint_ancestry=False,
+                    allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     stop_audit_cache=stop_audit_cache,
                     history_cache=history_cache,
                 )
@@ -3268,6 +3358,7 @@ class ReviewController:
                     reconciliation_result,
                     checkpoint_pin=stopping_checkpoint,
                     require_checkpoint_ancestry=False,
+                    allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     stop_audit_cache=stop_audit_cache,
                     history_cache=history_cache,
                 )
@@ -3309,6 +3400,7 @@ class ReviewController:
                 reconciliation_result,
                 checkpoint_pin=latest["checkpoint"],
                 require_checkpoint_ancestry=False,
+                allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                 stop_audit_cache=stop_audit_cache,
                 history_cache=history_cache,
             )
@@ -5430,6 +5522,7 @@ class ReviewController:
                 reconciliation,
                 checkpoint_pin=None,
                 require_checkpoint_ancestry=not fresh_taper,
+                allow_cli_hosted_overlap=selected == policy.Channel.CLI,
             )
             stop_evidence_checked = True
         if action == "grant":
@@ -5460,6 +5553,7 @@ class ReviewController:
                             reconciliation,
                             checkpoint_pin=None,
                             require_checkpoint_ancestry=not fresh_taper,
+                            allow_cli_hosted_overlap=selected == policy.Channel.CLI,
                         )
                 elif not (
                     bounded_replacement

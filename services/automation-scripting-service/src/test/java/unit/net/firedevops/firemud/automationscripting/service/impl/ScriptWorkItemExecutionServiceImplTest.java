@@ -221,10 +221,20 @@ class ScriptWorkItemExecutionServiceImplTest {
     item.setAuthorityUnavailableSince(outageSince);
     item.setAuthorityUnavailableCount(9);
     item.setNextEligibleAt(outageSince.plusSeconds(30));
+    item.setStatus("PENDING_EVALUATION");
     ScriptDefinition definition = scriptDefinition();
     definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
     ScriptEventAudit audit = new ScriptEventAudit();
-    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item), List.of());
+    Mockito.doAnswer(
+            invocation -> {
+              if (!"PENDING_EVALUATION".equals(item.getStatus())) {
+                return List.of();
+              }
+              item.setStatus("EVALUATING");
+              return List.of(item);
+            })
+        .when(workItemService)
+        .claimPendingForEvaluation(1);
     when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
         .thenReturn(Optional.of(definition));
     when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));

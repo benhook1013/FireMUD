@@ -244,6 +244,10 @@ _HOSTED_COMMENT_FINGERPRINT = re.compile(
     r"<!--\s*cr-comment:v1:([0-9a-f]{24})\s*-->",
     re.DOTALL,
 )
+_HOSTED_COMMENT_MARKER_COMMENT = re.compile(
+    r"<!--\s*cr-comment:v1(?=[\s:]|-->|\Z).*?(?:-->|\Z)",
+    re.DOTALL,
+)
 _HOSTED_COMMENT_MARKER_PREFIX = "cr-comment:v1"
 _HOSTED_COMMENT_AUXILIARY_PREFIXES = (
     "fingerprinting:",
@@ -276,8 +280,9 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
         match for match in _HOSTED_COMMENT_FINGERPRINT.finditer(body) if outside_fence(match.start(), match.end())
     ]
     marker_mentions = sum(
-        len(re.findall(re.escape(_HOSTED_COMMENT_MARKER_PREFIX), body[start:end]))
-        for start, end in _outside_fence_ranges(len(body), fenced_ranges)
+        len(re.findall(re.escape(_HOSTED_COMMENT_MARKER_PREFIX), match.group()))
+        for match in _HOSTED_COMMENT_MARKER_COMMENT.finditer(body)
+        if outside_fence(match.start(), match.end())
     )
     if marker_mentions != len(marker_matches):
         raise HostedCaptureError("Hosted finding comment contains a malformed cr-comment:v1 marker")

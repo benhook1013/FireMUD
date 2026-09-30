@@ -1394,6 +1394,22 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     existing.setHandoffOutcome("handoff_in_flight");
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
         .thenReturn(Optional.of(existing));
+    List<Integer> savedRowVersions = new ArrayList<>();
+    List<Long> savedIds = new ArrayList<>();
+    List<String> savedEventIds = new ArrayList<>();
+    Mockito.doAnswer(
+            invocation -> {
+              ScriptHandoffEvent saved = invocation.getArgument(0);
+              savedRowVersions.add(saved.getRowVersion());
+              savedIds.add(saved.getId());
+              savedEventIds.add(saved.getEventId());
+              int nextRowVersion = saved.getRowVersion() + 1;
+              saved.setRowVersion(nextRowVersion);
+              existing.setRowVersion(nextRowVersion);
+              return saved;
+            })
+        .when(handoffEventRepository)
+        .save(Mockito.any());
     ScriptGameplayCommandHandoffServiceImpl service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -1409,12 +1425,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository, Mockito.times(2)).save(handoffCaptor.capture());
-    assertThat(handoffCaptor.getAllValues())
-        .allSatisfy(
-            saved -> {
-              assertThat(saved.getId()).isEqualTo(44L);
-              assertThat(saved.getRowVersion()).isEqualTo(7);
-            });
+    assertThat(savedRowVersions).containsExactly(7, 8);
+    assertThat(savedIds).containsExactly(44L, 44L);
+    assertThat(savedEventIds)
+        .containsExactly("she-work-item-99-command-0", "she-work-item-99-command-0");
   }
 
   @Test

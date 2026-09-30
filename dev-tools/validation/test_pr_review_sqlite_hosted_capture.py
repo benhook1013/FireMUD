@@ -580,10 +580,24 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(one[0]["key"], "hosted-comment:202")
         self.assertNotIn("cr-comment:v1", one[0]["detail"])
 
+        prose_mentions = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202,
+            "**Reject malformed `cr-comment:v1` markers.**\n\n"
+            "The cr-comment:v1 prefix is mentioned in ordinary prose.\n\n"
+            "<!-- Note about cr-comment:v1 examples. -->\n\n"
+            "```text\n<!-- cr-comment:v1:not-a-fingerprint -->\n```\n\n"
+            f"Details.\n<!-- cr-comment:v1:{fingerprint} -->",
+        )
+        self.assertEqual(len(prose_mentions), 1)
+        self.assertEqual(prose_mentions[0]["key"], "hosted-comment:202")
+        self.assertEqual(prose_mentions[0]["title"], "Reject malformed `cr-comment:v1` markers.")
+
         with self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "malformed cr-comment:v1 marker"):
             sqlite_hosted_capture._hosted_comment_finding_segments(
                 202, "**Finding.**\n<!-- cr-comment:v1:not-a-fingerprint -->"
             )
+        with self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "malformed cr-comment:v1 marker"):
+            sqlite_hosted_capture._hosted_comment_finding_segments(202, "**Finding.**\n<!-- cr-comment:v1:bad")
         with self.assertRaisesRegex(sqlite_hosted_capture.HostedCaptureError, "repeats a cr-comment:v1 fingerprint"):
             sqlite_hosted_capture._hosted_comment_finding_segments(
                 202,

@@ -18,6 +18,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -74,6 +75,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   private ScriptPatchPinProjectionRepository pinProjectionRepository;
   private ScriptScheduleInstanceRepository scheduleInstanceRepository;
   private ExecutorService executor;
+  private String upgradeSchema;
 
   @BeforeAll
   void setUpRepositories() {
@@ -109,32 +111,168 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
   @AfterEach
   void stopExecutor() {
     executor.shutdownNow();
+    if (upgradeSchema != null) {
+      DSL.using(dataSource(null), SQLDialect.POSTGRES)
+          .execute("DROP SCHEMA " + upgradeSchema + " CASCADE");
+      upgradeSchema = null;
+    }
   }
 
   @Test
-  void flywayV4EvolvesV3EligibilityWithoutLosingReplayEvidence() {
+  void flywayV4PreservesV3WorkItemsAndPersistsReplayEvidence() {
+    upgradeSchema = "automation_v4_upgrade_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource upgradeDataSource = dataSource(upgradeSchema);
+    Flyway.configure()
+        .dataSource(upgradeDataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(upgradeSchema)
+        .defaultSchema(upgradeSchema)
+        .target("3.2")
+        .load()
+        .migrate();
+    DSLContext upgradeDsl = DSL.using(upgradeDataSource, SQLDialect.POSTGRES);
+
     assertThat(
-            dsl.fetchValue(
-                "SELECT is_nullable FROM information_schema.columns"
-                    + " WHERE table_schema = 'public' AND table_name = 'script_work_items'"
-                    + " AND column_name = 'next_eligible_at'",
+            upgradeDsl.fetchValue(
+                "SELECT version FROM flyway_schema_history WHERE success ORDER BY installed_rank DESC LIMIT 1",
                 String.class))
-        .isEqualTo("YES");
+        .isEqualTo("3.2");
+    Long deadLetteredWorkItemId =
+        upgradeDsl
+            .fetchOne(
+                "INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, "
+                    + "entity_id, script_id, event_type, event_schema_version, script_patch_version, "
+                    + "script_event_id, source_service, trigger_mode, status, cancel_reason, "
+                    + "created_at, updated_at, next_eligible_at) "
+                    + "VALUES ('tenant-v3-retained', 'instance-1', 'region-1', 12, 'entity-1', "
+                    + "'script-1', 'onCommand', 'v1', 'patch-1', 'event-dead-lettered', "
+                    + "'game-session-service', 'EVENT', 'DEAD_LETTERED', 'retained_failure', "
+                    + "'2026-09-30 12:00:00', '2026-09-30 12:01:00', '2026-09-30 12:02:00') "
+                    + "RETURNING id")
+            .get(0, Long.class);
+    Long pendingWorkItemId =
+        upgradeDsl
+            .fetchOne(
+                "INSERT INTO script_work_items (tenant_id, game_instance_id, region_id, region_epoch, "
+                    + "entity_id, script_id, event_type, event_schema_version, script_patch_version, "
+                    + "script_event_id, source_service, trigger_mode, status, created_at, updated_at, "
+                    + "next_eligible_at) "
+                    + "VALUES ('tenant-v3-retained', 'instance-1', 'region-1', 12, 'entity-1', "
+                    + "'script-1', 'onCommand', 'v1', 'patch-1', 'event-pending', "
+                    + "'game-session-service', 'EVENT', 'PENDING_EVALUATION', '2026-09-30 12:00:00', "
+                    + "'2026-09-30 12:01:00', '2035-01-02 03:04:05') RETURNING id")
+            .get(0, Long.class);
+    var retainedRowsBeforeV4 =
+        upgradeDsl.fetch(
+            "SELECT id, tenant_id, status, next_eligible_at, cancel_reason, created_at, updated_at "
+                + "FROM script_work_items ORDER BY id");
+
+    Flyway.configure()
+        .dataSource(upgradeDataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(upgradeSchema)
+        .defaultSchema(upgradeSchema)
+        .load()
+        .migrate();
+
     assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM pg_indexes WHERE schemaname = 'public'"
+            upgradeDsl.fetchValue(
+                "SELECT is_nullable FROM information_schema.columns"
+                    + " WHERE table_schema = ? AND table_name = 'script_work_items'"
+                    + " AND column_name = 'next_eligible_at'",
+                String.class,
+                upgradeSchema))
+        .isEqualTo("YES");
+    String eligibilityIndex =
+        upgradeDsl
+            .fetchOne(
+                "SELECT indexdef FROM pg_indexes WHERE schemaname = '"
+                    + upgradeSchema
+                    + "'"
                     + " AND tablename = 'script_work_items'"
-                    + " AND indexname = 'idx_script_work_items_status_eligible_created'",
-                Long.class))
+                    + " AND indexname = 'idx_script_work_items_status_eligible_created'")
+            .get("indexdef", String.class);
+    assertThat(eligibilityIndex).contains("(status, next_eligible_at, created_at, id)");
+    assertThat(
+            upgradeDsl.fetch(
+                "SELECT id, tenant_id, status, next_eligible_at, cancel_reason, created_at, updated_at "
+                    + "FROM script_work_items ORDER BY id"))
+        .isEqualTo(retainedRowsBeforeV4);
+    assertThat(
+            upgradeDsl.fetchValue(
+                "SELECT failure_generation FROM script_work_items WHERE id = ?",
+                Long.class,
+                deadLetteredWorkItemId))
         .isEqualTo(1L);
     assertThat(
-            dsl.fetchValue(
-                "SELECT count(*) FROM information_schema.tables"
-                    + " WHERE table_schema = 'public'"
-                    + " AND table_name IN ('script_dead_letter_replay_requests',"
-                    + " 'script_dead_letter_replay_results')",
-                Long.class))
+            upgradeDsl.fetchValue(
+                "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
+                java.time.LocalDateTime.class,
+                pendingWorkItemId))
+        .isEqualTo(java.time.LocalDateTime.parse("2035-01-02T03:04:05"));
+    upgradeDsl.execute(
+        "UPDATE script_work_items SET next_eligible_at = NULL WHERE id = ?", pendingWorkItemId);
+    assertThat(
+            upgradeDsl.fetchValue(
+                "SELECT next_eligible_at FROM script_work_items WHERE id = ?",
+                java.time.LocalDateTime.class,
+                pendingWorkItemId))
+        .isNull();
+
+    Long replayRequestId =
+        upgradeDsl
+            .fetchOne(
+                "INSERT INTO script_dead_letter_replay_requests (tenant_id, control_plane_request_id, "
+                    + "request_fingerprint, status, replayed_count, rejected_count) "
+                    + "VALUES ('tenant-v3-retained', 'request-44', ?, 'COMPLETED', 1, 0) RETURNING id",
+                REQUEST_DIGEST)
+            .get(0, Long.class);
+    upgradeDsl.execute(
+        "INSERT INTO script_dead_letter_replay_results (tenant_id, replay_request_id, "
+            + "requested_work_item_id, work_item_id, outcome, original_failure_stage, "
+            + "original_failure_reason, failure_generation) "
+            + "VALUES ('tenant-v3-retained', ?, ?, ?, 'REPLAYED', 'DSL_EVAL', "
+            + "'retained_failure', 1)",
+        replayRequestId,
+        deadLetteredWorkItemId,
+        deadLetteredWorkItemId);
+
+    assertThat(
+            upgradeDsl.fetchValue(
+                "SELECT control_plane_request_id FROM script_dead_letter_replay_requests "
+                    + "WHERE tenant_id = 'tenant-v3-retained' AND id = ?",
+                String.class,
+                replayRequestId))
+        .isEqualTo("request-44");
+    assertThat(
+            upgradeDsl.fetchValue(
+                "SELECT original_failure_reason FROM script_dead_letter_replay_results "
+                    + "WHERE replay_request_id = ? AND requested_work_item_id = ?",
+                String.class,
+                replayRequestId,
+                deadLetteredWorkItemId))
+        .isEqualTo("retained_failure");
+    assertThat(
+            upgradeDsl.fetchValue(
+                "SELECT count(*) FROM information_schema.tables WHERE table_schema = ? "
+                    + "AND table_name IN ('script_dead_letter_replay_requests', "
+                    + "'script_dead_letter_replay_results')",
+                Long.class,
+                upgradeSchema))
         .isEqualTo(2L);
+  }
+
+  private DriverManagerDataSource dataSource(String schemaName) {
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    String baseUrl = postgres.getJdbcUrl();
+    dataSource.setUrl(
+        schemaName == null
+            ? baseUrl
+            : baseUrl + (baseUrl.contains("?") ? "&" : "?") + "currentSchema=" + schemaName);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    return dataSource;
   }
 
   @Test
