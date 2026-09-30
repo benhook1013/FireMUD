@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.support;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -17,7 +18,6 @@ public final class RuntimeMembershipTestFixtures {
   private static final String STREAM_PREFIX = "account:auth-authority:v1:";
   private static final String ISSUER = "firemud-account-service";
   private static final String EVENT_ID = "00000000-0000-0000-0000-000000000099";
-  private static final String EVALUATED_AT = "2026-03-30T00:00:00Z";
 
   private RuntimeMembershipTestFixtures() {}
 
@@ -123,7 +123,7 @@ public final class RuntimeMembershipTestFixtures {
             .setAuthorityTuple(tuple)
             .setIssuanceFence("1")
             .addAllOutboxCheckpoints(checkpoints)
-            .setEvaluatedAt(EVALUATED_AT);
+            .setEvaluatedAt(Instant.now().toString());
     if (admitted) {
       response.addRoles("player");
     }
