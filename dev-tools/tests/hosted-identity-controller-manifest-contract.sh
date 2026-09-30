@@ -2066,22 +2066,28 @@ tcp_proxy_rules = [
 ]
 assert len(tcp_proxy_rules) == 1
 assert tcp_proxy_rules[0]["ports"] == [{"protocol": "TCP", "port": 2323}]
-grpc_targets = [
-    target
+grpc_rules = [
+    rule
     for rule in policy["spec"]["egress"]
     if any(port.get("port") == 6565 for port in rule.get("ports", []))
-    for target in rule.get("to", [])
 ]
-assert grpc_targets, "controller gRPC egress rule is missing"
-for target in grpc_targets:
-    assert target.get("namespaceSelector", {}).get("matchLabels", {}).get(
-        "firemud.dev/preview"
-    ) == "true" or target.get("namespaceSelector", {}).get("matchLabels", {}).get(
-        "firemud.dev/dev-demo"
-    ) == "true", target
-    assert target.get("podSelector", {}).get("matchLabels") == {
-        "app": "account-service"
-    }, target
+assert len(grpc_rules) == 1, grpc_rules
+assert grpc_rules[0]["ports"] == [{"protocol": "TCP", "port": 6565}]
+grpc_targets = grpc_rules[0]["to"]
+assert {
+    (
+        tuple(sorted(target["namespaceSelector"]["matchLabels"].items())),
+        tuple(sorted(target["podSelector"]["matchLabels"].items())),
+    )
+    for target in grpc_targets
+} == {
+    (namespace, (("app", workload),))
+    for namespace in (
+        (("firemud.dev/preview", "true"),),
+        (("firemud.dev/dev-demo", "true"),),
+    )
+    for workload in ("account-service", "game-session-service")
+}, grpc_targets
 PY
 for text_value in \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR \
@@ -3955,6 +3961,16 @@ def service_consumer_documents():
                 },
                 {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
             ]
+            if service == "logging-admin-service":
+                container["env"].insert(
+                    0,
+                    {
+                        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                        "valueFrom": {
+                            "fieldRef": {"fieldPath": "metadata.namespace"}
+                        },
+                    },
+                )
         if service == "spring-cloud-gateway":
             container["env"] = validator._expected_gateway_container_env("pr-42")
             container["envFrom"] = copy.deepcopy(validator.EXPECTED_GATEWAY_ENV_FROM)
@@ -4793,6 +4809,40 @@ for service in (
         fail(f"Kustomize base Deployment/{service} must use non-rolling Recreate strategy")
 for service in publication_services:
     assert_distinct_workload_service(service, base_deployments, "Kustomize base")
+
+base_logging_admin = deployment_for("logging-admin-service", base_deployments)
+base_logging_admin_container, base_logging_admin_pod = workload_container(
+    base_logging_admin, "logging-admin-service"
+)
+assert_paths_and_mount(
+    base_logging_admin_container,
+    "logging-admin-service",
+    "/tls/client.crt",
+    "/tls/client.key",
+    "/tls/ca.crt",
+)
+base_logging_admin_namespace = env_map(
+    base_logging_admin_container, "logging-admin-service"
+).get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+if base_logging_admin_namespace != {
+    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+}:
+    fail(
+        "Kustomize base Deployment/logging-admin-service must derive "
+        "FIREMUD_GRPC_WORKLOAD_NAMESPACE from metadata.namespace, "
+        f"found {base_logging_admin_namespace!r}"
+    )
+base_logging_admin_grpc_volume = named_entry(
+    base_logging_admin_pod.get("volumes"),
+    "grpc-tls",
+    "Kustomize base Deployment/logging-admin-service volumes",
+)
+if base_logging_admin_grpc_volume.get("secret", {}).get("secretName") != "firemud-grpc-tls":
+    fail(
+        "Kustomize base Deployment/logging-admin-service shared grpc-tls must use "
+        "firemud-grpc-tls"
+    )
 PY
 
 python3 - "$resolved_values" "$namespace_gate_values" <<'PY'

@@ -99,6 +99,9 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
     if (request.expectedPointerVersion() != null) {
       builder.setExpectedPointerVersion(request.expectedPointerVersion());
     }
+    if (request.expectedCatalogRevision() != null) {
+      builder.setExpectedCatalogRevision(request.expectedCatalogRevision());
+    }
     if (request.preparedVersionUpgradeId() != null
         && !request.preparedVersionUpgradeId().isBlank()) {
       builder.setPreparedVersionUpgradeId(request.preparedVersionUpgradeId());
@@ -136,6 +139,9 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
             .setControlPlaneRequestId(controlPlaneRequestId);
     if (request.expectedPointerVersion() != null) {
       builder.setExpectedPointerVersion(request.expectedPointerVersion());
+    }
+    if (request.expectedCatalogRevision() != null) {
+      builder.setExpectedCatalogRevision(request.expectedCatalogRevision());
     }
     ExecutePreparedVersionCutoverResponse response =
         gameSessionControlPlaneClient.executePreparedVersionCutover(builder.build());
@@ -245,6 +251,9 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         parseLong(entry.getTenantId(), "tenant_id"),
         parseLong(entry.getGameInstanceId(), "game_instance_id"),
         entry.getPointerVersion(),
+        entry.hasCatalogRevision() ? entry.getCatalogRevision() : null,
+        parseOptionalUuid(entry.getRealmId(), "realm_id"),
+        parseOptionalUuid(entry.getPlayableStateNamespaceId(), "playable_state_namespace_id"),
         entry.getVisible(),
         entry.getPublicProductionRealm(),
         entry.getRequiresCharacterSelection(),
@@ -255,6 +264,17 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         entry.getControlPlaneRequestId(),
         entry.getPreparedVersionUpgradeId().isBlank() ? null : entry.getPreparedVersionUpgradeId(),
         entry.getOccurredAtMs() <= 0 ? null : Instant.ofEpochMilli(entry.getOccurredAtMs()));
+  }
+
+  private UUID parseOptionalUuid(String value, String fieldName) {
+    if (value == null || value.isBlank()) {
+      return null;
+    }
+    try {
+      return UUID.fromString(value);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException(fieldName + " must be a UUID", ex);
+    }
   }
 
   private PreparedVersionUpgradeDto toDto(PreparedVersionUpgrade preparation) {
@@ -368,6 +388,8 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
         switch (error.getCode()) {
           case "INVALID_ARGUMENT" -> HttpStatus.BAD_REQUEST;
           case "PERMISSION_DENIED" -> HttpStatus.FORBIDDEN;
+          case "AUTHORITY_UNAVAILABLE", "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE" ->
+              HttpStatus.SERVICE_UNAVAILABLE;
           case "POINTER_VERSION_MISMATCH" -> HttpStatus.CONFLICT;
           case "CUTOVER_PREPARATION_INVALID" -> HttpStatus.CONFLICT;
           case "NOT_FOUND" -> HttpStatus.NOT_FOUND;

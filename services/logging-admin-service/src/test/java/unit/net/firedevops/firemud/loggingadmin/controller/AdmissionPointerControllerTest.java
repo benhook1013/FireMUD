@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.common.GlobalExceptionHandler;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -61,6 +62,9 @@ class AdmissionPointerControllerTest {
                     2L,
                     7L,
                     3L,
+                    5L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -77,7 +81,12 @@ class AdmissionPointerControllerTest {
         .perform(get("/admission-pointers").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].worldSlug").value("demo"))
-        .andExpect(jsonPath("$.data[0].tenantId").value(2));
+        .andExpect(jsonPath("$.data[0].tenantId").value(2))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(5))
+        .andExpect(jsonPath("$.data[0].realmId").value("11111111-1111-1111-1111-111111111111"))
+        .andExpect(
+            jsonPath("$.data[0].playableStateNamespaceId")
+                .value("22222222-2222-2222-2222-222222222222"));
   }
 
   @Test
@@ -93,6 +102,9 @@ class AdmissionPointerControllerTest {
                     2L,
                     7L,
                     3L,
+                    5L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"),
                     true,
                     true,
                     false,
@@ -111,7 +123,12 @@ class AdmissionPointerControllerTest {
             get("/admission-pointers/2/demo/production/audit")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data[0].pointerVersion").value(3));
+        .andExpect(jsonPath("$.data[0].pointerVersion").value(3))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(5))
+        .andExpect(jsonPath("$.data[0].realmId").value("11111111-1111-1111-1111-111111111111"))
+        .andExpect(
+            jsonPath("$.data[0].playableStateNamespaceId")
+                .value("22222222-2222-2222-2222-222222222222"));
   }
 
   @Test
@@ -304,6 +321,9 @@ class AdmissionPointerControllerTest {
                 2L,
                 7L,
                 11L,
+                7L,
+                UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                UUID.fromString("22222222-2222-2222-2222-222222222222"),
                 true,
                 true,
                 false,

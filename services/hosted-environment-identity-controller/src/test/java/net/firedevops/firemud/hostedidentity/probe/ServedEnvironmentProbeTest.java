@@ -107,6 +107,23 @@ class ServedEnvironmentProbeTest {
         "bridge-rejected", probe.probe(plan, 32001, ready, ready, rejected, ready).reason());
     assertEquals("grpc-rejected", probe.probe(plan, 32001, ready, ready, ready, rejected).reason());
     assertEquals(
+        "grpc-game-session-rejected",
+        probe
+            .probe(
+                plan,
+                HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+                32001,
+                ready,
+                ready,
+                ready,
+                ready,
+                (hostname, port) -> {
+                  assertEquals("game-session-service.pr-42.svc.cluster.local", hostname);
+                  assertEquals(6565, port);
+                  return new ServedEnvironmentProbe.ProbeResult(false, "rejected");
+                })
+            .reason());
+    assertEquals(
         "served-bridge-and-grpc-accepted",
         probe.probe(plan, 32001, ready, ready, ready, ready).reason());
   }
@@ -140,9 +157,10 @@ class ServedEnvironmentProbeTest {
         Set.of(
             "pr-42.preview.firedevops.net:443",
             "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
-            "account-service.pr-42.svc.cluster.local:6565"),
+            "account-service.pr-42.svc.cluster.local:6565",
+            "game-session-service.pr-42.svc.cluster.local:6565"),
         Set.copyOf(endpoints));
-    assertEquals(3, endpoints.size());
+    assertEquals(4, endpoints.size());
   }
 
   @Test
@@ -211,9 +229,10 @@ class ServedEnvironmentProbeTest {
             "pr-42.preview.firedevops.net:443",
             "pr-42.preview.firedevops.net:32001",
             "spring-cloud-gateway-mtls.pr-42.svc.cluster.local:443",
-            "account-service.pr-42.svc.cluster.local:6565"),
+            "account-service.pr-42.svc.cluster.local:6565",
+            "game-session-service.pr-42.svc.cluster.local:6565"),
         Set.copyOf(endpoints));
-    assertEquals(4, endpoints.size());
+    assertEquals(5, endpoints.size());
   }
 
   @Test
@@ -221,7 +240,7 @@ class ServedEnvironmentProbeTest {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
-    CountDownLatch started = new CountDownLatch(4);
+    CountDownLatch started = new CountDownLatch(5);
     EndpointProbeState state = new EndpointProbeState(started);
     ServedEnvironmentProbe.EndpointProbe endpoint = state::check;
 
@@ -229,7 +248,7 @@ class ServedEnvironmentProbeTest {
         probe.probe(plan, 32001, endpoint, endpoint, endpoint, endpoint, Duration.ofSeconds(10));
 
     assertEquals("served-bridge-and-grpc-accepted", result.reason());
-    assertEquals(4, state.calls.get());
+    assertEquals(5, state.calls.get());
     assertEquals(0, started.getCount());
   }
 
@@ -238,8 +257,8 @@ class ServedEnvironmentProbeTest {
     HostedIdentityProperties properties = new HostedIdentityProperties();
     EnvironmentIdentityPlan plan = new EnvironmentIdentityPlanner(properties).plan("pr-42");
     ServedEnvironmentProbe probe = new ServedEnvironmentProbe(properties);
-    CountDownLatch started = new CountDownLatch(4);
-    CountDownLatch interrupted = new CountDownLatch(4);
+    CountDownLatch started = new CountDownLatch(5);
+    CountDownLatch interrupted = new CountDownLatch(5);
     List<SSLSocket> openSockets = Collections.synchronizedList(new ArrayList<>());
     ServedEnvironmentProbe.EndpointProbe endpoint =
         (hostname, port) -> {
@@ -263,7 +282,7 @@ class ServedEnvironmentProbeTest {
     assertEquals("probe-deadline-exceeded", result.reason());
     assertTrue(started.await(1, TimeUnit.SECONDS));
     assertTrue(interrupted.await(1, TimeUnit.SECONDS));
-    assertEquals(4, openSockets.size());
+    assertEquals(5, openSockets.size());
     for (SSLSocket openSocket : openSockets) {
       verify(openSocket).close();
     }

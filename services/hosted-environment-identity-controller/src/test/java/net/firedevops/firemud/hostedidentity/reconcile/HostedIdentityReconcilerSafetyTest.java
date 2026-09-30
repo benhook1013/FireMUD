@@ -210,6 +210,7 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
+            anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
     Map<String, SecretProjectionService.ProjectionResult> acknowledgedProjections =
@@ -276,7 +277,8 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
-            org.mockito.ArgumentMatchers.eq("b".repeat(64)));
+            org.mockito.ArgumentMatchers.eq("b".repeat(64)),
+            org.mockito.ArgumentMatchers.eq("c".repeat(64)));
   }
 
   @Test
@@ -318,6 +320,70 @@ class HostedIdentityReconcilerSafetyTest {
         "ServedProbePending",
         "bridge-connection-failed",
         false);
+  }
+
+  @Test
+  void staleGameSessionServedLeafBlocksControllerReadiness() {
+    var expected =
+        new RuntimeProfileService.RuntimeProfile(
+            "uid",
+            "a".repeat(40),
+            "a".repeat(40),
+            HostedIdentityContract.PUBLIC_PREVIEW_EXPOSURE_MODE,
+            32016,
+            true);
+    DeploymentHeadGateFixture fixture = new DeploymentHeadGateFixture(expected);
+    when(fixture.batch.tcpProxyBridge())
+        .thenReturn(
+            DeploymentHeadGateFixture.material(
+                fixture.plan, HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE, "4"));
+    MixedOperation<Secret, SecretList, Resource<Secret>> secrets = mock(MixedOperation.class);
+    NonNamespaceOperation<Secret, SecretList, Resource<Secret>> runtimeSecrets =
+        mock(NonNamespaceOperation.class);
+    Resource<Secret> absent = mock(Resource.class);
+    when(fixture.client.secrets()).thenReturn(secrets);
+    when(secrets.inNamespace(fixture.plan.runtimeNamespace())).thenReturn(runtimeSecrets);
+    when(runtimeSecrets.withName(fixture.plan.tcpProxyBridgeSecretName())).thenReturn(absent);
+    when(absent.get()).thenReturn(null);
+    when(fixture.rollout.sync(any(), any(), anyString(), anyString(), anyString(), anyMap(), any()))
+        .thenReturn(new DeploymentRolloutService.RolloutResult(true, true, true));
+    when(fixture.probes.probe(
+            any(),
+            anyString(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            org.mockito.ArgumentMatchers.isNull(),
+            anyString(),
+            any(Secret.class),
+            anyString(),
+            anyString()))
+        .thenReturn(
+            new ServedEnvironmentProbe.ProbeResult(
+                false, "grpc-game-session-leaf-fingerprint-mismatch"));
+
+    UpdateControl<HostedEnvironmentIdentity> result = fixture.reconcile();
+
+    HostedEnvironmentIdentityStatus status = result.getResource().orElseThrow().getStatus();
+    assertEquals(HostedEnvironmentIdentityStatus.Phase.Verifying, status.getPhase());
+    assertEquals("ServedProbePending", status.getConditions().get(0).getReason());
+    assertEquals(
+        "grpc-game-session-leaf-fingerprint-mismatch", status.getConditions().get(0).getMessage());
+    verify(fixture.probes)
+        .probe(
+            any(),
+            anyString(),
+            anyInt(),
+            anyString(),
+            anyString(),
+            org.mockito.ArgumentMatchers.isNull(),
+            anyString(),
+            any(Secret.class),
+            org.mockito.ArgumentMatchers.eq("b".repeat(64)),
+            org.mockito.ArgumentMatchers.eq("c".repeat(64)));
+    verify(fixture.projections, never())
+        .acknowledge(
+            any(), any(), anyString(), anyString(), anyLong(), anyLong(), anyString(), any());
   }
 
   @Test
@@ -523,6 +589,7 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
+            anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
 
@@ -580,6 +647,7 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
+            anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
 
@@ -800,6 +868,7 @@ class HostedIdentityReconcilerSafetyTest {
             any(Secret.class),
             anyString(),
             any(Secret.class),
+            anyString(),
             anyString()))
         .thenReturn(new ServedEnvironmentProbe.ProbeResult(true, "served"));
     when(fixture.projections.acknowledge(
@@ -2221,6 +2290,7 @@ class HostedIdentityReconcilerSafetyTest {
             org.mockito.ArgumentMatchers.isNull(),
             anyString(),
             any(Secret.class),
+            anyString(),
             anyString()))
         .thenReturn(
             new ServedEnvironmentProbe.ProbeResult(false, "material-or-leaf-fingerprint-missing"));

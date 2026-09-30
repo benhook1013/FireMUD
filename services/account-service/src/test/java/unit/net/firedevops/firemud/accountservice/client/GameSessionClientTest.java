@@ -88,6 +88,27 @@ class GameSessionClientTest {
   }
 
   @Test
+  void reachableAdmissionPointerUnavailableResponsePropagatesAsDomainFailure() throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    when(stub.listGameplayWorlds(any()))
+        .thenReturn(
+            ListGameplayWorldsResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("ADMISSION_POINTER_UNAVAILABLE")
+                        .setMessage("incomplete authority"))
+                .build());
+    GameSessionClient client = newClient(stub);
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, client::listGameplayWorlds);
+
+    assertThat(failure)
+        .hasMessage("Gameplay world discovery failed: ADMISSION_POINTER_UNAVAILABLE");
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+  }
+
+  @Test
   void nonRetryableTransportStatusRetainsTransportClassification() throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
     StatusRuntimeException cause =

@@ -369,20 +369,31 @@ final class GameSessionRuntimeControlPlaneReadService {
 
   private AdmissionPointerControlPlaneEntry toControlPlaneEntry(
       GameplayAdmissionPointerSnapshot pointer) {
-    return AdmissionPointerControlPlaneEntry.newBuilder()
-        .setWorldSlug(normalizeBlank(pointer.worldSlug()))
-        .setWorldDisplayName(normalizeBlank(pointer.worldDisplayName()))
-        .setRealmSlug(normalizeBlank(pointer.realmSlug()))
-        .setRealmDisplayName(normalizeBlank(pointer.realmDisplayName()))
-        .setTenantId(Long.toString(pointer.tenantId()))
-        .setGameInstanceId(Long.toString(pointer.gameInstanceId()))
-        .setPointerVersion(pointer.pointerVersion())
-        .setVisible(pointer.visible())
-        .setRequiresCharacterSelection(pointer.requiresCharacterSelection())
-        .setStateScope(normalizeBlank(pointer.stateScope()))
-        .setCharacterCreationPolicy(normalizeBlank(pointer.characterCreationPolicy()))
-        .setPublicProductionRealm(pointer.publicProductionRealm())
-        .build();
+    if (pointer.catalogRevision() <= 0L
+        || pointer.realmId() == null
+        || pointer.playableStateNamespaceId() == null) {
+      throw new RuntimeStateException(
+          "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE",
+          "current admission pointer durable identity or catalog revision is unavailable");
+    }
+    AdmissionPointerControlPlaneEntry.Builder builder =
+        AdmissionPointerControlPlaneEntry.newBuilder()
+            .setWorldSlug(normalizeBlank(pointer.worldSlug()))
+            .setWorldDisplayName(normalizeBlank(pointer.worldDisplayName()))
+            .setRealmSlug(normalizeBlank(pointer.realmSlug()))
+            .setRealmDisplayName(normalizeBlank(pointer.realmDisplayName()))
+            .setTenantId(Long.toString(pointer.tenantId()))
+            .setGameInstanceId(Long.toString(pointer.gameInstanceId()))
+            .setPointerVersion(pointer.pointerVersion())
+            .setVisible(pointer.visible())
+            .setRequiresCharacterSelection(pointer.requiresCharacterSelection())
+            .setStateScope(normalizeBlank(pointer.stateScope()))
+            .setCharacterCreationPolicy(normalizeBlank(pointer.characterCreationPolicy()))
+            .setPublicProductionRealm(pointer.publicProductionRealm())
+            .setRealmId(pointer.realmId().toString())
+            .setPlayableStateNamespaceId(pointer.playableStateNamespaceId().toString())
+            .setCatalogRevision(pointer.catalogRevision());
+    return builder.build();
   }
 
   private ScriptPatchPublicationLink scriptPatchPublicationLink(
