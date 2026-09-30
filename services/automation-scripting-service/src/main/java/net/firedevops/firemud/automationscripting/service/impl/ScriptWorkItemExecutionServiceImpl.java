@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.ConnectException;
@@ -80,6 +81,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String PRIORITY_UNKNOWN = "unknown";
   private static final String EVENT_ON_LOAD = "onLoad";
   private static final String SERVICE_NAME = "automation-scripting-service";
+  private static final String PROCESSING_FAILURE_AFTER_CLAIM_METRIC =
+      "script_outbox_processing_failure_after_claim_total";
   private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
   // Only authority-unavailable plugin-fence reads get three durable retries, spaced 15, 30, and
   // 60 seconds apart. This keeps a missing authority from cycling with the five-second poll.
@@ -99,6 +102,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptReadinessCapacityService readinessCapacityService;
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
+  private final Counter processingFailureAfterClaimCounter;
   private final AutomationQueueService automationQueueService;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
@@ -451,6 +455,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.readinessCapacityService = readinessCapacityService;
     this.objectMapper = objectMapper;
     this.meterRegistry = meterRegistry;
+    this.processingFailureAfterClaimCounter =
+        meterRegistry.counter(PROCESSING_FAILURE_AFTER_CLAIM_METRIC);
     this.automationQueueService = automationQueueService;
     this.readinessProjectionService = readinessProjectionService;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
@@ -602,6 +608,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } catch (RuntimeException ex) {
       // Catch outside execute: an inner REQUIRED service may mark the shared transaction
       // rollback-only and throw UnexpectedRollbackException only during execute's commit.
+      processingFailureAfterClaimCounter.increment();
       return WorkItemAttempt.failedAfterClaim(ex);
     }
   }

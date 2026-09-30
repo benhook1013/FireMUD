@@ -1632,6 +1632,7 @@ class ScriptWorkItemExecutionServiceImplTest {
     List<Integer> claimTransactionIds = new ArrayList<>();
     List<Integer> evaluationTransactionIds = new ArrayList<>();
     Map<Long, String> committedStatuses = new HashMap<>();
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     AtomicBoolean remoteEffectAccepted = new AtomicBoolean();
 
     ScriptWorkItem indexed = workItem();
@@ -1739,7 +1740,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             null,
             null,
             new ObjectMapper(),
-            new SimpleMeterRegistry(),
+            meterRegistry,
             gameSessionClient,
             Mockito.mock(PluginRuntimeStateRepository.class),
             transactionManager);
@@ -1757,6 +1758,8 @@ class ScriptWorkItemExecutionServiceImplTest {
         .containsEntry(indexed.getId(), "EVALUATING")
         .containsEntry(fallback.getId(), "HANDED_OFF");
     assertThat(fallback.getStatus()).isEqualTo("HANDED_OFF");
+    assertThat(meterRegistry.counter("script_outbox_processing_failure_after_claim_total").count())
+        .isEqualTo(1.0);
     verify(workItemService, Mockito.times(1)).claimPendingForEvaluation(List.of(99L), 1);
     verify(handoffService, Mockito.times(1)).handoff(Mockito.eq(indexed), Mockito.any());
   }

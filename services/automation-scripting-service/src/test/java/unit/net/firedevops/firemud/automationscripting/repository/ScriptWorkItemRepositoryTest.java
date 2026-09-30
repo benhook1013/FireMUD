@@ -1014,7 +1014,10 @@ class ScriptWorkItemRepositoryTest {
             statement ->
                 assertThat(statement)
                     .contains(
-                        "script_work_items", "status", "updated_at", "script_dead_letter_replay_results")
+                        "script_work_items",
+                        "status",
+                        "updated_at",
+                        "script_dead_letter_replay_results")
                     .contains("work_item_id")
                     .doesNotContain("script_handoff_events"));
   }

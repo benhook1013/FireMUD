@@ -1344,7 +1344,8 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEqualTo(1L);
     assertThat(workItemRepository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.now()))
         .isZero();
-    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId()))).isTrue();
+    assertThat(dsl.fetchExists(SCRIPT_WORK_ITEMS, SCRIPT_WORK_ITEMS.ID.eq(parent.getId())))
+        .isTrue();
     assertThat(
             dsl.fetchCount(
                 SCRIPT_DEAD_LETTER_REPLAY_RESULTS,
