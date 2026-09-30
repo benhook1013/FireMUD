@@ -786,10 +786,6 @@ public class AccountServiceImpl implements AccountService {
 
   private JoinPublicProductionResult replayTerminalJoin(
       JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
-    if (isConnectScopeExpired(scope)) {
-      return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
-    }
-
     JoinEvaluation evaluation;
     try {
       evaluation = evaluateJoin(scope);
