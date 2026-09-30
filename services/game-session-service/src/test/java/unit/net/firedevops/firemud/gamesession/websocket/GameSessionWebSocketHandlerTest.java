@@ -735,6 +735,23 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void missingTransportSessionIdRejectsMalformedCommandBeforeParsing() throws Exception {
+    when(session.getAttributes()).thenReturn(Map.of());
+    when(parser.parse("GET 2147483648 Torch")).thenThrow(new NumberFormatException("overflow"));
+
+    handler.handleMessage(session, new TextMessage("GET 2147483648 Torch"));
+
+    verify(session)
+        .sendMessage(
+            argThat(
+                message ->
+                    "ERROR INVALID_ARGUMENT sessionId header required"
+                        .equals(message.getPayload())));
+    verify(session).close(CloseStatus.BAD_DATA);
+    verify(parser, never()).parse(any());
+  }
+
+  @Test
   void handleMessageDoesNotAppendScreenBufferForNormalizedLoggedInShell() throws Exception {
     TextCommand command = new TextCommand(TextCommandType.LOOK, List.of(), "LOOK");
     PlayerOutput output = PlayerOutput.message("Recent room line");

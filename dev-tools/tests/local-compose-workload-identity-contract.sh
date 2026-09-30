@@ -145,6 +145,56 @@ assert_workload_certificate account-service
   exit 1
 }
 
+# Certificate authority sources and workload outputs must not follow symlinks;
+# verify rejected paths leave their target content untouched.
+symlink_ensure_dir="$CERT_DIR/symlink-ensure"
+mkdir -p "$symlink_ensure_dir/workloads"
+for file in ca.crt ca.key client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem server.crt server.key; do
+  cp "$CERT_DIR/$file" "$symlink_ensure_dir/$file"
+done
+printf 'protected CA source\n' >"$symlink_ensure_dir/ca-key-target"
+rm "$symlink_ensure_dir/ca.key"
+ln -s "$symlink_ensure_dir/ca-key-target" "$symlink_ensure_dir/ca.key"
+if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$symlink_ensure_dir"; then
+  echo "ensure-dev-certs accepted a symlinked CA source" >&2
+  exit 1
+fi
+[[ "$(<"$symlink_ensure_dir/ca-key-target")" == "protected CA source" ]] || {
+  echo "ensure-dev-certs modified a symlinked CA source target" >&2
+  exit 1
+}
+rm "$symlink_ensure_dir/ca.key"
+cp "$CERT_DIR/ca.key" "$symlink_ensure_dir/ca.key"
+
+printf 'protected workload output\n' >"$symlink_ensure_dir/workload-key-target"
+ln -s "$symlink_ensure_dir/workload-key-target" \
+  "$symlink_ensure_dir/workloads/account-service.key"
+if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$symlink_ensure_dir"; then
+  echo "ensure-dev-certs accepted a symlinked workload output" >&2
+  exit 1
+fi
+[[ "$(<"$symlink_ensure_dir/workload-key-target")" == "protected workload output" ]] || {
+  echo "ensure-dev-certs modified a symlinked workload output target" >&2
+  exit 1
+}
+
+symlink_generator_dir="$CERT_DIR/symlink-generator"
+mkdir -p "$symlink_generator_dir"
+printf 'protected generator key\n' >"$symlink_generator_dir/key-target"
+ln -s "$symlink_generator_dir/key-target" "$symlink_generator_dir/output.key"
+if bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$CERT_DIR/ca.crt" "$CERT_DIR/ca.key" \
+  "$symlink_generator_dir/output.crt" "$symlink_generator_dir/output.key" \
+  local account-service; then
+  echo "generate-dev-certs accepted a symlinked workload output" >&2
+  exit 1
+fi
+[[ "$(<"$symlink_generator_dir/key-target")" == "protected generator key" \
+  && ! -e "$symlink_generator_dir/output.crt" ]] || {
+  echo "generate-dev-certs modified a symlinked output target" >&2
+  exit 1
+}
+
 for compose_file in docker-compose.override.yml docker-compose.local-images.override.yml; do
   compose_path="$ROOT_DIR/docker/$compose_file"
   rg -Fq 'FIREMUD_GRPC_PLAINTEXT: "false"' "$compose_path"

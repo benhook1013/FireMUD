@@ -102,6 +102,7 @@ public class ScriptDeadLetterReplayRepository {
   }
 
   public void saveResult(
+      String tenantId,
       long requestId,
       long requestedWorkItemId,
       Long workItemId,
@@ -114,6 +115,7 @@ public class ScriptDeadLetterReplayRepository {
       long failureGeneration,
       Instant now) {
     saveResult(
+        tenantId,
         requestId,
         requestedWorkItemId,
         workItemId,
@@ -130,6 +132,7 @@ public class ScriptDeadLetterReplayRepository {
   }
 
   public void saveResult(
+      String tenantId,
       long requestId,
       long requestedWorkItemId,
       Long workItemId,
@@ -143,13 +146,6 @@ public class ScriptDeadLetterReplayRepository {
       String originalFailureStage,
       String originalFailureReason,
       Instant now) {
-    String tenantId =
-        dsl.select(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID)
-            .from(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS)
-            .where(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.ID.eq(requestId))
-            .fetchOptional(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID)
-            .orElseThrow(
-                () -> new IllegalStateException("Replay result request owner is unavailable"));
     dsl.insertInto(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.TENANT_ID, tenantId)
         .set(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID, requestId)
@@ -179,14 +175,19 @@ public class ScriptDeadLetterReplayRepository {
         .execute();
   }
 
-  public List<ReplayItem> findResults(long requestId) {
+  public List<ReplayItem> findResults(String tenantId, long requestId) {
     return dsl.selectFrom(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
-        .where(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(requestId))
+        .where(
+            SCRIPT_DEAD_LETTER_REPLAY_RESULTS
+                .TENANT_ID
+                .eq(tenantId)
+                .and(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.REPLAY_REQUEST_ID.eq(requestId)))
         .orderBy(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID.asc())
         .fetch(this::toItem);
   }
 
-  public boolean complete(long requestId, long replayedCount, long rejectedCount, Instant now) {
+  public boolean complete(
+      String tenantId, long requestId, long replayedCount, long rejectedCount, Instant now) {
     return dsl.update(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS)
             .set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.STATUS, "COMPLETED")
             .set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.REPLAYED_COUNT, replayedCount)
@@ -200,6 +201,7 @@ public class ScriptDeadLetterReplayRepository {
                 SCRIPT_DEAD_LETTER_REPLAY_REQUESTS
                     .ID
                     .eq(requestId)
+                    .and(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID.eq(tenantId))
                     .and(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.STATUS.eq("RUNNING")))
             .execute()
         == 1;

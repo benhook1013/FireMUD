@@ -520,20 +520,31 @@ public final class GameSessionGrpcService
   public void listGameplayWorlds(
       ListGameplayWorldsRequest request,
       StreamObserver<ListGameplayWorldsResponse> responseObserver) {
-    ListGameplayWorldsResponse response =
-        ListGameplayWorldsResponse.newBuilder()
-            .addAllWorlds(
-                gameplayWorldCatalog.visibleWorlds().stream()
-                    .map(
-                        world ->
-                            net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
-                                .setWorldSlug(world.slug())
-                                .setDisplayName(world.displayName())
-                                .build())
-                    .toList())
-            .build();
-    responseObserver.onNext(response);
-    responseObserver.onCompleted();
+    try {
+      ListGameplayWorldsResponse response =
+          ListGameplayWorldsResponse.newBuilder()
+              .addAllWorlds(
+                  gameplayWorldCatalog.visibleWorldsFromAuthoritySnapshot().stream()
+                      .map(
+                          world ->
+                              net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                                  .setWorldSlug(world.slug())
+                                  .setDisplayName(world.displayName())
+                                  .build())
+                      .toList())
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      ListGameplayWorldsResponse response =
+          ListGameplayWorldsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    }
   }
 
   @Override
@@ -542,9 +553,10 @@ public final class GameSessionGrpcService
       ListGameplayRealmsRequest request,
       StreamObserver<ListGameplayRealmsResponse> responseObserver) {
     try {
+      String worldSelector = requireWorldSelector(request.getWorldSlug());
       WorldView world =
           gameplayWorldCatalog
-              .resolveWorld(request.getWorldSlug())
+              .resolveWorldFromAuthoritySnapshot(worldSelector)
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.visibleRealms(world).stream()
@@ -555,6 +567,15 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (CatalogRevisionUnavailableException ex) {
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(
@@ -635,6 +656,15 @@ public final class GameSessionGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (CatalogRevisionUnavailableException ex) {
+      GetAdmissionPointerResponse response =
+          GetAdmissionPointerResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setError(
@@ -830,6 +860,17 @@ public final class GameSessionGrpcService
         .setPlayableStateNamespaceId(
             requireIdentity(realm.playableStateNamespaceId(), "playableStateNamespaceId"))
         .build();
+  }
+
+  private static String requireWorldSelector(String worldSelector) {
+    if (worldSelector == null || worldSelector.isBlank()) {
+      throw new IllegalArgumentException("worldSlug is required");
+    }
+    String trimmed = worldSelector.trim();
+    if (!trimmed.matches("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")) {
+      throw new IllegalArgumentException("worldSlug must be a valid selector");
+    }
+    return worldSelector;
   }
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {

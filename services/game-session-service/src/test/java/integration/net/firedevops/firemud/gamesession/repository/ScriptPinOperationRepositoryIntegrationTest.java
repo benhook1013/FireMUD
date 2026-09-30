@@ -68,6 +68,8 @@ class ScriptPinOperationRepositoryIntegrationTest {
         .set(GAME_INSTANCES.ID, 7L)
         .set(GAME_INSTANCES.TENANT_ID, 1L)
         .set(GAME_INSTANCES.RUNTIME_VERSION, "runtime-1")
+        // VERSION_ID is the runtime version; SCRIPT_PATCH_BASE_VERSION_ID remains
+        // null in this test.
         .set(GAME_INSTANCES.VERSION_ID, 100L)
         .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, "patch-1")
         .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, 1L)
@@ -576,8 +578,28 @@ class ScriptPinOperationRepositoryIntegrationTest {
             100L);
 
     assertThat(replay).isEqualTo(mismatch);
-    assertThat(changedAdmission.errorCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(changedAdmission).isEqualTo(mismatch);
     assertThat(dsl.fetchCount(SCRIPT_PIN_OPERATION)).isEqualTo(1);
+    assertThat(
+            dsl.select(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID)
+                .from(SCRIPT_PIN_OPERATION)
+                .where(SCRIPT_PIN_OPERATION.CONTROL_PLANE_REQUEST_ID.eq("request-base-mismatch"))
+                .fetchOne(SCRIPT_PIN_OPERATION.VALIDATED_BASE_VERSION_ID))
+        .isEqualTo(101L);
+    assertThat(
+            dsl.select(
+                    GAME_INSTANCES.SCRIPT_PATCH_VERSION,
+                    GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID,
+                    GAME_INSTANCES.SCRIPT_PIN_EPOCH)
+                .from(GAME_INSTANCES)
+                .where(GAME_INSTANCES.ID.eq(7L))
+                .fetchOne())
+        .satisfies(
+            instance -> {
+              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION)).isEqualTo("patch-1");
+              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID)).isNull();
+              assertThat(instance.get(GAME_INSTANCES.SCRIPT_PIN_EPOCH)).isEqualTo(1L);
+            });
   }
 
   @Test
