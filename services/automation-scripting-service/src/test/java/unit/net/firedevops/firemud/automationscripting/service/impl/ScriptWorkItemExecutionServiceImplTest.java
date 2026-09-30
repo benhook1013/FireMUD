@@ -3103,14 +3103,15 @@ class ScriptWorkItemExecutionServiceImplTest {
     service.processPendingWorkItems(1);
 
     assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
-    assertThat(item.getCancelReason()).isNull();
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:handoff_in_flight");
     assertThat(audit.getFinalStage()).isNull();
     assertThat(audit.getFinalOutcome()).isNull();
     assertThat(attemptedOrdinals).containsExactly(0, 1);
     verify(handoffService, Mockito.times(2)).handoff(Mockito.eq(item), Mockito.any());
     verify(handoffService, Mockito.never())
         .recordUnattempted(Mockito.eq(item), Mockito.any(), Mockito.anyString());
-    verify(workItemRepository, Mockito.never()).save(item);
+    verify(workItemRepository).save(item);
   }
 
   @Test
@@ -3478,6 +3479,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         Mockito.mock(GameSessionControlPlaneClient.class);
     AutomationAdmissionStateService admissionStateService =
         Mockito.mock(AutomationAdmissionStateService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     ScriptWorkItem item = workItem();
     item.setFailureGeneration(5L);
     ScriptEventAudit audit = new ScriptEventAudit();
@@ -3542,7 +3544,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             allowingTenantBudgetService(),
             allowingDryRunCapacityService(),
             new ObjectMapper(),
-            new SimpleMeterRegistry(),
+            meterRegistry,
             null,
             null,
             null,
@@ -3557,7 +3559,8 @@ class ScriptWorkItemExecutionServiceImplTest {
     assertThat(result.completedCount()).isZero();
     assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
     assertThat(item.getFailureGeneration()).isEqualTo(5L);
-    assertThat(item.getCancelReason()).isNull();
+    assertThat(item.getCancelReason())
+        .isEqualTo("post_evaluation_reconciliation_required:handoff_in_flight");
     assertThat(audit.getFinalStage()).isNull();
     assertThat(audit.getFinalOutcome()).isNull();
     assertThat(handoffEvents).containsOnlyKeys(0);
@@ -3566,9 +3569,23 @@ class ScriptWorkItemExecutionServiceImplTest {
     verify(definitionRepository).findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1");
     verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
     verify(gameSessionClient, Mockito.never()).scheduleRemoteFollowup(Mockito.any());
+    verify(workItemRepository, Mockito.times(2)).save(item);
+    verify(rolloutProjectionService, Mockito.times(2)).refreshForWorkItem(item);
     verify(auditRepository, Mockito.never()).save(Mockito.any());
     verify(handoffEventRepository, Mockito.never())
         .findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 1);
+    assertThat(
+            meterRegistry
+                .find("automation_script_post_evaluation_reconciliation_required_total")
+                .tag("service", "automation-scripting-service")
+                .tag("stage", "TICK_HANDOFF")
+                .tag("priority", "normal")
+                .tag("source_class", "gameplay")
+                .counter())
+        .isNotNull()
+        .extracting(counter -> counter.count())
+        .isEqualTo(1.0);
+    assertThat(meterRegistry.find("automation_script_work_item_outcomes_total").counter()).isNull();
   }
 
   @Test
@@ -3888,21 +3905,24 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
-  void postEvaluationReconciliationMetricWaitsForCommitAndRefreshesPersistedProjection() {
+  void ambiguousHandoffReconciliationMetricWaitsForCommitAndRefreshesPersistedProjection() {
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     ScriptWorkItem item = workItem();
     item.setRowVersion(7);
+    item.setFailureGeneration(9L);
     ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
 
     TransactionSynchronizationManager.initSynchronization();
     try {
       ScriptWorkItemExecutionService.ExecutionBatchResult result =
-          executeWithRetryableHandoff(item, rolloutProjectionService, meterRegistry);
+          executeWithAmbiguousHandoff(item, rolloutProjectionService, meterRegistry);
 
       assertThat(result.failedCount()).isEqualTo(1);
       assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
-      assertThat(item.getCancelReason()).startsWith("post_evaluation_reconciliation_required:");
+      assertThat(item.getCancelReason())
+          .isEqualTo("post_evaluation_reconciliation_required:handoff_in_flight");
+      assertThat(item.getFailureGeneration()).isEqualTo(9L);
       assertThat(
               meterRegistry
                   .find("automation_script_post_evaluation_reconciliation_required_total")
@@ -3925,11 +3945,13 @@ class ScriptWorkItemExecutionServiceImplTest {
 
     ScriptWorkItem committedItem = workItem();
     committedItem.setRowVersion(21);
+    committedItem.setFailureGeneration(13L);
     ScriptPatchInstanceRolloutProjectionService committedProjection =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
     TransactionSynchronizationManager.initSynchronization();
     try {
-      executeWithRetryableHandoff(committedItem, committedProjection, meterRegistry);
+      executeWithAmbiguousHandoff(committedItem, committedProjection, meterRegistry);
+      assertThat(committedItem.getFailureGeneration()).isEqualTo(13L);
       assertThat(
               meterRegistry
                   .find("automation_script_post_evaluation_reconciliation_required_total")
@@ -5716,7 +5738,7 @@ class ScriptWorkItemExecutionServiceImplTest {
         .counter();
   }
 
-  private static ScriptWorkItemExecutionService.ExecutionBatchResult executeWithRetryableHandoff(
+  private static ScriptWorkItemExecutionService.ExecutionBatchResult executeWithAmbiguousHandoff(
       ScriptWorkItem item,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       SimpleMeterRegistry meterRegistry) {
@@ -5736,7 +5758,7 @@ class ScriptWorkItemExecutionServiceImplTest {
             invocation -> {
               item.setStatus("HANDOFF_IN_FLIGHT");
               return new ScriptGameplayCommandHandoffService.HandoffResult(
-                  false, "REMOTE_REJECTED", "", "", "", "UNAVAILABLE");
+                  false, "HANDOFF_IN_FLIGHT", "", "", "", "HANDOFF_IN_FLIGHT");
             });
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(

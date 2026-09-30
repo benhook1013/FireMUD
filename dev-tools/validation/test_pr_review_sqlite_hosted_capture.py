@@ -571,6 +571,76 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertNotIn("fingerprinting:", first_detail + second_detail)
         self.assertNotIn("cr-indicator-types:", first_detail + second_detail)
 
+    def test_multisegment_rejected_titles_keep_distinct_fingerprint_fallbacks(self) -> None:
+        first_fingerprint = "a1e39b83f15845dc073e0b8b"
+        second_fingerprint = "30d1ed367e7421c8d02b1413"
+        body = (
+            "**Bearer first-unsafe-value**\n\n"
+            "The first section has useful public detail.\n\n"
+            f"<!-- cr-comment:v1:{first_fingerprint} -->\n\n---\n\n"
+            "**Bearer second-unsafe-value**\n\n"
+            "The second section has separate public detail.\n\n"
+            f"<!-- cr-comment:v1:{second_fingerprint} -->"
+        )
+        review = {
+            "databaseId": 201,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-29T01:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        comment = {
+            "databaseId": 202,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+            "url": "https://github.example/owner/repo/pull/42#discussion_r202",
+        }
+        thread = {
+            "id": "PRRT_thread_1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "src/example.py",
+            "comments": {"nodes": [comment]},
+        }
+
+        captured = sqlite_hosted_capture.record_hosted_terminal_result(
+            self.records,
+            attempt_id=self.attempt_id,
+            repo=REPO,
+            source_pr=PR,
+            trigger_record=self.trigger_record(),
+            payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
+        )
+
+        findings = {item["source_finding_key"]: item for item in self.records.history(PR)["findings"]}
+        self.assertEqual(captured["counts"]["found"], 2)
+        self.assertEqual(
+            set(findings),
+            {
+                f"hosted-comment:202:fingerprint:{first_fingerprint}",
+                f"hosted-comment:202:fingerprint:{second_fingerprint}",
+            },
+        )
+        self.assertEqual(
+            findings[f"hosted-comment:202:fingerprint:{first_fingerprint}"]["title"],
+            f"CodeRabbit review comment 202 finding {first_fingerprint}",
+        )
+        self.assertEqual(
+            findings[f"hosted-comment:202:fingerprint:{second_fingerprint}"]["title"],
+            f"CodeRabbit review comment 202 finding {second_fingerprint}",
+        )
+        self.assertIn(
+            "first section has useful public detail",
+            findings[f"hosted-comment:202:fingerprint:{first_fingerprint}"]["detail"],
+        )
+        self.assertIn(
+            "second section has separate public detail",
+            findings[f"hosted-comment:202:fingerprint:{second_fingerprint}"]["detail"],
+        )
+
     def test_final_fingerprint_accepts_only_empty_or_known_auxiliary_tail(self) -> None:
         fingerprint = "a1e39b83f15845dc073e0b8b"
         prefix = f"**One finding.**\nDetails.\n<!-- cr-comment:v1:{fingerprint} -->"
@@ -677,6 +747,54 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertNotIn("unsafe-value", finding["detail"])
         self.assertNotIn("ghp_", finding["detail"])
         self.assertIn("[redacted credential]", finding["detail"])
+
+    def test_rejected_fallback_detail_is_omitted_without_losing_scrubbed_archive(self) -> None:
+        raw_secret = "ghp_" + "A" * 30
+        body = f"**Bearer unsafe-value**\nDetails include token={raw_secret}"
+        review = {
+            "databaseId": 201,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-29T01:03:00Z",
+            "commit": {"oid": HEAD},
+        }
+        comment = {
+            "databaseId": 202,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": body,
+            "createdAt": "2026-09-29T01:02:00Z",
+            "updatedAt": "2026-09-29T01:02:00Z",
+            "url": "https://github.example/owner/repo/pull/42#discussion_r202",
+        }
+        thread = {
+            "id": "PRRT_thread_1",
+            "isResolved": False,
+            "isOutdated": False,
+            "path": "src/example.py",
+            "comments": {"nodes": [comment]},
+        }
+
+        with patch.object(sqlite_hosted_capture, "_safe_finding_detail", return_value="secret=unsafe-fallback"):
+            captured = sqlite_hosted_capture.record_hosted_terminal_result(
+                self.records,
+                attempt_id=self.attempt_id,
+                repo=REPO,
+                source_pr=PR,
+                trigger_record=self.trigger_record(),
+                payload=self.payload(comments=[self.trigger_comment()], reviews=[review], review_threads=[thread]),
+            )
+
+        self.assertEqual(captured["state"], "completed")
+        self.assertEqual(captured["counts"]["found"], 1)
+        finding = self.records.history(PR)["findings"][0]
+        self.assertEqual(finding["source_finding_key"], "hosted-comment:202")
+        self.assertEqual(finding["title"], "CodeRabbit review comment 202")
+        self.assertEqual(finding["detail"], "")
+        archived = json.loads(self.records.attempt_artifacts(self.attempt_id)["hosted_comments"])
+        archived_body = archived["review_threads"][0]["comments"]["nodes"][0]["body"]
+        self.assertNotIn(raw_secret, archived_body)
+        self.assertIn("[redacted credential]", archived_body)
 
     def test_nonterminal_observation_keeps_the_attempt_open(self) -> None:
         active = {
