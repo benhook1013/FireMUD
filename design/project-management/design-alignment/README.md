@@ -110,7 +110,7 @@ This table describes the repository target state, not merely completed human rev
 
 ## Contract Authority Consolidation Scope
 
-Contract-authority consolidation applies to repeated normative product and architecture contracts whether or not an ADR records their rationale. ADRs organize the selective application process, but they are not the boundary of the deduplication work. PRs #2593 and #2594 complete the baseline pass for ADRs 0001-0050 and the major adjacent non-ADR contract families encountered across those design areas. Packets 3-7 (ADRs 0051-0178 plus TICK-05) and the direct decisions in ADRs 0179-0182 are now integrated with family-local consolidation without redefining that baseline.
+Contract-authority consolidation applies to repeated normative product and architecture contracts whether or not an ADR records their rationale. ADRs organize the selective application process, but they are not the boundary of the deduplication work. PRs #2593 and #2594 complete the baseline pass for ADRs 0001-0050 and the major adjacent non-ADR contract families encountered across those design areas. Packets 3-7 (ADRs 0051-0178 plus TICK-05) and the direct decisions in ADRs 0179-0182 and 0184 are now integrated with family-local consolidation without redefining that baseline.
 
 Consolidation names one canonical owner for a target contract and reduces competing secondary definitions to owner links plus local API, persistence, transport, operational, user-visible, implementation-drift, or proof consequences. It is not editorial deduplication: useful examples, runbooks, evidence schemas, local constraints, and explanatory context remain where they serve their owning document.
 
