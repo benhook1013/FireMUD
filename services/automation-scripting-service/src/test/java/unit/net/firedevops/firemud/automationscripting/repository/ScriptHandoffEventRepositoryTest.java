@@ -1,15 +1,19 @@
 package net.firedevops.firemud.automationscripting.repository;
 
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.entity.ScriptHandoffEvent;
 import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptHandoffEventsRecord;
+import net.firedevops.firemud.automationscripting.jooq.tables.records.ScriptWorkItemsRecord;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.Result;
@@ -547,6 +551,253 @@ class ScriptHandoffEventRepositoryTest {
               assertThat(sql.substring(0, whereStart)).doesNotContain("event_id =");
               assertThat(sql.substring(whereStart)).contains("event_id", "row_version");
             });
+  }
+
+  @Test
+  void retentionCleanupBindsUtcOffsetDateTimeForNullableHoldComparison() {
+    Instant safeWatermark = Instant.parse("2026-08-01T00:00:00Z");
+    Instant now = Instant.parse("2026-08-02T00:00:00Z");
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields()))
+          };
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.deleteExpiredRetentionEvidence(safeWatermark, now)).isZero();
+
+    assertThat(bindingsRef.get()[0]).isInstanceOf(java.sql.Timestamp.class);
+    assertThat(bindingsRef.get()).contains("2026-08-02 00:00:00+00:00");
+    assertThat(bindingsRef.get()).contains("DEAD_LETTERED");
+    assertThat(bindingsRef.get())
+        .anySatisfy(
+            binding -> {
+              assertThat(binding).isInstanceOf(Number.class);
+              assertThat(((Number) binding).longValue()).isEqualTo(500L);
+            });
+    String renderedSql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    assertThat(renderedSql).contains("select \"retention_candidates\".\"id\"");
+    assertThat(renderedSql)
+        .contains(
+            "\"retention_candidates\".\"observed_at\" <",
+            "\"retention_candidates\".\"retention_hold_until\"",
+            "\"retention_candidates\".\"handoff_outcome\"",
+            "regexp_replace");
+    assertThat(renderedSql)
+        .contains(
+            "select \"retention_candidates\".\"id\", \"retention_candidates\".\"tenant_id\", \"retention_candidates\".\"work_item_id\"",
+            "tenant_id",
+            "observed_at",
+            " < ",
+            "\"retention_candidates\".\"retention_hold_until\"",
+            "handoff_outcome",
+            "regexp_replace",
+            "retention_siblings",
+            "\"retention_siblings\".\"tenant_id\" = \"retention_candidates\".\"tenant_id\"",
+            "\"retention_siblings\".\"work_item_id\" = \"retention_candidates\".\"work_item_id\"",
+            "is null",
+            "\"retention_siblings\".\"observed_at\"",
+            " >= ",
+            "\"retention_siblings\".\"retention_hold_until\"",
+            " > ",
+            " <= ",
+            "status",
+            "not in",
+            "script_dead_letter_replay_results",
+            "\"script_dead_letter_replay_results\".\"tenant_id\" = \"retention_candidates\".\"tenant_id\"",
+            "\"script_dead_letter_replay_results\".\"work_item_id\" = \"retention_candidates\".\"work_item_id\"",
+            "order by \"retention_candidates\".\"event_id\" asc",
+            "fetch next ? rows only");
+    assertThat(renderedSql).doesNotContain("for update");
+  }
+
+  @Test
+  void retentionCleanupLocksBundlesAndParentsBeforeBoundedRecheckDelete() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    ArrayList<String> statements = new ArrayList<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+          statements.add(sql);
+          if (sql.contains("retention_recheck_candidates")) {
+            return new MockResult[] {new MockResult(1, handoffResult(resultDsl))};
+          }
+          if (sql.contains("retention_candidates")) {
+            return new MockResult[] {new MockResult(1, handoffResult(resultDsl))};
+          }
+          if (sql.startsWith("select") && sql.contains("script_work_items")) {
+            return new MockResult[] {new MockResult(1, parentResult(resultDsl))};
+          }
+          if (sql.startsWith("delete")) {
+            return new MockResult[] {new MockResult(1)};
+          }
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields()))
+          };
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository.deleteExpiredRetentionEvidence(
+                Instant.parse("2026-08-01T00:00:00Z"), Instant.parse("2026-08-02T00:00:00Z")))
+        .isEqualTo(1L);
+    assertThat(statements).hasSize(5);
+    assertThat(statements.get(0))
+        .contains("retention_candidates", "order by", "event_id", "fetch next ? rows only")
+        .doesNotContain("for update");
+    assertThat(statements.get(1))
+        .contains("script_work_items", "tenant_id", "id", "for update")
+        .doesNotContain("retention_candidates");
+    assertThat(statements.get(2))
+        .contains("script_handoff_events", "tenant_id", "work_item_id", "for update")
+        .doesNotContain("retention_candidates");
+    assertThat(statements.get(3))
+        .contains(
+            "retention_recheck_candidates",
+            "retention_recheck_siblings",
+            "script_dead_letter_replay_results");
+    assertThat(statements.get(4))
+        .startsWith("delete")
+        .contains("script_handoff_events", "tenant_id", "id");
+  }
+
+  @Test
+  void retentionHoldWriteUsesUtcOffsetDateTimeAndAllowsClearingHold() {
+    Instant holdUntil = Instant.parse("2026-08-03T00:00:00Z");
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          bindingsRef.set(context.bindings());
+          sqlRef.set(context.sql());
+          return new MockResult[] {new MockResult(1)};
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.setRetentionHold("tenant-1", 41L, holdUntil)).isTrue();
+    assertThat(bindingsRef.get()).contains("2026-08-03 00:00:00+00:00");
+
+    assertThat(repository.setRetentionHold("tenant-1", 41L, null)).isTrue();
+    assertThat(retentionHoldSetClause(sqlRef.get())).contains("retention_hold_until");
+    assertThat(bindingsRef.get()).contains((Object) null);
+  }
+
+  @Test
+  void newLogicalChildUsesAtomicCurrentEventIdConflictUpsert() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql());
+          ScriptHandoffEventsRecord row = handoffRecord();
+          var result = resultDsl.newResult(SCRIPT_HANDOFF_EVENTS);
+          result.add(row);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    ScriptHandoffEvent saved = repository.save(handoffEvent());
+
+    assertThat(saved.getId()).isEqualTo(41L);
+    String renderedSql = sql.get().toLowerCase(Locale.ROOT);
+    int conflictIndex = renderedSql.indexOf("on conflict");
+    int updateIndex = renderedSql.indexOf("do update", conflictIndex);
+    assertThat(conflictIndex).as(renderedSql).isGreaterThanOrEqualTo(0);
+    assertThat(updateIndex).as(renderedSql).isGreaterThan(conflictIndex);
+    assertThat(renderedSql.substring(conflictIndex, updateIndex)).contains("event_id");
+    assertThat(renderedSql).contains("where");
+    assertThat(renderedSql).contains("returning", "do update");
+  }
+
+  @Test
+  void newLogicalChildFailsWhenConflictResolutionReturnsNoDurableRow() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS))};
+    ScriptHandoffEventRepository repository =
+        new ScriptHandoffEventRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThatThrownBy(() -> repository.save(handoffEvent()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("did not yield a persisted row");
+  }
+
+  private static ScriptHandoffEventsRecord handoffRecord() {
+    ScriptHandoffEventsRecord record = new ScriptHandoffEventsRecord();
+    record.setId(41L);
+    record.setEventId("event-1");
+    record.setTenantId("tenant-1");
+    record.setGameInstanceId("game-1");
+    record.setScriptPatchVersion("patch-1");
+    record.setScriptId("script-1");
+    record.setWorkItemId(99L);
+    record.setCommandOrdinal(0);
+    record.setAutomationDispatchId("dispatch-1");
+    record.setTargetEntityId("entity-1");
+    record.setEmittedCommandText("look");
+    record.setHandoffOutcome("enqueued");
+    record.setHandoffReason("game_session_accepted");
+    record.setObservedAt(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
+    record.setRowVersion(0);
+    return record;
+  }
+
+  private static Result<Record> handoffResult(DSLContext resultDsl) {
+    var result = resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.fields());
+    result.add(handoffRecord());
+    return result;
+  }
+
+  private static Result<Record> parentResult(DSLContext resultDsl) {
+    ScriptWorkItemsRecord record = new ScriptWorkItemsRecord();
+    record.setId(99L);
+    record.setTenantId("tenant-1");
+    record.setStatus("HANDED_OFF");
+    var result = resultDsl.newResult(SCRIPT_WORK_ITEMS.fields());
+    result.add(record);
+    return result;
+  }
+
+  private static ScriptHandoffEvent handoffEvent() {
+    ScriptHandoffEvent event = new ScriptHandoffEvent();
+    event.setEventId("event-1");
+    event.setTenantId("tenant-1");
+    event.setGameInstanceId("game-1");
+    event.setScriptPatchVersion("patch-1");
+    event.setScriptId("script-1");
+    event.setWorkItemId(99L);
+    event.setCommandOrdinal(0);
+    event.setAutomationDispatchId("dispatch-1");
+    event.setTargetEntityId("entity-1");
+    event.setEmittedCommandText("look");
+    event.setHandoffOutcome("enqueued");
+    event.setHandoffReason("game_session_accepted");
+    event.setObservedAt(Instant.parse("2026-01-01T00:00:00Z"));
+    return event;
+  }
+
+  private static String retentionHoldSetClause(String sql) {
+    String normalized = sql.toLowerCase(Locale.ROOT);
+    int setStart = normalized.indexOf(" set ");
+    int whereStart = normalized.indexOf(" where ", setStart);
+    assertThat(setStart).as(sql).isGreaterThanOrEqualTo(0);
+    assertThat(whereStart).as(sql).isGreaterThan(setStart);
+    return normalized.substring(setStart, whereStart);
   }
 
   private static String conflictTarget(String sql) {

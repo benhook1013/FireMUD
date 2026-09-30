@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.repository;
 
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptHandoffEvents.SCRIPT_HANDOFF_EVENTS;
 import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptWorkItems.SCRIPT_WORK_ITEMS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
@@ -28,6 +29,90 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.PageRequest;
 
 class ScriptWorkItemRepositoryTest {
+  @Test
+  void replayCandidateLookupLocksTheParentBeforeReceiptInsertion() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findByIdForUpdate(17L)).isEmpty();
+    assertThat(sql.get()).contains("script_work_items", "for update");
+  }
+
+  @Test
+  void replayCandidateLookupScopesTenantBeforeLockingRows() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findByTenantIdAndIdInForUpdateOrderByIdAsc("tenant-1", List.of(17L, 18L)))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement).contains("tenant_id", "id", "order by", "for update"));
+  }
+
+  @Test
+  void replayCandidateSnapshotScopesTenantWithoutLockingRows() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findByTenantIdAndIdInOrderByIdAsc("tenant-1", List.of(17L, 18L)))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement -> {
+              assertThat(statement).contains("tenant_id", "id", "order by");
+              assertThat(statement).doesNotContain("for update");
+            });
+  }
+
+  @Test
+  void replayCandidateLockScopesTenantAndIdBeforeClaimCas() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findByTenantIdAndIdForUpdate("tenant-1", 17L)).isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement -> assertThat(statement).contains("tenant_id", "id", "for update"));
+  }
+
   @Test
   void exactOwnerEvidenceLookupIncludesControlPlaneRequestId() {
     AtomicReference<String> sql = new AtomicReference<>();
@@ -105,8 +190,11 @@ class ScriptWorkItemRepositoryTest {
     ScriptWorkItemsRecord row = workItemRecord(13L, 0, 0L);
     row.setPluginActivationEpoch(4L);
     row.setLifecycleRevision(8L);
+    row.setFailureGeneration(3L);
+    row.setAuthorityUnavailableSince(LocalDateTime.parse("2026-08-01T00:00:02"));
+    row.setAuthorityUnavailableCount(2);
     row.setAuthorityUnavailableRetryCount(2);
-    row.setNextEligibleAt(LocalDateTime.parse("2026-08-01T00:00:02"));
+    row.setNextEligibleAt(LocalDateTime.parse("2026-08-01T00:00:03"));
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     AtomicReference<String> insertSql = new AtomicReference<>();
     MockDataProvider provider =
@@ -137,15 +225,22 @@ class ScriptWorkItemRepositoryTest {
     item.setPluginVersionId("plugin-v1");
     item.setPluginActivationEpoch(4L);
     item.setLifecycleRevision(8L);
+    item.setFailureGeneration(3L);
+    item.setAuthorityUnavailableSince(Instant.parse("2026-08-01T00:00:02Z"));
+    item.setAuthorityUnavailableCount(2);
     item.setAuthorityUnavailableRetryCount(2);
-    item.setNextEligibleAt(Instant.parse("2026-08-01T00:00:02Z"));
+    item.setNextEligibleAt(Instant.parse("2026-08-01T00:00:03Z"));
 
     ScriptWorkItem saved = repository.insertIfAbsentByTriggerIdentity(item).workItem();
 
     assertThat(saved.getPluginActivationEpoch()).isEqualTo(4L);
     assertThat(saved.getLifecycleRevision()).isEqualTo(8L);
+    assertThat(saved.getFailureGeneration()).isEqualTo(3L);
+    assertThat(saved.getAuthorityUnavailableSince())
+        .isEqualTo(Instant.parse("2026-08-01T00:00:02Z"));
+    assertThat(saved.getAuthorityUnavailableCount()).isEqualTo(2);
     assertThat(saved.getAuthorityUnavailableRetryCount()).isEqualTo(2);
-    assertThat(saved.getNextEligibleAt()).isEqualTo(Instant.parse("2026-08-01T00:00:02Z"));
+    assertThat(saved.getNextEligibleAt()).isEqualTo(Instant.parse("2026-08-01T00:00:03Z"));
     assertThat(insertSql)
         .hasValueSatisfying(
             sql ->
@@ -153,6 +248,9 @@ class ScriptWorkItemRepositoryTest {
                     .contains(
                         "plugin_activation_epoch",
                         "lifecycle_revision",
+                        "failure_generation",
+                        "authority_unavailable_since",
+                        "authority_unavailable_count",
                         "authority_unavailable_retry_count",
                         "next_eligible_at"));
   }
@@ -178,7 +276,8 @@ class ScriptWorkItemRepositoryTest {
         .hasValueSatisfying(
             statement ->
                 assertThat(statement)
-                    .contains("status", "next_eligible_at", "<=", "order by", "created_at"));
+                    .contains(
+                        "status", "next_eligible_at", "is null", "<=", "order by", "created_at"));
   }
 
   @Test
@@ -205,7 +304,66 @@ class ScriptWorkItemRepositoryTest {
         .hasValueSatisfying(
             statement ->
                 assertThat(statement)
-                    .contains("\"id\" in", "status", "next_eligible_at", "<=", "order by"));
+                    .contains(
+                        "\"id\" in", "status", "next_eligible_at", "is null", "<=", "order by"));
+  }
+
+  @Test
+  void broadNonPendingQueryTreatsNullNextEligibilityAsImmediatelyEligible() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository.findByStatusOrderByCreatedAtAscIdAsc(
+        "EVALUATING", Instant.parse("2026-08-01T00:00:00Z"), PageRequest.of(0, 10));
+
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains("status", "next_eligible_at", "is null", " or ", "<=", "order by"));
+  }
+
+  @Test
+  void pointerNonPendingQueryTreatsNullNextEligibilityAsImmediatelyEligible() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    repository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+        List.of(99L, 100L),
+        "EVALUATING",
+        Instant.parse("2026-08-01T00:00:00Z"),
+        PageRequest.of(0, 10));
+
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "\"id\" in",
+                        "status",
+                        "next_eligible_at",
+                        "is null",
+                        " or ",
+                        "<=",
+                        "order by"));
   }
 
   @Test
@@ -219,6 +377,168 @@ class ScriptWorkItemRepositoryTest {
         .isThrownBy(() -> repository.insertIfAbsentByTriggerIdentity(item))
         .withMessage(
             "plugin_activation_epoch and lifecycle_revision must both be zero or both be positive");
+  }
+
+  @Test
+  void pendingClaimUsesRetryEligibilityAndSkipLocked() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository.findByStatusForUpdateOrderByCreatedAtAscIdAsc(
+                "PENDING_EVALUATION", PageRequest.of(0, 10)))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "next_eligible_at", "current_timestamp", "for update", "skip locked"));
+  }
+
+  @Test
+  void cancellationClaimUsesBoundedScopeAndRowLock() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .findByTenantIdAndScriptPatchVersionAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+                    "tenant-1",
+                    "patch-1",
+                    "game-1",
+                    "region-1",
+                    List.of("PENDING_EVALUATION", "EVALUATING")))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "tenant_id",
+                        "script_patch_version",
+                        "game_instance_id",
+                        "region_id",
+                        "for update",
+                        "fetch next"));
+  }
+
+  @Test
+  void pluginCancellationClaimUsesBoundedScopeAndRowLock() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    AtomicReference<Object[]> bindings = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          bindings.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository
+                .findByTenantIdAndPluginIdAndPluginVersionIdAndStatusInForUpdateOrderByCreatedAtAscIdAsc(
+                    "tenant-1",
+                    "plugin-1",
+                    "plugin-v1",
+                    "game-1",
+                    "region-1",
+                    List.of("PENDING_EVALUATION", "EVALUATING")))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains("id", "for update", "fetch next")
+                    .satisfies(
+                        scopedSql -> {
+                          int whereIndex = scopedSql.indexOf(" where ");
+                          int fetchIndex = scopedSql.indexOf("fetch next");
+                          assertThat(scopedSql.substring(whereIndex, fetchIndex))
+                              .contains(
+                                  "tenant_id",
+                                  "plugin_id",
+                                  "plugin_version_id",
+                                  "game_instance_id",
+                                  "region_id",
+                                  "status");
+                        }));
+    assertThat(bindings)
+        .hasValueSatisfying(
+            values ->
+                assertThat(values)
+                    .contains(
+                        "tenant-1",
+                        "plugin-1",
+                        "plugin-v1",
+                        "game-1",
+                        "region-1",
+                        "PENDING_EVALUATION",
+                        "EVALUATING"));
+  }
+
+  @Test
+  void replayClaimFencesStatusRowVersionAndFailureGeneration() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    AtomicReference<Object[]> bindings = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          bindings.set(context.bindings());
+          return new MockResult[] {
+            new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.fields()))
+          };
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(
+            repository.claimDeadLetterForReplay(
+                11L, "tenant-1", 4, 3L, Instant.parse("2026-08-01T00:00:04Z")))
+        .isEmpty();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "update",
+                        "status",
+                        "cancel_reason",
+                        "authority_unavailable_since",
+                        "authority_unavailable_count",
+                        "next_eligible_at",
+                        "row_version",
+                        "failure_generation")
+                    .satisfies(
+                        sqlText ->
+                            assertThat(sqlText.substring(0, sqlText.indexOf(" returning ")))
+                                .contains("cancel_reason")));
+    assertThat(bindings.get())
+        .containsSubsequence("PENDING_EVALUATION", null, null, 0, 0, null)
+        .containsSubsequence(11L, "tenant-1", "DEAD_LETTERED", 4, 3L);
   }
 
   @Test
@@ -353,6 +673,7 @@ class ScriptWorkItemRepositoryTest {
     ScriptWorkItem saved = repository.insertIfAbsentByTriggerIdentity(item).workItem();
 
     assertThat(saved.getScriptPinEpoch()).isZero();
+    assertThat(saved.getFailureGeneration()).isZero();
     assertThat(conflictClause(insertSql.get()))
         .contains("where", "script_pin_epoch", "= 0")
         .doesNotContain("script_pin_control_plane_request_id");
@@ -445,30 +766,6 @@ class ScriptWorkItemRepositoryTest {
   }
 
   @Test
-  void deletingWorkItemsDisposesChildEvidenceBeforeParentRows() {
-    List<String> sqlStatements = new ArrayList<>();
-    MockDataProvider provider =
-        context -> {
-          sqlStatements.add(context.sql().toLowerCase(Locale.ROOT));
-          return new MockResult[] {new MockResult(1, null)};
-        };
-    ScriptWorkItemRepository repository =
-        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
-    ScriptWorkItem item = new ScriptWorkItem();
-    item.setId(99L);
-
-    repository.deleteAll(List.of(item));
-
-    assertThat(sqlStatements).hasSize(3);
-    assertThat(sqlStatements.get(0))
-        .startsWith("update")
-        .contains("script_event_audit")
-        .contains("work_item_id");
-    assertThat(sqlStatements.get(1)).contains("script_handoff_events");
-    assertThat(sqlStatements.get(2)).contains("script_work_items");
-  }
-
-  @Test
   void statusRetentionDeletesChildrenBeforeMatchingParents() {
     DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     List<String> sqlStatements = new ArrayList<>();
@@ -477,6 +774,11 @@ class ScriptWorkItemRepositoryTest {
           String sql = context.sql().toLowerCase(Locale.ROOT);
           sqlStatements.add(sql);
           if (sql.startsWith("select")) {
+            if (sql.contains("script_handoff_events") && !sql.contains("script_work_items")) {
+              return new MockResult[] {
+                new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.ID))
+              };
+            }
             Record1<Long> returned = resultDsl.newRecord(SCRIPT_WORK_ITEMS.ID);
             returned.set(SCRIPT_WORK_ITEMS.ID, 99L);
             Result<Record1<Long>> result = resultDsl.newResult(SCRIPT_WORK_ITEMS.ID);
@@ -491,17 +793,41 @@ class ScriptWorkItemRepositoryTest {
     assertThat(repository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.EPOCH))
         .isEqualTo(1);
 
-    assertThat(sqlStatements).hasSize(4);
-    assertThat(sqlStatements.get(0)).startsWith("select").contains("for update");
+    assertThat(sqlStatements).hasSize(6);
+    assertThat(sqlStatements.get(0))
+        .startsWith("select")
+        .contains(
+            "for update",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at");
+    assertThat(sqlStatements.get(0))
+        .contains("\"observed_at\" is null", "\"observed_at\" >= cast(? as timestamp");
     assertThat(sqlStatements.get(1))
+        .startsWith("select")
+        .contains("script_handoff_events", "for update");
+    assertThat(sqlStatements.get(2))
+        .startsWith("select")
+        .contains(
+            "script_work_items",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at")
+        .contains("for update");
+    assertThat(sqlStatements.get(3))
         .startsWith("update")
         .contains("script_event_audit")
         .contains("work_item_id");
-    assertThat(sqlStatements.get(2)).contains("script_handoff_events");
-    assertThat(sqlStatements.get(3))
+    assertThat(sqlStatements.get(4))
+        .contains("script_handoff_events", "retention_hold_until", "current_timestamp");
+    assertThat(sqlStatements.get(5))
         .contains("script_work_items")
         .contains("status")
-        .contains("updated_at");
+        .contains(
+            "updated_at",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at");
   }
 
   @Test
@@ -513,6 +839,11 @@ class ScriptWorkItemRepositoryTest {
           String sql = context.sql().toLowerCase(Locale.ROOT);
           sqlStatements.add(sql);
           if (sql.startsWith("select")) {
+            if (sql.contains("script_handoff_events") && !sql.contains("script_work_items")) {
+              return new MockResult[] {
+                new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.ID))
+              };
+            }
             Record1<Long> returned = resultDsl.newRecord(SCRIPT_WORK_ITEMS.ID);
             returned.set(SCRIPT_WORK_ITEMS.ID, 99L);
             Result<Record1<Long>> result = resultDsl.newResult(SCRIPT_WORK_ITEMS.ID);
@@ -526,19 +857,30 @@ class ScriptWorkItemRepositoryTest {
 
     assertThat(repository.deleteOldestByStatus("HANDED_OFF", 1)).isEqualTo(1);
 
-    assertThat(sqlStatements).hasSize(4);
+    assertThat(sqlStatements).hasSize(6);
     assertThat(sqlStatements.get(0))
         .startsWith("select")
         .contains("status")
         .contains("order by")
         .contains("fetch next")
-        .contains("for update");
+        .contains("for update")
+        .doesNotContain("observed_at");
     assertThat(sqlStatements.get(1))
+        .startsWith("select")
+        .contains("script_handoff_events", "for update");
+    assertThat(sqlStatements.get(2))
+        .startsWith("select")
+        .contains("script_work_items", "script_dead_letter_replay_results", "retention_hold_until")
+        .contains("for update");
+    assertThat(sqlStatements.get(3))
         .startsWith("update")
         .contains("script_event_audit")
         .contains("work_item_id");
-    assertThat(sqlStatements.get(2)).contains("script_handoff_events");
-    assertThat(sqlStatements.get(3)).contains("script_work_items").contains("status");
+    assertThat(sqlStatements.get(4))
+        .contains("script_handoff_events", "retention_hold_until", "current_timestamp");
+    assertThat(sqlStatements.get(5))
+        .contains("script_work_items", "status", "script_dead_letter_replay_results")
+        .doesNotContain("observed_at");
   }
 
   @Test
@@ -549,6 +891,135 @@ class ScriptWorkItemRepositoryTest {
     assertThat(repository.deleteByStatusAndUpdatedAtBefore("DEAD_LETTERED", Instant.EPOCH))
         .isZero();
     assertThat(repository.deleteOldestByStatus("DEAD_LETTERED", 1)).isZero();
+  }
+
+  @Test
+  void statusRetentionSkipsChildDeletionWhenEligibilityChangesAfterChildLock() {
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    List<String> sqlStatements = new ArrayList<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          sqlStatements.add(sql);
+          if (sql.startsWith("select")
+              && sql.contains("script_handoff_events")
+              && !sql.contains("script_work_items")) {
+            return new MockResult[] {
+              new MockResult(0, resultDsl.newResult(SCRIPT_HANDOFF_EVENTS.ID))
+            };
+          }
+          if (sqlStatements.size() == 1) {
+            Record1<Long> returned = resultDsl.newRecord(SCRIPT_WORK_ITEMS.ID);
+            returned.set(SCRIPT_WORK_ITEMS.ID, 99L);
+            Result<Record1<Long>> result = resultDsl.newResult(SCRIPT_WORK_ITEMS.ID);
+            result.add(returned);
+            return new MockResult[] {new MockResult(1, result)};
+          }
+          return new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.ID))};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.EPOCH)).isZero();
+    assertThat(sqlStatements).hasSize(3);
+    assertThat(sqlStatements.get(1)).contains("script_handoff_events", "for update");
+    assertThat(sqlStatements.get(2))
+        .contains(
+            "script_work_items",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at")
+        .contains("for update");
+  }
+
+  @Test
+  void terminalCleanupRequiresReceiptAndActiveHandoffHoldProof() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          return new MockResult[] {new MockResult(0, resultDsl.newResult(SCRIPT_WORK_ITEMS.ID))};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.deleteByStatusAndUpdatedAtBefore("HANDED_OFF", Instant.EPOCH)).isZero();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "script_work_items",
+                        "script_dead_letter_replay_results",
+                        "script_handoff_events",
+                        "retention_hold_until",
+                        "handoff_outcome",
+                        "regexp_replace",
+                        "observed_at",
+                        "current_timestamp"));
+    assertThat(sql.get())
+        .contains("script_handoff_events\".\"tenant_id\" = \"script_work_items\".\"tenant_id\"")
+        .contains("script_handoff_events\".\"work_item_id\" = \"script_work_items\".\"id\"");
+  }
+
+  @Test
+  void deadLetterBlockedMetricDoesNotUseChildAbsenceAsDeletionProof() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          Field<Integer> countField = DSL.field("count", Integer.class);
+          Result<Record1<Integer>> result = resultDsl.newResult(countField);
+          Record1<Integer> countRow = resultDsl.newRecord(countField);
+          countRow.set(countField, 0);
+          result.add(countRow);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.countTerminalRowsBlockedByEvidence("DEAD_LETTERED", Instant.EPOCH))
+        .isZero();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains("script_work_items", "status", "updated_at")
+                    .doesNotContain("script_event_audit", "script_handoff_events"));
+  }
+
+  @Test
+  void replayReceiptBlockedMetricCountsOnlyAgedRowsWithRetainedReplayResults() {
+    AtomicReference<String> sql = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+    MockDataProvider provider =
+        context -> {
+          sql.set(context.sql().toLowerCase(Locale.ROOT));
+          Field<Integer> countField = DSL.field("count", Integer.class);
+          Result<Record1<Integer>> result = resultDsl.newResult(countField);
+          Record1<Integer> countRow = resultDsl.newRecord(countField);
+          countRow.set(countField, 0);
+          result.add(countRow);
+          return new MockResult[] {new MockResult(1, result)};
+        };
+    ScriptWorkItemRepository repository =
+        new ScriptWorkItemRepository(DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.countTerminalRowsBlockedByReplayReceipts("HANDED_OFF", Instant.EPOCH))
+        .isZero();
+    assertThat(sql)
+        .hasValueSatisfying(
+            statement ->
+                assertThat(statement)
+                    .contains(
+                        "script_work_items",
+                        "status",
+                        "updated_at",
+                        "script_dead_letter_replay_results")
+                    .contains("work_item_id")
+                    .doesNotContain("script_handoff_events"));
   }
 
   @Test

@@ -1,11 +1,94 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import java.util.Objects;
 import net.firedevops.firemud.automationscripting.entity.ScriptWorkItem;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 
 /** Shared ordering and vocabulary for the two work-item fence evaluation paths. */
 final class ScriptWorkItemFenceEvaluationSupport {
   private ScriptWorkItemFenceEvaluationSupport() {}
+
+  static String validateRuntimeIdentity(ScriptWorkItem workItem) {
+    if (workItem.getTenantId() == null
+        || workItem.getTenantId().isBlank()
+        || workItem.getGameInstanceId() == null
+        || workItem.getGameInstanceId().isBlank()
+        || workItem.getRegionId() == null
+        || workItem.getRegionId().isBlank()
+        || workItem.getRegionEpoch() == null
+        || workItem.getRegionEpoch() <= 0) {
+      return "runtime_scope_missing";
+    }
+    if (workItem.getScriptPinEpoch() <= 0) {
+      return "script_pin_epoch_unavailable";
+    }
+    return null;
+  }
+
+  static String validateRuntimeState(
+      ScriptWorkItem workItem, GetGameInstanceRuntimeStateResponse runtime) {
+    if (runtime == null || runtime.hasError() || !runtime.hasRuntimeState()) {
+      return "script_pin_authority_unavailable";
+    }
+    var state = runtime.getRuntimeState();
+    if (!Objects.equals(workItem.getTenantId(), state.getTenantId())
+        || !Objects.equals(workItem.getGameInstanceId(), state.getGameInstanceId())) {
+      return "runtime_scope_changed";
+    }
+    if (!Objects.equals(workItem.getScriptPatchVersion(), state.getPinnedScriptPatchVersion())) {
+      return "script_patch_version_mismatch";
+    }
+    if (workItem.getScriptPinEpoch() != state.getScriptPinEpoch()) {
+      return "script_pin_epoch_mismatch";
+    }
+    String capturedPinRequestId = workItem.getScriptPinControlPlaneRequestId();
+    String runtimePinRequestId = state.getScriptPatchPinnedControlPlaneRequestId();
+    if (capturedPinRequestId == null
+        || capturedPinRequestId.isBlank()
+        || runtimePinRequestId == null
+        || runtimePinRequestId.isBlank()) {
+      return "script_pin_owner_request_unavailable";
+    }
+    if (!capturedPinRequestId.equals(runtimePinRequestId)) {
+      return "script_pin_owner_request_mismatch";
+    }
+    if (!Objects.equals(workItem.getRegionId(), state.getRegionId())
+        || !workItem.getRegionEpoch().equals(state.getRegionEpoch())) {
+      return "runtime_scope_changed";
+    }
+    Long capturedBaseVersionId = workItem.getScriptPatchBaseVersionId();
+    long runtimeBaseVersionId = state.getPinnedScriptPatchBaseVersionId();
+    if (capturedBaseVersionId == null
+        || capturedBaseVersionId <= 0L
+        || runtimeBaseVersionId <= 0L) {
+      return "script_patch_base_version_unavailable";
+    }
+    if (capturedBaseVersionId != runtimeBaseVersionId) {
+      return "script_patch_base_version_mismatch";
+    }
+
+    String capturedPlayableStateScope =
+        RoutingBundleSupport.normalizePlayableStateScope(workItem.getPlayableStateScope());
+    String runtimePlayableStateScope =
+        RoutingBundleSupport.normalizePlayableStateScope(state.getPlayableStateScope());
+    RoutingBundleSupport.RoutingBundle runtimeRoutingBundle =
+        RoutingBundleSupport.fromRuntimeState(state);
+    if (!runtimeRoutingBundle.isPresent()) {
+      return "script_pin_authority_unavailable";
+    }
+    if (capturedPlayableStateScope.isBlank()
+        || !capturedPlayableStateScope.equals(runtimePlayableStateScope)) {
+      return "playable_state_scope_mismatch";
+    }
+    RoutingBundleSupport.RoutingBundle capturedRoutingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
+    if (!RoutingBundleSupport.sameRoutingBundle(runtimeRoutingBundle, capturedRoutingBundle)) {
+      return "routing_bundle_changed";
+    }
+    return null;
+  }
 
   /** Validates captured plugin evidence before consulting current plugin authority. */
   static String validateCapturedPluginFence(ScriptWorkItem workItem) {

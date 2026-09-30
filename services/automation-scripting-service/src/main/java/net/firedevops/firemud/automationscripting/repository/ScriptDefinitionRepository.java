@@ -218,7 +218,7 @@ public class ScriptDefinitionRepository {
                         SCRIPTS.DEFINITION.isDistinctFrom(DSL.excluded(SCRIPTS.DEFINITION)),
                         SCRIPTS.ROW_VERSION.add(1))
                     .otherwise(SCRIPTS.ROW_VERSION))
-            .where(SCRIPTS.BASE_VERSION_ID.eq(DSL.excluded(SCRIPTS.BASE_VERSION_ID)))
+            .where(SCRIPTS.BASE_VERSION_ID.isNotDistinctFrom(DSL.excluded(SCRIPTS.BASE_VERSION_ID)))
             .returningResult(returningFields)
             .fetchOptional(
                 returned -> {

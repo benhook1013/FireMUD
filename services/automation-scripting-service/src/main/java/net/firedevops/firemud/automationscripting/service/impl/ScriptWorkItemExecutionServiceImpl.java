@@ -1,14 +1,23 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
+import java.sql.SQLException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTransientException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
 import net.firedevops.firemud.automationscripting.entity.ScriptDefinition;
@@ -30,12 +39,20 @@ import net.firedevops.firemud.automationscripting.service.quota.ScriptReadinessC
 import net.firedevops.firemud.automationscripting.service.quota.ScriptTenantBudgetService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
+import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.RecoverableDataAccessException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -45,6 +62,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
   private static final String STAGE_ADMISSION = "ADMISSION";
@@ -52,12 +70,19 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
   private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
+  private static final String OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED =
+      "authority_unavailable_exhausted";
+  private static final Duration AUTHORITY_UNAVAILABLE_RETRY_DELAY = Duration.ofSeconds(30);
+  private static final Duration AUTHORITY_UNAVAILABLE_MAX_AGE = Duration.ofMinutes(10);
+  private static final int MAX_AUTHORITY_UNAVAILABLE_OUTCOMES = 10;
   private static final String PRIORITY_HIGH = "high";
   private static final String PRIORITY_NORMAL = "normal";
   private static final String PRIORITY_BACKGROUND = "background";
   private static final String PRIORITY_UNKNOWN = "unknown";
   private static final String EVENT_ON_LOAD = "onLoad";
   private static final String SERVICE_NAME = "automation-scripting-service";
+  private static final String PROCESSING_FAILURE_AFTER_CLAIM_METRIC =
+      "script_outbox_processing_failure_after_claim_total";
   private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
   // Only authority-unavailable plugin-fence reads get three durable retries, spaced 15, 30, and
   // 60 seconds apart. This keeps a missing authority from cycling with the five-second poll.
@@ -77,8 +102,46 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptReadinessCapacityService readinessCapacityService;
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
+  private final Counter processingFailureAfterClaimCounter;
   private final AutomationQueueService automationQueueService;
+  private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
+  private final TransactionTemplate transactionTemplate;
+  private final TransactionTemplate pluginFenceReadTransactionTemplate;
+
+  /** Compatibility constructor for focused plugin-fence tests. */
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        null,
+        null,
+        null,
+        null,
+        pluginRuntimeStateRepository,
+        null);
+  }
 
   public ScriptWorkItemExecutionServiceImpl(
       ScriptWorkItemService workItemService,
@@ -106,10 +169,46 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         null,
         null,
         null,
+        null,
         null);
   }
 
-  @org.springframework.beans.factory.annotation.Autowired
+  /** Compatibility constructor for focused tests that provide readiness collaborators. */
+  public ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptReadinessCapacityService readinessCapacityService) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        readinessProjectionService,
+        readinessCapacityService,
+        null,
+        null);
+  }
+
+  /** Compatibility constructor for focused tests that provide readiness collaborators. */
   public ScriptWorkItemExecutionServiceImpl(
       AutomationQueueService automationQueueService,
       ScriptWorkItemService workItemService,
@@ -141,10 +240,14 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         automationQueueService,
         readinessProjectionService,
         readinessCapacityService,
-        pluginRuntimeStateRepository);
+        null,
+        pluginRuntimeStateRepository,
+        null);
   }
 
+  @org.springframework.beans.factory.annotation.Autowired
   public ScriptWorkItemExecutionServiceImpl(
+      AutomationQueueService automationQueueService,
       ScriptWorkItemService workItemService,
       ScriptDefinitionRepository scriptDefinitionRepository,
       ScriptGameplayCommandHandoffService handoffService,
@@ -154,9 +257,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptOutputProperties outputProperties,
       ScriptTenantBudgetService tenantBudgetService,
       ScriptDryRunCapacityService dryRunCapacityService,
+      ScriptReadinessCapacityService readinessCapacityService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
       ObjectMapper objectMapper,
       MeterRegistry meterRegistry,
-      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository,
+      PlatformTransactionManager transactionManager) {
     this(
         workItemService,
         scriptDefinitionRepository,
@@ -169,10 +276,13 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
-        null,
-        null,
-        null,
-        pluginRuntimeStateRepository);
+        automationQueueService,
+        readinessProjectionService,
+        readinessCapacityService,
+        gameSessionControlPlaneClient,
+        pluginRuntimeStateRepository,
+        transactionManager == null ? null : new TransactionTemplate(transactionManager),
+        newPluginFenceReadTransactionTemplate(transactionManager));
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -199,6 +309,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         dryRunCapacityService,
         objectMapper,
         meterRegistry,
+        null,
         null,
         null,
         null,
@@ -233,6 +344,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         automationQueueService,
         null,
         null,
+        null,
         null);
   }
 
@@ -250,7 +362,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       MeterRegistry meterRegistry,
       AutomationQueueService automationQueueService,
       ScriptPatchReadinessProjectionService readinessProjectionService,
-      ScriptReadinessCapacityService readinessCapacityService) {
+      ScriptReadinessCapacityService readinessCapacityService,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
     this(
         workItemService,
         scriptDefinitionRepository,
@@ -266,6 +380,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         automationQueueService,
         readinessProjectionService,
         readinessCapacityService,
+        gameSessionControlPlaneClient,
+        pluginRuntimeStateRepository,
         null);
   }
 
@@ -284,7 +400,49 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       AutomationQueueService automationQueueService,
       ScriptPatchReadinessProjectionService readinessProjectionService,
       ScriptReadinessCapacityService readinessCapacityService,
-      PluginRuntimeStateRepository pluginRuntimeStateRepository) {
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository,
+      TransactionTemplate transactionTemplate) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        readinessProjectionService,
+        readinessCapacityService,
+        gameSessionControlPlaneClient,
+        pluginRuntimeStateRepository,
+        transactionTemplate,
+        null);
+  }
+
+  private ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptReadinessCapacityService readinessCapacityService,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository,
+      TransactionTemplate transactionTemplate,
+      TransactionTemplate pluginFenceReadTransactionTemplate) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -297,35 +455,177 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.readinessCapacityService = readinessCapacityService;
     this.objectMapper = objectMapper;
     this.meterRegistry = meterRegistry;
+    this.processingFailureAfterClaimCounter =
+        meterRegistry.counter(PROCESSING_FAILURE_AFTER_CLAIM_METRIC);
     this.automationQueueService = automationQueueService;
     this.readinessProjectionService = readinessProjectionService;
+    this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
+    this.transactionTemplate = transactionTemplate;
+    this.pluginFenceReadTransactionTemplate = pluginFenceReadTransactionTemplate;
+  }
+
+  private static TransactionTemplate newPluginFenceReadTransactionTemplate(
+      PlatformTransactionManager transactionManager) {
+    if (transactionManager == null) {
+      return null;
+    }
+    TransactionTemplate template = new TransactionTemplate(transactionManager);
+    template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    template.setReadOnly(true);
+    return template;
   }
 
   @Override
-  @Transactional
   public ExecutionBatchResult processPendingWorkItems(int maxItems) {
+    if (transactionTemplate != null) {
+      return processPendingWorkItemsWithTransactionalClaims(maxItems);
+    }
+
+    // Compatibility constructors used by focused unit tests do not have a transaction manager.
+    // Keep their existing batch-claim shape; the production constructor always supplies one.
     List<ScriptWorkItem> claimed = claimWorkItems(maxItems);
     int completedCount = 0;
     int failedCount = 0;
     for (ScriptWorkItem workItem : claimed) {
-      if (processClaimedWorkItem(workItem)) {
-        completedCount++;
-      } else {
+      try {
+        if (processClaimedWorkItem(workItem)) {
+          completedCount++;
+        } else {
+          failedCount++;
+        }
+      } catch (RuntimeException ex) {
+        // The claim is already EVALUATING, but this item lacks enough stage/effect evidence for
+        // an automatic disposition. Leave it unresolved until the target lease/recovery owner
+        // exists, while ensuring one bad item cannot abort the rest of this claimed batch.
+        LOGGER.error(
+            "Unexpected exception processing claimed script work item id={}; leaving unresolved",
+            workItem.getId(),
+            ex);
         failedCount++;
       }
     }
     return new ExecutionBatchResult(claimed.size(), completedCount, failedCount);
   }
 
+  /** Commits each candidate claim before processing it in a separate transaction. */
+  private ExecutionBatchResult processPendingWorkItemsWithTransactionalClaims(int maxItems) {
+    if (maxItems <= 0) {
+      throw new IllegalArgumentException("max_items must be positive");
+    }
+
+    int indexedCapacity = Math.max(0, maxItems - 1);
+    List<ScriptWorkItem> indexedCandidates = findIndexedCandidates(maxItems, indexedCapacity);
+    Set<Long> attemptedWorkItemIds = new HashSet<>();
+    BatchCounts counts = new BatchCounts();
+    processCandidates(indexedCandidates, indexedCapacity, attemptedWorkItemIds, counts);
+
+    if (counts.claimedCount < maxItems) {
+      int scanLimit =
+          (int) Math.min(Integer.MAX_VALUE, (long) maxItems + attemptedWorkItemIds.size());
+      List<ScriptWorkItem> fallbackCandidates =
+          workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+              STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, scanLimit));
+      processCandidates(fallbackCandidates, maxItems, attemptedWorkItemIds, counts);
+    }
+
+    return new ExecutionBatchResult(counts.claimedCount, counts.completedCount, counts.failedCount);
+  }
+
+  private List<ScriptWorkItem> findIndexedCandidates(int maxItems, int indexedCapacity) {
+    if (automationQueueService == null || indexedCapacity <= 0) {
+      return List.of();
+    }
+
+    List<AutomationQueueWorkItemPointer> pointers;
+    try {
+      pointers =
+          automationQueueService.drainIndexedWorkItemPointers(
+              Math.max(1, maxItems * 2), indexedCapacity);
+    } catch (RuntimeException ex) {
+      LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
+      meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
+      return List.of();
+    }
+    List<Long> workItemIds =
+        pointers.stream().map(AutomationQueueWorkItemPointer::outboxWorkItemId).distinct().toList();
+    if (workItemIds.isEmpty()) {
+      return List.of();
+    }
+    return workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+        workItemIds, STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, indexedCapacity));
+  }
+
+  private void processCandidates(
+      List<ScriptWorkItem> candidates,
+      int maxItems,
+      Set<Long> attemptedWorkItemIds,
+      BatchCounts counts) {
+    for (ScriptWorkItem candidate : candidates) {
+      if (counts.claimedCount >= maxItems) {
+        return;
+      }
+      Long workItemId = candidate.getId();
+      if (workItemId == null || !attemptedWorkItemIds.add(workItemId)) {
+        continue;
+      }
+
+      WorkItemAttempt attempt = claimThenProcessWorkItem(workItemId);
+      if (!attempt.claimed()) {
+        continue;
+      }
+      counts.claimedCount++;
+      if (attempt.failure() != null) {
+        // Claim and processing use separate transactions, so a processing rollback cannot erase
+        // the durable EVALUATING claim. Without an owner/recovery contract, leave it unresolved.
+        LOGGER.error(
+            "Unexpected exception processing claimed script work item id={}; leaving unresolved",
+            workItemId,
+            attempt.failure());
+        counts.failedCount++;
+      } else if (attempt.completed()) {
+        counts.completedCount++;
+      } else {
+        counts.failedCount++;
+      }
+    }
+  }
+
+  private WorkItemAttempt claimThenProcessWorkItem(long workItemId) {
+    List<ScriptWorkItem> claimed =
+        transactionTemplate.execute(
+            status -> workItemService.claimPendingForEvaluation(List.of(workItemId), 1));
+    if (claimed == null || claimed.isEmpty()) {
+      return WorkItemAttempt.notClaimed();
+    }
+
+    // TransactionTemplate commits the claim before returning. A worker stop here can leave an
+    // EVALUATING row without a processing attempt; that recovery gap is intentionally unresolved.
+    ScriptWorkItem workItem = claimed.getFirst();
+    try {
+      Boolean completed = transactionTemplate.execute(status -> processClaimedWorkItem(workItem));
+      return WorkItemAttempt.claimed(Boolean.TRUE.equals(completed));
+    } catch (RuntimeException ex) {
+      // Catch outside execute: an inner REQUIRED service may mark the shared transaction
+      // rollback-only and throw UnexpectedRollbackException only during execute's commit.
+      processingFailureAfterClaimCounter.increment();
+      return WorkItemAttempt.failedAfterClaim(ex);
+    }
+  }
+
   private List<ScriptWorkItem> claimWorkItems(int maxItems) {
     if (automationQueueService == null) {
+      return workItemService.claimPendingForEvaluation(maxItems);
+    }
+    int indexedCapacity = Math.max(0, maxItems - 1);
+    if (indexedCapacity <= 0) {
       return workItemService.claimPendingForEvaluation(maxItems);
     }
     List<AutomationQueueWorkItemPointer> pointers;
     try {
       pointers =
-          automationQueueService.drainIndexedWorkItemPointers(Math.max(1, maxItems * 2), maxItems);
+          automationQueueService.drainIndexedWorkItemPointers(
+              Math.max(1, maxItems * 2), indexedCapacity);
     } catch (RuntimeException ex) {
       LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
       meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
@@ -334,10 +634,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     List<ScriptWorkItem> queueClaimed =
         workItemService.claimPendingForEvaluation(
             pointers.stream().map(AutomationQueueWorkItemPointer::outboxWorkItemId).toList(),
-            maxItems);
-    if (queueClaimed.size() >= maxItems) {
-      return queueClaimed;
-    }
+            indexedCapacity);
     List<ScriptWorkItem> fallbackClaimed =
         workItemService.claimPendingForEvaluation(maxItems - queueClaimed.size());
     if (fallbackClaimed.isEmpty()) {
@@ -351,6 +648,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private boolean processClaimedWorkItem(ScriptWorkItem workItem) {
     Instant now = Instant.now();
+    String fenceFailure = validateCurrentExecutionFences(workItem);
+    if (fenceFailure != null) {
+      if (isTerminalFenceFailure(fenceFailure)) {
+        cancel(workItem, STAGE_ADMISSION, "canceled", fenceFailure, now);
+      } else {
+        requeueAfterAuthorityUnavailable(workItem, fenceFailure, STAGE_ADMISSION, now);
+      }
+      return false;
+    }
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
@@ -397,6 +703,49 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
 
     return evaluateClaimedWorkItem(workItem, now);
+  }
+
+  /**
+   * Final Automation-side runtime/pin fence. Queue claims are intentionally not authority: the
+   * runtime/pin tuple is reread immediately before definition evaluation and any gameplay handoff.
+   * Plugin lifecycle is an independent fence checked at its own boundaries below.
+   */
+  private String validateCurrentExecutionFences(ScriptWorkItem workItem) {
+    if (isOnLoad(workItem)) {
+      // Tenant-readiness onLoad is pre-instance-pin work and has no runtime pin fence.
+      return null;
+    }
+    String localFenceFailure =
+        ScriptWorkItemFenceEvaluationSupport.validateRuntimeIdentity(workItem);
+    if (localFenceFailure != null) {
+      return localFenceFailure;
+    }
+    if (gameSessionControlPlaneClient == null) {
+      // Compatibility constructors are used by isolated evaluator tests. The Spring production
+      // constructor always supplies both authority collaborators and therefore takes the strict
+      // branch below; keeping this seam local avoids making unit fixtures model remote authority.
+      return null;
+    }
+    final GetGameInstanceRuntimeStateResponse runtime;
+    try {
+      runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Game-session runtime authority read failed for script work item id={}",
+          workItem.getId(),
+          ex);
+      return "script_pin_authority_unavailable";
+    }
+    String runtimeFailure =
+        ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(workItem, runtime);
+    if (runtimeFailure != null) {
+      return runtimeFailure;
+    }
+    // Plugin lifecycle is an independent fence with its own bounded retry budget. It is checked
+    // by validateCurrentPluginFence at each plugin-owned boundary below.
+    return null;
   }
 
   private boolean evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
@@ -493,6 +842,20 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return true;
     }
 
+    // DSL evaluation is not the effect boundary. Re-read every authoritative execution fence
+    // after evaluation and immediately before the first gameplay handoff so a repin, plugin ABA,
+    // lifecycle transition, or policy revocation that won during evaluation cannot emit effects.
+    String handoffFenceFailure = validateCurrentExecutionFences(workItem);
+    if (handoffFenceFailure != null) {
+      if (isTerminalFenceFailure(handoffFenceFailure)) {
+        cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffFenceFailure, now);
+      } else {
+        requeueAfterAuthorityUnavailable(workItem, handoffFenceFailure, STAGE_DSL_EVAL, now);
+      }
+      return false;
+    }
+    clearAuthorityUnavailableRetryState(workItem);
+
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
     PluginFenceValidation retryableFanoutFence = null;
     PluginFenceValidation terminalFanoutFence = null;
@@ -540,7 +903,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return false;
     }
     if (retryableFanoutFence != null) {
-      retryOrDeadLetterPluginFence(workItem, retryableFanoutFence, STAGE_DSL_EVAL);
+      // Evaluation has already produced output and fan-out may have accepted earlier commands.
+      // There is no durable output/child ledger to safely resume, so neither automatic retry nor
+      // operator replay may re-enter the DSL after this uncertain post-evaluation boundary.
+      deadLetter(
+          workItem,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF,
+          OUTCOME_INFRASTRUCTURE_ERROR,
+          retryableFanoutFence.reason(),
+          Instant.now());
       return false;
     }
     if (firstRejectedHandoff != null
@@ -565,6 +936,97 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     AutomationQueuePublicationSupport.enqueueAfterCommit(automationQueueService, workItem, LOGGER);
   }
 
+  private void requeueAfterAuthorityUnavailable(
+      ScriptWorkItem workItem, String reason, String stage, Instant now) {
+    Instant firstUnavailableAt = workItem.getAuthorityUnavailableSince();
+    if (firstUnavailableAt == null) {
+      firstUnavailableAt = now;
+    }
+    int priorCount = Math.max(0, workItem.getAuthorityUnavailableCount());
+    int nextCount =
+        priorCount >= MAX_AUTHORITY_UNAVAILABLE_OUTCOMES
+            ? MAX_AUTHORITY_UNAVAILABLE_OUTCOMES
+            : priorCount + 1;
+    workItem.setAuthorityUnavailableSince(firstUnavailableAt);
+    workItem.setAuthorityUnavailableCount(nextCount);
+    if (nextCount >= MAX_AUTHORITY_UNAVAILABLE_OUTCOMES
+        || !now.isBefore(firstUnavailableAt.plus(AUTHORITY_UNAVAILABLE_MAX_AGE))) {
+      deadLetter(
+          workItem,
+          stage,
+          OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
+          OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
+          now);
+      return;
+    }
+    workItem.setStatus("PENDING_EVALUATION");
+    workItem.setCancelReason(reason);
+    workItem.setNextEligibleAt(now.plus(AUTHORITY_UNAVAILABLE_RETRY_DELAY));
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(workItem);
+    // Do not immediately republish while the authority is unavailable: that creates a hot loop
+    // against the same unavailable dependency. The durable pending row is picked up by the next
+    // executor scan once authority recovers.
+  }
+
+  /** Clears an outage budget after a fresh fence read succeeds. */
+  private void clearAuthorityUnavailableRetryState(ScriptWorkItem workItem) {
+    if (workItem.getAuthorityUnavailableSince() == null
+        && workItem.getAuthorityUnavailableCount() == 0
+        && workItem.getNextEligibleAt() == null) {
+      return;
+    }
+    workItem.setAuthorityUnavailableSince(null);
+    workItem.setAuthorityUnavailableCount(0);
+    workItem.setNextEligibleAt(null);
+    workItemRepository.save(workItem);
+  }
+
+  private static boolean isRepositoryUnavailable(Throwable exception) {
+    Throwable cause = exception;
+    while (cause != null) {
+      if (cause instanceof SQLTransientException
+          || cause instanceof SQLRecoverableException
+          || cause instanceof TransientDataAccessException
+          || cause instanceof RecoverableDataAccessException
+          || cause instanceof ConnectException
+          || cause instanceof SocketTimeoutException) {
+        return true;
+      }
+      if (cause instanceof SQLException sqlException
+          && AutomationControlPlaneSupport.isRetryableSqlState(sqlException)) {
+        return true;
+      }
+      cause = cause.getCause();
+    }
+    return false;
+  }
+
+  private static boolean isTerminalFenceFailure(String reason) {
+    return switch (reason) {
+      case "script_patch_version_mismatch",
+          "script_patch_base_version_unavailable",
+          "script_patch_base_version_mismatch",
+          "playable_state_scope_mismatch",
+          "routing_bundle_changed",
+          "script_pin_epoch_mismatch",
+          "script_pin_epoch_unavailable",
+          "script_pin_owner_request_unavailable",
+          "script_pin_owner_request_mismatch",
+          "runtime_scope_missing",
+          "runtime_scope_changed",
+          "plugin_disabled",
+          "plugin_version_mismatch",
+          "plugin_activation_epoch_mismatch",
+          "plugin_binding_mismatch",
+          "plugin_lifecycle_revision_mismatch",
+          "plugin_lifecycle_evidence_unavailable" ->
+          true;
+      default -> false;
+    };
+  }
+
   private void retryOrDeadLetterPluginFence(
       ScriptWorkItem workItem, PluginFenceValidation pluginFence, String stage) {
     if (!REASON_AUTHORITY_UNAVAILABLE.equals(pluginFence.reason())) {
@@ -582,6 +1044,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
     Duration delay = AUTHORITY_UNAVAILABLE_RETRY_DELAYS.get(retryCount);
     workItem.setAuthorityUnavailableRetryCount(retryCount + 1);
+    workItem.setCancelReason(pluginFence.reason());
     workItem.setNextEligibleAt(retryAt.plus(delay));
     persistDelayedRetry(workItem);
   }
@@ -960,8 +1423,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   private void deadLetter(
       ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
+    if (!STATUS_DEAD_LETTERED.equals(workItem.getStatus())) {
+      workItem.setFailureGeneration(Math.addExact(workItem.getFailureGeneration(), 1L));
+    }
     workItem.setStatus(STATUS_DEAD_LETTERED);
     workItem.setCancelReason(reason);
+    workItem.setNextEligibleAt(null);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
@@ -974,6 +1441,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
     workItem.setStatus(STATUS_CANCELED);
     workItem.setCancelReason(reason);
+    workItem.setNextEligibleAt(null);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
@@ -986,6 +1454,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
     workItem.setStatus(STATUS_HANDED_OFF);
     workItem.setCancelReason(null);
+    workItem.setAuthorityUnavailableSince(null);
+    workItem.setAuthorityUnavailableCount(0);
+    workItem.setNextEligibleAt(null);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
     rolloutProjectionService.refreshForWorkItem(workItem);
@@ -1050,6 +1521,23 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return RequestIdValidation.requirePositiveLong(workItem.getTenantId(), "tenant_id");
   }
 
+  private Optional<PluginRuntimeState> readCurrentPluginRuntimeState(ScriptWorkItem workItem) {
+    if (pluginRuntimeStateRepository == null) {
+      return Optional.empty();
+    }
+    String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId());
+    if (pluginFenceReadTransactionTemplate == null) {
+      return pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+          workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
+    }
+    Optional<PluginRuntimeState> state =
+        pluginFenceReadTransactionTemplate.execute(
+            ignored ->
+                pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+                    workItem.getTenantId(), workItem.getGameInstanceId(), pluginId));
+    return state == null ? Optional.empty() : state;
+  }
+
   private PluginFenceValidation validateCurrentPluginFence(ScriptWorkItem workItem) {
     if (isOnLoad(workItem)) {
       return null;
@@ -1063,13 +1551,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (pluginRuntimeStateRepository == null) {
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
-    PluginRuntimeState state =
-        pluginRuntimeStateRepository
-            .findByTenantIdAndGameInstanceIdAndPluginId(
-                workItem.getTenantId(),
-                workItem.getGameInstanceId(),
-                ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
-            .orElse(null);
+    final PluginRuntimeState state;
+    try {
+      state = readCurrentPluginRuntimeState(workItem).orElse(null);
+    } catch (DataAccessException
+        | org.springframework.dao.DataAccessException
+        | TransactionException ex) {
+      if (isRepositoryUnavailable(ex)) {
+        return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+      }
+      return new PluginFenceValidation("plugin_lifecycle_evidence_unavailable", false);
+    }
     if (state == null) {
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
@@ -1080,6 +1572,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     try {
       pluginState = PluginState.valueOf(state.getPluginState());
     } catch (IllegalArgumentException ex) {
+      if ("REVOKED".equals(state.getPluginState().trim().toUpperCase(java.util.Locale.ROOT))) {
+        return new PluginFenceValidation("plugin_disabled", false);
+      }
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
     if (pluginState == PluginState.PLUGIN_STATE_UNSPECIFIED) {
@@ -1105,6 +1600,26 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
     workItem.setAuthorityUnavailableRetryCount(0);
     return null;
+  }
+
+  private static final class BatchCounts {
+    private int claimedCount;
+    private int completedCount;
+    private int failedCount;
+  }
+
+  private record WorkItemAttempt(boolean claimed, boolean completed, RuntimeException failure) {
+    private static WorkItemAttempt notClaimed() {
+      return new WorkItemAttempt(false, false, null);
+    }
+
+    private static WorkItemAttempt claimed(boolean completed) {
+      return new WorkItemAttempt(true, completed, null);
+    }
+
+    private static WorkItemAttempt failedAfterClaim(RuntimeException failure) {
+      return new WorkItemAttempt(true, false, failure);
+    }
   }
 
   private record PluginFenceValidation(String reason, boolean retryable) {}

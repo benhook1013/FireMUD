@@ -20,7 +20,7 @@ Replacement operations use the stable `playableStateNamespaceId` and owner-resol
 - `liveness` is process-local only.
 - `readiness` is truthful local readiness for the currently implemented entity-query slice and must fail when the service cannot safely answer room/entity lookup traffic with its required local persistence/cache/bootstrap state.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
-- `entity.actor-condition.expiry-interval-seconds` controls the scheduled active-condition expiry sweep. The default is 30 seconds and removes rows whose `expires_at` has elapsed; gameplay reads also ignore expired rows, so the sweep is cleanup and convergence rather than the sole correctness guard.
+- `entity.actor-condition.expiry-interval-seconds` controls the scheduled actor-condition expiry sweep. The default is 30 seconds, and the sweep globally and without a batch bound deletes rows whose `expires_at` has elapsed. Gameplay reads filter those rows before evaluating state, so an expired effect is not restored. The sweep targets only `actor_active_conditions`; separate `entity_mutation_effects` receipts remain and are checked by `ApplyActorCondition` before mutation, but a receipt-retention guarantee across the replay/restore horizon is unproved. No concrete duplicate-application or S2-loss claim is made. Target proof still requires explicit S1/S2 classification, dependent-reference/hold checks, a safe watermark, and typed target, request-digest, and concurrency enforcement; expiry is not itself a retention or disposal decision.
 
 ## Tick Locking
 

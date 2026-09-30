@@ -258,6 +258,11 @@ spec:
             summary: Player-facing reopen was attempted without complete convergence
             description: A controller-authoritative recovery release was attempted before cold-start convergence completed. Keep traffic quarantined and investigate the operation evidence and participant dispositions immediately.
 
+    - name: firemud.recording.automation
+      rules:
+        - record: automation_retention_dead_letter_blocked_rows:max
+          expr: max by (namespace, service) (automation_retention_dead_letter_blocked_rows)
+
     - name: firemud.alerts.observability
       rules:
         - alert: AlertmanagerServiceUnavailable
