@@ -3,6 +3,7 @@ package net.firedevops.firemud.automationscripting.service.impl;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.stub.StreamObserver;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -73,7 +74,10 @@ import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.transaction.CannotCreateTransactionException;
 
@@ -2108,10 +2112,45 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         observer(ref));
 
     assertThat(ref.get().hasError()).isTrue();
-    assertThat(ref.get().getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+    assertThat(ref.get().getError().getCode()).isEqualTo("PERMISSION_DENIED");
     assertThat(ref.get().getError().getMessage())
         .isEqualTo("actorPrincipal must match the authenticated account");
     Mockito.verify(workItemService, Mockito.never()).replayDeadLetters(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "40001,UNAVAILABLE",
+    "40P01,UNAVAILABLE",
+    "40002,INTERNAL"
+  })
+  void mapsOnlyKnownRetryableSerializationSqlStates(
+      String sqlState, String expectedErrorCode) {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenThrow(
+            new DataAccessResourceFailureException(
+                "database failure", new SQLException("database failure", sqlState)));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
+            .setActorPrincipal("1")
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo(expectedErrorCode);
   }
 
   @Test

@@ -97,7 +97,8 @@ final class AutomationControlPlaneSupport {
     String sqlState = sqlException.getSQLState();
     return sqlState != null
         && (sqlState.startsWith("08")
-            || sqlState.startsWith("40")
+            || sqlState.equals("40001")
+            || sqlState.equals("40P01")
             || sqlState.equals("57014")
             || sqlState.equals("55P03"));
   }

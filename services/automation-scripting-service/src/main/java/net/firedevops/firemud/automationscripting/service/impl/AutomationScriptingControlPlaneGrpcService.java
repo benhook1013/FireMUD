@@ -661,7 +661,7 @@ public final class AutomationScriptingControlPlaneGrpcService
       throw new IllegalArgumentException("actorPrincipal is required for replay");
     }
     if (!authenticatedAccountId.equals(actorPrincipal)) {
-      throw new IllegalArgumentException("actorPrincipal must match the authenticated account");
+      throw new AdminAuthorizationException("actorPrincipal must match the authenticated account");
     }
   }
 
