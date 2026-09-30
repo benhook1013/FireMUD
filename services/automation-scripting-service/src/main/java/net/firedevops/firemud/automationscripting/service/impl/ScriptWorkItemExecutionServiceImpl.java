@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
@@ -113,7 +114,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private record HandoffExecutionResult(
       String terminalFenceFailure,
       PluginFenceValidation retryableFence,
-      ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff) {}
+      ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff,
+      boolean childHandoffAttempted) {}
 
   private record EvaluationFencePrecheck(boolean checked, String failure) {}
 
@@ -534,6 +536,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
     String terminalFenceFailure = null;
     PluginFenceValidation retryableFence = null;
+    boolean childHandoffAttempted = false;
     try {
       try {
         handoffService.beginAggregateFanout(workItem);
@@ -542,7 +545,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
             "Unable to preflight script handoff fanout for workItemId={}; scheduling retry",
             workItem.getId(),
             ex);
-        return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult());
+        return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult(), false);
       }
       for (int commandIndex = 0; commandIndex < commands.size(); commandIndex++) {
         ScriptGameplayCommandHandoffService.EmittedCommand command = commands.get(commandIndex);
@@ -561,6 +564,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           }
           break;
         }
+        childHandoffAttempted = true;
         ScriptGameplayCommandHandoffService.HandoffResult result =
             handoffService.handoff(workItem, command);
         if (!result.accepted()
@@ -577,7 +581,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     } finally {
       handoffService.endAggregateFanout(workItem);
     }
-    return new HandoffExecutionResult(terminalFenceFailure, retryableFence, firstRejectedHandoff);
+    return new HandoffExecutionResult(
+        terminalFenceFailure, retryableFence, firstRejectedHandoff, childHandoffAttempted);
   }
 
   private static ScriptGameplayCommandHandoffService.HandoffResult
@@ -752,26 +757,40 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
               workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
     } catch (DataAccessException ex) {
       if (isRepositoryUnavailable(ex)) {
-        return "plugin_lifecycle_collaborator_unavailable";
+        return REASON_AUTHORITY_UNAVAILABLE;
       }
       return "plugin_lifecycle_evidence_unavailable";
+    }
+    if (plugin == null || plugin.isEmpty()) {
+      return REASON_AUTHORITY_UNAVAILABLE;
     }
     PluginState pluginState = null;
     String activePluginVersionId = "";
     long pluginActivationEpoch = 0L;
     long lifecycleRevision = 0L;
-    if (plugin.isPresent()) {
-      var state = plugin.orElseThrow();
-      activePluginVersionId = state.getActivePluginVersionId();
-      if (state.getPluginState() != null) {
-        try {
-          pluginState = PluginState.valueOf(state.getPluginState());
-        } catch (IllegalArgumentException ex) {
-          pluginState = null;
+    var state = plugin.orElseThrow();
+    if (state.getPluginState() != null) {
+      try {
+        pluginState = PluginState.valueOf(state.getPluginState());
+      } catch (IllegalArgumentException ex) {
+        if ("REVOKED".equals(state.getPluginState().trim().toUpperCase(Locale.ROOT))) {
+          return "plugin_disabled";
         }
+        return REASON_AUTHORITY_UNAVAILABLE;
       }
+    }
+    if (pluginState == null || pluginState == PluginState.PLUGIN_STATE_UNSPECIFIED) {
+      return REASON_AUTHORITY_UNAVAILABLE;
+    }
+    if (pluginState == PluginState.PLUGIN_STATE_ENABLED) {
+      activePluginVersionId = state.getActivePluginVersionId();
       pluginActivationEpoch = state.getPluginActivationEpoch();
       lifecycleRevision = state.getLifecycleRevision();
+      if (ScriptWorkItemFenceEvaluationSupport.normalize(activePluginVersionId).isBlank()
+          || pluginActivationEpoch <= 0
+          || lifecycleRevision <= 0) {
+        return REASON_AUTHORITY_UNAVAILABLE;
+      }
     }
     return ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
         workItem, activePluginVersionId, pluginState, pluginActivationEpoch, lifecycleRevision);
@@ -901,7 +920,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
     if (firstRejectedHandoff != null
         && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
-      requeueAfterRetryableFailure(workItem);
+      ScriptWorkItem retryableWorkItem = workItem;
+      if (handoffResult.childHandoffAttempted()) {
+        // A child transaction may mutate the detached entity before rollback, including to
+        // statuses other than HANDOFF_IN_FLIGHT. Requeue only from an authoritative row that
+        // confirms the work item remains EVALUATING; otherwise retain it for reconciliation.
+        retryableWorkItem = workItemRepository.findById(workItem.getId()).orElse(null);
+        if (retryableWorkItem == null || !"EVALUATING".equals(retryableWorkItem.getStatus())) {
+          return false;
+        }
+      }
+      requeueAfterRetryableFailure(retryableWorkItem);
       return false;
     }
     markTerminalSuccess(
@@ -999,6 +1028,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       case "script_patch_version_mismatch",
           "script_patch_base_version_unavailable",
           "script_patch_base_version_mismatch",
+          "playable_state_scope_mismatch",
+          "routing_bundle_changed",
           "script_pin_epoch_mismatch",
           "script_pin_epoch_unavailable",
           "runtime_scope_missing",

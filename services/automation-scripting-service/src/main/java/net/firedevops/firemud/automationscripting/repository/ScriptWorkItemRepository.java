@@ -480,16 +480,17 @@ public class ScriptWorkItemRepository {
     // schema has no recovery-aware parent hold/generation proof, so every aged row is blocked.
     return "DEAD_LETTERED".equals(status)
         ? dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows)
-        : dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows.and(noBlockingRetentionEvidence().not()));
+        : dsl.fetchCount(
+            SCRIPT_WORK_ITEMS, agedRows.and(noBlockingRetentionEvidence(safeWatermark).not()));
   }
 
   /**
    * Parent-cleanup proof for the current schema. Replay results always remain attached until a
    * receipt-retention horizon exists; handoff rows may be removed only when their owner hold is
-   * absent or no longer active. Audit rows are detached separately and therefore do not block the
-   * parent here.
+   * absent or no longer active and, for age cleanup, their observed time is before the supplied
+   * cutoff. Audit rows are detached separately and therefore do not block the parent here.
    */
-  private static Condition noBlockingRetentionEvidence() {
+  private static Condition noBlockingRetentionEvidence(Instant handoffObservedBefore) {
     return notExists(
             selectOne()
                 .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
@@ -509,10 +510,10 @@ public class ScriptWorkItemRepository {
                             .TENANT_ID
                             .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
                             .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(SCRIPT_WORK_ITEMS.ID))
-                            .and(handoffBlocksParent()))));
+                            .and(handoffBlocksParent(handoffObservedBefore)))));
   }
 
-  private static Condition handoffBlocksParent() {
+  private static Condition handoffBlocksParent(Instant handoffObservedBefore) {
     Condition incompleteOutcome =
         SCRIPT_HANDOFF_EVENTS
             .HANDOFF_OUTCOME
@@ -522,10 +523,19 @@ public class ScriptWorkItemRepository {
                         "regexp_replace({0}, '[[:space:]]', '', 'g')",
                         String.class, SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME)
                     .eq(""));
-    return HANDOFF_RETENTION_HOLD_UNTIL
-        .isNotNull()
-        .and(HANDOFF_RETENTION_HOLD_UNTIL.gt(CURRENT_OFFSET_TIMESTAMP))
-        .or(incompleteOutcome);
+    Condition blockedByHoldOrIncomplete =
+        HANDOFF_RETENTION_HOLD_UNTIL
+            .isNotNull()
+            .and(HANDOFF_RETENTION_HOLD_UNTIL.gt(CURRENT_OFFSET_TIMESTAMP))
+            .or(incompleteOutcome);
+    if (handoffObservedBefore == null) {
+      return blockedByHoldOrIncomplete;
+    }
+    return blockedByHoldOrIncomplete.or(
+        SCRIPT_HANDOFF_EVENTS
+            .OBSERVED_AT
+            .isNull()
+            .or(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT.ge(toLocalDateTime(handoffObservedBefore))));
   }
 
   /**
@@ -974,7 +984,7 @@ public class ScriptWorkItemRepository {
     if (updatedAt != null) {
       condition = condition.and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
     }
-    return condition.and(noBlockingRetentionEvidence());
+    return condition.and(noBlockingRetentionEvidence(updatedAt));
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {

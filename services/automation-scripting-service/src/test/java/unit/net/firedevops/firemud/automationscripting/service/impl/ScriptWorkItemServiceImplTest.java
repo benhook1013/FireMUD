@@ -40,11 +40,13 @@ import net.firedevops.firemud.automationscripting.service.ScriptWorkItemService;
 import net.firedevops.firemud.automationscripting.v1.PluginState;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchInstanceRolloutStatus;
 import net.firedevops.firemud.automationscripting.v1.ScriptPatchStatus;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.ParticipantDigest;
 import net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
+import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.GameInstanceRuntimeState;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse;
 import org.junit.jupiter.api.Test;
@@ -399,10 +401,10 @@ class ScriptWorkItemServiceImplTest {
 
   @Test
   void replayRetainsOriginalFailureEvidenceWithoutRewritingAudit() {
-    ScriptWorkItem item = replayableRuntimeWorkItem(95L);
+    ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(95L));
     item.setCancelReason("GAME_SESSION_UNAVAILABLE");
     item.setFailureGeneration(2L);
-    ScriptWorkItem claimed = replayableRuntimeWorkItem(95L);
+    ScriptWorkItem claimed = withRoutingBundle(replayableRuntimeWorkItem(95L));
     claimed.setStatus("PENDING_EVALUATION");
     claimed.setCancelReason("GAME_SESSION_UNAVAILABLE");
     claimed.setFailureGeneration(2L);
@@ -483,17 +485,7 @@ class ScriptWorkItemServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-1")
-                        .setPinnedScriptPatchBaseVersionId(7L)
-                        .setScriptPinEpoch(1L)
-                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
-                        .setRegionId("region-1")
-                        .setRegionEpoch(3L)
-                        .build())
+                .setRuntimeState(replayRuntimeState("SHARED", 17L, 7L))
                 .build());
 
     ScriptWorkItemService service =
@@ -531,10 +523,10 @@ class ScriptWorkItemServiceImplTest {
 
   @Test
   void rejectsReplayWithoutOriginalFailureEvidenceBeforeClaim() {
-    ScriptWorkItem item = replayableRuntimeWorkItem(96L);
+    ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(96L));
     item.setCancelReason("");
     item.setFailureGeneration(3L);
-    ScriptWorkItem contradictory = replayableRuntimeWorkItem(97L);
+    ScriptWorkItem contradictory = withRoutingBundle(replayableRuntimeWorkItem(97L));
     contradictory.setCancelReason("WORK_ITEM_REASON");
     contradictory.setFailureGeneration(4L);
 
@@ -582,17 +574,7 @@ class ScriptWorkItemServiceImplTest {
     when(gameSessionClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-1")
-                        .setPinnedScriptPatchBaseVersionId(7L)
-                        .setScriptPinEpoch(1L)
-                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
-                        .setRegionId("region-1")
-                        .setRegionEpoch(3L)
-                        .build())
+                .setRuntimeState(replayRuntimeState("SHARED", 17L, 7L))
                 .build());
 
     ScriptWorkItemService service =
@@ -2921,17 +2903,7 @@ class ScriptWorkItemServiceImplTest {
     when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
         .thenReturn(
             GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setRuntimeState(
-                    GameInstanceRuntimeState.newBuilder()
-                        .setTenantId("1")
-                        .setGameInstanceId("game-1")
-                        .setPinnedScriptPatchVersion("patch-1")
-                        .setPinnedScriptPatchBaseVersionId(pinnedBaseVersionId)
-                        .setScriptPinEpoch(1L)
-                        .setScriptPatchPinnedControlPlaneRequestId("req-1")
-                        .setRegionId("region-1")
-                        .setRegionEpoch(3L)
-                        .build())
+                .setRuntimeState(replayRuntimeState("SHARED", 17L, pinnedBaseVersionId))
                 .build());
     ScriptWorkItemService service =
         new ScriptWorkItemServiceImpl(
@@ -3161,6 +3133,35 @@ class ScriptWorkItemServiceImplTest {
   }
 
   @Test
+  void replayRejectsNegativePreviewTimestampsBeforeRepositoryRead() {
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptWorkItemService service =
+        service(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient());
+
+    for (ScriptWorkItemService.ReplayDeadLettersCommand command :
+        List.of(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("101"), "", -1L, 0L, 0, "req-after", "admin", "retry"),
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("101"), "", 0L, -1L, 0, "req-before", "admin", "retry"))) {
+      assertThatThrownBy(() -> service.replayDeadLetters(command))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessage("replay_filters_require_preview");
+    }
+    Mockito.verifyNoInteractions(workItemRepository);
+  }
+
+  @Test
   void replayRejectsDistinctTextualIdsThatParseToTheSameWorkItem() {
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptWorkItemService service =
@@ -3292,6 +3293,113 @@ class ScriptWorkItemServiceImplTest {
         .isEqualTo("runtime_scope_changed");
   }
 
+  @ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "ISOLATED, 17, playable_state_scope_mismatch",
+    "SHARED, 18, routing_bundle_changed"
+  })
+  void rejectsReplayForChangedRoutingBeforeRecoveryClaim(
+      String currentScope, long currentPointerVersion, String rejectionReason) {
+    ScriptWorkItem item = withRoutingBundle(replayableRuntimeWorkItem(93L));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(93L)).thenReturn(Optional.of(item));
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(replayRuntimeState(currentScope, currentPointerVersion, 7L))
+                .build());
+    ScriptWorkItemServiceImpl service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService(),
+            null,
+            gameSessionControlPlaneClient,
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("93"), "", 0L, 0L, 0, "req-93", "admin", "retry"));
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(replay -> assertThat(replay.rejectionReason()).isEqualTo(rejectionReason));
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(workItemRepository, never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
+  }
+
+  @Test
+  void rejectsReplayForLegacyMissingRoutingBeforeRecoveryClaim() {
+    ScriptWorkItem item = replayableRuntimeWorkItem(94L);
+    item.setPlayableStateScope("SHARED");
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(94L)).thenReturn(Optional.of(item));
+    GameSessionControlPlaneClient gameSessionControlPlaneClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(replayRuntimeState("SHARED", 17L, 7L))
+                .build());
+    ScriptWorkItemServiceImpl service =
+        new ScriptWorkItemServiceImpl(
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            ingressAuditRepository(),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            outboxProperties(),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            rolloutProjectionService(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            gameDesignClient(),
+            readinessProjectionService(),
+            null,
+            gameSessionControlPlaneClient,
+            new SimpleMeterRegistry(),
+            Mockito.mock(ScriptDefinitionRepository.class));
+
+    ScriptWorkItemService.ReplayResult result =
+        service.replayDeadLetters(
+            new ScriptWorkItemService.ReplayDeadLettersCommand(
+                "1", "", "", List.of("94"), "", 0L, 0L, 0, "req-94", "admin", "retry"));
+
+    assertThat(result.replayedCount()).isZero();
+    assertThat(result.rejectedCount()).isEqualTo(1L);
+    assertThat(result.results())
+        .singleElement()
+        .satisfies(
+            replay -> assertThat(replay.rejectionReason()).isEqualTo("routing_bundle_changed"));
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    verify(workItemRepository, never())
+        .claimDeadLetterForReplay(
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyInt(),
+            Mockito.anyLong(),
+            Mockito.any(Instant.class));
+  }
+
   private static ScriptWorkItem workItem(String patchVersion, String status, Instant updatedAt) {
     ScriptWorkItem item = new ScriptWorkItem();
     item.setTenantId("1");
@@ -3315,6 +3423,51 @@ class ScriptWorkItemServiceImplTest {
     item.setEventSchemaVersion("v1");
     item.setScriptEventId("event-" + id);
     return item;
+  }
+
+  private static ScriptWorkItem withRoutingBundle(ScriptWorkItem item) {
+    item.setPlayableStateScope("SHARED");
+    item.setWorldSlug("demo");
+    item.setRealmSlug("production");
+    item.setPointerVersion("17");
+    return item;
+  }
+
+  private static GameInstanceRuntimeState replayRuntimeState(
+      String playableStateScope, long pointerVersion, long baseVersionId) {
+    PlayableStateScope scope =
+        switch (playableStateScope) {
+          case "SHARED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+          case "ISOLATED" -> PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED;
+          default -> PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED;
+        };
+    return GameInstanceRuntimeState.newBuilder()
+        .setTenantId("1")
+        .setGameInstanceId("game-1")
+        .setPinnedScriptPatchVersion("patch-1")
+        .setPinnedScriptPatchBaseVersionId(baseVersionId)
+        .setScriptPinEpoch(1L)
+        .setScriptPatchPinnedControlPlaneRequestId("req-1")
+        .setRegionId("region-1")
+        .setRegionEpoch(3L)
+        .setPlayableStateScope(scope)
+        .setWorldSlug("demo")
+        .setRealmSlug("production")
+        .setPointerVersion(pointerVersion)
+        .addCurrentAdmissionPointers(replayCurrentPointer(playableStateScope, pointerVersion))
+        .build();
+  }
+
+  private static AdmissionPointerControlPlaneEntry replayCurrentPointer(
+      String playableStateScope, long pointerVersion) {
+    return AdmissionPointerControlPlaneEntry.newBuilder()
+        .setTenantId("1")
+        .setGameInstanceId("game-1")
+        .setWorldSlug("demo")
+        .setRealmSlug("production")
+        .setPointerVersion(pointerVersion)
+        .setStateScope(playableStateScope)
+        .build();
   }
 
   private static ScriptWorkItemService replayService(ScriptWorkItemRepository workItemRepository) {

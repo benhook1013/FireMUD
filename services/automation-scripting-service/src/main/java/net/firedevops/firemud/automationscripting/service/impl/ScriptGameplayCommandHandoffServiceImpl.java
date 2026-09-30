@@ -254,19 +254,29 @@ public class ScriptGameplayCommandHandoffServiceImpl
     requireCommand(command);
     // An accepted child is immutable retry evidence; replay it before consulting today's
     // admission or runtime owner, which may have advanced after the original dispatch.
-    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command);
+    String dispatchId = dispatchId(workItem, command.ordinal());
+    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command, dispatchId);
     if (acceptedResult != null) {
       return acceptedResult;
     }
-    String dispatchId = dispatchId(workItem, command.ordinal());
     AggregateAdmissionSnapshot aggregateSnapshot =
         aggregateAdmissionSnapshots.get().get(workItem.getId());
-    HandoffPreparation preparation;
+    HandoffPreflight preflight;
     try {
-      HandoffPreflight preflight =
+      preflight =
           aggregateSnapshot == null
               ? preflight(workItem)
               : HandoffPreflight.from(aggregateSnapshot);
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Unable to preflight script handoff for workItemId={} commandOrdinal={}",
+          workItem.getId(),
+          command.ordinal(),
+          ex);
+      return retryablePreparationResult();
+    }
+    HandoffPreparation preparation;
+    try {
       preparation = executeIntentTransaction(workItem, command, dispatchId, preflight);
     } catch (RuntimeException ex) {
       LOGGER.warn(
@@ -274,7 +284,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
           workItem.getId(),
           command.ordinal(),
           ex);
-      return retryablePreparationResult();
+      return reconcileFailedIntentPreparation(workItem, command, dispatchId);
     }
     if (preparation.result() != null) {
       return preparation.result();
@@ -381,7 +391,7 @@ public class ScriptGameplayCommandHandoffServiceImpl
     // the local fence in that transaction even when aggregate fanout retained a remote runtime
     // snapshot; the aggregate snapshot is not local admission authority.
     lockAdmissionScope(workItem);
-    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command);
+    HandoffResult acceptedResult = acceptedHandoffResult(workItem, command, dispatchId);
     if (acceptedResult != null) {
       return new HandoffPreparation(acceptedResult, false);
     }
@@ -434,6 +444,12 @@ public class ScriptGameplayCommandHandoffServiceImpl
         aggregateSnapshot == null
             ? preflight.runtimeScopeStatus()
             : aggregateSnapshot.runtimeRegionScopeStatus();
+    if (runtimeScopeStatus == RuntimeRegionScopeStatus.SKIPPED) {
+      // The preflight skipped the remote read because admission was unavailable or fenced. If
+      // admission recovered before this transaction, do not reinterpret that skipped read as a
+      // malformed owner response; let the caller retry with a fresh preflight outside the tx.
+      return new HandoffPreparation(retryablePreparationResult(), false);
+    }
     if (runtimeScopeStatus == RuntimeRegionScopeStatus.ADVANCED) {
       Instant now = Instant.now();
       cancelForRuntimeRegionScopeAdvance(
@@ -580,7 +596,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
 
   private record HandoffRowFence(Long id, int rowVersion) {}
 
-  private HandoffResult acceptedHandoffResult(ScriptWorkItem workItem, EmittedCommand command) {
+  private HandoffResult acceptedHandoffResult(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
     ScriptHandoffEvent existing =
         handoffEventRepository
             .findByTenantIdAndWorkItemIdAndCommandOrdinal(
@@ -588,6 +605,17 @@ public class ScriptGameplayCommandHandoffServiceImpl
             .orElse(null);
     if (existing == null) {
       return null;
+    }
+    if (isAcceptedHandoff(existing)
+        && !handoffIdentityMatches(existing, workItem, command, dispatchId)) {
+      return new HandoffResult(
+          false,
+          ScriptHandoffOutcomeSupport.OUTCOME_REMOTE_REJECTED,
+          "",
+          "",
+          "",
+          ScriptHandoffOutcomeSupport.REASON_IDEMPOTENCY_CONFLICT,
+          "existing handoff child identity does not match request");
     }
     return switch (normalize(existing.getHandoffOutcome()).trim().toLowerCase(Locale.ROOT)) {
       case "enqueued" ->
@@ -923,7 +951,8 @@ public class ScriptGameplayCommandHandoffServiceImpl
     CURRENT,
     ADVANCED,
     UNAVAILABLE,
-    MALFORMED
+    MALFORMED,
+    SKIPPED
   }
 
   private record AggregateAdmissionSnapshot(
@@ -942,8 +971,45 @@ public class ScriptGameplayCommandHandoffServiceImpl
     RuntimeRegionScopeStatus runtimeScopeStatus =
         admissionFenceReason == null
             ? runtimeRegionScopeStatusOutsideTransaction(workItem)
-            : RuntimeRegionScopeStatus.MALFORMED;
+            : RuntimeRegionScopeStatus.SKIPPED;
     return new HandoffPreflight(admissionFenceReason, runtimeScopeStatus);
+  }
+
+  private HandoffResult reconcileFailedIntentPreparation(
+      ScriptWorkItem workItem, EmittedCommand command, String dispatchId) {
+    try {
+      return executeRpcWithoutLocalTransaction(
+          () -> {
+            Optional<ScriptWorkItem> persistedWorkItem =
+                workItemRepository.findById(workItem.getId());
+            Optional<ScriptHandoffEvent> persistedIntent =
+                handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal(
+                    workItem.getTenantId(), workItem.getId(), command.ordinal());
+            if (persistedIntent.isPresent()) {
+              ScriptHandoffEvent intent = persistedIntent.orElseThrow();
+              ScriptWorkItem identitySource = persistedWorkItem.orElse(workItem);
+              if (!handoffIdentityMatches(intent, identitySource, command, dispatchId)) {
+                return reconciliationRequiredResult(
+                    "persisted handoff intent identity does not match request; reconciliation is required");
+              }
+              return reconciliationRequiredResult(
+                  "handoff intent may have committed; reconciliation is required");
+            }
+            if (persistedWorkItem.isEmpty()
+                || !"EVALUATING".equals(persistedWorkItem.orElseThrow().getStatus())) {
+              return reconciliationRequiredResult(
+                  "handoff preparation outcome could not be confirmed");
+            }
+            return retryablePreparationResult();
+          });
+    } catch (RuntimeException readbackFailure) {
+      LOGGER.warn(
+          "Unable to read back failed script handoff preparation for workItemId={} commandOrdinal={}; retaining in-flight evidence",
+          workItem.getId(),
+          command.ordinal(),
+          readbackFailure);
+      return reconciliationRequiredResult(readbackFailure);
+    }
   }
 
   private RuntimeRegionScopeStatus runtimeRegionScopeStatusOutsideTransaction(

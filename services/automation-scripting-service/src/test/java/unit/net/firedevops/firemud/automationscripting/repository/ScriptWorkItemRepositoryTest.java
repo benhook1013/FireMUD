@@ -584,13 +584,23 @@ class ScriptWorkItemRepositoryTest {
     assertThat(sqlStatements).hasSize(6);
     assertThat(sqlStatements.get(0))
         .startsWith("select")
-        .contains("for update", "script_dead_letter_replay_results", "retention_hold_until");
+        .contains(
+            "for update",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at");
+    assertThat(sqlStatements.get(0))
+        .contains("\"observed_at\" is null", "\"observed_at\" >= cast(? as timestamp");
     assertThat(sqlStatements.get(1))
         .startsWith("select")
         .contains("script_handoff_events", "for update");
     assertThat(sqlStatements.get(2))
         .startsWith("select")
-        .contains("script_work_items", "script_dead_letter_replay_results", "retention_hold_until")
+        .contains(
+            "script_work_items",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at")
         .contains("for update");
     assertThat(sqlStatements.get(3))
         .startsWith("update")
@@ -601,7 +611,11 @@ class ScriptWorkItemRepositoryTest {
     assertThat(sqlStatements.get(5))
         .contains("script_work_items")
         .contains("status")
-        .contains("updated_at", "script_dead_letter_replay_results", "retention_hold_until");
+        .contains(
+            "updated_at",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at");
   }
 
   @Test
@@ -637,7 +651,8 @@ class ScriptWorkItemRepositoryTest {
         .contains("status")
         .contains("order by")
         .contains("fetch next")
-        .contains("for update");
+        .contains("for update")
+        .doesNotContain("observed_at");
     assertThat(sqlStatements.get(1))
         .startsWith("select")
         .contains("script_handoff_events", "for update");
@@ -652,7 +667,8 @@ class ScriptWorkItemRepositoryTest {
     assertThat(sqlStatements.get(4))
         .contains("script_handoff_events", "retention_hold_until", "current_timestamp");
     assertThat(sqlStatements.get(5))
-        .contains("script_work_items", "status", "script_dead_letter_replay_results");
+        .contains("script_work_items", "status", "script_dead_letter_replay_results")
+        .doesNotContain("observed_at");
   }
 
   @Test
@@ -696,7 +712,11 @@ class ScriptWorkItemRepositoryTest {
     assertThat(sqlStatements).hasSize(3);
     assertThat(sqlStatements.get(1)).contains("script_handoff_events", "for update");
     assertThat(sqlStatements.get(2))
-        .contains("script_work_items", "script_dead_letter_replay_results", "retention_hold_until")
+        .contains(
+            "script_work_items",
+            "script_dead_letter_replay_results",
+            "retention_hold_until",
+            "observed_at")
         .contains("for update");
   }
 
@@ -724,6 +744,7 @@ class ScriptWorkItemRepositoryTest {
                         "retention_hold_until",
                         "handoff_outcome",
                         "regexp_replace",
+                        "observed_at",
                         "current_timestamp"));
     assertThat(sql.get())
         .contains("script_handoff_events\".\"tenant_id\" = \"script_work_items\".\"tenant_id\"")
