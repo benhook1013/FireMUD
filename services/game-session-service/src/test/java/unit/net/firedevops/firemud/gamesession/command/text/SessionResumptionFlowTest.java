@@ -1,5 +1,14 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.List;
@@ -65,14 +74,7 @@ import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
@@ -444,8 +446,7 @@ class SessionResumptionFlowTest {
     Mockito.verify(firstPartyConnectContextRegistry, Mockito.never()).unregister(1L);
     Mockito.verify(gameInstanceService, Mockito.never()).stopSession(Mockito.anyLong());
 
-    TextCommandInterpretationResult secondLogin =
-        interpreter.interpret("2", LOGIN_PAYLOAD, false);
+    TextCommandInterpretationResult secondLogin = interpreter.interpret("2", LOGIN_PAYLOAD, false);
     assertTrue(secondLogin.commandResult().accepted());
     assertEquals(
         sessionBeforeLogout, sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow());
@@ -836,6 +837,4 @@ class SessionResumptionFlowTest {
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .allMatch(presence -> presence.role() == GameplayPresenceRole.PLAYER));
   }
-
-
 }

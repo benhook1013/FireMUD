@@ -1138,7 +1138,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(secondPayloads)
         .noneMatch(
             payload ->
-                "transcript_chunk".equals(json(payload).path("eventType").asText())
                 ("transcript_chunk".equals(json(payload).path("eventType").asText())
                         || "transcript_entry".equals(json(payload).path("eventType").asText()))
                     && payload.contains("First-party replay"));

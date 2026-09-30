@@ -1,5 +1,9 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.when;
+
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -46,9 +50,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.when;
+
 class PlayCommandHandlerTest {
   private static final String PLAY_COMMAND_NAME = "PLAY";
   private static final UUID ADMISSION_REALM_ID =
@@ -3142,5 +3144,4 @@ class PlayCommandHandlerTest {
   private static String tenantForGameInstance(String gameInstanceId) {
     return "2".equals(gameInstanceId) || "41".equals(gameInstanceId) ? "23" : "22";
   }
-
 }

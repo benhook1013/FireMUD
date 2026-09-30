@@ -35,13 +35,15 @@ class V8__enforce_tenant_public_realm_cardinalityTest {
                 Matcher matcher = MIGRATION_FILE.matcher(name);
                 assertThat(matcher.matches()).as("migration filename %s", name).isTrue();
                 MigrationVersion version = MigrationVersion.fromVersion(matcher.group(1));
-                namesByVersion.computeIfAbsent(version, ignored -> new java.util.ArrayList<>())
+                namesByVersion
+                    .computeIfAbsent(version, ignored -> new java.util.ArrayList<>())
                     .add(name);
               });
     }
 
     assertThat(namesByVersion.values()).allSatisfy(names -> assertThat(names).hasSize(1));
-    List<String> orderedMigrationNames = namesByVersion.values().stream().flatMap(List::stream).toList();
+    List<String> orderedMigrationNames =
+        namesByVersion.values().stream().flatMap(List::stream).toList();
     assertThat(orderedMigrationNames)
         .containsSubsequence(
             "V7__audit_gameplay_catalog_revision.sql",

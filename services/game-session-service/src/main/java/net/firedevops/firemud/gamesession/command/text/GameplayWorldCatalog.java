@@ -235,14 +235,15 @@ public final class GameplayWorldCatalog {
     }
     List<RealmView> matches =
         visibleRealms(world).stream()
-        .filter(realm -> realm.slug().equalsIgnoreCase(originatingTarget.realmSlug()))
-        .filter(realm -> realm.tenantId() == originatingTarget.tenantId())
-        .filter(realm -> realm.catalogRevision() == originatingTarget.catalogRevision())
-        .filter(realm -> realm.pointerVersion() == originatingTarget.pointerVersion())
-        .filter(
-            realm ->
-                realmTargetFingerprint(world, realm).equals(originatingTarget.targetFingerprint()))
-        .toList();
+            .filter(realm -> realm.slug().equalsIgnoreCase(originatingTarget.realmSlug()))
+            .filter(realm -> realm.tenantId() == originatingTarget.tenantId())
+            .filter(realm -> realm.catalogRevision() == originatingTarget.catalogRevision())
+            .filter(realm -> realm.pointerVersion() == originatingTarget.pointerVersion())
+            .filter(
+                realm ->
+                    realmTargetFingerprint(world, realm)
+                        .equals(originatingTarget.targetFingerprint()))
+            .toList();
     return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
@@ -613,8 +614,7 @@ public final class GameplayWorldCatalog {
             .flatMap(
                 world ->
                     visibleRealms(world).stream()
-                        .filter(
-                            realm -> normalizedRealm.equals(normalizeSlug(realm.slug())))
+                        .filter(realm -> normalizedRealm.equals(normalizeSlug(realm.slug())))
                         .map(
                             realm ->
                                 new RuntimeRealmTarget(

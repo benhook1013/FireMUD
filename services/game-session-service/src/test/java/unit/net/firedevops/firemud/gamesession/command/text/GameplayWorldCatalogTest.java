@@ -1,5 +1,9 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.when;
+
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
@@ -15,9 +19,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mockito;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.when;
+
 class GameplayWorldCatalogTest {
   private final GameplayAdmissionPointerAuthorityService authorityService =
       Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -41,7 +43,8 @@ class GameplayWorldCatalogTest {
         .thenReturn(
             List.of(
                 pointer("demo", "Demo World", "production", "Live Realm", 1L, 11L, 7L),
-                pointer("authority", "Authority World", "production", "Authority Live", 2L, 21L, 8L)));
+                pointer(
+                    "authority", "Authority World", "production", "Authority Live", 2L, 21L, 8L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     GameplayWorldCatalog.DiscoverySnapshot snapshot = catalog.readDiscoverySnapshot();
@@ -1089,16 +1092,6 @@ class GameplayWorldCatalogTest {
 
   private static GameplayWorldCatalog.RealmView realm(String slug, boolean publicProduction) {
     return new GameplayWorldCatalog.RealmView(
-        slug,
-        slug,
-        7L,
-        11L,
-        1L,
-        true,
-        publicProduction,
-        false,
-        "SHARED",
-        "ALLOW_NEW");
+        slug, slug, 7L, 11L, 1L, true, publicProduction, false, "SHARED", "ALLOW_NEW");
   }
-
 }

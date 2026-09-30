@@ -1,5 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,7 +31,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
-import static org.assertj.core.api.Assertions.assertThat;
+
 class WorldsCommandHandlerTest {
   private static final UUID ADMISSION_REALM_ID =
       UUID.fromString("00000000-0000-0000-0000-000000000001");
@@ -2223,5 +2225,4 @@ class WorldsCommandHandlerTest {
     world.setRealms(List.of(realm));
     return world;
   }
-
 }

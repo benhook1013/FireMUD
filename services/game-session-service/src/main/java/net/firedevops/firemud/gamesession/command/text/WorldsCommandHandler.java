@@ -17,7 +17,6 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
-import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
@@ -1053,6 +1052,7 @@ public class WorldsCommandHandler {
     static CharacterBrowseResult success(CharacterBrowseViewOutput output) {
       return new Success(output);
     }
+
     static CharacterBrowseResult invalidWorld() {
       return new InvalidWorld();
     }
