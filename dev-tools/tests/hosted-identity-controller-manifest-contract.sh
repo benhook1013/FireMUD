@@ -4693,11 +4693,39 @@ def env_map(container, service):
     entries = container.get("env")
     if not isinstance(entries, list):
         fail(f"Deployment/{service} container has no env list")
-    return {
-        entry.get("name"): entry
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("name")
-    }
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = entry["name"]
+        if name in result:
+            fail(f"Deployment/{service} has duplicate env name {name}")
+        result[name] = entry
+    return result
+
+
+synthetic_duplicate_env_rejections = 0
+duplicate_namespace_env = {
+    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+}
+try:
+    env_map(
+        {"env": [duplicate_namespace_env, duplicate_namespace_env]},
+        "synthetic duplicate fixture",
+    )
+except SystemExit as error:
+    if "duplicate env name FIREMUD_GRPC_WORKLOAD_NAMESPACE" not in str(error):
+        raise
+    synthetic_duplicate_env_rejections += 1
+else:
+    fail("synthetic duplicate env fixture was not rejected")
+if synthetic_duplicate_env_rejections != 1:
+    fail(
+        "synthetic duplicate env proof expected one rejection, found "
+        f"{synthetic_duplicate_env_rejections}"
+    )
+print(f"synthetic duplicate env fixtures rejected: {synthetic_duplicate_env_rejections}")
 
 
 def assert_paths_and_mount(container, service, cert_path, key_path, ca_path):
@@ -4916,27 +4944,34 @@ if base_logging_admin_grpc_volume.get("secret", {}).get("secretName") != "firemu
     )
 PY
 
-python3 - "$resolved_values" "$namespace_gate_values" <<'PY'
+for certificate_identity_mode in standalone hosted-controller; do
+  for logging_spring_profile in true false; do
+    python3 - "$resolved_values" "$namespace_gate_values" "$certificate_identity_mode" "$logging_spring_profile" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
 values = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+certificate_identity_mode = sys.argv[3]
+logging_spring_profile = sys.argv[4] == "true"
+values["previewStack"]["certificateIdentity"]["mode"] = certificate_identity_mode
 services = values["previewStack"]["services"]
 by_name = {service["name"]: service for service in services}
+by_name["logging-admin-service"]["springProfile"] = logging_spring_profile
+by_name["logging-admin-service"]["mountGrpcTls"] = True
 by_name["game-design-service"]["springProfile"] = False
 by_name["game-design-service"]["mountGrpcTls"] = True
 by_name["world-management-service"]["mountGrpcTls"] = False
 Path(sys.argv[2]).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
 
-if ! helm template hosted-identity-namespace-gates "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$namespace_gate_values" \
-  >"$namespace_gate_rendered"; then
-  fail "Helm chart render failed for gRPC namespace gate fixture"
-fi
-python3 - "$namespace_gate_rendered" <<'PY'
+    if ! helm template "ns-gate-${certificate_identity_mode}-${logging_spring_profile}" "$ROOT_DIR/k8s/helm/firemud" \
+      -f "$namespace_gate_values" \
+      >"$namespace_gate_rendered"; then
+      fail "Helm chart render failed for gRPC namespace gate fixture (${certificate_identity_mode}, springProfile=${logging_spring_profile})"
+    fi
+    python3 - "$namespace_gate_rendered" "$certificate_identity_mode" "$logging_spring_profile" <<'PY'
 import sys
 from pathlib import Path
 
@@ -4952,6 +4987,8 @@ deployments = {
     for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
     if isinstance(document, dict) and document.get("kind") == "Deployment"
 }
+certificate_identity_mode = sys.argv[2]
+logging_spring_profile = sys.argv[3] == "true"
 
 
 def env_map(service):
@@ -4962,8 +4999,80 @@ def env_map(service):
     container = next((item for item in containers if item.get("name") == service), None)
     if container is None:
         fail(f"container/{service} is missing")
-    return {entry.get("name"): entry for entry in container.get("env", []) if entry.get("name")}
+    entries = container.get("env")
+    if not isinstance(entries, list):
+        fail(f"container/{service} has no env list")
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = entry["name"]
+        if name in result:
+            fail(f"Deployment/{service} has duplicate env name {name}")
+        result[name] = entry
+    return result
 
+
+logging_env = env_map("logging-admin-service")
+logging_deployment = deployments["logging-admin-service"]
+logging_container = next(
+    item
+    for item in logging_deployment["spec"]["template"]["spec"]["containers"]
+    if item.get("name") == "logging-admin-service"
+)
+namespace_entries = [
+    entry
+    for entry in logging_container["env"]
+    if isinstance(entry, dict)
+    and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+]
+if len(namespace_entries) != 1:
+    fail(
+        "logging-admin-service must render exactly one "
+        "FIREMUD_GRPC_WORKLOAD_NAMESPACE, found "
+        f"{len(namespace_entries)}"
+    )
+namespace = logging_env.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+if namespace != {
+    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+}:
+    fail(f"logging-admin-service must derive namespace from metadata.namespace, found {namespace!r}")
+if logging_spring_profile:
+    if logging_env.get("SPRING_PROFILES_ACTIVE") != {
+        "name": "SPRING_PROFILES_ACTIVE",
+        "value": "prod",
+    }:
+        fail("springProfile=true logging-admin-service must enable the prod profile")
+elif "SPRING_PROFILES_ACTIVE" in logging_env:
+    fail("springProfile=false logging-admin-service unexpectedly enables the Spring profile")
+
+expected_paths = {
+    "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/client.crt",
+    "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/client.key",
+    "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+}
+for name, value in expected_paths.items():
+    if logging_env.get(name, {}).get("value") != value:
+        fail(
+            f"{certificate_identity_mode} logging-admin-service must retain shared "
+            f"{name}={value!r}, found {logging_env.get(name)!r}"
+        )
+pod_spec = logging_deployment["spec"]["template"]["spec"]
+grpc_mounts = [
+    mount
+    for mount in logging_container.get("volumeMounts", [])
+    if isinstance(mount, dict) and mount.get("name") == "grpc-tls"
+]
+if len(grpc_mounts) != 1 or grpc_mounts[0].get("mountPath") != "/tls" or grpc_mounts[0].get("readOnly") is not True:
+    fail(f"{certificate_identity_mode} logging-admin-service must retain its read-only shared /tls mount")
+grpc_volumes = [
+    volume
+    for volume in pod_spec.get("volumes", [])
+    if isinstance(volume, dict) and volume.get("name") == "grpc-tls"
+]
+if len(grpc_volumes) != 1 or grpc_volumes[0].get("secret", {}).get("secretName") != "firemud-grpc-tls":
+    fail(f"{certificate_identity_mode} logging-admin-service must retain the shared firemud-grpc-tls Secret")
 
 mounted_without_spring = env_map("game-design-service")
 namespace = mounted_without_spring.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
@@ -4979,5 +5088,7 @@ without_mount = env_map("world-management-service")
 if "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in without_mount:
     fail("publication workload without a gRPC TLS mount unexpectedly declares namespace")
 PY
+  done
+done
 
 echo "hosted identity controller manifest contract passed"

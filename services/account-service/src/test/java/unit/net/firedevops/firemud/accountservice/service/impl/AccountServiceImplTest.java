@@ -932,8 +932,17 @@ class AccountServiceImplTest {
         subscriptionRepository, accountTenantMembershipRepository, accountAuditOutboxRepository);
   }
 
-  @Test
-  void expiredTerminalJoinScopeFailsClosedWithoutReplayingStoredSuccess() {
+  @ParameterizedTest
+  @CsvSource({
+    "COMMITTED, JOINED, true, active, true",
+    "FAILED, PUBLIC_PRODUCTION_ADMISSION_DENIED, false, grace, false"
+  })
+  void exactTerminalJoinRetryReplaysAfterConnectScopeExpiry(
+      String status,
+      String outcome,
+      boolean allowPublicJoin,
+      String entitlementStatus,
+      boolean expectedSuccess) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -950,10 +959,117 @@ class AccountServiceImplTest {
     AtomicReference<AccountJoinOperationRepository.JoinOperation> retainedOperation =
         new AtomicReference<>();
     retainJoinEvidence(retainedScope, retainedOperation);
-    String connectScopeId = "expired-committed-connect-scope";
+    Subscription currentPolicy = new Subscription();
+    currentPolicy.setId(22L);
+    currentPolicy.setTenantId(7L);
+    currentPolicy.setStatus(entitlementStatus);
+    currentPolicy.setEntitlementVersion(1L);
+    when(subscriptionRepository.findByTenantIdForUpdate(7L))
+        .thenReturn(java.util.List.of(currentPolicy));
+
+    String connectScopeId = expiredConnectScopeId();
     JoinPublicProductionRequest request =
-        new JoinPublicProductionRequest(connectScopeId, "join-expired-committed-1");
-    VerifiedJoinScope unsignedExpiredScope =
+        new JoinPublicProductionRequest(connectScopeId, "join-expired-terminal-1");
+    VerifiedJoinScope expiredScope = expiredVerifiedJoinScope(connectScopeId);
+    retainedScope.set(expiredScope);
+    String callerBinding =
+        new JwtUtil(JWT_SECRET, 300000L)
+            .parseToken(bootstrap.bootstrapToken())
+            .getPayload()
+            .get("jti")
+            .toString();
+    var terminalOperation =
+        terminalJoinOperation(
+            request.requestId(),
+            expiredScope,
+            callerBinding,
+            status,
+            outcome,
+            allowPublicJoin,
+            false);
+    retainedOperation.set(terminalOperation);
+
+    JoinPublicProductionResult retry =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    assertEquals(expectedSuccess, retry.success());
+    assertTrue(retry.replayed());
+    assertEquals(outcome, retry.outcomeCode());
+    assertEquals(terminalOperation, retainedOperation.get());
+    assertEquals(status, retainedOperation.get().status());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
+    verifyNoInteractions(accountAuditOutboxRepository);
+
+    var mismatchedIntent =
+        terminalJoinOperation(
+            request.requestId(),
+            expiredScope,
+            callerBinding,
+            status,
+            outcome,
+            allowPublicJoin,
+            true);
+    retainedOperation.set(mismatchedIntent);
+    AuthenticationException intentConflict =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.joinPublicProduction(bootstrap.bootstrapToken(), request));
+
+    assertEquals("IDEMPOTENCY_CONFLICT", intentConflict.getCode());
+    assertEquals(mismatchedIntent, retainedOperation.get());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
+        .findByTenantIdForUpdate(7L);
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finish(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.nullable(Long.class),
+            org.mockito.ArgumentMatchers.nullable(Long.class),
+            org.mockito.ArgumentMatchers.nullable(Long.class));
+  }
+
+  @Test
+  void newJoinRejectsExpiredConnectScopeBeforePersistingIntent() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(sessionService.isAccountSessionActive(
+            org.mockito.ArgumentMatchers.eq(11L), org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(true);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException expiredScope =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProduction(
+                    bootstrap.bootstrapToken(),
+                    new JoinPublicProductionRequest(
+                        expiredConnectScopeId(), "join-expired-new-1")));
+
+    assertEquals("CONNECT_SCOPE_INVALID", expiredScope.getCode());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .insertIntent(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    verifyNoInteractions(
+        accountConnectScopeRepository,
+        accountTenantMembershipRepository,
+        subscriptionRepository,
+        accountAuditOutboxRepository);
+  }
+
+  private VerifiedJoinScope expiredVerifiedJoinScope(String connectScopeId) {
+    VerifiedJoinScope unsignedScope =
         new VerifiedJoinScope(
             connectScopeId,
             11L,
@@ -969,89 +1085,95 @@ class AccountServiceImplTest {
             "1999-12-31T23:59:00Z",
             "2000-01-01T00:00:00Z",
             "");
-    VerifiedJoinScope expiredScope =
-        new VerifiedJoinScope(
-            unsignedExpiredScope.connectScopeId(),
-            unsignedExpiredScope.accountId(),
-            unsignedExpiredScope.tenantId(),
-            unsignedExpiredScope.realmId(),
-            unsignedExpiredScope.worldSlug(),
-            unsignedExpiredScope.realmSlug(),
-            unsignedExpiredScope.playableStateNamespaceId(),
-            unsignedExpiredScope.playableStateScope(),
-            unsignedExpiredScope.gameInstanceId(),
-            unsignedExpiredScope.catalogRevision(),
-            unsignedExpiredScope.pointerVersion(),
-            unsignedExpiredScope.evaluatedAt(),
-            unsignedExpiredScope.connectScopeExpiresAt(),
-            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.scope(
-                unsignedExpiredScope));
-    retainedScope.set(expiredScope);
-    String callerBinding =
-        new JwtUtil(JWT_SECRET, 300000L)
-            .parseToken(bootstrap.bootstrapToken())
-            .getPayload()
-            .get("jti")
-            .toString();
-    var committedOperation =
-        new AccountJoinOperationRepository.JoinOperation(
-            request.requestId(),
-            expiredScope.accountId(),
-            expiredScope.tenantId(),
-            expiredScope.realmId(),
-            expiredScope.worldSlug(),
-            expiredScope.realmSlug(),
-            expiredScope.playableStateNamespaceId(),
-            expiredScope.playableStateScope(),
-            expiredScope.gameInstanceId(),
-            expiredScope.catalogRevision(),
-            expiredScope.pointerVersion(),
-            callerBinding,
-            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
-            expiredScope.snapshotDigest(),
-            "AVAILABLE",
-            true,
-            1L,
-            1,
-            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.request(
-                expiredScope, callerBinding, true, 1L),
-            "COMMITTED",
-            "JOINED",
-            701L,
-            1L,
-            1L,
-            1,
-            net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
-                request.requestId(), expiredScope, callerBinding),
-            null,
-            "AVAILABLE",
-            0,
-            null,
-            null,
-            java.time.Instant.now());
-    retainedOperation.set(committedOperation);
+    return new VerifiedJoinScope(
+        unsignedScope.connectScopeId(),
+        unsignedScope.accountId(),
+        unsignedScope.tenantId(),
+        unsignedScope.realmId(),
+        unsignedScope.worldSlug(),
+        unsignedScope.realmSlug(),
+        unsignedScope.playableStateNamespaceId(),
+        unsignedScope.playableStateScope(),
+        unsignedScope.gameInstanceId(),
+        unsignedScope.catalogRevision(),
+        unsignedScope.pointerVersion(),
+        unsignedScope.evaluatedAt(),
+        unsignedScope.connectScopeExpiresAt(),
+        net.firedevops.firemud.accountservice.dto.AccountJoinDigest.scope(unsignedScope));
+  }
 
-    JoinPublicProductionResult retry =
-        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+  private String expiredConnectScopeId() {
+    return new JwtUtil(JWT_SECRET, 120000L)
+        .generateToken(
+            "11",
+            -1000L,
+            Map.ofEntries(
+                Map.entry("aud", "bootstrap-connect-scope"),
+                Map.entry("accountId", 11L),
+                Map.entry("tenantId", 7L),
+                Map.entry("realmId", REALM_ID),
+                Map.entry("worldSlug", "demo"),
+                Map.entry("realmSlug", "production"),
+                Map.entry("playableStateNamespaceId", PLAYABLE_STATE_NAMESPACE_ID),
+                Map.entry("playableStateScope", "SHARED"),
+                Map.entry("gameInstanceId", 44L),
+                Map.entry("catalogRevision", 23L),
+                Map.entry("pointerVersion", 17L),
+                Map.entry("evaluatedAt", "1999-12-31T23:59:00Z"),
+                Map.entry("connectScopeExpiresAt", "2000-01-01T00:00:00Z"),
+                Map.entry("jti", "expired-connect-scope")));
+  }
 
-    assertFalse(retry.success());
-    assertFalse(retry.replayed());
-    assertEquals("CONNECT_SCOPE_INVALID", retry.outcomeCode());
-    assertEquals(committedOperation, retainedOperation.get());
-    assertEquals("COMMITTED", retainedOperation.get().status());
-    assertEquals("JOINED", retainedOperation.get().outcome());
-    assertEquals(701L, retainedOperation.get().membershipId());
-    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
-        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
-    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
-        .finish(
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.nullable(Long.class),
-            org.mockito.ArgumentMatchers.nullable(Long.class),
-            org.mockito.ArgumentMatchers.nullable(Long.class));
-    verifyNoInteractions(subscriptionRepository, accountAuditOutboxRepository);
+  private AccountJoinOperationRepository.JoinOperation terminalJoinOperation(
+      String requestId,
+      VerifiedJoinScope scope,
+      String callerBinding,
+      String status,
+      String outcome,
+      boolean allowPublicJoin,
+      boolean corruptIntentDigest) {
+    String intentDigest =
+        net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
+            requestId, scope, callerBinding);
+    if (corruptIntentDigest) {
+      intentDigest = "corrupt-" + intentDigest;
+    }
+    boolean committed = "COMMITTED".equals(status);
+    return new AccountJoinOperationRepository.JoinOperation(
+        requestId,
+        scope.accountId(),
+        scope.tenantId(),
+        scope.realmId(),
+        scope.worldSlug(),
+        scope.realmSlug(),
+        scope.playableStateNamespaceId(),
+        scope.playableStateScope(),
+        scope.gameInstanceId(),
+        scope.catalogRevision(),
+        scope.pointerVersion(),
+        callerBinding,
+        net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(
+            scope.connectScopeId()),
+        scope.snapshotDigest(),
+        "AVAILABLE",
+        allowPublicJoin,
+        1L,
+        1,
+        net.firedevops.firemud.accountservice.dto.AccountJoinDigest.request(
+            scope, callerBinding, allowPublicJoin, 1L),
+        status,
+        outcome,
+        committed ? 701L : null,
+        committed ? 1L : null,
+        committed ? 1L : null,
+        1,
+        intentDigest,
+        null,
+        "AVAILABLE",
+        0,
+        null,
+        null,
+        java.time.Instant.now());
   }
 
   @Test
