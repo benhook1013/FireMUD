@@ -698,17 +698,13 @@ class GameSessionGrpcServiceTest {
         authorityPointer("private", "preview", 7L, 66L, true, false);
     Mockito.when(pointerAuthorityService.listPointers())
         .thenReturn(
-            List.of(
-                privateRealm,
-                authorityPointer("public-world", "live", 7L, 44L, true, true)));
+            List.of(privateRealm, authorityPointer("public-world", "live", 7L, 44L, true, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
-    GetAdmissionPointerResponse response =
-        getAdmissionPointer(service, "7", "private", "preview");
+    GetAdmissionPointerResponse response = getAdmissionPointer(service, "7", "private", "preview");
 
     assertFalse(response.hasError());
     assertEquals("66", response.getAdmissionPointer().getGameInstanceId());
-    assertEquals(
-        privateRealm.realmId().toString(), response.getAdmissionPointer().getRealmId());
+    assertEquals(privateRealm.realmId().toString(), response.getAdmissionPointer().getRealmId());
     assertEquals(
         privateRealm.playableStateNamespaceId().toString(),
         response.getAdmissionPointer().getPlayableStateNamespaceId());
@@ -729,8 +725,7 @@ class GameSessionGrpcServiceTest {
                 authorityPointer("beta", "live", 7L, 55L, true, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
 
-    GetAdmissionPointerResponse response =
-        getAdmissionPointer(service, "7", "private", "preview");
+    GetAdmissionPointerResponse response = getAdmissionPointer(service, "7", "private", "preview");
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
     assertFalse(response.hasAdmissionPointer());
@@ -747,8 +742,7 @@ class GameSessionGrpcServiceTest {
         .thenReturn(List.of(authorityPointer("private", "preview", 7L, 66L, true, false)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
 
-    GetAdmissionPointerResponse response =
-        getAdmissionPointer(service, "7", "private", "preview");
+    GetAdmissionPointerResponse response = getAdmissionPointer(service, "7", "private", "preview");
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
     assertFalse(response.hasAdmissionPointer());
@@ -768,8 +762,7 @@ class GameSessionGrpcServiceTest {
                 authorityPointer("hidden", "live", 7L, 44L, false, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
 
-    GetAdmissionPointerResponse response =
-        getAdmissionPointer(service, "7", "private", "preview");
+    GetAdmissionPointerResponse response = getAdmissionPointer(service, "7", "private", "preview");
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
     assertFalse(response.hasAdmissionPointer());
@@ -789,8 +782,7 @@ class GameSessionGrpcServiceTest {
                 authorityPointer("other-tenant", "live", 8L, 44L, true, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
 
-    GetAdmissionPointerResponse response =
-        getAdmissionPointer(service, "7", "private", "preview");
+    GetAdmissionPointerResponse response = getAdmissionPointer(service, "7", "private", "preview");
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
     assertFalse(response.hasAdmissionPointer());
