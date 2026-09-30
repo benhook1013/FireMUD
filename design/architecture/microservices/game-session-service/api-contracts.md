@@ -8,6 +8,8 @@ Target state makes Game Session the authoritative owner of region/tick coordinat
 
 ## Implementation Status
 
+- `EnqueueAutomationCommandIfAbsent` and `ScheduleRemoteFollowup` currently fail closed at their authenticated internal receiving boundary with `FAILED_PRECONDITION` / `automation_admission_receiver_fence_unavailable`, before command, coordinator, follow-up, or queue mutation. The retained lower-level admission implementation does not prove the cross-service Automation admission-epoch fence required by [ADR 0106](../../decisions/adr-0106-epoch-fenced-script-rollback-without-routine-gameplay-pause.md). A separate receiver-fence successor must durably serialize installation against receiving admission, preserve exact retry outcomes, and prove that a handoff whose intent committed before an Automation pause cannot create live work under the displaced admission epoch afterward. This gate preserves ordinary gameplay APIs and does not claim the successor implemented.
+
 This document mixes live and target-state control-plane surfaces. Current live behavior is narrower:
 
 - the shipped pause/resume control path is `PauseTicksForScope` / `ResumeTicksForScope` at the current `{tenantId, gameInstanceId}` runtime boundary;
