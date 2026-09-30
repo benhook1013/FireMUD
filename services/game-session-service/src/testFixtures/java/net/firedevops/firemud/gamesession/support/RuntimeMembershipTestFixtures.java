@@ -3,11 +3,13 @@ package net.firedevops.firemud.gamesession.support;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.RuntimeAuthorityTuple;
 import net.firedevops.firemud.account.v1.RuntimeMembershipBaseline;
 import net.firedevops.firemud.account.v1.RuntimeOutboxCheckpoint;
 import net.firedevops.firemud.account.v1.RuntimeOutboxSourceEvidence;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 
 /** Complete or intentionally incomplete fixtures for the denied runtime membership carrier. */
@@ -15,7 +17,6 @@ public final class RuntimeMembershipTestFixtures {
   private static final String STREAM_PREFIX = "account:auth-authority:v1:";
   private static final String ISSUER = "firemud-account-service";
   private static final String EVENT_ID = "00000000-0000-0000-0000-000000000099";
-  private static final String EVENT_DIGEST = "sha256:" + "0".repeat(64);
   private static final String EVALUATED_AT = "2026-03-30T00:00:00Z";
 
   private RuntimeMembershipTestFixtures() {}
@@ -127,12 +128,41 @@ public final class RuntimeMembershipTestFixtures {
       response.addRoles("player");
     }
     if (exists) {
+      MembershipAuthorityEventV1Codec.MembershipEvent event =
+          MembershipAuthorityEventV1Codec.seal(
+              Map.ofEntries(
+                  Map.entry("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION),
+                  Map.entry("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE),
+                  Map.entry("eventId", EVENT_ID),
+                  Map.entry("requestId", "runtime-membership-request"),
+                  Map.entry("outboxStreamKey", membershipStream),
+                  Map.entry("outboxSequence", "1"),
+                  Map.entry("sourceScope", "membership/" + accountUuid + "/" + tenantUuid),
+                  Map.entry("accountId", accountUuid),
+                  Map.entry("tenantId", tenantUuid),
+                  Map.entry("membershipExists", true),
+                  Map.entry("membershipLifecycleState", lifecycle),
+                  Map.entry("membershipVersion", Map.of(tenantUuid, membershipVersion)),
+                  Map.entry("membershipAuthorityGeneration", "1"),
+                  Map.entry(
+                      "authorityTuple",
+                      Map.of(
+                          "issuerAuthGeneration", "1",
+                          "accountAuthorityGeneration", "1",
+                          "tenantAuthorityGeneration", Map.of(tenantUuid, "1"),
+                          "membershipAuthorityGeneration", Map.of(tenantUuid, "1"),
+                          "privateRealmGrantVersions", List.of())),
+                  Map.entry("issuanceFence", "1"),
+                  Map.entry("roles", admitted ? List.of("player") : List.of()),
+                  Map.entry("gameplayAdmissionAllowed", admitted),
+                  Map.entry("callerBoundAuthorityInvalidated", false)));
       response.addOutboxSourceEvidence(
           RuntimeOutboxSourceEvidence.newBuilder()
               .setOutboxStreamKey(membershipStream)
               .setOutboxSequence("1")
-              .setEventId(EVENT_ID)
-              .setEventDigest(EVENT_DIGEST));
+              .setEventId(event.eventId())
+              .setEventDigest(event.eventDigest())
+              .setCanonicalEventJson(event.canonicalJson()));
     }
     return response.build();
   }

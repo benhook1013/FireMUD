@@ -7,14 +7,18 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.RuntimeAuthorityTuple;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
@@ -918,11 +922,114 @@ public class PlayCommandHandler {
       return false;
     }
     var source = response.getOutboxSourceEvidence(0);
-    return source.getUnknownFields().asMap().isEmpty()
-        && source.getOutboxStreamKey().equals(membershipStream)
-        && source.getOutboxSequence().equals(checkpointSequences.get(membershipStream))
-        && isCanonicalUuid(source.getEventId())
-        && source.getEventDigest().matches("sha256:[0-9a-f]{64}");
+    if (!source.getUnknownFields().asMap().isEmpty()
+        || !source.getOutboxStreamKey().equals(membershipStream)
+        || !source.getOutboxSequence().equals(checkpointSequences.get(membershipStream))
+        || !isCanonicalUuid(source.getEventId())
+        || !source.getEventDigest().matches("sha256:[0-9a-f]{64}")
+        || !StringUtils.hasText(source.getCanonicalEventJson())) {
+      return false;
+    }
+    final MembershipAuthorityEventV1Codec.MembershipEvent event;
+    try {
+      event = MembershipAuthorityEventV1Codec.verify(source.getCanonicalEventJson());
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+    return matchesMembershipEvent(response, source, event, checkpointSequences, membershipStream);
+  }
+
+  private static boolean matchesMembershipEvent(
+      GetTenantMembershipForRuntimeResponse response,
+      net.firedevops.firemud.account.v1.RuntimeOutboxSourceEvidence source,
+      MembershipAuthorityEventV1Codec.MembershipEvent event,
+      Map<String, String> checkpointSequences,
+      String membershipStream) {
+    return event.canonicalJson().equals(source.getCanonicalEventJson())
+        && event.eventId().equals(source.getEventId())
+        && event.eventDigest().equals(source.getEventDigest())
+        && event.outboxStreamKey().equals(source.getOutboxStreamKey())
+        && event.outboxSequence().equals(source.getOutboxSequence())
+        && event.outboxStreamKey().equals(membershipStream)
+        && event.outboxSequence().equals(checkpointSequences.get(membershipStream))
+        && event.accountId().equals(response.getAccountId())
+        && event.tenantId().equals(response.getTenantId())
+        && event.membershipLifecycleState().equals(response.getMembershipLifecycleState())
+        && event.membershipVersion().equals(response.getMembershipVersionMap())
+        && event.membershipAuthorityGeneration().equals(response.getMembershipAuthorityGeneration())
+        && event.issuanceFence().equals(response.getIssuanceFence())
+        && event.roles().equals(response.getRolesList())
+        && event.gameplayAdmissionAllowed() == response.getGameplayAdmissionAllowed()
+        && matchesAuthorityTuple(response.getAuthorityTuple(), event.authorityTuple());
+  }
+
+  private static boolean matchesAuthorityTuple(
+      RuntimeAuthorityTuple response, MembershipAuthorityEventV1Codec.AuthorityTuple event) {
+    if (!response.getIssuerAuthGeneration().equals(event.issuerAuthGeneration())
+        || !response.getAccountAuthorityGeneration().equals(event.accountAuthorityGeneration())
+        || !response.getTenantAuthorityGenerationMap().equals(event.tenantAuthorityGeneration())
+        || !response
+            .getMembershipAuthorityGenerationMap()
+            .equals(event.membershipAuthorityGeneration())
+        || response.getPrivateRealmGrantVersionsCount() != event.privateRealmGrantVersions().size()
+        || response.hasAccountSecurityCutoff() != event.accountSecurityCutoff().isPresent()
+        || response.hasTenantBillingCutoff() != event.tenantBillingCutoff().isPresent()) {
+      return false;
+    }
+    for (int index = 0; index < response.getPrivateRealmGrantVersionsCount(); index++) {
+      var responseGrant = response.getPrivateRealmGrantVersions(index);
+      var eventGrant = event.privateRealmGrantVersions().get(index);
+      if (!responseGrant.getTenantId().equals(eventGrant.tenantId())
+          || !responseGrant.getWorldSlug().equals(eventGrant.worldSlug())
+          || !responseGrant.getRealmSlug().equals(eventGrant.realmSlug())
+          || !responseGrant.getPlaytestLifecycleId().equals(eventGrant.playtestLifecycleId())
+          || !responseGrant.getGrantVersion().equals(eventGrant.grantVersion())) {
+        return false;
+      }
+    }
+    if (response.hasAccountSecurityCutoff()) {
+      var responseCutoff = response.getAccountSecurityCutoff();
+      var eventCutoff = event.accountSecurityCutoff().orElseThrow();
+      if (!responseCutoff
+              .getAccountAuthorityGeneration()
+              .equals(eventCutoff.accountAuthorityGeneration())
+          || !responseCutoff.getOutboxStreamKey().equals(eventCutoff.outboxStreamKey())
+          || !responseCutoff.getOutboxSequence().equals(eventCutoff.outboxSequence())) {
+        return false;
+      }
+    }
+    if (response.hasTenantBillingCutoff()) {
+      var eventCutoffs = event.tenantBillingCutoff().orElseThrow();
+      var responseCutoffs = response.getTenantBillingCutoff().getEntriesList();
+      if (responseCutoffs.size() != eventCutoffs.size()) {
+        return false;
+      }
+      Set<String> responseCutoffTenants = new HashSet<>();
+      for (var responseEntry : responseCutoffs) {
+        var eventCutoff = eventCutoffs.get(responseEntry.getTenantId());
+        if (!responseCutoffTenants.add(responseEntry.getTenantId())
+            || eventCutoff == null
+            || !responseEntry
+                .getCutoff()
+                .getTenantAuthorityGeneration()
+                .equals(eventCutoff.tenantAuthorityGeneration())
+            || !responseEntry
+                .getCutoff()
+                .getTenantBillingSequence()
+                .equals(eventCutoff.tenantBillingSequence())
+            || !responseEntry.getCutoff().getOutboxStreamKey().equals(eventCutoff.outboxStreamKey())
+            || !responseEntry
+                .getCutoff()
+                .getOutboxSequence()
+                .equals(eventCutoff.outboxSequence())) {
+          return false;
+        }
+      }
+      if (!responseCutoffTenants.equals(eventCutoffs.keySet())) {
+        return false;
+      }
+    }
+    return true;
   }
 
   private static boolean isPositiveCanonicalDecimal(String value) {
