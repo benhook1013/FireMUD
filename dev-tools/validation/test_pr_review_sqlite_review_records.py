@@ -26,6 +26,81 @@ from pr_review.state import FindingRoute
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
+    def test_new_subagent_start_bounds_coverage_before_persisting(self) -> None:
+        self.bootstrap()
+        self.records.start_attempt(
+            attempt_id="coverage-200",
+            source_pr=2893,
+            channel="subagent",
+            metadata={"coverage_limits": ["n" * 200]},
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "at most 200"):
+            self.records.start_attempt(
+                attempt_id="coverage-201",
+                source_pr=2893,
+                channel="subagent",
+                metadata={"coverage_limits": ["n" * 201]},
+            )
+        self.assertEqual([item["attempt_id"] for item in self.records.attempt_history(2893)], ["coverage-200"])
+
+    def test_existing_long_subagent_note_completes_losslessly_only_for_exact_source(self) -> None:
+        self.bootstrap()
+        note = "Original audit coverage and context retained. " * 7
+        metadata = {"reviewer": "Sol medium", "scope": "narrow", "coverage_limits": [note]}
+        # Reproduce metadata accepted by the old start path, without rewriting it.
+        with patch.object(sqlite_review_records, "_coverage_limits", return_value=(note,)):
+            self.records.start_attempt(
+                attempt_id="legacy-long-note",
+                source_pr=2893,
+                channel="subagent",
+                candidate_sha="a" * 40,
+                metadata=metadata,
+            )
+        attempt = self.records.attempt("legacy-long-note")
+        with sqlite3.connect(self.database) as connection:
+            stored = connection.execute(
+                "SELECT metadata_json FROM review_attempts WHERE attempt_id = ?", ("legacy-long-note",)
+            ).fetchone()[0]
+        arguments = {
+            "run_id": "legacy-long-note",
+            "source_pr": 2893,
+            "channel": "subagent",
+            "source_head": "a" * 40,
+            "reviewer": "Sol medium",
+            "scope": "narrow",
+            "coverage_limits": [note],
+            "started_at": attempt["started_at"],
+            "findings": (),
+            "source_decisions": (),
+        }
+        for changed in (
+            {"run_id": "forged-note"},
+            {"source_pr": 2894},
+            {"source_head": "b" * 40},
+            {"reviewer": "other reviewer"},
+            {"scope": "broad"},
+            {"coverage_limits": [note + " altered"]},
+            {"started_at": "2026-09-01T00:00:00Z"},
+        ):
+            with self.subTest(changed=changed), self.assertRaisesRegex(ReviewRecordsError, "at most 200"):
+                self.records.import_completed_run(**{**arguments, **changed})
+        self.assertEqual(self.records.history(2893)["runs"], [])
+        self.records.import_completed_run(**arguments)
+        self.assertEqual(self.records.history(2893)["runs"][0]["coverage_limits"], [note])
+        self.assertEqual(self.records.attempt("legacy-long-note")["metadata"], metadata)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT metadata_json FROM review_attempts WHERE attempt_id = ?", ("legacy-long-note",)
+                ).fetchone()[0],
+                stored,
+            )
+
+    def test_retained_coverage_still_checks_text_and_secrets(self) -> None:
+        for note in ("n" * 201 + "\n", "n" * 201 + " token=ghp_" + "A" * 30):
+            with self.subTest(note=note), self.assertRaises(ReviewRecordsError):
+                sqlite_review_records._coverage_limits([note], retained=[note])
+
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
@@ -110,9 +185,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             ("cli_events", "{}\n", "CLI events must be JSON objects, one per line"),
             ("hosted_review", "{}", "hosted_review must be JSON"),
         ):
-            with self.subTest(kind=kind), patch.object(
-                sqlite_review_records.json, "loads", side_effect=RecursionError("parse recursion")
-            ), self.assertRaisesRegex(ReviewRecordsError, f"^{message}$") as raised:
+            with (
+                self.subTest(kind=kind),
+                patch.object(sqlite_review_records.json, "loads", side_effect=RecursionError("parse recursion")),
+                self.assertRaisesRegex(ReviewRecordsError, f"^{message}$") as raised,
+            ):
                 _archive_artifact(kind, content)
             self.assertIsInstance(raised.exception.__cause__, RecursionError)
 
@@ -121,17 +198,19 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         for _ in range(sys.getrecursionlimit() + 10):
             nested = {"nested": nested}
 
-        with patch.object(sqlite_review_records.json, "loads", return_value=nested), self.assertRaisesRegex(
-            ReviewRecordsError, "^hosted_review JSON is too deeply nested$"
-        ) as scrub_raised:
+        with (
+            patch.object(sqlite_review_records.json, "loads", return_value=nested),
+            self.assertRaisesRegex(ReviewRecordsError, "^hosted_review JSON is too deeply nested$") as scrub_raised,
+        ):
             _archive_artifact("hosted_review", "{}")
         self.assertIsInstance(scrub_raised.exception.__cause__, RecursionError)
 
-        with patch.object(
-            sqlite_review_records, "_json", side_effect=RecursionError("serialization recursion")
-        ), self.assertRaisesRegex(
-            ReviewRecordsError, "^hosted_review JSON is too deeply nested$"
-        ) as serialization_raised:
+        with (
+            patch.object(sqlite_review_records, "_json", side_effect=RecursionError("serialization recursion")),
+            self.assertRaisesRegex(
+                ReviewRecordsError, "^hosted_review JSON is too deeply nested$"
+            ) as serialization_raised,
+        ):
             _archive_artifact("hosted_review", "{}")
         self.assertIsInstance(serialization_raised.exception.__cause__, RecursionError)
 
@@ -148,17 +227,17 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
     def test_attempt_write_and_read_database_errors_are_wrapped(self) -> None:
         self.bootstrap()
-        with patch.object(
-            self.records, "_write_connection", side_effect=sqlite3.OperationalError("write failed")
-        ), self.assertRaisesRegex(ReviewRecordsError, "start_attempt") as raised:
-            self.records.start_attempt(
-                attempt_id="attempt-write-error", source_pr=2890, channel="cli"
-            )
+        with (
+            patch.object(self.records, "_write_connection", side_effect=sqlite3.OperationalError("write failed")),
+            self.assertRaisesRegex(ReviewRecordsError, "start_attempt") as raised,
+        ):
+            self.records.start_attempt(attempt_id="attempt-write-error", source_pr=2890, channel="cli")
         self.assertIsInstance(raised.exception.__cause__, sqlite3.OperationalError)
 
-        with patch.object(
-            self.records, "_connect", side_effect=sqlite3.DatabaseError("read failed")
-        ), self.assertRaisesRegex(ReviewRecordsError, "attempt_history") as raised:
+        with (
+            patch.object(self.records, "_connect", side_effect=sqlite3.DatabaseError("read failed")),
+            self.assertRaisesRegex(ReviewRecordsError, "attempt_history") as raised,
+        ):
             self.records.attempt_history(2890)
         self.assertIsInstance(raised.exception.__cause__, sqlite3.DatabaseError)
 
@@ -185,9 +264,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 self.records.attempt("attempt-on-old-schema")
 
         with sqlite3.connect(self.database) as connection:
-            connection.execute(
-                "UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1"
-            )
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1")
         with self.assertRaises(RecordsSchemaIncompatible):
             self.records.attempt("attempt-on-unknown-schema")
 
@@ -215,16 +292,16 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.bootstrap()
         with self.assertRaisesRegex(ReviewRecordsError, "metadata must be JSON") as raised:
             self.records.start_attempt(
-                attempt_id="attempt-invalid-metadata", source_pr=2890, channel="cli",
+                attempt_id="attempt-invalid-metadata",
+                source_pr=2890,
+                channel="cli",
                 metadata={"unsupported": object()},
             )
         self.assertIsInstance(raised.exception.__cause__, TypeError)
 
     def test_history_validates_attempt_metadata_once_as_an_object(self) -> None:
         self.bootstrap()
-        self.records.start_attempt(
-            attempt_id="attempt-corrupt-metadata", source_pr=2890, channel="cli"
-        )
+        self.records.start_attempt(attempt_id="attempt-corrupt-metadata", source_pr=2890, channel="cli")
         with sqlite3.connect(self.database) as connection:
             connection.execute(
                 "UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
@@ -244,27 +321,44 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_attempt_archives_complete_json_events_and_redacts_credentials(self) -> None:
         self.bootstrap()
         start = self.records.start_attempt(
-            attempt_id="run.archive-1", source_pr=2890, channel="cli", candidate_sha="a" * 40,
-            started_at="2026-09-29T01:00:00Z", metadata={"published_head": "a" * 40},
+            attempt_id="run.archive-1",
+            source_pr=2890,
+            channel="cli",
+            candidate_sha="a" * 40,
+            started_at="2026-09-29T01:00:00Z",
+            metadata={"published_head": "a" * 40},
         )
         self.assertFalse(start["idempotent_replay"])
-        self.assertTrue(self.records.start_attempt(
-            attempt_id="run.archive-1", source_pr=2890, channel="cli", candidate_sha="a" * 40,
-            started_at="2026-09-29T01:00:00Z", metadata={"published_head": "a" * 40},
-        )["idempotent_replay"])
+        self.assertTrue(
+            self.records.start_attempt(
+                attempt_id="run.archive-1",
+                source_pr=2890,
+                channel="cli",
+                candidate_sha="a" * 40,
+                started_at="2026-09-29T01:00:00Z",
+                metadata={"published_head": "a" * 40},
+            )["idempotent_replay"]
+        )
         code_identifier = "ReviewCandidateImmutablePublicationBindingForExactHead" * 2
-        events = json.dumps({
-            "type": "finding",
-            "body": "token=ghp_" + "A" * 30,
-            "symbol": code_identifier,
-            "summary": "The complete non-secret review explanation remains available.",
-            "password": "p",
-            "api_key": "k1",
-            "nested": {"access_token": "t"},
-        }) + "\n"
+        events = (
+            json.dumps(
+                {
+                    "type": "finding",
+                    "body": "token=ghp_" + "A" * 30,
+                    "symbol": code_identifier,
+                    "summary": "The complete non-secret review explanation remains available.",
+                    "password": "p",
+                    "api_key": "k1",
+                    "nested": {"access_token": "t"},
+                }
+            )
+            + "\n"
+        )
         finish_args = {
-            "state": "completed", "finished_at": "2026-09-29T01:01:00Z",
-            "duration_seconds": 60, "exit_status": 0,
+            "state": "completed",
+            "finished_at": "2026-09-29T01:01:00Z",
+            "duration_seconds": 60,
+            "exit_status": 0,
             "artifacts": {"cli_events": events, "cli_diagnostic": "provider connected"},
         }
         self.assertFalse(self.records.finish_attempt("run.archive-1", **finish_args)["idempotent_replay"])
@@ -319,15 +413,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 metadata={"published_head": "a" * 40},
             )
 
-        first_finish = self.records.finish_attempt(
-            attempt_id, state="failed", diagnostic="provider closed"
-        )
+        first_finish = self.records.finish_attempt(attempt_id, state="failed", diagnostic="provider closed")
         self.assertFalse(first_finish["idempotent_replay"])
         stored_finish = self.records.attempt(attempt_id)["finished_at"]
         self.assertTrue(
-            self.records.finish_attempt(
-                attempt_id, state="failed", diagnostic="provider closed"
-            )["idempotent_replay"]
+            self.records.finish_attempt(attempt_id, state="failed", diagnostic="provider closed")["idempotent_replay"]
         )
         with self.assertRaisesRegex(ReviewRecordsError, "terminal attempt replay has different content"):
             self.records.finish_attempt(
@@ -347,9 +437,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             ),
             (sqlite3.OperationalError("injected write failure"), "cannot record SQLite source decision"),
         ):
-            with self.subTest(error=type(error).__name__), patch.object(
-                self.records, "_write_connection", side_effect=error
-            ), self.assertRaisesRegex(ReviewRecordsError, message):
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(self.records, "_write_connection", side_effect=error),
+                self.assertRaisesRegex(ReviewRecordsError, message),
+            ):
                 self.records.correct_source_decision(
                     "run.correction-sql-error",
                     "cli-run:run.correction-sql-error:finding:1",
@@ -380,9 +472,9 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(Exception, f"requires writer build {WRITER_BUILD}"):
             old_writer.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
-            self.assertEqual(connection.execute(
-                "SELECT records_schema_version FROM review_records_metadata"
-            ).fetchone()[0], 6)
+            self.assertEqual(
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 6
+            )
 
     def test_v5_upgrade_preserves_attempts_and_fences_previous_writer(self) -> None:
         self.bootstrap()
@@ -393,17 +485,15 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE provider_origins")
             connection.execute("DROP TABLE historical_gap_artifacts")
             connection.execute("DROP TABLE historical_provider_gaps")
-            connection.execute(
-                "UPDATE review_records_metadata SET records_schema_version = 5, min_writer_build = 3"
-            )
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 5, min_writer_build = 3")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 3")
         self.records.migrate()
         self.records.migrate()
         self.assertEqual(self.records.attempt_history(2893)[0]["state"], "rate_limited")
         with sqlite3.connect(self.database) as connection:
-            self.assertEqual(connection.execute(
-                "SELECT records_schema_version FROM review_records_metadata"
-            ).fetchone()[0], 6)
+            self.assertEqual(
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 6
+            )
         with self.assertRaisesRegex(Exception, rf"requires writer build {WRITER_BUILD}\b"):
             SqliteStateStore(self.database, writer_build=3).update(lambda state: state)
 
@@ -430,8 +520,11 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             selected = original_history(pr, **kwargs)
             if pr == 2890:
                 self.records.record_run(
-                    run_id="later-run", source_pr=2893, channel="subagent",
-                    findings=(), started_at="2026-09-29T01:00:00Z",
+                    run_id="later-run",
+                    source_pr=2893,
+                    channel="subagent",
+                    findings=(),
+                    started_at="2026-09-29T01:00:00Z",
                     finished_at="2026-09-29T01:01:00Z",
                 )
             return selected
@@ -444,14 +537,22 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_provider_origin_is_durable_idempotent_and_conflict_checked(self) -> None:
         self.bootstrap()
         self.records.import_completed_run(
-            run_id="provider-clean-1", source_pr=2893, channel="hosted",
-            findings=(), source_decisions=(), reviewer="CodeRabbit Hosted",
-            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+            run_id="provider-clean-1",
+            source_pr=2893,
+            channel="hosted",
+            findings=(),
+            source_decisions=(),
+            reviewer="CodeRabbit Hosted",
+            started_at="2026-09-29T01:00:00Z",
+            finished_at="2026-09-29T01:01:00Z",
         )
         origin = {
-            "repository": "BenHook1013/FireMUD", "source_pr": 2893,
-            "channel": "hosted", "provider_id": "trigger:987654321",
-            "checkpoint_id": 123456789, "checkpoint_fingerprint": "a" * 64,
+            "repository": "BenHook1013/FireMUD",
+            "source_pr": 2893,
+            "channel": "hosted",
+            "provider_id": "trigger:987654321",
+            "checkpoint_id": 123456789,
+            "checkpoint_fingerprint": "a" * 64,
             "run_id": "provider-clean-1",
         }
         self.assertFalse(self.records.link_provider_origin(**origin)["idempotent_replay"])
@@ -461,10 +562,14 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
             self.records.link_provider_origin(**{**origin, "checkpoint_fingerprint": "b" * 64})
         with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
-            self.records.link_provider_origin(**{
-                **origin, "provider_id": "trigger:987654322", "checkpoint_id": 123456791,
-                "checkpoint_fingerprint": "c" * 64,
-            })
+            self.records.link_provider_origin(
+                **{
+                    **origin,
+                    "provider_id": "trigger:987654322",
+                    "checkpoint_id": 123456791,
+                    "checkpoint_fingerprint": "c" * 64,
+                }
+            )
         artifact = {"hosted_comments": json.dumps({"reply": "Full review finished", "symbol": "X" * 60})}
         self.assertFalse(self.records.archive_imported_artifacts("provider-clean-1", artifact)["idempotent_replay"])
         self.assertTrue(self.records.archive_imported_artifacts("provider-clean-1", artifact)["idempotent_replay"])
@@ -472,16 +577,20 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             self.records.archive_imported_artifacts(
                 "provider-clean-1", {"hosted_comments": json.dumps({"reply": "different"})}
             )
-        self.assertEqual(self.records.history(2893)["provider_origins"][0]["repository"],
-                         "benhook1013/firemud")
+        self.assertEqual(self.records.history(2893)["provider_origins"][0]["repository"], "benhook1013/firemud")
         self.assertEqual(self.records.history(2893)["imported_artifacts"][0]["kind"], "hosted_comments")
 
     def test_provider_origin_sqlite_failures_are_wrapped(self) -> None:
         self.bootstrap()
         self.records.import_completed_run(
-            run_id="provider-sql-error", source_pr=2893, channel="hosted",
-            findings=(), source_decisions=(), reviewer="CodeRabbit Hosted",
-            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+            run_id="provider-sql-error",
+            source_pr=2893,
+            channel="hosted",
+            findings=(),
+            source_decisions=(),
+            reviewer="CodeRabbit Hosted",
+            started_at="2026-09-29T01:00:00Z",
+            finished_at="2026-09-29T01:01:00Z",
         )
         with (
             patch.object(
@@ -492,27 +601,43 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             self.assertRaisesRegex(ReviewRecordsError, "cannot link provider origin"),
         ):
             self.records.link_provider_origin(
-                repository="BenHook1013/FireMUD", source_pr=2893, channel="hosted",
-                provider_id="trigger:987654323", checkpoint_id=123456792,
-                checkpoint_fingerprint="d" * 64, run_id="provider-sql-error",
+                repository="BenHook1013/FireMUD",
+                source_pr=2893,
+                channel="hosted",
+                provider_id="trigger:987654323",
+                checkpoint_id=123456792,
+                checkpoint_fingerprint="d" * 64,
+                run_id="provider-sql-error",
             )
 
     def test_historical_gap_preserves_evidence_without_run_and_can_be_superseded(self) -> None:
         self.bootstrap()
         self.records.record_historical_gap(
-            repository="benhook1013/firemud", source_pr=2894, channel="cli",
-            checkpoint_id=123456790, checkpoint_fingerprint="d" * 64,
+            repository="benhook1013/firemud",
+            source_pr=2894,
+            channel="cli",
+            checkpoint_id=123456790,
+            checkpoint_fingerprint="d" * 64,
             checkpoint={"comment_id": 123456790, "body": "Only surviving source"},
-            artifacts={}, missing_reason="Original CLI event capture unavailable",
+            artifacts={},
+            missing_reason="Original CLI event capture unavailable",
         )
         self.assertEqual(self.records.history(2894)["historical_gap_artifacts"], [])
         gap = {
-            "repository": "BenHook1013/FireMUD", "source_pr": 2893, "channel": "hosted",
-            "checkpoint_id": 123456789, "checkpoint_fingerprint": "a" * 64,
+            "repository": "BenHook1013/FireMUD",
+            "source_pr": 2893,
+            "channel": "hosted",
+            "checkpoint_id": 123456789,
+            "checkpoint_fingerprint": "a" * 64,
             "checkpoint": {"body": "Review checkpoint", "comment_id": 123456789},
-            "artifacts": {"hosted_comments": json.dumps({
-                "body": "finding visible", "credential": "Bearer synthetic-secret-value",
-            })},
+            "artifacts": {
+                "hosted_comments": json.dumps(
+                    {
+                        "body": "finding visible",
+                        "credential": "Bearer synthetic-secret-value",
+                    }
+                )
+            },
             "missing_reason": "Private decision capture never existed",
         }
         self.assertFalse(self.records.record_historical_gap(**gap)["idempotent_replay"])
@@ -529,28 +654,51 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
             self.records.record_historical_gap(**{**gap, "missing_reason": "Different reason"})
         with self.assertRaisesRegex(ReviewRecordsError, "conflicts"):
-            self.records.record_historical_gap(**{**gap, "artifacts": {
-                "hosted_comments": '{"body":"different"}',
-            }})
+            self.records.record_historical_gap(
+                **{
+                    **gap,
+                    "artifacts": {
+                        "hosted_comments": '{"body":"different"}',
+                    },
+                }
+            )
         with self.assertRaisesRegex(ReviewRecordsError, "size limit"):
-            self.records.record_historical_gap(**{**gap, "artifacts": {
-                "hosted_review": "x" * (4 * 1024 * 1024 + 1),
-            }})
+            self.records.record_historical_gap(
+                **{
+                    **gap,
+                    "artifacts": {
+                        "hosted_review": "x" * (4 * 1024 * 1024 + 1),
+                    },
+                }
+            )
         self.records.import_completed_run(
-            run_id="recovered-run", source_pr=2893, channel="hosted",
-            findings=(), source_decisions=(), reviewer="CodeRabbit Hosted",
-            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+            run_id="recovered-run",
+            source_pr=2893,
+            channel="hosted",
+            findings=(),
+            source_decisions=(),
+            reviewer="CodeRabbit Hosted",
+            started_at="2026-09-29T01:00:00Z",
+            finished_at="2026-09-29T01:01:00Z",
         )
         with self.assertRaisesRegex(ReviewRecordsError, "historical checkpoint evidence"):
             self.records.link_provider_origin(
-                repository=gap["repository"], source_pr=2893, channel="hosted",
-                provider_id="trigger:987654321", checkpoint_id=gap["checkpoint_id"],
-                checkpoint_fingerprint="c" * 64, run_id="recovered-run",
+                repository=gap["repository"],
+                source_pr=2893,
+                channel="hosted",
+                provider_id="trigger:987654321",
+                checkpoint_id=gap["checkpoint_id"],
+                checkpoint_fingerprint="c" * 64,
+                run_id="recovered-run",
             )
         self.records.link_provider_origin(
-            repository=gap["repository"], source_pr=2893, channel="hosted",
-            provider_id="trigger:987654321", checkpoint_id=gap["checkpoint_id"],
-            checkpoint_fingerprint=gap["checkpoint_fingerprint"], run_id="recovered-run",
+            repository=gap["repository"],
+            source_pr=2893,
+            channel="hosted",
+            provider_id="trigger:987654321",
+            checkpoint_id=gap["checkpoint_id"],
+            checkpoint_fingerprint=gap["checkpoint_fingerprint"],
+            run_id="recovered-run",
         )
         recovered = self.records.history(2893)
         self.assertEqual(recovered["historical_gaps"][0]["superseded_by_run_id"], "recovered-run")
@@ -561,41 +709,63 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_cli_decision_correction_is_append_only_and_exact_prior(self) -> None:
         self.bootstrap()
         self.records.start_attempt(
-            attempt_id="run.correction", source_pr=2890, channel="cli",
+            attempt_id="run.correction",
+            source_pr=2890,
+            channel="cli",
             started_at="2026-09-29T01:00:00Z",
         )
         self.records.finish_attempt(
-            "run.correction", state="completed", finished_at="2026-09-29T01:01:00Z",
+            "run.correction",
+            state="completed",
+            finished_at="2026-09-29T01:01:00Z",
         )
         key = "cli-run:run.correction:finding:1"
         self.records.record_run(
-            run_id="run.correction", source_pr=2890, channel="cli",
+            run_id="run.correction",
+            source_pr=2890,
+            channel="cli",
             findings=(self.observation(key),),
-            started_at="2026-09-29T01:00:00Z", finished_at="2026-09-29T01:01:00Z",
+            started_at="2026-09-29T01:00:00Z",
+            finished_at="2026-09-29T01:01:00Z",
         )
         self.records.link_attempt_run("run.correction", "run.correction")
         self.records.record_source_decision(
-            "run.correction", key, decision_id="original-decision", decision="rejected",
-            actor="reviewer", reason="initial reading",
+            "run.correction",
+            key,
+            decision_id="original-decision",
+            decision="rejected",
+            actor="reviewer",
+            reason="initial reading",
         )
         with self.assertRaisesRegex(ReviewRecordsError, "latest exact decision"):
             self.records.correct_source_decision(
-                "run.correction", key, supersedes_id="wrong", correction_id="fix-1",
-                decision="accepted", actor="reviewer", reason="corrected reading",
+                "run.correction",
+                key,
+                supersedes_id="wrong",
+                correction_id="fix-1",
+                decision="accepted",
+                actor="reviewer",
+                reason="corrected reading",
             )
         corrected = self.records.correct_source_decision(
-            "run.correction", key, supersedes_id="original-decision", correction_id="fix-1",
-            decision="accepted", actor="reviewer", reason="corrected reading",
+            "run.correction",
+            key,
+            supersedes_id="original-decision",
+            correction_id="fix-1",
+            decision="accepted",
+            actor="reviewer",
+            reason="corrected reading",
         )
         self.assertEqual(corrected["counts"], {"found": 1, "accepted": 1, "routed": 0})
         self.assertEqual(self.records.cli_source_decisions("run.correction"), {1: ("accepted", "corrected reading")})
         with sqlite3.connect(self.database) as connection:
-            self.assertEqual(connection.execute(
-                "SELECT COUNT(*) FROM decisions WHERE run_id = 'run.correction'"
-            ).fetchone()[0], 1)
-            self.assertEqual(connection.execute(
-                "SELECT supersedes_id FROM source_decision_corrections"
-            ).fetchone()[0], "original-decision")
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM decisions WHERE run_id = 'run.correction'").fetchone()[0], 1
+            )
+            self.assertEqual(
+                connection.execute("SELECT supersedes_id FROM source_decision_corrections").fetchone()[0],
+                "original-decision",
+            )
 
     def test_duplicate_source_identity_in_one_run_is_rejected_atomically(self) -> None:
         self.bootstrap()
@@ -656,17 +826,13 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(identifiers.detail, "hyphenated-review-context-identifier-with-many-parts")
 
         self.assertEqual(FindingObservation("token-context", "Z" * 40).title, "Z" * 40)
-        self.assertEqual(FindingObservation("mixed-case-token", "AbCdEf0123456789" * 3).title,
-                         "AbCdEf0123456789" * 3)
-        for key, value in (("provider-token", f"ghp_{sha1}"),
-                           ("jwt-token", "eyJabcdefgh.eyJabcdefgh.eyJabcdefgh")):
+        self.assertEqual(FindingObservation("mixed-case-token", "AbCdEf0123456789" * 3).title, "AbCdEf0123456789" * 3)
+        for key, value in (("provider-token", f"ghp_{sha1}"), ("jwt-token", "eyJabcdefgh.eyJabcdefgh.eyJabcdefgh")):
             with self.subTest(value=value), self.assertRaisesRegex(ReviewRecordsError, "credential or raw secret"):
                 FindingObservation(key, value)
 
     def test_safe_finding_detail_strips_csi_color_and_normalizes_c0_c1_controls(self) -> None:
-        detail = _safe_finding_detail(
-            "before\x1b[31mafter\x1b[0m\x00token=ghp_" + "A" * 30 + "\x9b31m\x85tail"
-        )
+        detail = _safe_finding_detail("before\x1b[31mafter\x1b[0m\x00token=ghp_" + "A" * 30 + "\x9b31m\x85tail")
 
         self.assertEqual(detail, "beforeafter token=[redacted credential] tail")
         self.assertFalse(any(ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F for character in detail))
@@ -1009,9 +1175,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_previous_records_schema_version_fails_closed_without_migration(self) -> None:
         self.bootstrap()
         with sqlite3.connect(self.database) as connection:
-            connection.execute(
-                "UPDATE review_records_metadata SET records_schema_version = 3 WHERE singleton = 1"
-            )
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 3 WHERE singleton = 1")
 
         with self.assertRaisesRegex(ReviewRecordsError, "schema version 3"):
             self.records.bootstrap()
@@ -1041,9 +1205,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         all_open = self.records.open_routes()
         self.assertEqual([route["source_pr"] for route in incoming], [2700])
         self.assertEqual(incoming[0]["assignment"], "incoming")
-        self.assertIn({"source_pr": 2999, "assignment": "unassigned"}, [
-            {"source_pr": route["source_pr"], "assignment": route["assignment"]} for route in all_open
-        ])
+        self.assertIn(
+            {"source_pr": 2999, "assignment": "unassigned"},
+            [{"source_pr": route["source_pr"], "assignment": route["assignment"]} for route in all_open],
+        )
         self.assertEqual(self.records.history(2879)["routes"][0]["source_pr"], 2700)
 
         with self.assertRaisesRegex(ReviewRecordsError, "current target"):
@@ -1247,9 +1412,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertNotIn("taper", result)
 
         with sqlite3.connect(self.database) as connection:
-            connection.execute(
-                "UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1"
-            )
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 999 WHERE singleton = 1")
         with self.assertRaisesRegex(ReviewRecordsError, "schema version 999"):
             reopened.history(2828)
 
