@@ -78,6 +78,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mockito;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.transaction.CannotCreateTransactionException;
 
@@ -2280,6 +2282,64 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     Mockito.verify(workItemService)
         .replayDeadLetters(
             Mockito.argThat(command -> "request-replay".equals(command.controlPlaneRequestId())));
+  }
+
+  @Test
+  void mapsOptimisticLockingReplayFailureToInternalEvenWhenWrappedByTransientFailure() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenThrow(
+            new TransientDataAccessResourceException(
+                "transient wrapper", new OptimisticLockingFailureException("stale write")));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
+            .setActorPrincipal("1")
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("INTERNAL");
+    assertThat(ref.get().getError().getMessage())
+        .isEqualTo("Replay failed due to an internal error");
+  }
+
+  @Test
+  void keepsOtherConcurrencyReplayFailuresRetryable() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    Mockito.when(workItemService.replayDeadLetters(Mockito.any()))
+        .thenThrow(new PessimisticLockingFailureException("row lock contention"));
+    AutomationScriptingControlPlaneGrpcService service =
+        newService(
+            workItemService,
+            Mockito.mock(PluginRuntimeStateService.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class));
+    AtomicReference<ReplayDeadLetteredWorkItemsResponse> ref = new AtomicReference<>();
+
+    service.replayDeadLetteredWorkItems(
+        ReplayDeadLetteredWorkItemsRequest.newBuilder()
+            .setTenantId("1")
+            .addWorkItemIds("77")
+            .setControlPlaneRequestId("request-replay")
+            .setActorPrincipal("1")
+            .setReason("retry")
+            .build(),
+        observer(ref));
+
+    assertThat(ref.get().getError().getCode()).isEqualTo("UNAVAILABLE");
   }
 
   @Test

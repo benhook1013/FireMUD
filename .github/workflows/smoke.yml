@@ -477,6 +477,7 @@ jobs:
             const prNumber = String(context.payload.pull_request.number);
             const started = Date.now();
             const timeoutMs = 25 * 60 * 1000;
+            const cancelledReplacementTimeoutMs = 5 * 60 * 1000;
             const sleepMs = 15000;
             const pullRequestCheckInterval = 4;
             const retryableStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -706,6 +707,8 @@ jobs:
             }
 
             let currentIdentity = null;
+            let cancelledRunId = null;
+            let cancelledRunObservedAt = null;
             smokeGatePolling: while (Date.now() - started < timeoutMs) {
               if (pollIteration % pullRequestCheckInterval === 0 || !currentIdentity) {
                 const resolvedIdentity = await resolveCurrentIdentity(
@@ -737,12 +740,26 @@ jobs:
                 matching?.status === "completed" &&
                 matching.conclusion === "cancelled"
               ) {
+                if (cancelledRunId !== matching.id) {
+                  cancelledRunId = matching.id;
+                  cancelledRunObservedAt = Date.now();
+                }
                 const replacement = await findMatchingRuntimeImagesRun(
                   "repository_dispatch",
                   expectedDisplayTitle,
                   currentIdentity
                 );
                 if (!replacement) {
+                  if (Date.now() - cancelledRunObservedAt >= cancelledReplacementTimeoutMs) {
+                    if (await isCurrentPullRequestObsolete("Stopping obsolete cancelled-run smoke gate for")) {
+                      return;
+                    }
+                    core.setFailed(
+                      `Cancelled runtime-images run ${cancelledRunId} has no exact repository_dispatch replacement ` +
+                      `after ${cancelledReplacementTimeoutMs / 60000} minutes`
+                    );
+                    return;
+                  }
                   core.info(
                     `Exact pull_request runtime-images run ${matching.id} was cancelled; waiting for an exact repository_dispatch replacement.`
                   );

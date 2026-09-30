@@ -646,7 +646,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       if (isTerminalFenceFailure(fenceFailure)) {
         cancel(workItem, STAGE_ADMISSION, "canceled", fenceFailure, now);
       } else {
-        requeueAfterAuthorityUnavailable(workItem, fenceFailure, now);
+        requeueAfterAuthorityUnavailable(workItem, fenceFailure, STAGE_ADMISSION, now);
       }
       return false;
     }
@@ -844,7 +844,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       if (isTerminalFenceFailure(handoffFenceFailure)) {
         cancel(workItem, STAGE_DSL_EVAL, "canceled", handoffFenceFailure, now);
       } else {
-        requeueAfterAuthorityUnavailable(workItem, handoffFenceFailure, now);
+        requeueAfterAuthorityUnavailable(workItem, handoffFenceFailure, STAGE_DSL_EVAL, now);
       }
       return false;
     }
@@ -931,7 +931,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void requeueAfterAuthorityUnavailable(
-      ScriptWorkItem workItem, String reason, Instant now) {
+      ScriptWorkItem workItem, String reason, String stage, Instant now) {
     Instant firstUnavailableAt = workItem.getAuthorityUnavailableSince();
     if (firstUnavailableAt == null) {
       firstUnavailableAt = now;
@@ -947,7 +947,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         || !now.isBefore(firstUnavailableAt.plus(AUTHORITY_UNAVAILABLE_MAX_AGE))) {
       deadLetter(
           workItem,
-          STAGE_ADMISSION,
+          stage,
           OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
           OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
           now);

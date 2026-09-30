@@ -16,6 +16,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.springframework.dao.ConcurrencyFailureException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.RecoverableDataAccessException;
 import org.springframework.dao.TransientDataAccessException;
 import org.springframework.transaction.TransactionTimedOutException;
@@ -60,6 +61,10 @@ final class AutomationControlPlaneSupport {
   }
 
   private static boolean isRetryableReplayFailure(Throwable failure) {
+    if (hasOptimisticLockingFailure(failure)) {
+      return false;
+    }
+
     Throwable current = failure;
     while (current != null) {
       if (current instanceof StatusRuntimeException statusFailure
@@ -82,6 +87,17 @@ final class AutomationControlPlaneSupport {
         return true;
       }
       if (current instanceof SQLException sqlException && isRetryableSqlState(sqlException)) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
+  }
+
+  private static boolean hasOptimisticLockingFailure(Throwable failure) {
+    Throwable current = failure;
+    while (current != null) {
+      if (current instanceof OptimisticLockingFailureException) {
         return true;
       }
       current = current.getCause();

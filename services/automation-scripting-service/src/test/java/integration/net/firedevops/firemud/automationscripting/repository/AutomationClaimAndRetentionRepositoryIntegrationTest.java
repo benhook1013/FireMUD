@@ -354,6 +354,7 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
         .isEmpty();
 
     replayRepository.saveResult(
+        "tenant-replay-a",
         tenantA.id(),
         9001L,
         null,
@@ -414,9 +415,31 @@ class AutomationClaimAndRetentionRepositoryIntegrationTest {
             now);
 
     replayRepository.saveResult(
-        tenantA.id(), 9101L, null, "rejected", "not_found_or_not_owned", "", 0L, 0L, 0L, 1L, now);
+        "tenant-hold-a",
+        tenantA.id(),
+        9101L,
+        null,
+        "rejected",
+        "not_found_or_not_owned",
+        "",
+        0L,
+        0L,
+        0L,
+        1L,
+        now);
     replayRepository.saveResult(
-        tenantB.id(), 9102L, null, "rejected", "not_found_or_not_owned", "", 0L, 0L, 0L, 1L, now);
+        "tenant-hold-b",
+        tenantB.id(),
+        9102L,
+        null,
+        "rejected",
+        "not_found_or_not_owned",
+        "",
+        0L,
+        0L,
+        0L,
+        1L,
+        now);
     long resultAId =
         dsl.fetchValue(
             SCRIPT_DEAD_LETTER_REPLAY_RESULTS.ID,

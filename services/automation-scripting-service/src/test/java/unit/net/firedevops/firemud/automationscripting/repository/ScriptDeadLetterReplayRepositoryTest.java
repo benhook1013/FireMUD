@@ -1,16 +1,11 @@
 package net.firedevops.firemud.automationscripting.repository;
 
-import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayRequests.SCRIPT_DEAD_LETTER_REPLAY_REQUESTS;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
-import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.jooq.tools.jdbc.MockConnection;
@@ -23,18 +18,10 @@ class ScriptDeadLetterReplayRepositoryTest {
   void saveResultPreservesFirstConcurrentOutcome() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicInteger callCount = new AtomicInteger();
-    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql());
-          if (callCount.getAndIncrement() == 0) {
-            Field<?>[] ownerFields = {SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID};
-            Result<Record> ownerResult = resultDsl.newResult(ownerFields);
-            Record owner = resultDsl.newRecord(ownerFields);
-            owner.set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID, "tenant-1");
-            ownerResult.add(owner);
-            return new MockResult[] {new MockResult(1, ownerResult)};
-          }
+          callCount.incrementAndGet();
           return new MockResult[] {new MockResult(1)};
         };
     ScriptDeadLetterReplayRepository repository =
@@ -42,9 +29,10 @@ class ScriptDeadLetterReplayRepositoryTest {
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
     repository.saveResult(
-        1L, 42L, 42L, "retried_evaluation", "", "", 3L, 4L, 5L, 2L, Instant.EPOCH);
+        "tenant-1", 1L, 42L, 42L, "retried_evaluation", "", "", 3L, 4L, 5L, 2L, Instant.EPOCH);
 
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT)).contains("on conflict", "do nothing");
+    assertThat(callCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -52,19 +40,11 @@ class ScriptDeadLetterReplayRepositoryTest {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     AtomicInteger callCount = new AtomicInteger();
-    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql());
           bindingsRef.set(context.bindings());
-          if (callCount.getAndIncrement() == 0) {
-            Field<?>[] ownerFields = {SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID};
-            Result<Record> ownerResult = resultDsl.newResult(ownerFields);
-            Record owner = resultDsl.newRecord(ownerFields);
-            owner.set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID, "tenant-1");
-            ownerResult.add(owner);
-            return new MockResult[] {new MockResult(1, ownerResult)};
-          }
+          callCount.incrementAndGet();
           return new MockResult[] {new MockResult(1)};
         };
     ScriptDeadLetterReplayRepository repository =
@@ -72,6 +52,7 @@ class ScriptDeadLetterReplayRepositoryTest {
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
     repository.saveResult(
+        "tenant-1",
         1L,
         42L,
         42L,
@@ -88,7 +69,8 @@ class ScriptDeadLetterReplayRepositoryTest {
 
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
         .contains("original_failure_stage", "original_failure_reason");
-    assertThat(bindingsRef.get()).contains("TICK_HANDOFF", "GAME_SESSION_UNAVAILABLE");
+    assertThat(bindingsRef.get()).contains("tenant-1", "TICK_HANDOFF", "GAME_SESSION_UNAVAILABLE");
+    assertThat(callCount.get()).isEqualTo(1);
   }
 
   @Test

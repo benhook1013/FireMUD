@@ -947,6 +947,63 @@ class ScriptWorkItemExecutionServiceImplTest {
   }
 
   @Test
+  void authorityUnavailableAfterEvaluationRecordsDslEvaluationStageWhenExhausted() {
+    ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptDefinitionRepository definitionRepository =
+        Mockito.mock(ScriptDefinitionRepository.class);
+    ScriptGameplayCommandHandoffService handoffService =
+        Mockito.mock(ScriptGameplayCommandHandoffService.class);
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            runtimeStateResponse(),
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").build())
+                .build());
+    ScriptWorkItem item = workItem();
+    ScriptDefinition definition = scriptDefinition();
+    definition.setDefinition("{\"emitCommands\":[{\"commandText\":\"LOOK\"}]}");
+    ScriptEventAudit audit = new ScriptEventAudit();
+    when(workItemService.claimPendingForEvaluation(1)).thenReturn(List.of(item));
+    when(definitionRepository.findByTenantIdAndScriptVersionAndName(1L, "patch-1", "script-1"))
+        .thenAnswer(
+            invocation -> {
+              // Model the exhausted outage budget reached during the evaluated handoff fence.
+              item.setAuthorityUnavailableSince(Instant.now().minus(Duration.ofMinutes(11)));
+              item.setAuthorityUnavailableCount(9);
+              return Optional.of(definition);
+            });
+    when(auditRepository.findByWorkItemId(99L)).thenReturn(Optional.of(audit));
+    when(workItemRepository.save(item)).thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptWorkItemExecutionService service =
+        fenceExecutionService(
+            workItemService,
+            workItemRepository,
+            auditRepository,
+            definitionRepository,
+            handoffService,
+            null,
+            gameSessionClient,
+            Mockito.mock(PluginRuntimeStateRepository.class));
+
+    ScriptWorkItemExecutionService.ExecutionBatchResult result = service.processPendingWorkItems(1);
+
+    assertThat(result.failedCount()).isEqualTo(1);
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
+    assertThat(item.getCancelReason()).isEqualTo("authority_unavailable_exhausted");
+    assertThat(audit.getFinalStage()).isEqualTo("DSL_EVAL");
+    assertThat(audit.getFinalOutcome()).isEqualTo("authority_unavailable_exhausted");
+    assertThat(audit.getFinalReason()).isEqualTo("authority_unavailable_exhausted");
+    verify(handoffService, Mockito.never()).handoff(Mockito.any(), Mockito.any());
+    verify(workItemRepository).save(item);
+    verify(auditRepository).save(audit);
+  }
+
+  @Test
   void authorityUnavailableRetryDeadLettersWhenFirstOutcomeExceedsAgeBound() {
     ScriptWorkItemService workItemService = Mockito.mock(ScriptWorkItemService.class);
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);

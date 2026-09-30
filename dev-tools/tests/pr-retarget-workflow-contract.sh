@@ -1217,6 +1217,8 @@ require_contains "$smoke_path" 'break workflowRunPages;'
 require_contains "$smoke_path" 'workflowRunQuery.head_sha = identity.headSha;'
 require_contains "$smoke_path" 'matching.conclusion === "cancelled"'
 require_contains "$smoke_path" 'waiting for an exact repository_dispatch replacement'
+require_contains "$smoke_path" 'const cancelledReplacementTimeoutMs = 5 * 60 * 1000;'
+require_contains "$smoke_path" 'Cancelled runtime-images run ${cancelledRunId} has no exact repository_dispatch replacement '
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
@@ -1737,13 +1739,17 @@ check("skipped", true, "credential-free full-stack smoke step did not pass")
     const wrongAnchorDispatch = dispatchRun(604, "d".repeat(40), headSha, mergeSha);
     const queryStart = workflowRunQueries.length;
     const jobStart = jobQueries.length;
+    const startedAt = fakeNow;
     availableRuns = [eventRun, wrongAnchorDispatch];
-    return check("success", true, "Timed out waiting for the exact runtime-images/full-smoke run").then(() => {
+    return check("success", true, "Cancelled runtime-images run 603 has no exact repository_dispatch replacement").then(() => {
       if (!workflowRunQueries.slice(queryStart).some((query) => query.event === "repository_dispatch")) {
         throw new Error("a cancelled exact event run must check for a repository_dispatch replacement");
       }
       if (jobQueries.length !== jobStart) {
         throw new Error("Smoke Gate must reject a dispatch replacement with a mismatched base anchor");
+      }
+      if (fakeNow - startedAt >= 25 * 60 * 1000) {
+        throw new Error("a cancelled exact event run without replacement must fail before the generic smoke deadline");
       }
     });
   })
