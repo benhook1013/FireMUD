@@ -8,7 +8,6 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptRuntimeProperties;
@@ -2280,8 +2279,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
         replayObserver,
         Status.Code.UNAVAILABLE,
         "Replay service temporarily unavailable; retry with the same control_plane_request_id");
-    assertThat(Status.fromThrowable(replayObserver.error).getDescription())
-        .doesNotContain("database secret");
+    assertThat(replayObserver.errorDescription).doesNotContain("database secret");
     Mockito.verify(workItemService)
         .replayDeadLetters(
             Mockito.argThat(command -> "request-replay".equals(command.controlPlaneRequestId())));
@@ -2373,8 +2371,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertReplayTransportError(
         replayObserver, Status.Code.INTERNAL, "Replay failed due to an internal error");
-    assertThat(Status.fromThrowable(replayObserver.error).getDescription())
-        .doesNotContain("sensitive implementation detail");
+    assertThat(replayObserver.errorDescription).doesNotContain("sensitive implementation detail");
   }
 
   @Test
@@ -2403,7 +2400,7 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     assertReplayTransportError(
         replayObserver, Status.Code.INTERNAL, "Replay failed due to an internal error");
-    assertThat(Status.fromThrowable(replayObserver.error).getDescription())
+    assertThat(replayObserver.errorDescription)
         .doesNotContain("permanent transaction configuration");
   }
 
@@ -2762,36 +2759,19 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
     };
   }
 
-  private static <T> StreamObserver<T> observer(AtomicReference<T> ref, AtomicBoolean completed) {
-    return new StreamObserver<>() {
-      @Override
-      public void onNext(T value) {
-        ref.set(value);
-      }
-
-      @Override
-      public void onError(Throwable t) {}
-
-      @Override
-      public void onCompleted() {
-        completed.set(true);
-      }
-    };
-  }
-
   private static void assertReplayTransportError(
       ReplayObserver observer, Status.Code expectedCode, String expectedMessage) {
     assertThat(observer.response).isNull();
-    assertThat(observer.error).isNotNull();
-    assertThat(Status.fromThrowable(observer.error).getCode()).isEqualTo(expectedCode);
-    assertThat(Status.fromThrowable(observer.error).getDescription()).isEqualTo(expectedMessage);
+    assertThat(observer.errorCode).isEqualTo(expectedCode);
+    assertThat(observer.errorDescription).isEqualTo(expectedMessage);
     assertThat(observer.completed).isFalse();
   }
 
   private static final class ReplayObserver
       implements StreamObserver<ReplayDeadLetteredWorkItemsResponse> {
     private ReplayDeadLetteredWorkItemsResponse response;
-    private Throwable error;
+    private Status.Code errorCode;
+    private String errorDescription;
     private boolean completed;
 
     @Override
@@ -2801,7 +2781,9 @@ class AutomationScriptingControlPlaneGrpcServiceTest {
 
     @Override
     public void onError(Throwable t) {
-      error = t;
+      Status status = Status.fromThrowable(t);
+      errorCode = status.getCode();
+      errorDescription = status.getDescription();
     }
 
     @Override
