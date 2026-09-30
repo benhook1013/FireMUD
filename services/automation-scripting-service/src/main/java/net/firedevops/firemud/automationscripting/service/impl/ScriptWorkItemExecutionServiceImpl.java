@@ -596,10 +596,22 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     Instant now = Instant.now();
     if (isTerminalFenceFailure(fenceFailure)) {
       cancel(workItem, STAGE_DSL_EVAL, "canceled", fenceFailure, now);
+    } else {
+      markPostEvaluationReconciliationRequired(workItem, fenceFailure, now);
     }
     // Evaluation has already emitted output, but there is no durable descriptor/child ledger
     // from which to resume handoff. Keep retryable fence failures unresolved for reconciliation;
     // requeueing would rerun the DSL after an uncertain evaluated-output boundary.
+  }
+
+  private void markPostEvaluationReconciliationRequired(
+      ScriptWorkItem workItem, String reason, Instant now) {
+    if (!"EVALUATING".equals(workItem.getStatus())) {
+      return;
+    }
+    workItem.setCancelReason("post_evaluation_reconciliation_required:" + reason);
+    workItem.setUpdatedAt(now);
+    workItemRepository.save(workItem);
   }
 
   private HandoffExecutionResult executeHandoffLoop(
@@ -648,10 +660,14 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
                 || isHandoffReconciliationRequired(result)
                 || (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)
                     && !ScriptHandoffOutcomeSupport.isRetryable(result)))) {
-          // Continue through the complete emitted set. The handoff owner records one durable
-          // attempted child per call; returning here would leave later siblings without either an
-          // attempted disposition or an explicit unattempted terminal record.
+          // Continue through the complete emitted set when the child outcome is definite. An
+          // ambiguous child below is the exception: preserve its in-flight evidence and stop.
           firstRejectedHandoff = result;
+        }
+        if (isHandoffReconciliationRequired(result)) {
+          // This child may already have been accepted remotely. Preserve that in-flight evidence
+          // and defer all later siblings until this exact child has been reconciled.
+          break;
         }
       }
     } finally {
@@ -1048,12 +1064,18 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       // Evaluation has already emitted output, but there is no durable descriptor/child ledger
       // from which to resume all commands. Keep the parent unresolved for explicit reconciliation;
       // retrying it would re-enter the DSL after an uncertain partial fanout.
+      markPostEvaluationReconciliationRequired(
+          workItem, handoffResult.retryableFence().reason(), now);
       return false;
     }
     if (firstRejectedHandoff != null
         && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
       // The child attempt may have rolled back after a remote uncertainty. Keep the evaluated
       // parent unresolved instead of re-entering the DSL.
+      markPostEvaluationReconciliationRequired(
+          workItem,
+          ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(firstRejectedHandoff),
+          now);
       return false;
     }
     markTerminalSuccess(
