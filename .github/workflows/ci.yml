@@ -971,7 +971,9 @@ jobs:
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.gamesession.repository.ScriptPinOperationRepositoryIntegrationTest \
+            --require-suite net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest \
             --require-case 'net.firedevops.firemud.gamesession.repository.ScriptPinOperationRepositoryIntegrationTest#pinAdmissionBaseMustStillMatchTheRowLockedRuntimeAndIsBoundToTheReceipt()' \
+            --require-case 'net.firedevops.firemud.gamesession.websocket.GameSessionWebSocketHandlerIntegrationTest#websocketFirstPartySignedCompleteContextFailsClosedWithoutMutation()' \
             game-session-service
 
       - name: 📦 Build Runtime JAR
