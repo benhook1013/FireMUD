@@ -91,13 +91,16 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
 
   private TextCommandInterpretationResult handleJoin(TextCommandDispatchRequest request) {
     if (request.command().joinRequestPayload().isEmpty() || request.sessionContext().isEmpty()) {
-      return errorResult("INVALID_ARGUMENT", "JOIN requires a world selector after LOGIN.");
+      return joinErrorResult(
+          "INVALID_ARGUMENT",
+          "JOIN requires a world selector after LOGIN.",
+          "error.join.invalid-request");
     }
     TextCommandPayload.JoinRequest payload = request.command().joinRequestPayload().orElseThrow();
     return switch (worldsHandler.joinPublicProductionMembership(
         request.sessionId(), request.sessionContext().orElseThrow(), payload.worldSelector())) {
       case WorldsCommandHandler.JoinMembershipResult.Failure failure ->
-          errorResult(failure.code(), joinFailureMessage(failure.code()));
+          joinErrorResult(failure.code());
       case WorldsCommandHandler.JoinMembershipResult.Response response ->
           handleJoinResponse(response.response());
     };
@@ -110,17 +113,19 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
       if (code.isBlank()) {
         code = "JOIN_FAILED";
       }
-      return errorResult(code, joinFailureMessage(code));
+      return joinErrorResult(code);
     }
     if (!response.getSuccess()) {
       String code = response.getOutcomeCode().isBlank() ? "JOIN_FAILED" : response.getOutcomeCode();
-      return errorResult(code, joinFailureMessage(code));
+      return joinErrorResult(code);
     }
     return new TextCommandInterpretationResult(
         net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
         List.of(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.notice(
-                "Membership is ready. Continue with CHARS and PLAY.")));
+                "Membership is ready. Continue with CHARS and PLAY.",
+                "notice.join.success",
+                java.util.Map.of())));
   }
 
   private String realmBrowseFailureMessage(String code) {
@@ -146,6 +151,33 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
       case "LOGIN_REQUIRED" -> "Log in before joining a world.";
       default -> "The selected world could not be joined.";
     };
+  }
+
+  private String joinFailureMessageKey(String code) {
+    return switch (code) {
+      case "CONNECT_SCOPE_INVALID" -> "error.join.connect-scope-invalid";
+      case "CONNECT_SCOPE_MISMATCH" -> "error.join.connect-scope-mismatch";
+      case "MEMBERSHIP_RECONCILIATION_REQUIRED" -> "error.join.membership-reconciliation-required";
+      case "AUTH_UNAVAILABLE", "UNAVAILABLE", "DEADLINE_EXCEEDED" ->
+          "error.join.authority-unavailable";
+      case "ENTITLEMENT_UNAVAILABLE" -> "error.join.entitlement-unavailable";
+      case "LOGIN_REQUIRED" -> "error.join.login-required";
+      default -> "error.join.failed";
+    };
+  }
+
+  private TextCommandInterpretationResult joinErrorResult(String code) {
+    String message = joinFailureMessage(code);
+    return joinErrorResult(code, message, joinFailureMessageKey(code));
+  }
+
+  private TextCommandInterpretationResult joinErrorResult(
+      String code, String message, String messageKey) {
+    return new TextCommandInterpretationResult(
+        net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.failure(code, message),
+        List.of(
+            net.firedevops.firemud.gamesession.presentation.PlayerOutput.error(
+                code, message, messageKey, java.util.Map.of())));
   }
 
   private TextCommandInterpretationResult handleChars(TextCommandDispatchRequest request) {
