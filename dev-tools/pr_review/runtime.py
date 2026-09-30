@@ -1460,6 +1460,7 @@ class LiveEvidence:
             owner_run_id = self._cli_lock_owner_run_id(cli_lock_path)
             owner_terminal_error_for_pr = False
             active_capture_for_other_pr = False
+            exact_owner_active_for_other_pr = False
             owner_metadata = cli_root / "runs" / owner_run_id / "metadata.json" if owner_run_id is not None else None
             metadata_paths = (
                 (owner_metadata,) if owner_metadata is not None else (cli_root / "runs").glob("*/metadata.json")
@@ -1471,14 +1472,19 @@ class LiveEvidence:
                     continue
                 if not isinstance(active_metadata, Mapping):
                     continue
+                exact_owner_metadata = (
+                    owner_run_id is not None
+                    and metadata_path == owner_metadata
+                    and metadata_path.parent.name == owner_run_id
+                    and active_metadata.get("run_id") == owner_run_id
+                )
+                if owner_run_id is not None and not exact_owner_metadata:
+                    continue
                 capture_pr = active_metadata.get("pull_request")
                 terminal_error = (metadata_path.parent / "error").is_file()
                 if any((metadata_path.parent / name).exists() for name in ("capture-complete", "error", "exit-status")):
-                    run_id = active_metadata.get("run_id")
                     if (
-                        owner_run_id is not None
-                        and metadata_path.parent.name == owner_run_id
-                        and run_id == owner_run_id
+                        exact_owner_metadata
                         and isinstance(capture_pr, int)
                         and not isinstance(capture_pr, bool)
                         and capture_pr == pr
@@ -1490,6 +1496,8 @@ class LiveEvidence:
                     continue
                 if capture_pr != pr:
                     active_capture_for_other_pr = True
+                    if exact_owner_metadata:
+                        exact_owner_active_for_other_pr = True
                     continue
                 anchor_metadata = {
                     key: value
@@ -1514,6 +1522,7 @@ class LiveEvidence:
             if (
                 operational_only
                 and not values
+                and not exact_owner_active_for_other_pr
                 and not (owner_terminal_error_for_pr and not active_capture_for_other_pr)
             ):
                 values.append(

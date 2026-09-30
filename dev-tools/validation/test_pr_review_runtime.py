@@ -331,7 +331,37 @@ class RuntimeTest(unittest.TestCase):
                 other_pr_history = provider._active_cli_history(43, common, operational_only=True)
 
             self.assertEqual([item["checkpoint"] for item in owner_history], [f"active-cli:{run_id}"])
-            self.assertEqual([item["checkpoint"] for item in other_pr_history], ["active-cli:unidentified"])
+            self.assertEqual(other_pr_history, [])
+
+    def test_recognized_cli_owner_requires_matching_active_metadata_to_suppress_fallback(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        for metadata_run_id, terminal_marker in (("run.other", None), (None, "exit-status")):
+            with (
+                self.subTest(metadata_run_id=metadata_run_id, terminal_marker=terminal_marker),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                common = Path(directory)
+                cli_root = common / "firemud" / "pr-review"
+                run_id = f"run.{'b' * 32}"
+                capture = cli_root / "runs" / run_id
+                capture.mkdir(parents=True)
+                metadata = {"run_id": metadata_run_id or run_id, "pull_request": 43, "candidate_sha": HEAD}
+                (capture / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+                if terminal_marker is not None:
+                    (capture / terminal_marker).write_text("0\n", encoding="utf-8")
+                (cli_root / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+
+                with (
+                    patch.object(provider, "_request_lock_is_held", return_value=True),
+                    patch.object(
+                        Path,
+                        "glob",
+                        side_effect=AssertionError("recognized owner must not scan run history"),
+                    ),
+                ):
+                    history = provider._active_cli_history(42, common, operational_only=True)
+
+                self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
 
     def test_recognized_cli_lock_owner_with_missing_metadata_fails_closed(self) -> None:
         provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
@@ -375,8 +405,10 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
             ):
                 history = provider.request_history(42, "cli")
+                unrelated_pr_history = provider.request_history(43, "cli")
 
             self.assertEqual([item["checkpoint"] for item in history], [f"active-cli:{run_id}"])
+            self.assertEqual([item["checkpoint"] for item in unrelated_pr_history], ["active-cli:unidentified"])
 
     def test_stopped_hosted_projection_preserves_current_cooldown(self) -> None:
         now = datetime.now(timezone.utc)
@@ -3023,11 +3055,18 @@ class RuntimeTest(unittest.TestCase):
             "unresolved_findings": [],
         }
 
-        class SteppedDateTime:
-            @classmethod
-            def now(cls, _timezone):
-                return next(cls.samples)
+        class SteppedDateTime(datetime):
+            last_sample = None
 
+            @classmethod
+            def now(cls, tz=None):
+                try:
+                    cls.last_sample = next(cls.samples)
+                except StopIteration:
+                    pass
+                return cls.last_sample
+
+        SteppedDateTime.last_sample = now
         SteppedDateTime.samples = iter((now, audit_after))
 
         def legacy_audit_at_sample(*_args, **kwargs):
@@ -3049,6 +3088,7 @@ class RuntimeTest(unittest.TestCase):
         ):
             audit = observer.review_stop_audit(42, anchor)
 
+        self.assertEqual(SteppedDateTime.now(timezone.utc), audit_after)
         self.assertEqual(audit["active_reservations"], ["review active"])
         self.assertEqual(
             audit["terminal_rate_limits"],
