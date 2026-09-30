@@ -70,6 +70,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
   private static final String OUTCOME_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
+  private static final String REASON_HANDOFF_IN_FLIGHT = "handoff_in_flight";
   private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
   private static final String OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED =
@@ -1055,6 +1056,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (isHandoffReconciliationRequired(firstRejectedHandoff)) {
       // An earlier child may already have been accepted. Keep the parent active until that
       // exact-identity handoff is reconciled, even if a later sibling hits a terminal fence.
+      markPostEvaluationReconciliationRequired(
+          workItem, REASON_HANDOFF_IN_FLIGHT, now, ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     if (firstRejectedHandoff != null

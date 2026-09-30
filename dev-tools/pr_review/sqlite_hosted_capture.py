@@ -1171,13 +1171,26 @@ def _findings_for_completed_result(
             except ReviewRecordsError:
                 # Raw evidence remains in the scrubbed artifact; structured history
                 # uses a safe headline if the provider prose resembles a secret.
-                observations.append(
-                    FindingObservation(
+                fingerprint = finding["key"].partition(":fingerprint:")[2]
+                fallback_title = f"CodeRabbit review comment {comment_id}"
+                if fingerprint:
+                    fallback_title += f" finding {fingerprint}"
+                try:
+                    fallback = FindingObservation(
                         source_finding_key=finding["key"],
-                        title=f"CodeRabbit review comment {comment_id}",
+                        title=fallback_title,
                         detail=finding["detail"],
                     )
-                )
+                except ReviewRecordsError:
+                    # The headline and detail are validated independently. Keep a
+                    # rejected detail out of structured history without dropping
+                    # the provider result or changing its immutable finding key.
+                    fallback = FindingObservation(
+                        source_finding_key=finding["key"],
+                        title=fallback_title,
+                        detail="",
+                    )
+                observations.append(fallback)
 
     source_kind = "review" if response_review is not None else "comment"
     source = response_review or response_comment
