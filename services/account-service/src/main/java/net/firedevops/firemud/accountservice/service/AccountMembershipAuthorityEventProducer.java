@@ -316,7 +316,7 @@ public class AccountMembershipAuthorityEventProducer {
     if (accountId <= 0L || legacyTenantId <= 0L) {
       throw new IllegalArgumentException("Account and retained tenant identities must be positive");
     }
-    joinOperationRepository.lockAccount(accountId);
+    preparePairAuthorityForRuntimeSnapshot(accountId, legacyTenantId);
     if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isPresent()) {
       PositiveMembershipSnapshot positive =
           readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
@@ -471,6 +471,33 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Absent Account membership differs from its durable pair authority baseline");
     }
+  }
+
+  /**
+   * Ensures that one exact, Account-fenced runtime snapshot has durable pair authority to read.
+   *
+   * <p>A never-joined pair reuses JOIN's committed absence enrollment, then proves the resulting
+   * sequence-zero snapshot. An existing membership is enrolled only through its exact current
+   * active receipt/event proof and is read back against the pair row. Inactive, unproved, or
+   * contradictory history remains denied; this method does not mutate membership or event history.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void preparePairAuthorityForRuntimeSnapshot(long accountId, long legacyTenantId) {
+    if (accountId <= 0L || legacyTenantId <= 0L) {
+      throw new IllegalArgumentException("Account and retained tenant identities must be positive");
+    }
+
+    // Keep the same lock order as JOIN before resolving identity or inspecting retained history.
+    joinOperationRepository.lockAccount(accountId);
+    resolveIdentity(accountId, legacyTenantId);
+    if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isEmpty()) {
+      preparePairAuthorityForJoin(accountId, legacyTenantId);
+      readNeverJoinedMembershipSnapshot(accountId, legacyTenantId);
+      return;
+    }
+
+    enrollProvenRetainedActivePair(accountId, legacyTenantId);
+    readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
   }
 
   /** Requires the previously committed never-joined baseline under the JOIN account fence. */

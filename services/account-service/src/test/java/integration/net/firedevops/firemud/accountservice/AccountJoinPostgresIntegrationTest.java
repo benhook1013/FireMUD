@@ -975,8 +975,9 @@ class AccountJoinPostgresIntegrationTest {
   @Test
   void neverJoinedSnapshotRequiresAndRetainsDurablePairBaselineBeforeFirstJoin() {
     JoinFixture fixture = fixture("active");
+    long originalIssuanceFence = accountIssuanceFence(fixture);
 
-    preparePairAuthorityBaseline(fixture);
+    prepareRuntimeSnapshotAuthority(fixture);
     var absence = readNeverJoinedMembershipSnapshot(fixture);
     Map<String, Object> baselineRow = membershipPairAuthorityRow(fixture);
 
@@ -994,6 +995,15 @@ class AccountJoinPostgresIntegrationTest {
         .containsEntry(fixture.tenantUuid().toString(), "1");
     assertThat(countAuthorityMembershipEvents(fixture)).isZero();
     assertThat(countAuthorityMembershipStreams(fixture)).isZero();
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+    assertThat(countRoleSnapshotHeaders(fixture)).isZero();
+    assertThat(countRoleSnapshotRows(fixture)).isZero();
+    assertThat(countMembershipAuthorityGenerations(fixture)).isEqualTo(1L);
+    assertThat(countMembershipPairAuthorities(fixture)).isEqualTo(1L);
+    assertThat(authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid()))
+        .isEqualTo(1L);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(originalIssuanceFence);
     assertThat(baselineRow)
         .containsEntry("account_uuid", fixture.accountUuid())
         .containsEntry("tenant_uuid", fixture.tenantUuid())
@@ -1007,7 +1017,7 @@ class AccountJoinPostgresIntegrationTest {
         .containsEntry("last_event_digest", null)
         .containsEntry("last_transition_invalidated", false);
 
-    preparePairAuthorityBaseline(fixture);
+    prepareRuntimeSnapshotAuthority(fixture);
 
     assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(baselineRow);
     var retriedAbsence = readNeverJoinedMembershipSnapshot(fixture);
@@ -1018,6 +1028,15 @@ class AccountJoinPostgresIntegrationTest {
         .containsExactlyElementsOf(expectedMembershipOutboxCheckpoints(fixture, "0"));
     assertThat(retriedAbsence.outboxSourceEvidence()).isEmpty();
     assertThat(countAuthorityMembershipEvents(fixture)).isZero();
+    assertThat(countAuthorityMembershipStreams(fixture)).isZero();
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+    assertThat(countRoleSnapshotHeaders(fixture)).isZero();
+    assertThat(countRoleSnapshotRows(fixture)).isZero();
+    assertThat(countMembershipAuthorityGenerations(fixture)).isEqualTo(1L);
+    assertThat(authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid()))
+        .isEqualTo(1L);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(originalIssuanceFence);
 
     JoinPublicProductionResult joined = join(fixture);
     var positive = readPairBoundPositiveMembershipSnapshot(fixture);
@@ -1053,14 +1072,31 @@ class AccountJoinPostgresIntegrationTest {
         .containsEntry("last_event_digest", positive.authorityEvent().eventDigest())
         .containsEntry("last_transition_invalidated", false);
     assertThat(countAuthorityMembershipEvents(fixture)).isEqualTo(1L);
+
+    long receiptCount = countMembershipTransitionReceipts(fixture);
+    long eventCount = countAuthorityMembershipEvents(fixture);
+    long eventStreamCount = countAuthorityMembershipStreams(fixture);
+    long membershipGeneration =
+        authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid());
+    long issuanceFence = accountIssuanceFence(fixture);
+    prepareRuntimeSnapshotAuthority(fixture);
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(joinedPairRow);
+    assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(receiptCount);
+    assertThat(countAuthorityMembershipEvents(fixture)).isEqualTo(eventCount);
+    assertThat(countAuthorityMembershipStreams(fixture)).isEqualTo(eventStreamCount);
+    assertThat(authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid()))
+        .isEqualTo(membershipGeneration);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(issuanceFence);
+    assertThat(readPairBoundPositiveMembershipSnapshot(fixture).authorityEvent())
+        .isEqualTo(positive.authorityEvent());
   }
 
   @Test
   void runtimeMembershipSnapshotKeepsAbsenceAndFirstJoinEvidenceInOneFencedResult() {
     JoinFixture fixture = fixture("active");
-    preparePairAuthorityBaseline(fixture);
 
     var absent = readRuntimeMembershipSnapshot(fixture);
+    Map<String, Object> baselineRow = membershipPairAuthorityRow(fixture);
     assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
     assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
     assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
@@ -1081,8 +1117,36 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(absent.outboxSourceEvidence()).isEmpty();
     assertThat(absent.roles()).isEmpty();
     assertThat(absent.issuanceFence()).matches("[1-9][0-9]*");
+    assertThat(baselineRow)
+        .containsEntry("membership_exists", false)
+        .containsEntry("membership_version", 1L)
+        .containsEntry("membership_authority_generation", 1L)
+        .containsEntry("last_event_sequence", 0L)
+        .containsEntry("last_event_id", null)
+        .containsEntry("last_event_digest", null);
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countAuthorityMembershipEvents(fixture)).isZero();
+    assertThat(countAuthorityMembershipStreams(fixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+    assertThat(countMembershipAuthorityGenerations(fixture)).isEqualTo(1L);
+    assertThat(countMembershipPairAuthorities(fixture)).isEqualTo(1L);
 
-    assertThat(join(fixture).success()).isTrue();
+    var retriedAbsence = readRuntimeMembershipSnapshot(fixture);
+    assertThat(retriedAbsence.membershipExists()).isFalse();
+    assertThat(retriedAbsence.membershipBaseline()).isEqualTo(absent.membershipBaseline());
+    assertThat(retriedAbsence.authorityTuple()).isEqualTo(absent.authorityTuple());
+    assertThat(retriedAbsence.outboxCheckpoints()).isEqualTo(absent.outboxCheckpoints());
+    assertThat(retriedAbsence.outboxSourceEvidence()).isEmpty();
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(baselineRow);
+    assertThat(countAuthorityMembershipEvents(fixture)).isZero();
+    assertThat(countAuthorityMembershipStreams(fixture)).isZero();
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(fixture)).isZero();
+
+    JoinPublicProductionResult joined = join(fixture);
+    assertThat(joined.success()).isTrue();
+    assertThat(joined.membershipVersion()).isEqualTo(2L);
+    assertThat(joined.membershipAuthorityGeneration()).isEqualTo(1L);
     var active = readRuntimeMembershipSnapshot(fixture);
     var event = readPairBoundPositiveMembershipSnapshot(fixture).authorityEvent();
     assertThat(active.membershipExists()).isTrue();
@@ -1108,15 +1172,11 @@ class AccountJoinPostgresIntegrationTest {
                 event.canonicalJson()));
     assertThat(active.roles()).contains("player");
     assertThat(active.issuanceFence()).matches("[1-9][0-9]*");
+    assertThat(active.outboxSourceEvidence()).hasSize(1);
   }
 
   @Test
-  void runtimeMembershipSnapshotRejectsUnprovedPairAndContradictoryGeneration() {
-    JoinFixture missingPair = fixture("active");
-    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(missingPair))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("Never-joined pair baseline is absent");
-
+  void runtimeMembershipSnapshotRejectsContradictoryGeneration() {
     JoinFixture contradictoryPair = fixture("active");
     preparePairAuthorityBaseline(contradictoryPair);
     dsl.execute(
@@ -1128,18 +1188,88 @@ class AccountJoinPostgresIntegrationTest {
     assertThatThrownBy(() -> readRuntimeMembershipSnapshot(contradictoryPair))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(
-            "membership authority generation cannot prove its sequence-zero baseline");
+            "Absent Account membership differs from its durable pair authority baseline");
   }
 
   @Test
-  void neverJoinedSnapshotRejectsMissingPairAndAbsentMembershipWithRetainedHistory() {
+  void concurrentRuntimeSnapshotPreparationAndFirstJoinPreservePairOrdering() throws Exception {
+    JoinFixture fixture = fixture("active");
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countMembershipAuthorityGenerations(fixture)).isZero();
+    assertThat(countMembershipPairAuthorities(fixture)).isZero();
+    assertThat(countAuthorityMembershipEvents(fixture)).isZero();
+
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(3);
+    try {
+      Future<?> firstPreparation =
+          executor.submit(
+              () -> {
+                await(start);
+                prepareRuntimeSnapshotAuthority(fixture);
+              });
+      Future<?> secondPreparation =
+          executor.submit(
+              () -> {
+                await(start);
+                prepareRuntimeSnapshotAuthority(fixture);
+              });
+      Future<JoinPublicProductionResult> joinAttempt =
+          executor.submit(
+              () -> {
+                await(start);
+                return join(fixture);
+              });
+      start.countDown();
+
+      firstPreparation.get(30, TimeUnit.SECONDS);
+      secondPreparation.get(30, TimeUnit.SECONDS);
+      JoinPublicProductionResult joined = joinAttempt.get(30, TimeUnit.SECONDS);
+
+      assertThat(joined.success()).isTrue();
+      assertThat(joined.outcomeCode()).isEqualTo("JOINED");
+      assertThat(countMemberships(fixture)).isEqualTo(1L);
+      assertThat(countMembershipAuthorityGenerations(fixture)).isEqualTo(1L);
+      assertThat(countMembershipPairAuthorities(fixture)).isEqualTo(1L);
+      assertThat(membershipPairAuthorityRow(fixture))
+          .containsEntry("membership_exists", true)
+          .containsEntry("membership_version", 2L)
+          .containsEntry("membership_authority_generation", 1L)
+          .containsEntry("last_event_sequence", 1L);
+      assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(1L);
+      assertThat(countAuthorityMembershipEvents(fixture)).isEqualTo(1L);
+      assertThat(countAuthorityMembershipStreams(fixture)).isEqualTo(1L);
+    } finally {
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void neverJoinedSnapshotReaderRejectsMissingPairWithoutEnrollingIt() {
     JoinFixture missingPair = fixture("active");
     assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(missingPair))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Never-joined pair baseline is absent");
+    assertThat(countMembershipPairAuthorities(missingPair)).isZero();
+    assertThat(countMembershipAuthorityGenerations(missingPair)).isZero();
+    assertThat(countMemberships(missingPair)).isZero();
+    assertThat(countAuthorityMembershipEvents(missingPair)).isZero();
+  }
+
+  @Test
+  void runtimeMembershipSnapshotRejectsUnmappedTenantAndAbsentMembershipHistory() {
+    JoinFixture unmappedTenant = fixture("active", TenantAssociationSetup.MISSING);
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(unmappedTenant))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("approved Account tenant association is absent");
+    assertThat(countMemberships(unmappedTenant)).isZero();
+    assertThat(countMembershipAuthorityGenerations(unmappedTenant)).isZero();
+    assertThat(countMembershipPairAuthorities(unmappedTenant)).isZero();
+    assertThat(countAuthorityMembershipEvents(unmappedTenant)).isZero();
 
     JoinFixture removedMembership = fixture("active");
     JoinPublicProductionResult joined = join(removedMembership);
+    Map<String, Object> retainedPair = membershipPairAuthorityRow(removedMembership);
     dsl.execute(
         "DELETE FROM account_join_operations WHERE request_id = ?", removedMembership.requestId());
     dsl.execute(
@@ -1153,10 +1283,35 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(joined.success()).isTrue();
     assertThat(countMemberships(removedMembership)).isZero();
     assertThat(countAuthorityMembershipEvents(removedMembership)).isEqualTo(1L);
-    assertThatThrownBy(() -> readNeverJoinedMembershipSnapshot(removedMembership))
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(removedMembership))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(
             "Retained Account membership history has no supported restoration path");
+    assertThat(membershipPairAuthorityRow(removedMembership)).isEqualTo(retainedPair);
+    assertThat(countMembershipAuthorityGenerations(removedMembership)).isEqualTo(1L);
+    assertThat(countAuthorityMembershipEvents(removedMembership)).isEqualTo(1L);
+  }
+
+  @Test
+  void runtimeMembershipSnapshotRejectsInactiveMembershipWithoutChangingAuthority() {
+    JoinFixture fixture = fixture("active");
+    JoinPublicProductionResult joined = join(fixture);
+    Map<String, Object> pairRow = membershipPairAuthorityRow(fixture);
+    long membershipGeneration =
+        authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid());
+    dsl.execute(
+        "UPDATE account_tenant_membership SET lifecycle_state = 'INACTIVE', "
+            + "gameplay_admission_allowed = FALSE WHERE id = ?",
+        joined.membershipId());
+
+    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(fixture))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not a positive active explicit membership");
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(pairRow);
+    assertThat(authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid()))
+        .isEqualTo(membershipGeneration);
+    assertThat(countAuthorityMembershipEvents(fixture)).isEqualTo(1L);
+    assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(1L);
   }
 
   @Test
@@ -1223,6 +1378,14 @@ class AccountJoinPostgresIntegrationTest {
                     fixture.accountId(), fixture.tenantId()));
   }
 
+  private void prepareRuntimeSnapshotAuthority(JoinFixture fixture) {
+    new TransactionTemplate(transactionManager)
+        .executeWithoutResult(
+            status ->
+                membershipAuthorityEventProducer.preparePairAuthorityForRuntimeSnapshot(
+                    fixture.accountId(), fixture.tenantId()));
+  }
+
   private AccountMembershipAuthorityEventProducer.NeverJoinedMembershipSnapshot
       readNeverJoinedMembershipSnapshot(JoinFixture fixture) {
     return new TransactionTemplate(transactionManager)
@@ -1260,6 +1423,16 @@ class AccountJoinPostgresIntegrationTest {
             .fetchOne();
     assertThat(row).isNotNull();
     return row.intoMap();
+  }
+
+  private long countMembershipPairAuthorities(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_membership_pair_authority "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                fixture.accountUuid(),
+                fixture.tenantUuid())
+            .fetchOne(0, Long.class));
   }
 
   private JoinFixture fixture(String subscriptionStatus) {
@@ -1809,6 +1982,15 @@ class AccountJoinPostgresIntegrationTest {
             .fetchOne(0, Long.class));
   }
 
+  private long accountIssuanceFence(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT issuance_fence FROM account_authority_issuance_fences "
+                    + "WHERE account_uuid = ?",
+                fixture.accountUuid())
+            .fetchOne(0, Long.class));
+  }
+
   private List<String> committedRoles(JoinFixture fixture) {
     return dsl.resultQuery(
             "SELECT roles.role_identifier FROM account_tenant_membership_role_snapshot_roles roles "
@@ -1825,7 +2007,8 @@ class AccountJoinPostgresIntegrationTest {
   private static void await(CountDownLatch start) {
     try {
       if (!start.await(10, TimeUnit.SECONDS)) {
-        throw new IllegalStateException("concurrent JOIN test did not receive its start signal");
+        throw new IllegalStateException(
+            "concurrent Account membership test did not receive its start signal");
       }
     } catch (InterruptedException ex) {
       Thread.currentThread().interrupt();
