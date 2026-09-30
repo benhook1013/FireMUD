@@ -404,16 +404,8 @@ class SessionResumptionFlowTest {
 
     verify(accountRecentPresenceService)
         .recordDisconnect(1L, AccountRecentPresenceDisposition.TAKEOVER);
-    verify(scriptEventPublisher)
-        .publishRegionExitEvent(
-            Mockito.argThat(
-                context ->
-                    context.sessionId() == 1L
-                        && context.gameInstanceId() == 1L
-                        && context.characterId() == 7001L
-                        && "R-1021".equals(context.roomInstanceId())),
-            Mockito.eq("disconnect:takeover:1:1:7001"),
-            Mockito.eq("TAKEOVER"));
+    verify(scriptEventPublisher, Mockito.never())
+        .publishRegionExitEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     assertEquals(1.0, meterRegistry.counter("gamesession.session.takeover").count());
     assertEquals(0.0, meterRegistry.counter("gamesession.session.resume").count());
   }
@@ -589,9 +581,16 @@ class SessionResumptionFlowTest {
     assertFalse(lookAfterCutover.commandResult().accepted());
     assertEquals("PLAY_REQUIRED", lookAfterCutover.commandResult().errorCode());
 
+    Mockito.clearInvocations(entityManagementClient);
     TextCommandInterpretationResult charsAfterCutover =
         interpreter.interpret("1", "CHARS demo", false);
-    assertTrue(charsAfterCutover.commandResult().accepted());
+    assertFalse(charsAfterCutover.commandResult().accepted());
+    verify(entityManagementClient, Mockito.never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.class));
   }
 
   @Test
@@ -825,7 +824,7 @@ class SessionResumptionFlowTest {
             GetTenantMembershipForRuntimeResponse.newBuilder()
                 .setError(
                     ErrorDetail.newBuilder()
-                        .setCode("FAILED_PRECONDITION")
+                        .setCode("AUTH_UNAVAILABLE")
                         .setMessage("runtime authority unavailable")
                         .build())
                 .build());

@@ -728,7 +728,7 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void ambiguousPublicRealmSelectorInvalidatesTenantCatalog() {
+  void ambiguousPublicRealmSelectorSuppressesPublicDiscoveryButRetainsInternalCatalog() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
             List.of(
@@ -739,8 +739,10 @@ class GameplayWorldCatalogTest {
                         realm("production", true),
                         realm("PRODUCTION", false),
                         realm("event", false)))));
-    assertThat(catalog.visibleWorlds()).isEmpty();
-    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.publicVisibleWorlds()).isEmpty();
+    assertThat(catalog.browseView().worlds()).isEmpty();
+    assertThat(catalog.resolvePublicWorld("demo")).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isPresent();
     assertThat(catalog.resolveRealmTarget("demo", "production")).isEmpty();
   }
 
@@ -758,9 +760,11 @@ class GameplayWorldCatalogTest {
                         realm("EVENT", true),
                         realm("private", false)))));
 
-    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.publicVisibleWorlds()).isEmpty();
     assertThat(catalog.browseView().worlds()).isEmpty();
-    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.resolvePublicWorld("demo")).isEmpty();
+    assertThat(catalog.publicProductionRealmCardinality(7L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
   }
 
   @Test
@@ -949,7 +953,7 @@ class GameplayWorldCatalogTest {
                     List.of(realm("production", true), realm("seasonal", true)))));
 
     assertThat(catalog.browseView().worlds()).isEmpty();
-    assertThat(catalog.resolveWorld("demo")).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isPresent();
     assertThat(catalog.resolvePublicWorld("demo")).isEmpty();
   }
 
@@ -964,12 +968,14 @@ class GameplayWorldCatalogTest {
                     "sandbox", "Builder Sandbox", List.of(realm("production", true)))));
 
     assertThat(catalog.browseView().worlds()).isEmpty();
-    assertThat(catalog.resolveWorld("demo")).isEmpty();
-    assertThat(catalog.resolveWorld("sandbox")).isEmpty();
+    assertThat(catalog.resolveWorld("demo")).isPresent();
+    assertThat(catalog.resolveWorld("sandbox")).isPresent();
+    assertThat(catalog.resolvePublicWorld("demo")).isEmpty();
+    assertThat(catalog.resolvePublicWorld("sandbox")).isEmpty();
   }
 
   @Test
-  void tenantWithNoVisiblePublicRealmFailsClosedForDiscoveryAndSelection() {
+  void privateOnlyTenantIsHiddenFromPublicDiscoveryButRetainedForInternalResolution() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
             List.of(
@@ -978,10 +984,11 @@ class GameplayWorldCatalogTest {
                     "Private Only",
                     List.of(realm("private-a", false), realm("private-b", false)))));
 
-    assertThat(catalog.visibleWorlds()).isEmpty();
+    assertThat(catalog.visibleWorlds()).hasSize(1);
+    assertThat(catalog.publicVisibleWorlds()).isEmpty();
     assertThat(catalog.browseView().worlds()).isEmpty();
     assertThat(catalog.resolvePublicWorld("private-only")).isEmpty();
-    assertThat(catalog.resolveWorld("private-only")).isEmpty();
+    assertThat(catalog.resolveWorld("private-only")).isPresent();
   }
 
   @Test

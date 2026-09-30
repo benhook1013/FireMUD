@@ -22,6 +22,7 @@ import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
 import net.firedevops.firemud.gamesession.service.SessionIdParsing;
@@ -608,28 +609,61 @@ public final class GameSessionGrpcService
           gameplayAdmissionPointerAuthorityService.listPointers();
       List<GameplayAdmissionPointerSnapshot> snapshot =
           pointerSnapshot == null ? List.of() : pointerSnapshot;
-      long visiblePublicProductionPointerCount =
-          snapshot.stream()
-              .filter(Objects::nonNull)
-              .filter(pointer -> pointer.tenantId() == tenantId)
-              .filter(GameplayAdmissionPointerSnapshot::visible)
-              .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
-              .count();
-      if (visiblePublicProductionPointerCount != 1L) {
-        throw new CatalogRevisionUnavailableException(
-            "Expected exactly one visible public-production realm for tenant "
-                + tenantId
-                + " but found "
-                + visiblePublicProductionPointerCount);
-      }
-      GameplayAdmissionPointerSnapshot realm =
+      List<GameplayAdmissionPointerSnapshot> selectedRealms =
           snapshot.stream()
               .filter(Objects::nonNull)
               .filter(pointer -> pointer.tenantId() == tenantId)
               .filter(pointer -> Objects.equals(pointer.worldSlug(), request.getWorldSlug()))
               .filter(pointer -> Objects.equals(pointer.realmSlug(), request.getRealmSlug()))
-              .findFirst()
-              .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
+              .toList();
+      if (selectedRealms.isEmpty()) {
+        long visiblePublicProductionPointerCount =
+            snapshot.stream()
+                .filter(Objects::nonNull)
+                .filter(pointer -> pointer.tenantId() == tenantId)
+                .filter(GameplayAdmissionPointerSnapshot::visible)
+                .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
+                .count();
+        if (pointerSnapshot == null || visiblePublicProductionPointerCount != 1L) {
+          throw new CatalogRevisionUnavailableException(
+              "Expected exactly one visible public-production realm for tenant "
+                  + tenantId
+                  + " but found "
+                  + visiblePublicProductionPointerCount);
+        }
+        throw new IllegalArgumentException("Unknown gameplay realm selection");
+      }
+      if (selectedRealms.size() > 1) {
+        throw new CatalogRevisionUnavailableException(
+            "Multiple current gameplay realms match the requested tenant and selector");
+      }
+      GameplayAdmissionPointerSnapshot realm = selectedRealms.getFirst();
+      if (!GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(realm)
+          || realm.catalogRevision() <= 0L
+          || realm.realmId() == null
+          || realm.playableStateNamespaceId() == null
+          || realm.characterCreationPolicy() == null
+          || realm.characterCreationPolicy().isBlank()) {
+        throw new CatalogRevisionUnavailableException(
+            "Authoritative gameplay pointer identity is missing or invalid");
+      }
+      if (realm.publicProductionRealm()) {
+        List<GameplayAdmissionPointerSnapshot> visiblePublicProductionRealms =
+            snapshot.stream()
+                .filter(Objects::nonNull)
+                .filter(pointer -> pointer.tenantId() == tenantId)
+                .filter(GameplayAdmissionPointerSnapshot::visible)
+                .filter(GameplayAdmissionPointerSnapshot::publicProductionRealm)
+                .toList();
+        if (visiblePublicProductionRealms.size() != 1
+            || !visiblePublicProductionRealms.getFirst().equals(realm)) {
+          throw new CatalogRevisionUnavailableException(
+              "Expected exactly one visible public-production realm for tenant "
+                  + tenantId
+                  + " but found "
+                  + visiblePublicProductionRealms.size());
+        }
+      }
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setAdmissionPointer(

@@ -2849,7 +2849,10 @@ class PlayCommandHandlerTest {
 
   @Test
   void deniedSameSlugSelectionInAnotherTenantPreservesExistingBinding() {
-    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0).setTenantId(23L);
+    GameplayCatalogProperties.Realm selectedRealm =
+        gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0);
+    selectedRealm.setTenantId(23L);
+    selectedRealm.setPublicProductionRealm(true);
     SessionContext context =
         new SessionContext(
             1L,
@@ -2876,8 +2879,20 @@ class PlayCommandHandlerTest {
                 .setTenantId("23")
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("INACTIVE")
                 .setMembershipVersion(2L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    when(accountClient.getTenantEntitlementsForRuntime(Mockito.eq("23"), Mockito.anyString()))
+        .thenReturn(
+            net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                .setTenantId("23")
+                .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
+                .setEntitlementVersion(1L)
+                .setTenantBillingSequence(1L)
+                .setEvaluatedAt(evaluatedAtNow())
                 .build());
 
     PlayCommandHandlingResult result =
@@ -2898,12 +2913,13 @@ class PlayCommandHandlerTest {
   @Test
   void playReadsAccountMembershipGrantAndEntitlementBeforeActorRoster() {
     SessionContext context =
-        new SessionContext(1L, 23L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-    stubOwnedRoster(
-        "41",
-        PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
-        actorForTenant("23", "7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+    Mockito.doReturn(
+            roster(
+                actor("7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)))
+        .when(entityManagementClient)
+        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -2917,21 +2933,21 @@ class PlayCommandHandlerTest {
     org.mockito.InOrder order = Mockito.inOrder(accountClient, entityManagementClient);
     order
         .verify(accountClient)
-        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("23"), Mockito.anyString());
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("22"), Mockito.anyString());
     order
         .verify(accountClient)
         .getRealmAccessGrantForRuntime(
             Mockito.eq("123"),
-            Mockito.eq("23"),
+            Mockito.eq("22"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
     order
         .verify(accountClient)
-        .getTenantEntitlementsForRuntime(Mockito.eq("23"), Mockito.anyString());
+        .getTenantEntitlementsForRuntime(Mockito.eq("22"), Mockito.anyString());
     order
         .verify(entityManagementClient)
-        .listCharactersByAccount("23", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -2954,14 +2970,17 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsAnotherAccountsActorEvenWhenNameMatches() {
     SessionContext context =
-        new SessionContext(1L, 23L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     Character foreign =
-        actorForTenant("23", "7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+        actorForTenant("22", "7001", "Emberline", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
             .toBuilder()
             .setAccountId("999")
             .build();
-    stubOwnedRoster("2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, foreign);
+    Mockito.doReturn(roster(foreign))
+        .when(entityManagementClient)
+        .listCharactersByAccount(
+            "22", "123", "2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
 
     PlayCommandHandlingResult result =
         handler.handle(
@@ -3058,6 +3077,11 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertIdentityUnavailableWithoutMutation(result);
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionAuthenticationService, never())
         .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
   }

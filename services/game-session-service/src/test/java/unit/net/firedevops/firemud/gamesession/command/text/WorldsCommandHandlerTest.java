@@ -299,6 +299,12 @@ class WorldsCommandHandlerTest {
   @Test
   void browseRealmsToleratesNullRealmEnums() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(true);
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
     gameplayCatalogProperties
         .getWorlds()
@@ -379,8 +385,13 @@ class WorldsCommandHandlerTest {
   @Test
   void browseCharactersRejectsNullRealmScopeBeforeReadingRoster() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(true);
     gameplayCatalogProperties.getWorlds().getFirst().getRealms().getFirst().setStateScope(null);
-    addPublicProductionAuthority(gameplayCatalogProperties);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
@@ -1276,7 +1287,7 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void crossTenantWorldSlugCollisionCannotHideTenantWidePublicRealmAmbiguity() {
+  void crossTenantCollisionSuppressesValidSlugWhenOtherTenantHasAmbiguousPublicCardinality() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     List<GameplayAdmissionPointerSnapshot> initialPointers =
@@ -1311,13 +1322,14 @@ class WorldsCommandHandlerTest {
 
     assertThat(catalog.publicProductionRealmCardinality(22L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.MULTIPLE);
-    assertThat(catalog.readDiscoverySnapshot().output().worlds())
-        .extracting(WorldsViewOutput.WorldEntry::slug)
-        .containsExactly("DEMO");
+    assertThat(catalog.publicProductionRealmCardinality(33L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
+    assertThat(catalog.readDiscoverySnapshot().output().worlds()).isEmpty();
+    assertThat(catalog.resolvePublicWorld("demo")).isEmpty();
     Mockito.clearInvocations(accountClient);
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "other"))
-        .isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+        .isEqualTo(WorldsCommandHandler.RealmBrowseResult.invalidSelector());
     Mockito.verifyNoInteractions(accountClient);
 
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
@@ -1699,7 +1711,10 @@ class WorldsCommandHandlerTest {
                             true,
                             false,
                             "SHARED",
-                            "ALLOW_NEW"),
+                            "ALLOW_NEW",
+                            1L,
+                            ADMISSION_REALM_ID,
+                            ADMISSION_NAMESPACE_ID),
                         new GameplayWorldCatalog.RealmView(
                             "secret",
                             "Secret Realm",

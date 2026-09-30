@@ -546,15 +546,16 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void charsAreVisibleAfterLogin() {
+  void charsAreNotDisclosedWithoutTypedEntityRosterProof() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "CHARS demo", false);
 
-    assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("CHARS demo", interpretation).contains("demo"));
-    assertTrue(
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertFalse(renderedResponse("CHARS demo", interpretation).contains("Live Realm"));
+    assertFalse(
         renderedResponse("CHARS demo", interpretation)
             .contains("Realm state: shared, creation: allow_new"));
   }

@@ -696,11 +696,10 @@ class GameSessionGrpcServiceTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot privateRealm =
         authorityPointer("private", "preview", 7L, 66L, true, false);
-    Mockito.when(pointerAuthorityService.findPointer(7L, "private", "preview"))
-        .thenReturn(java.util.Optional.of(privateRealm));
     Mockito.when(pointerAuthorityService.listPointers())
         .thenReturn(
             List.of(
+                privateRealm,
                 authorityPointer("alpha", "live", 7L, 44L, true, true),
                 authorityPointer("beta", "live", 7L, 55L, true, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
@@ -729,7 +728,53 @@ class GameSessionGrpcServiceTest {
 
     assertFalse(response.get().hasError());
     assertEquals("66", response.get().getAdmissionPointer().getGameInstanceId());
-    Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
+    assertEquals(
+        privateRealm.realmId().toString(), response.get().getAdmissionPointer().getRealmId());
+    assertEquals(
+        privateRealm.playableStateNamespaceId().toString(),
+        response.get().getAdmissionPointer().getPlayableStateNamespaceId());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
+    Mockito.verify(pointerAuthorityService, Mockito.never())
+        .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
+  void privateAdmissionRejectsDuplicateExactRowsInCurrentPointerSnapshot() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot privateRealm =
+        authorityPointer("private", "preview", 7L, 66L, true, false);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenReturn(List.of(privateRealm, privateRealm));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+    AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();
+
+    service.getAdmissionPointer(
+        GetAdmissionPointerRequest.newBuilder()
+            .setTenantId("7")
+            .setWorldSlug("private")
+            .setRealmSlug("preview")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetAdmissionPointerResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.get().getError().getCode());
+    assertFalse(response.get().hasAdmissionPointer());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
+    Mockito.verify(pointerAuthorityService, Mockito.never())
+        .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
   }
 
   @Test

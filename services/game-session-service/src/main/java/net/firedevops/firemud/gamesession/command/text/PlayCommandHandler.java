@@ -404,6 +404,24 @@ public class PlayCommandHandler {
           return characterIdentityUnavailableFailure(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), character, ex);
         }
+        boolean retainedTargetMatchesSelection =
+            context.hasGameplayRegionBinding()
+                && context.tenantId() == selectedRealm.tenantId()
+                && context.gameInstanceId() == selectedRealm.gameInstanceId()
+                && (!StringUtils.hasText(context.worldSlug())
+                    || sameSlug(context.worldSlug(), selectedWorld.slug()))
+                && (!StringUtils.hasText(context.realmSlug())
+                    || sameSlug(context.realmSlug(), selectedRealm.slug()));
+        if (!StringUtils.hasText(character)
+            && retainedTargetMatchesSelection
+            && context.characterId() != resolvedCharacter.id()) {
+          return characterIdentityUnavailableFailure(
+              selectedTenantTag,
+              Long.toString(selectedRealm.gameInstanceId()),
+              Long.toString(context.characterId()),
+              new IllegalStateException(
+                  "Current persisted roster no longer contains the retained actor"));
+        }
         String characterName = resolvedCharacter.name();
         Optional<PlayCommandHandlingResult> moderationFailure =
             validateModerationPolicy(context, selectedRealm, selectedTenantTag);

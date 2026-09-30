@@ -832,22 +832,16 @@ public final class GameplayWorldCatalog {
     return world != null && !visibleRealms(world).isEmpty();
   }
 
-  private boolean isPlayerAddressable(RealmView realm) {
-    return realm != null
-        && realm.visible()
-        && realm.slug() != null
-        && !realm.slug().isBlank()
-        && realm.tenantId() > 0L;
-  }
-
   private boolean hasValidPublicProductionRealm(CatalogState catalogState, long tenantId) {
     return tenantId > 0L && catalogState.publicProductionCounts().getOrDefault(tenantId, 0L) == 1L;
   }
 
   private CatalogState readCatalogState() {
     if (authorityPointerSupplier == null) {
-      List<WorldView> worlds = normalizeWorlds(worldSupplier.get());
-      return new CatalogState(worlds, publicProductionCounts(worlds));
+      List<WorldView> suppliedWorlds = worldSupplier.get();
+      List<WorldView> worlds = normalizeWorlds(suppliedWorlds);
+      // Count authoritative rows before normalization removes case-colliding realm selectors.
+      return new CatalogState(worlds, publicProductionCounts(suppliedWorlds));
     }
     List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
     if (pointers == null) {
@@ -884,12 +878,18 @@ public final class GameplayWorldCatalog {
 
   private Map<Long, Long> publicProductionCounts(List<WorldView> worlds) {
     Map<Long, Long> counts = new LinkedHashMap<>();
+    if (worlds == null) {
+      return Map.of();
+    }
     for (WorldView world : worlds) {
-      if (world.realms() == null) {
+      if (world == null || world.realms() == null) {
         continue;
       }
       for (RealmView realm : world.realms()) {
-        if (isPlayerAddressable(realm) && realm.publicProductionRealm()) {
+        if (realm != null
+            && realm.visible()
+            && realm.tenantId() > 0L
+            && realm.publicProductionRealm()) {
           counts.merge(realm.tenantId(), 1L, Long::sum);
         }
       }
@@ -901,11 +901,9 @@ public final class GameplayWorldCatalog {
       List<GameplayAdmissionPointerSnapshot> pointers) {
     Map<Long, Long> counts = new LinkedHashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
-      if (hasCompleteAuthorityPointer(pointer)
+      if (pointer != null
           && pointer.visible()
           && pointer.tenantId() > 0L
-          && pointer.realmSlug() != null
-          && !pointer.realmSlug().isBlank()
           && pointer.publicProductionRealm()) {
         counts.merge(pointer.tenantId(), 1L, Long::sum);
       }
@@ -956,7 +954,13 @@ public final class GameplayWorldCatalog {
             .toList();
     Map<String, Set<Long>> tenantsByWorldSlug = new LinkedHashMap<>();
     Map<WorldIdentity, Set<String>> rawWorldSlugsByTenant = new LinkedHashMap<>();
-    for (GameplayAdmissionPointerSnapshot pointer : completePointers) {
+    // Collisions must include rows later suppressed for tenant cardinality or completeness.
+    List<GameplayAdmissionPointerSnapshot> selectorPointers =
+        sourcePointers.stream()
+            .filter(pointer -> pointer.tenantId() > 0L)
+            .filter(pointer -> pointer.worldSlug() != null && !pointer.worldSlug().isBlank())
+            .toList();
+    for (GameplayAdmissionPointerSnapshot pointer : selectorPointers) {
       String normalizedWorldSlug = normalizeSlug(pointer.worldSlug());
       tenantsByWorldSlug
           .computeIfAbsent(normalizedWorldSlug, ignored -> new HashSet<>())

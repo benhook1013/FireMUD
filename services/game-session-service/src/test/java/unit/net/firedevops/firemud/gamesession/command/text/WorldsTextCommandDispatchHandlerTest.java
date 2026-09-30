@@ -780,13 +780,36 @@ class WorldsTextCommandDispatchHandlerTest {
 
   @Test
   void realmsBrowseFailsClosedWhenAccountScopeIssuerIsUnavailable() {
-    gameplayCatalogProperties.setWorlds(List.of(world("sandbox", 1L, 2L, false)));
+    gameplayCatalogProperties.setWorlds(List.of(world("sandbox", 22L, 2L, false)));
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(true);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTH_UNAVAILABLE")
+                        .build())
+                .build());
+    WorldsTextCommandDispatchHandler scopedHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(
+                TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
+                entityManagementClient,
+                accountClient,
+                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+            scriptEventPublisher);
     SessionContext context =
         new SessionContext(
             7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
-        handler.handle(
+        scopedHandler.handle(
             new TextCommandDispatchRequest(
                 "7",
                 new TextCommand(TextCommandType.REALMS, List.of("sandbox"), "REALMS sandbox"),
@@ -795,12 +818,19 @@ class WorldsTextCommandDispatchHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
-    Mockito.verifyNoInteractions(scriptEventPublisher);
+    Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
+    Mockito.verifyNoInteractions(entityManagementClient, scriptEventPublisher);
   }
 
   @Test
   void unavailableCharsDoesNotReadRosterOrPublishGameplayEvent() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(true);
     SessionContext context =
         new SessionContext(
             7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");

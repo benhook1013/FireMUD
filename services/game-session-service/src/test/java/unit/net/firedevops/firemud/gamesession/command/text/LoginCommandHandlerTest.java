@@ -1601,7 +1601,7 @@ class LoginCommandHandlerTest {
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    99L,
+                    77L,
                     22L,
                     "demo",
                     "production",
@@ -1623,7 +1623,7 @@ class LoginCommandHandlerTest {
         .clearGameplayBinding(prior, "LOGIN_ACCOUNT_CHANGED");
     inOrder.verify(sessionContextService).save(saved.capture());
     assertEquals(22L, saved.getValue().tenantId());
-    assertEquals(99L, saved.getValue().accountId());
+    assertEquals(77L, saved.getValue().accountId());
     assertEquals(0L, saved.getValue().characterId());
     assertEquals(0L, saved.getValue().gameInstanceId());
     assertEquals("demo", saved.getValue().worldSlug());

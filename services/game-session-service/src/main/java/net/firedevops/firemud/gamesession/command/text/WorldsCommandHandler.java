@@ -781,6 +781,10 @@ public class WorldsCommandHandler {
       return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
     }
     GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
+    // Redact private-only targets before CHARS can reveal realm-selection hints.
+    if (!worldCatalog.isPubliclyDiscoverable(catalogSnapshot, world)) {
+      return CharacterBrowseResult.invalidWorld();
+    }
     try {
       currentRealmCatalog = worldCatalog.readRealmDiscoverySnapshot(world);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
