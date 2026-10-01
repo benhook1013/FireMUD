@@ -1447,7 +1447,7 @@ jobs:
             --expected-room-id "$room_id" \
             --reconnect > "$WSS_SEMANTIC_OUT"
           jq -e --arg expected "$room_id" \
-            '.transport == "first-party-wss" and .classification == "diagnostic-operator-smoke" and .lookRoomId == $expected and .sessions == 2 and .logout == true and .reconnect == true' \
+            '.transport == "first-party-wss" and .classification == "diagnostic-operator-smoke" and .steps == ["LOGIN", "PLAY", "LOOK"] and .lookRoomId == $expected and .sessions == 2 and .logout == false and .reconnect == true and .replayRejected == true' \
             "$WSS_SEMANTIC_OUT" >/dev/null
 
       - name: Revalidate exact source binding and runtime Namespace UID before diagnostics
