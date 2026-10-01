@@ -4,6 +4,10 @@
 
 Superseded by [ADR 0170](./adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md)
 
+## Supersession
+
+- Replacement ADR: [ADR 0170](./adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md)
+
 ## Context
 
 FireMUD already makes two high-level decisions:

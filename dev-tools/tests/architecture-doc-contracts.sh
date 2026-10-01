@@ -2575,6 +2575,76 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",
     [
+        "require Gateway's typed recovery probe through the existing authenticated owning-service maintenance API boundary while shared readiness remains `QUARANTINED`",
+        "Normal player consume remains `OPEN`-only and is not invoked for this recovery proof",
+        "timeout, malformed, below-threshold, or uncertain results fail closed",
+        "This probe remains target-only and unimplemented, so the checklist is not yet executable for this gate",
+        "[ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md)",
+        "[Gateway replay readiness](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake)",
+        "[reset policy matrix](./system-architecture-redis-reset-and-recovery.md#reset-policy-matrix-prefix-summary)",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    ["a fresh canonical replay-consume invocation on the same pinned Redis connection"],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "Gateway owns only the shared replay-domain exception: `gateway:connect-token:{gateway-connect-token-replay-v1}:jti:*`, `gateway:connect-token:{gateway-connect-token-replay-v1}:deny:jti:*`, `gateway:connect-token:{gateway-connect-token-replay-v1}:readiness`, and the separately registered recovery-only `gateway:connect-token:{gateway-connect-token-replay-v1}:probe:*`",
+        "Participant-guard uniqueness also includes the owner-declared runtime-family partition: S1/S2 use `(tenantId, playableStateNamespaceId)`, while only explicitly declared S3 uses `(tenantId, gameInstanceId)`; unknown or unclassified families fail closed.",
+        "The immutable `requestDigest` binds that identity but is not a uniqueness field or partition substitute; other scope and tick values remain exact evidence.",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md",
+    [
+        "## Supersession\n\n- Replacement ADR: [ADR 0170](./adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md)",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    [
+        "## Supersession\n\n- Replacement ADR: [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md)",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md",
+    [
+        "Gateway Service owns the exact connect-token replay, browser-deny, readiness/fence, and recovery-probe key families in the pinned `gateway-connect-token-replay-v1` domain: `gateway:connect-token:{gateway-connect-token-replay-v1}:jti:<jti>`, `gateway:connect-token:{gateway-connect-token-replay-v1}:deny:jti:<jti>`, `gateway:connect-token:{gateway-connect-token-replay-v1}:readiness`, and `gateway:connect-token:{gateway-connect-token-replay-v1}:probe:<operationId>:<nonce>`, as defined by [ADR 0029](./adr-0029-single-use-gameplay-connect-token-carriage.md).",
+        "These are bounded Gateway-owned replay and recovery records, not wildcard access or a broader non-owner participation grant.",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/game-design-service/operations.md",
+    [
+        "`VersionPublishCommandServiceImpl` normally records terminal `FAILED` and returns the attempt snapshot for publication failures; `TemporalVersionPublishActivitiesImpl` catches only `PendingReconciliationException` and returns `PENDING`.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-gateway.md",
+    [
+        "When the latest expiry of an affected token is known, the quarantine deadline also covers that token's `exp + firemud.gateway.connectTokenClockSkewMs`; the deadline is the later of these bounds, and admission must never reopen before it.",
+        "This deadline rule is defined by [ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md).",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-identifier-glossary.md",
+    [
+        "The owner must allocate and durably persist each generated child's ordinal and owner-scope/root/parent/ordinal-to-child-`EffectId` mapping under the accepted owner contract; deterministic child-ID derivation is only proposed by pending [ADR 0183](./decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) and is not current target.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "Any handoff or recovery path that performs maintenance or reset mutation on this barrier must carry the unchanged [ADR 0085](./decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md) external maintenance handoff: exact `operationId`, external maintenance fence/lock binding, classifier, immutable evidence digest, and complete affected scope.",
+        "`OwnerRoutineReplayExemption` is available only for explicitly classified, non-conflicting ordinary owner-local routine replay or reconciliation outside maintenance and reset; it cannot authorize these mutations.",
+        "A missing or mismatched handoff leaves the barrier `RECONCILIATION_REQUIRED` and fails closed.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
         "Gateway's typed readiness-probe operation",
         "[Gateway replay readiness](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake)",
         "currently unimplemented, so the checklist is not yet executable for this gate",
