@@ -100,42 +100,33 @@ public class DeploymentRolloutService {
                 HostedIdentityContract.GRPC_REVISION_ANNOTATION,
                 combinedGrpcWorkloadRevision(grpcRevision, revision, "publication-leaf"));
       }
-      String accountRevision =
-          grpcWorkloadIdentityRevisions.get(HostedIdentityContract.GRPC_ACCOUNT_ROLE);
-      if (accountRevision == null) {
-        throw new IllegalArgumentException("Account gRPC workload identity revision is required");
+      for (RequiredGrpcWorkloadRevision workloadRevision :
+          List.of(
+              new RequiredGrpcWorkloadRevision(
+                  HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+                  HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD,
+                  "account-leaf",
+                  "Account gRPC workload identity revision is required"),
+              new RequiredGrpcWorkloadRevision(
+                  HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+                  HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD,
+                  "game-session-leaf",
+                  "Game Session gRPC workload identity revision is required"),
+              new RequiredGrpcWorkloadRevision(
+                  HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+                  HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD,
+                  "social-groups-leaf",
+                  "Social Groups gRPC workload identity revision is required"))) {
+        String revision = grpcWorkloadIdentityRevisions.get(workloadRevision.role());
+        if (revision == null) {
+          throw new IllegalArgumentException(workloadRevision.missingRevisionMessage());
+        }
+        revisionsByDeployment
+            .computeIfAbsent(workloadRevision.workload(), ignored -> new LinkedHashMap<>())
+            .put(
+                HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                combinedGrpcWorkloadRevision(grpcRevision, revision, workloadRevision.leafKind()));
       }
-      revisionsByDeployment
-          .computeIfAbsent(
-              HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD, ignored -> new LinkedHashMap<>())
-          .put(
-              HostedIdentityContract.GRPC_REVISION_ANNOTATION,
-              combinedGrpcWorkloadRevision(grpcRevision, accountRevision, "account-leaf"));
-      String gameSessionRevision =
-          grpcWorkloadIdentityRevisions.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
-      if (gameSessionRevision == null) {
-        throw new IllegalArgumentException(
-            "Game Session gRPC workload identity revision is required");
-      }
-      revisionsByDeployment
-          .computeIfAbsent(
-              HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD, ignored -> new LinkedHashMap<>())
-          .put(
-              HostedIdentityContract.GRPC_REVISION_ANNOTATION,
-              combinedGrpcWorkloadRevision(grpcRevision, gameSessionRevision, "game-session-leaf"));
-      String socialGroupsRevision =
-          grpcWorkloadIdentityRevisions.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
-      if (socialGroupsRevision == null) {
-        throw new IllegalArgumentException(
-            "Social Groups gRPC workload identity revision is required");
-      }
-      revisionsByDeployment
-          .computeIfAbsent(
-              HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD, ignored -> new LinkedHashMap<>())
-          .put(
-              HostedIdentityContract.GRPC_REVISION_ANNOTATION,
-              combinedGrpcWorkloadRevision(
-                  grpcRevision, socialGroupsRevision, "social-groups-leaf"));
     }
     Map<String, Boolean> readinessByDeployment = new LinkedHashMap<>();
     for (Map.Entry<String, Map<String, String>> entry : revisionsByDeployment.entrySet()) {
@@ -176,6 +167,9 @@ public class DeploymentRolloutService {
         + "|"
         + leafRevision;
   }
+
+  private record RequiredGrpcWorkloadRevision(
+      String role, String workload, String leafKind, String missingRevisionMessage) {}
 
   /**
    * Terminates both bridge endpoints for the monotonic Retired identity-removal intent while

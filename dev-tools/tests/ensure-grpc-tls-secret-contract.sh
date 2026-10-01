@@ -323,7 +323,7 @@ for secret in firemud-grpc-tls "${workloads[@]/#/firemud-grpc-}"; do
     exit 1
   }
 done
-last_projection_line="$(grep -n '^snapshot dev/firemud-grpc-game-session-service fields=tls.crt,tls.key,ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
+last_projection_line="$(grep -n '^snapshot dev/firemud-grpc-social-groups-service fields=tls.crt,tls.key,ca.crt$' "$success_log" | tail -n 1 | cut -d: -f1)"
 reapply_line="$(grep -n '^apply dev/firemud-grpc-tls$' "$success_log" | cut -d: -f1)"
 legacy_delete_line="$(grep -n '^delete dev/firemud-grpc-ca$' "$success_log" | cut -d: -f1)"
 [[ -n "$last_projection_line" && -n "$reapply_line" && -n "$legacy_delete_line" && \
