@@ -28,10 +28,12 @@ import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAsso
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeCrypto;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopePurpose;
 import net.firedevops.firemud.accountservice.security.AccountGameplayConnectSourceVerifier;
+import net.firedevops.firemud.accountservice.security.HistoricalAccountGameplayConnectEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GatewayConnectContext;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
+import net.firedevops.firemud.common.security.HistoricalGatewayConnectEvidence;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -173,6 +175,82 @@ public final class AccountCommittedConnectSourceReader {
     }
   }
 
+  /**
+   * Reads one exact, already-committed V35 Account source as historical provenance, using the
+   * caller-supplied signed original Gateway assertion to anchor source-time verification. This
+   * proves the committed source and its correspondence to that supplied assertion only. It does not
+   * prove that a V37 frame retained the original Gateway context, that Gateway accepted it, fresh
+   * authorization, current authority, registry readiness, result recovery eligibility, or
+   * admission. It cannot be used in place of {@link #read} or a current Gateway context.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public HistoricalCommittedSourceEvidence readHistorical(
+      AccountConnectTokenIssuanceIdentity identity, String signedOriginalGatewayAssertion) {
+    Objects.requireNonNull(identity, "identity");
+    requireGameSessionPeer();
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Committed Account source readback requires an active owner transaction");
+    }
+    HistoricalGatewayConnectEvidence historicalGatewayEvidence =
+        GatewayConnectContextCodec.verifyHistoricalEvidence(
+            signedOriginalGatewayAssertion, gatewayVerificationKeys);
+    requireContextRequestIdentity(identity, historicalGatewayEvidence);
+
+    // Keep the same Account row fence, canonical UUID provenance, and retained tenant resolver as
+    // strict-current source readback. The historical assertion changes neither the source identity
+    // nor the transaction/data-access boundary.
+    joinOperationRepository.lockAccount(identity.accountId());
+    Account account =
+        accountRepository
+            .findById(identity.accountId())
+            .orElseThrow(() -> new IllegalStateException("Account source identity is absent"));
+    UUID accountUuid = requireAccountIdentity(account, identity.accountId());
+    requireContextValue(historicalGatewayEvidence, "accountId", accountUuid.toString());
+
+    ApprovedAssociation tenantAssociation = tenantIdentityResolver.resolve(identity.tenantId());
+    if (tenantAssociation.legacyTenantId() != identity.tenantId()) {
+      throw new IllegalStateException("Account source tenant identity is mismatched");
+    }
+    requireContextValue(
+        historicalGatewayEvidence, "tenantId", tenantAssociation.canonicalTenantId().toString());
+
+    AccountCommittedConnectSource committedSource =
+        issuanceRepository
+            .readCommittedResponseEnvelope(identity)
+            .orElseThrow(() -> new IllegalStateException("Committed Account source is absent"));
+    byte[] compactJwtBytes =
+        envelopeCrypto.decrypt(
+            committedSource.responseEnvelope().envelope(),
+            AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE,
+            committedSource.responseEnvelope().binding());
+    try {
+      String compactJwt = decodeStrictUtf8(compactJwtBytes);
+      byte[] actualTokenHash = sha256(compactJwtBytes);
+      if (!MessageDigest.isEqual(committedSource.operation().tokenHash(), actualTokenHash)) {
+        throw new IllegalStateException("Committed Account source token hash does not match");
+      }
+
+      HistoricalAccountGameplayConnectEvidence historicalSourceEvidence =
+          sourceVerifier.verifyHistorical(compactJwt, historicalGatewayEvidence);
+      Map<String, Object> sourceClaims = historicalSourceEvidence.sourceClaims();
+      if (!Objects.equals(sourceClaims.get("jti"), committedSource.operation().tokenIdentity())) {
+        throw new IllegalStateException("Committed Account source token identity does not match");
+      }
+
+      return new HistoricalCommittedSourceEvidence(
+          committedSource.operation().operationId(),
+          committedSource.responseEnvelope().envelope().keyId(),
+          actualTokenHash,
+          historicalSourceEvidence.accountKeyId(),
+          historicalGatewayEvidence.kid(),
+          sourceClaims,
+          historicalGatewayEvidence.claims());
+    } finally {
+      java.util.Arrays.fill(compactJwtBytes, (byte) 0);
+    }
+  }
+
   private GatewayConnectContext verifyGatewayContext(String signedGatewayContext) {
     return GatewayConnectContextCodec.verifyAndDecode(
         signedGatewayContext, gatewayVerificationKeys, clock);
@@ -195,6 +273,16 @@ public final class AccountCommittedConnectSourceReader {
     }
   }
 
+  private static void requireContextRequestIdentity(
+      AccountConnectTokenIssuanceIdentity identity,
+      HistoricalGatewayConnectEvidence historicalContext) {
+    if (!identity.connectScopeId().equals(historicalContext.text("connectScopeId"))
+        || !identity.requestId().equals(historicalContext.text("connectRequestId"))) {
+      throw new IllegalArgumentException(
+          "Gateway context does not match the exact Account source request identity");
+    }
+  }
+
   private static UUID requireAccountIdentity(Account account, long numericAccountId) {
     if (account.getId() == null
         || account.getId() != numericAccountId
@@ -210,6 +298,14 @@ public final class AccountCommittedConnectSourceReader {
   private static void requireContextValue(
       GatewayConnectContext context, String field, String expectedValue) {
     if (!expectedValue.equals(context.text(field))) {
+      throw new IllegalArgumentException(
+          "Gateway context does not match the retained Account " + field);
+    }
+  }
+
+  private static void requireContextValue(
+      HistoricalGatewayConnectEvidence historicalContext, String field, String expectedValue) {
+    if (!expectedValue.equals(historicalContext.text(field))) {
       throw new IllegalArgumentException(
           "Gateway context does not match the retained Account " + field);
     }
@@ -307,6 +403,51 @@ public final class AccountCommittedConnectSourceReader {
         return Collections.unmodifiableList(copy);
       }
       throw new IllegalArgumentException("unsupported verified claim value");
+    }
+  }
+
+  /**
+   * Immutable readback of a committed V35 source matched to a caller-supplied historical Gateway
+   * assertion. This is source/correspondence provenance only; it does not establish retained V37
+   * context, past Gateway acceptance, fresh or current authorization, registry state, recovery
+   * eligibility, or admission. It retains neither compact Account JWT nor signed Gateway envelope.
+   */
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP",
+      justification =
+          "Verified claim maps and nested JSON values are deeply copied into immutable containers "
+              + "by the canonical constructor before record accessors expose them")
+  public record HistoricalCommittedSourceEvidence(
+      UUID operationId,
+      String responseEnvelopeKeyId,
+      byte[] sourceTokenHash,
+      String accountSourceKeyId,
+      String gatewayKeyId,
+      Map<String, Object> originalSourceClaims,
+      Map<String, Object> historicalGatewayClaims) {
+    public HistoricalCommittedSourceEvidence {
+      Objects.requireNonNull(operationId, "operationId");
+      Objects.requireNonNull(responseEnvelopeKeyId, "responseEnvelopeKeyId");
+      Objects.requireNonNull(accountSourceKeyId, "accountSourceKeyId");
+      Objects.requireNonNull(gatewayKeyId, "gatewayKeyId");
+      if (sourceTokenHash == null || sourceTokenHash.length != 32) {
+        throw new IllegalArgumentException("source token hash must be 32 bytes");
+      }
+      sourceTokenHash = sourceTokenHash.clone();
+      originalSourceClaims = OriginalSourceEvidence.immutableObject(originalSourceClaims);
+      historicalGatewayClaims = OriginalSourceEvidence.immutableObject(historicalGatewayClaims);
+    }
+
+    @Override
+    public byte[] sourceTokenHash() {
+      return sourceTokenHash.clone();
+    }
+
+    @Override
+    public String toString() {
+      return "HistoricalCommittedSourceEvidence[operationId="
+          + operationId
+          + ", committedSource=<redacted>, historicalGateway=<redacted>]";
     }
   }
 }

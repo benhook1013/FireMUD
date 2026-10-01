@@ -978,13 +978,17 @@ jobs:
             account-service
 
       - name: 🔎 Verify Account committed connect source readback proof
-        if: ${{ matrix.module == 'account-service' }}
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExactCommittedOriginalSourceAndLostResultWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#doesNotReturnWhenAccountFenceWaitOutlivesTheUnchangedGatewayDeadline()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExpiredCommittedSourceOnlyThroughHistoricalEvidenceWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRejectsRequestTargetHashAndTokenIdentityMismatches()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRequiresCommittedSuccess()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRequiresRegisteredGatewayAndAccountSigningKeys()' \
             account-service
 
       - name: Verify Account fresh tenant association PostgreSQL proof

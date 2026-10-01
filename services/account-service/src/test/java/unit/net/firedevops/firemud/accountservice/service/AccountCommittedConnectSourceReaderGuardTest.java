@@ -108,6 +108,42 @@ class AccountCommittedConnectSourceReaderGuardTest {
     verifyNoCollaboratorInteractions();
   }
 
+  @Test
+  void historicalReadRequiresExactPeerAndOwnerTransactionBeforeAnyInteraction() {
+    AdminAuthorizationException missingPeer =
+        assertThrows(
+            AdminAuthorizationException.class,
+            () -> withoutPeer(() -> reader.readHistorical(IDENTITY, "unparsed-gateway-context")));
+    assertEquals(
+        "Committed Account source readback requires the exact Game Session workload identity",
+        missingPeer.getMessage());
+    verifyNoCollaboratorInteractions();
+
+    AdminAuthorizationException wrongPeer =
+        assertThrows(
+            AdminAuthorizationException.class,
+            () ->
+                withPeer(
+                    peer(WORKLOAD_NAMESPACE, "world-management-service"),
+                    () -> reader.readHistorical(IDENTITY, "unparsed-gateway-context")));
+    assertEquals(
+        "Committed Account source readback requires the exact Game Session workload identity",
+        wrongPeer.getMessage());
+    verifyNoCollaboratorInteractions();
+
+    IllegalStateException missingTransaction =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                withPeer(
+                    expectedGameSessionPeer,
+                    () -> reader.readHistorical(IDENTITY, "unparsed-gateway-context")));
+    assertEquals(
+        "Committed Account source readback requires an active owner transaction",
+        missingTransaction.getMessage());
+    verifyNoCollaboratorInteractions();
+  }
+
   private void assertPeerDeniedBeforeInteractions(GrpcPeerIdentity peer) {
     AdminAuthorizationException failure =
         assertThrows(
