@@ -1802,6 +1802,26 @@ require_contains(
     ],
 )
 require_contains(
+    "design/architecture/system-architecture-scripting-runtime-execution.md",
+    [
+        "Target state also preserves any admission/execution-start charge markers already reached in the separate durable handler charge record",
+        "as defined by [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules)",
+        "that record and its linkage are not claimed as current implementation",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-runtime-execution.md",
+    ["the separate durable handler charge record preserves any admission/execution-start charge markers already reached"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-observability-contract.md",
+    [
+        "`eventType`",
+        "`eventSchemaVersion` (admitted event and payload contract version, including tenant-readiness `onLoad`; see [normative Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields))",
+        "`scriptPatchVersion`",
+    ],
+)
+require_contains(
     "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
     [
         "with mandatory dry-run/test isolation",

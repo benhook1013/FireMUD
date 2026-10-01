@@ -75,6 +75,7 @@ The following is the canonical target `script_event_audit` field list (with the 
   - `scriptId`
   - `pluginId`, `pluginVersionId`, and `bindingId` (required for resolved plugin handlers)
   - `eventType`
+  - `eventSchemaVersion` (admitted event and payload contract version, including tenant-readiness `onLoad`; see [normative Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields))
   - `scriptPatchVersion`
   - `scriptPinEpoch` (required for gameplay/runtime and scheduler triggers; absent for tenant-readiness `onLoad`)
   - `scriptPinControlPlaneRequestId` (retained immutable owner/audit evidence, required with a positive `scriptPinEpoch` for every instance-scoped gameplay/runtime and scheduler trigger; absent with the entire pin tuple for pre-instance requests such as tenant-readiness `onLoad`; epoch-zero records represent explicitly unpinned state only on contracts that support that state and are not valid instance-scoped trigger admission)
