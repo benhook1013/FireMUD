@@ -69,8 +69,12 @@ PUBLICATION_GRPC_WORKLOADS = {
 }
 ACCOUNT_GRPC_WORKLOADS = {"account-service"}
 GAME_SESSION_GRPC_WORKLOADS = {"game-session-service"}
+SOCIAL_GROUPS_GRPC_WORKLOADS = {"social-groups-service"}
 DISTINCT_GRPC_WORKLOADS = (
-    PUBLICATION_GRPC_WORKLOADS | ACCOUNT_GRPC_WORKLOADS | GAME_SESSION_GRPC_WORKLOADS
+    PUBLICATION_GRPC_WORKLOADS
+    | ACCOUNT_GRPC_WORKLOADS
+    | GAME_SESSION_GRPC_WORKLOADS
+    | SOCIAL_GROUPS_GRPC_WORKLOADS
 )
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES
@@ -92,6 +96,8 @@ EXPECTED_NAMES = {
         "internal-services",
         "internal-services-egress",
         "account-service-controller-ingress",
+        "game-session-service-controller-ingress",
+        "social-groups-service-controller-ingress",
         "spring-cloud-gateway-ingress",
         "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
@@ -306,8 +312,12 @@ def _expected_names_for_mode(
         for kind, names in FRONTEND_EXPECTED_NAMES.items():
             expected_names.setdefault(kind, set()).difference_update(names)
     if certificate_identity_mode == "standalone":
-        expected_names.setdefault("NetworkPolicy", set()).discard(
-            "account-service-controller-ingress"
+        expected_names["NetworkPolicy"].difference_update(
+            {
+                "account-service-controller-ingress",
+                "game-session-service-controller-ingress",
+                "social-groups-service-controller-ingress",
+            }
         )
     return expected_names
 
@@ -2237,26 +2247,28 @@ def validate_network_policies(
         },
     }
     if certificate_identity_mode == "hosted-controller":
-        controller_policy = policies["account-service-controller-ingress"]
-        spec = _require_mapping(
-            controller_policy.get("spec"),
-            "NetworkPolicy/account-service-controller-ingress.spec",
-        )
-        if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress selects an unsafe workload"
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
+            policy_name = f"{workload}-controller-ingress"
+            spec = _require_mapping(
+                policies[policy_name].get("spec"),
+                f"NetworkPolicy/{policy_name}.spec",
             )
-        if spec.get("policyTypes") != ["Ingress"]:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress must only govern ingress"
-            )
-        expected_ingress = [
-            {"from": [expected_from], "ports": [{"protocol": "TCP", "port": 6565}]}
-        ]
-        if spec.get("ingress") != expected_ingress:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress has an unsafe exception"
-            )
+            if spec.get("podSelector") != {"matchLabels": {"app": workload}}:
+                fail(f"NetworkPolicy/{policy_name} selects an unsafe workload")
+            if spec.get("policyTypes") != ["Ingress"]:
+                fail(f"NetworkPolicy/{policy_name} must only govern ingress")
+            expected_ingress = [
+                {
+                    "from": [expected_from],
+                    "ports": [{"protocol": "TCP", "port": 6565}],
+                }
+            ]
+            if spec.get("ingress") != expected_ingress:
+                fail(f"NetworkPolicy/{policy_name} has an unsafe exception")
 
     gateway_ingress = _require_mapping(
         policies["spring-cloud-gateway-ingress"].get("spec"),

@@ -3,6 +3,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+refuse_symlink_path() {
+  local path="$1"
+  local description="$2"
+  local current_path="$path"
+
+  while [[ "$current_path" != "." && "$current_path" != "/" ]]; do
+    [[ ! -L "$current_path" ]] || {
+      echo "refusing symlinked $description: $path" >&2
+      exit 1
+    }
+    current_path="$(dirname -- "$current_path")"
+  done
+}
+
 if [[ "${1:-}" == "--workload" ]]; then
   umask 077
   if [[ $# -ne 7 ]]; then
@@ -16,6 +30,10 @@ if [[ "${1:-}" == "--workload" ]]; then
   output_key="$5"
   runtime_namespace="$6"
   workload="$7"
+  refuse_symlink_path "$ca_cert" "certificate authority source"
+  refuse_symlink_path "$ca_key" "certificate authority source"
+  refuse_symlink_path "$output_cert" "workload certificate output"
+  refuse_symlink_path "$output_key" "workload private-key output"
   for required_file in "$ca_cert" "$ca_key"; do
     [[ -f "$required_file" ]] || {
       echo "missing certificate authority file: $required_file" >&2
@@ -85,6 +103,24 @@ if [ -n "$TARGET" ]; then
   CERT_DIR="$TARGET"
 else
   CERT_DIR="${CERT_DIR:-$SCRIPT_DIR}"
+fi
+
+refuse_symlink_path "$CERT_DIR" "certificate directory"
+generated_files=(
+  ca.crt ca.key ca.srl client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem
+  server.crt server.key server.csr dev-cert.cnf
+)
+for filename in "${generated_files[@]}"; do
+  refuse_symlink_path "$CERT_DIR/$filename" "certificate material"
+done
+if [[ -d "$CERT_DIR" ]]; then
+  while IFS= read -r -d '' symlink_path; do
+    echo "refusing symlinked certificate material: $symlink_path" >&2
+    exit 1
+  done < <(find -P "$CERT_DIR" -mindepth 1 -maxdepth 1 -type l \( \
+    -name '*.crt' -o -name '*.key' -o -name '*.pem' -o -name '*.srl' -o -name '*.csr' \
+    -o -name 'dev-cert.cnf' \
+  \) -print0)
 fi
 
 if [ -f "$CERT_DIR/ca.crt" ] && [ -f "$CERT_DIR/ca.key" ] \

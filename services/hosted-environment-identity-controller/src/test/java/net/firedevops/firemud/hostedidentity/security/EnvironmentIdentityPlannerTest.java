@@ -73,6 +73,15 @@ class EnvironmentIdentityPlannerTest {
     assertEquals(
         plan.grpcGameSessionSecretName(),
         plan.secretName(HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
+    assertEquals("pr-42-grpc-social-groups-service", plan.grpcSocialGroupsCertificateName());
+    assertEquals("pr-42-grpc-social-groups-service", plan.grpcSocialGroupsSourceSecretName());
+    assertEquals("firemud-grpc-social-groups-service", plan.grpcSocialGroupsSecretName());
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/social-groups-service",
+        plan.grpcWorkloadIdentityUriSan(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD));
+    assertEquals(
+        plan.grpcSocialGroupsSecretName(),
+        plan.secretName(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE));
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       assertEquals("pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
       assertEquals("firemud-grpc-" + workload, plan.grpcPublicationSecretName(workload));

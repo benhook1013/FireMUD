@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   captureEmailLinkLanding,
   completeEmailLink,
+  emailLinkFailureMessage,
+  EmailLinkCompletionError,
 } from '../src/emailLinkLanding.ts';
 
 test('verification GET captures a fragment token without dispatching an API mutation', () => {
@@ -121,4 +123,77 @@ test('missing token and failed completion never report success', async () => {
     )
   );
   assert.equal(calls, 1);
+});
+
+test('completion preserves HTTP failure categories without exposing the token', async () => {
+  for (const status of [400, 429, 503]) {
+    await assert.rejects(
+      completeEmailLink(
+        { kind: 'verify-email', token: 'secret-token' },
+        undefined,
+        async () => ({ ok: false, status })
+      ),
+      (error) => {
+        assert.ok(error instanceof EmailLinkCompletionError);
+        assert.equal(error.kind, 'http');
+        assert.equal(error.status, status);
+        assert.doesNotMatch(error.message, /secret-token/);
+        return true;
+      }
+    );
+  }
+});
+
+test('completion preserves network failures without retrying the POST', async () => {
+  let calls = 0;
+  await assert.rejects(
+    completeEmailLink(
+      { kind: 'verify-email', token: 'secret-token' },
+      undefined,
+      async () => {
+        calls += 1;
+        throw new Error('offline');
+      }
+    ),
+    (error) => {
+      assert.ok(error instanceof EmailLinkCompletionError);
+      assert.equal(error.kind, 'network');
+      assert.equal(error.status, null);
+      assert.doesNotMatch(error.message, /secret-token|offline/);
+      return true;
+    }
+  );
+  assert.equal(calls, 1);
+});
+
+test('failure messages distinguish rejected input from uncertain completion', () => {
+  const rejected = emailLinkFailureMessage(
+    'verify-email',
+    new EmailLinkCompletionError('http', 400)
+  );
+  assert.match(rejected, /could not accept this request/i);
+  assert.doesNotMatch(rejected, /invalid|expired/i);
+
+  for (const failure of [
+    new EmailLinkCompletionError('http', 429),
+    new EmailLinkCompletionError('http', 503),
+    new EmailLinkCompletionError('network', null),
+  ]) {
+    const verification = emailLinkFailureMessage('verify-email', failure);
+    assert.match(verification, /could not confirm/i);
+    assert.match(verification, /check your account after signing in/i);
+
+    const reset = emailLinkFailureMessage('reset-password', failure);
+    assert.match(reset, /could not confirm/i);
+    assert.match(reset, /try signing in with your intended new password/i);
+    assert.doesNotMatch(reset, /invalid|expired/i);
+  }
+
+  assert.match(
+    emailLinkFailureMessage(
+      'verify-email',
+      new EmailLinkCompletionError('missing-token', null)
+    ),
+    /invalid or has expired/i
+  );
 });

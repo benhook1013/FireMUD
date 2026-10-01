@@ -36,6 +36,8 @@ from pathlib import Path, PurePosixPath
 from .sqlite_review_records import (
     _SECRET_PATTERNS,
     SqliteReviewRecords,
+    _has_secret_field_value,
+    _is_secret_field,
 )
 from .sqlite_store import SqliteStateStore
 
@@ -50,8 +52,7 @@ _HOST = re.compile(
 _REMOTE_PATH = re.compile(r"^/[A-Za-z0-9._/-]+$")
 _COMMAND_TIMEOUT_SECONDS = 120
 _DEFAULT_RETENTION_COUNT = 30
-_GENERIC_SECRET_PATTERN = _SECRET_PATTERNS[-1]
-_SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS[:-1]
+_SPECIFIC_SECRET_PATTERNS = _SECRET_PATTERNS
 _EXPECTED_COLUMNS = {
     "controller_metadata": ("singleton", "data_model_version", "min_writer_build"),
     "review_state": ("singleton", "state_json"),
@@ -74,14 +75,39 @@ _EXPECTED_COLUMNS = {
     ),
     "route_target_history": ("sequence", "route_id", "target_pr", "changed_at", "actor", "reason"),
     "decisions": (
-        "decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision_pr",
+        "decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision_pr", "target_pr",
         "decision", "actor", "reason", "decided_at",
     ),
     "resolutions": (
         "resolution_id", "route_id", "resolution_pr", "outcome", "actor", "proof_or_reason", "resolved_at",
     ),
+    "review_attempts": (
+        "attempt_id", "source_pr", "channel", "candidate_sha", "state", "started_at", "finished_at",
+        "duration_seconds", "exit_status", "trigger_id", "provider_review_id", "checkpoint_id",
+        "run_id", "diagnostic", "metadata_json",
+    ),
+    "review_artifacts": ("attempt_id", "kind", "content", "source_sha256", "redactions"),
+    "source_decision_corrections": (
+        "sequence", "correction_id", "supersedes_id", "run_id", "finding_id", "decision",
+        "target_pr", "actor", "reason", "decided_at",
+    ),
+    "provider_origins": (
+        "repository", "source_pr", "channel", "provider_id", "checkpoint_id",
+        "checkpoint_fingerprint", "run_id",
+    ),
+    "imported_artifacts": ("run_id", "kind", "content", "source_sha256", "redactions"),
+    "historical_provider_gaps": (
+        "repository", "source_pr", "channel", "checkpoint_id", "checkpoint_fingerprint",
+        "checkpoint_json", "checkpoint_source_sha256", "checkpoint_redactions", "missing_reason",
+    ),
+    "historical_gap_artifacts": (
+        "repository", "source_pr", "checkpoint_id", "kind", "content", "source_sha256", "redactions",
+    ),
 }
-_EXPECTED_INDEXES = {"review_runs_source_pr_idx", "routes_target_status_idx"}
+_EXPECTED_INDEXES = {
+    "review_runs_source_pr_idx", "routes_target_status_idx", "review_attempts_pr_idx",
+    "source_corrections_finding_idx", "provider_origins_source_idx", "historical_gaps_source_idx",
+}
 _TEXT_COLUMNS = {
     "controller_metadata": (),
     "review_state": ("state_json",),
@@ -93,7 +119,24 @@ _TEXT_COLUMNS = {
     "route_target_history": ("route_id", "changed_at", "actor", "reason"),
     "decisions": ("decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision", "actor", "reason", "decided_at"),
     "resolutions": ("resolution_id", "route_id", "outcome", "actor", "proof_or_reason", "resolved_at"),
+    "review_attempts": ("attempt_id", "channel", "candidate_sha", "state", "started_at", "finished_at", "trigger_id", "provider_review_id", "checkpoint_id", "run_id", "diagnostic", "metadata_json"),
+    "review_artifacts": ("attempt_id", "kind", "content", "source_sha256"),
+    "source_decision_corrections": (
+        "correction_id", "supersedes_id", "run_id", "finding_id", "decision", "actor", "reason", "decided_at",
+    ),
+    "provider_origins": ("repository", "channel", "provider_id", "checkpoint_fingerprint", "run_id"),
+    "imported_artifacts": ("run_id", "kind", "content", "source_sha256"),
+    "historical_provider_gaps": (
+        "repository", "channel", "checkpoint_fingerprint", "checkpoint_json",
+        "checkpoint_source_sha256", "missing_reason",
+    ),
+    "historical_gap_artifacts": ("repository", "kind", "content", "source_sha256"),
 }
+_JSON_COLUMNS = {
+    "state_json", "coverage_limits_json", "import_payload_json", "metadata_json", "checkpoint_json",
+}
+_ARTIFACT_TABLES = {"review_artifacts", "imported_artifacts", "historical_gap_artifacts"}
+_JSON_ARTIFACT_KINDS = {"cli_events", "hosted_review", "hosted_comments", "metadata"}
 
 
 class BackupError(RuntimeError):
@@ -263,7 +306,11 @@ def backup_database(
                 raise BackupError("could not verify uploaded SFTP bytes") from exc
             raise
 
-        _verify_remote_file(remote, sftp_binary, final_remote_path)
+        try:
+            _verify_remote_file(remote, sftp_binary, final_remote_path)
+        except BackupError:
+            _remove_remote_partial(remote, sftp_binary, final_remote_path)
+            raise
         _prune_remote_backups(remote, sftp_binary, retention_count, keep=filename)
         return BackupReceipt(
             filename=filename,
@@ -418,9 +465,11 @@ def _validate_database(path: Path, label: str) -> None:
             prs = {
                 int(row[0])
                 for row in connection.execute(
-                    "SELECT source_pr FROM review_runs UNION SELECT decision_pr FROM decisions "
+                    "SELECT source_pr FROM review_runs UNION SELECT source_pr FROM review_attempts "
+                    "UNION SELECT decision_pr FROM decisions "
                     "UNION SELECT source_pr FROM routes UNION SELECT target_pr FROM routes WHERE target_pr IS NOT NULL "
-                    "UNION SELECT resolution_pr FROM resolutions"
+                    "UNION SELECT resolution_pr FROM resolutions "
+                    "UNION SELECT source_pr FROM historical_provider_gaps"
                 )
             }
         for pr in sorted(prs):
@@ -436,10 +485,33 @@ def _validate_database(path: Path, label: str) -> None:
                     connection.execute(
                         "SELECT COUNT(*) FROM routes WHERE source_pr = ? OR target_pr = ?", (pr, pr)
                     ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM review_attempts WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM source_decision_corrections c "
+                        "JOIN review_runs r USING (run_id) WHERE r.source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM provider_origins WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM imported_artifacts a JOIN review_runs r USING (run_id) "
+                        "WHERE r.source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM historical_provider_gaps WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM historical_gap_artifacts WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
                 )
             actual = (
                 len(history["runs"]), len(history["findings"]),
-                len(history["decisions"]), len(history["routes"]),
+                len(history["decisions"]), len(history["routes"]), len(history["attempts"]),
+                len(history["corrections"]), len(history["provider_origins"]),
+                len(history["imported_artifacts"]), len(history["historical_gaps"]),
+                len(history["historical_gap_artifacts"]),
             )
             if actual != expected:
                 raise BackupError("indexed review-history readback does not match persisted record counts")
@@ -478,50 +550,92 @@ def _require_allowlisted_schema(connection: sqlite3.Connection) -> None:
 def _screen_persisted_text(connection: sqlite3.Connection) -> None:
     for table, columns in _TEXT_COLUMNS.items():
         for column in columns:
+            if column == "content" and table in _ARTIFACT_TABLES:
+                for kind, value in connection.execute(f'SELECT "kind", "content" FROM "{table}"'):
+                    if not isinstance(kind, str) or not isinstance(value, str):
+                        raise BackupError("persisted artifact kind and content must be text")
+                    if kind in _JSON_ARTIFACT_KINDS:
+                        _screen_json_artifact(kind, value)
+                    elif _looks_secret(value):
+                        raise BackupError("database contains credential- or raw-secret-looking text")
+                continue
             for (value,) in connection.execute(f'SELECT "{column}" FROM "{table}"'):
                 if not isinstance(value, str):
                     continue
-                if column == "state_json":
+                if column in _JSON_COLUMNS:
                     try:
                         document = json.loads(value)
                     except json.JSONDecodeError as exc:
-                        raise BackupError("controller state JSON cannot be screened") from exc
-                    _screen_json_values(document)
+                        raise BackupError("persisted JSON cannot be screened") from exc
+                    if column == "import_payload_json":
+                        _screen_import_payload(document)
+                    else:
+                        _screen_json_values(document)
                 elif _looks_secret(value):
                     raise BackupError("database contains credential- or raw-secret-looking text")
 
 
-def _screen_json_values(value: object, key: str = "") -> None:
+def _screen_json_artifact(kind: str, content: str) -> None:
+    try:
+        if kind == "cli_events":
+            documents = []
+            for line in content.split("\n"):
+                line = line.removesuffix("\r")
+                if line.strip():
+                    document = json.loads(line)
+                    if not isinstance(document, dict):
+                        raise ValueError("CLI event is not an object")
+                    documents.append(document)
+        else:
+            documents = [json.loads(content)]
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise BackupError("persisted JSON artifact cannot be screened") from exc
+    _screen_json_values(documents)
+
+
+def _screen_import_payload(document: object) -> None:
+    if not isinstance(document, dict):
+        raise BackupError("review import payload is not an object")
+    for key, value in document.items():
+        if key != "findings" or not isinstance(value, list):
+            if isinstance(key, str) and _is_secret_field(key) and _has_secret_field_value(value):
+                raise BackupError("database contains an unredacted semantic secret field")
+            _screen_json_values(value)
+            continue
+        for finding in value:
+            if not isinstance(finding, dict):
+                raise BackupError("review import finding is not an object")
+            for finding_key, finding_value in finding.items():
+                if finding_key == "source_finding_key" and isinstance(finding_value, str):
+                    if _looks_secret(finding_value, identifier=True):
+                        raise BackupError("database contains credential- or raw-secret-looking text")
+                else:
+                    if (
+                        isinstance(finding_key, str)
+                        and _is_secret_field(finding_key)
+                        and _has_secret_field_value(finding_value)
+                    ):
+                        raise BackupError("database contains an unredacted semantic secret field")
+                    _screen_json_values(finding_value)
+
+
+def _screen_json_values(value: object) -> None:
     if isinstance(value, str):
         if _looks_secret(value):
             raise BackupError("database contains credential- or raw-secret-looking text")
     elif isinstance(value, dict):
-        for nested_value in value.values():
+        for key, nested_value in value.items():
+            if isinstance(key, str) and _is_secret_field(key) and _has_secret_field_value(nested_value):
+                raise BackupError("database contains an unredacted semantic secret field")
             _screen_json_values(nested_value)
     elif isinstance(value, list):
         for nested_value in value:
             _screen_json_values(nested_value)
 
 
-def _looks_secret(value: str) -> bool:
-    if any(pattern.search(value) for pattern in _SPECIFIC_SECRET_PATTERNS):
-        return True
-    return any(
-        not _is_known_identifier(match.group())
-        for match in _GENERIC_SECRET_PATTERN.finditer(value)
-    )
-
-
-def _is_known_identifier(token: str) -> bool:
-    if re.fullmatch(r"(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})", token):
-        return True
-    words = token.split("_")
-    return (
-        len(token) <= 120
-        and len(words) >= 5
-        and not set(words) & {"access", "aws", "bearer", "credential", "github", "key", "password", "private", "secret", "token"}
-        and all(2 <= len(word) <= 24 and word.isascii() and word.isalpha() and word.islower() for word in words)
-    )
+def _looks_secret(value: str, *, identifier: bool = False) -> bool:
+    del identifier  # Kept for older callers; explicit credential patterns apply to all text.
+    return any(pattern.search(value) for pattern in _SPECIFIC_SECRET_PATTERNS)
 
 
 def _require_integrity(connection: sqlite3.Connection, label: str) -> None:

@@ -127,27 +127,28 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     if (existing == null) {
       return;
     }
+    GameplayPresence current = playerPresence(existing);
     GameplayPresence updated =
         new GameplayPresence(
-            existing.sessionId(),
-            existing.tenantId(),
-            existing.gameInstanceId(),
-            existing.playableStateScope(),
-            existing.worldSlug(),
-            existing.realmSlug(),
-            existing.pointerVersion(),
-            existing.accountId(),
-            existing.characterId(),
-            existing.characterName(),
-            existing.role(),
-            existing.connectedAtEpochMs(),
+            current.sessionId(),
+            current.tenantId(),
+            current.gameInstanceId(),
+            current.playableStateScope(),
+            current.worldSlug(),
+            current.realmSlug(),
+            current.pointerVersion(),
+            current.accountId(),
+            current.characterId(),
+            current.characterName(),
+            GameplayPresenceRole.PLAYER,
+            current.connectedAtEpochMs(),
             explicitAfk ? Long.valueOf(currentTimeMillisSupplier.getAsLong()) : null,
-            existing.lastAcceptedCommandAtEpochMs(),
-            existing.lastMeaningfulActivityAtEpochMs());
+            current.lastAcceptedCommandAtEpochMs(),
+            current.lastMeaningfulActivityAtEpochMs());
     valueOps.set(presenceKey(sessionId), updated, presenceTtl);
     redisTemplate.expire(
-        gameInstanceKey(existing.tenantId(), existing.gameInstanceId()), presenceTtl);
-    redisTemplate.expire(accountKey(existing.tenantId(), existing.accountId()), presenceTtl);
+        gameInstanceKey(current.tenantId(), current.gameInstanceId()), presenceTtl);
+    redisTemplate.expire(accountKey(current.tenantId(), current.accountId()), presenceTtl);
   }
 
   @Override
@@ -158,29 +159,30 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
       return;
     }
     long now = currentTimeMillisSupplier.getAsLong();
+    GameplayPresence current = playerPresence(existing);
     GameplayPresence updated =
         new GameplayPresence(
-            existing.sessionId(),
-            existing.tenantId(),
-            existing.gameInstanceId(),
-            existing.playableStateScope(),
-            existing.worldSlug(),
-            existing.realmSlug(),
-            existing.pointerVersion(),
-            existing.accountId(),
-            existing.characterId(),
-            existing.characterName(),
-            existing.role(),
-            existing.connectedAtEpochMs(),
-            existing.explicitAfkSinceEpochMs(),
+            current.sessionId(),
+            current.tenantId(),
+            current.gameInstanceId(),
+            current.playableStateScope(),
+            current.worldSlug(),
+            current.realmSlug(),
+            current.pointerVersion(),
+            current.accountId(),
+            current.characterId(),
+            current.characterName(),
+            GameplayPresenceRole.PLAYER,
+            current.connectedAtEpochMs(),
+            current.explicitAfkSinceEpochMs(),
             Long.valueOf(now),
             meaningfulGameplayActivity
                 ? Long.valueOf(now)
-                : existing.lastMeaningfulActivityAtEpochMs());
+                : current.lastMeaningfulActivityAtEpochMs());
     valueOps.set(presenceKey(sessionId), updated, presenceTtl);
     redisTemplate.expire(
-        gameInstanceKey(existing.tenantId(), existing.gameInstanceId()), presenceTtl);
-    redisTemplate.expire(accountKey(existing.tenantId(), existing.accountId()), presenceTtl);
+        gameInstanceKey(current.tenantId(), current.gameInstanceId()), presenceTtl);
+    redisTemplate.expire(accountKey(current.tenantId(), current.accountId()), presenceTtl);
   }
 
   @Override
@@ -207,7 +209,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
         continue;
       }
       if (presence.tenantId() == tenantId && presence.gameInstanceId() == gameInstanceId) {
-        matches.add(presence);
+        matches.add(playerPresence(presence));
       }
     }
 
@@ -256,7 +258,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
           setOps.remove(accountKey, sessionIdText);
           continue;
         }
-        accountMatches.add(presence);
+        accountMatches.add(playerPresence(presence));
       }
       if (!accountMatches.isEmpty()) {
         accountMatches.sort(ACCOUNT_PRESENCE_PREFERENCE.reversed());
@@ -269,7 +271,30 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   @Override
   public Optional<GameplayPresence> findConnectedBySessionId(long sessionId) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    return Optional.ofNullable((GameplayPresence) valueOps.get(presenceKey(sessionId)));
+    return Optional.ofNullable((GameplayPresence) valueOps.get(presenceKey(sessionId)))
+        .map(RedisGameplayPresenceService::playerPresence);
+  }
+
+  private static GameplayPresence playerPresence(GameplayPresence presence) {
+    if (presence.role() == GameplayPresenceRole.PLAYER) {
+      return presence;
+    }
+    return new GameplayPresence(
+        presence.sessionId(),
+        presence.tenantId(),
+        presence.gameInstanceId(),
+        presence.playableStateScope(),
+        presence.worldSlug(),
+        presence.realmSlug(),
+        presence.pointerVersion(),
+        presence.accountId(),
+        presence.characterId(),
+        presence.characterName(),
+        GameplayPresenceRole.PLAYER,
+        presence.connectedAtEpochMs(),
+        presence.explicitAfkSinceEpochMs(),
+        presence.lastAcceptedCommandAtEpochMs(),
+        presence.lastMeaningfulActivityAtEpochMs());
   }
 
   private String presenceKey(long sessionId) {

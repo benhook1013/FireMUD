@@ -332,7 +332,16 @@ final class AutomationGameplayCommandAdmissionSupport {
             false);
       }
       if (ownershipRejected.isPresent()) {
-        return new DurableAdmission(ownershipRejected.orElseThrow(), null, false);
+        AdmissionResult rejection = ownershipRejected.orElseThrow();
+        return new DurableAdmission(
+            new AdmissionResult(
+                rejection.accepted(),
+                rejection.admissionOutcome(),
+                existing.getCommandId(),
+                rejection.errorCode(),
+                rejection.errorMessage()),
+            null,
+            false);
       }
     }
     return new DurableAdmission(result, retryExisting ? existing : null, false, retryExisting);

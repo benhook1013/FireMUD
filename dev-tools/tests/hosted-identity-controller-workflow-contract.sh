@@ -6012,6 +6012,9 @@ if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
     firemud-grpc-game-session-service)
       printf '%s' '{"metadata":{"name":"firemud-grpc-game-session-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-game-session-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
       ;;
+    firemud-grpc-social-groups-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-social-groups-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-social-groups-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
     *)
       printf 'unexpected projection Secret: %s\n' "$secret_name" >&2
       exit 2
