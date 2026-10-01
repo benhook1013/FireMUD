@@ -120,6 +120,63 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_actual_security_and_orphan_prompt_display_shapes(self) -> None:
+        header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
+        body = (header + "\n<details>\n<summary>🧩 Analysis chain</summary>\n"
+                "Script executed:\n```bash\necho diagnostic\n```\n</details>\n"
+                "**Broken Authentication**\n\n**Reachability:** External  \n"
+                "**Exploitability:** Difficult  \n**CWE:** [CWE-294](https://cwe.mitre.org/data/definitions/294.html)\n"
+                "**Quarantine replay admission after marker loss.** Production Redis absence fails closed.\n"
+                "```java\nFoo<T> sample;\n```\n<summary>🤖 Prompt for AI Agents</summary>\n"
+                "```text\nDo not display this truncated prompt")
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944363, body)[0]
+        self.assertEqual(finding["title"], "Quarantine replay admission after marker loss.")
+        self.assertEqual(finding["display_severity"], "Major")
+        self.assertEqual(finding["display_detail"], "Production Redis absence fails closed.\n```java\nFoo<T> sample;\n```")
+        self.assertNotIn("Broken Authentication", finding["display_detail"])
+        sample = "```html\n<summary>🤖 Prompt for AI Agents</summary>\nFoo<T>\n```"
+        ordinary = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202, "**Preserve the sample.**\n" + sample)[0]
+        self.assertEqual(ordinary["display_detail"], sample)
+
+    def test_actual_analysis_before_headline_and_inline_duplicate(self) -> None:
+        for title in ("Require explicit non-application evidence.", "Keep tenantId consistent."):
+            with self.subTest(title=title):
+                body = ("_🗄️ Data Integrity & Integration_ | _🟠 Major_ | _⚡ Quick win_\n"
+                        "<details><summary>🔎 Supported by static analysis</summary>"
+                        "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 + "```\n</details>\n"
+                        f"**{title}** Lines 20–25 must preserve `tenantId`.\n"
+                        "<details>\n<summary>Suggested fix</summary>\n```diff\n+noise\n```\n</details>\n"
+                        "<summary>🤖 Prompt for AI Agents</summary>Rewrite everything")
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944302, body)[0]
+                self.assertEqual(finding["title"], title)
+                self.assertEqual(finding["display_detail"], "Lines 20–25 must preserve `tenantId`.")
+                self.assertEqual(finding["display_severity"], "Major")
+
+    def test_hosted_severity_reads_explicit_badges_only(self) -> None:
+        cases = [("_Potential issue_ | _🔴 Critical_ | _Quick win_", "Critical"),
+                 ("_Correctness_ | _Trivial_ | _Heavy lift_", "Trivial"),
+                 ("**[P1] Bug**", "P1"), ("> **Severity: High**", "High"),
+                 ("**Major**", "Major"), ("The Critical issue has Major impact.", None),
+                 ("```md\n**Minor**\n```", None),
+                 ("<details><summary>Prompt for AI Agents</summary>**Major**</details>", None),
+                 ("<details><summary>Supported by static analysis</summary>**Low**</details>", None),
+                 ("**Major**\n**Minor**", None), ("No provider badge.", None)]
+        for badge, expected in cases:
+            with self.subTest(badge=badge):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+                    202, badge + "\n**Validate the target.**\nIssue explanation.")[0]
+                self.assertEqual(finding["display_severity"], expected)
+
+    def test_hosted_severity_is_independent_per_fingerprint(self) -> None:
+        body = ("_Bug_ | _Major_ | _Quick win_\n**First issue.**\n"
+                "<!-- cr-comment:v1:aaaaaaaaaaaaaaaaaaaaaaaa -->\n"
+                "_Bug_ | _Minor_ | _Quick win_\n**Second issue.**\n"
+                "<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->")
+        findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
+        self.assertEqual([item["display_severity"] for item in findings], ["Major", "Minor"])
+        self.assertEqual(len({item["key"] for item in findings}), 2)
+
     def test_headline_ignores_analysis_wrappers_and_scripts(self) -> None:
         issue = ("The `AlreadyStarted` path does not compare the incoming "
                  "`PreparedWorldInstanceRequest` with the existing workflow's request identity.")

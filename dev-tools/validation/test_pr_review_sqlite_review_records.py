@@ -125,6 +125,44 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                      "```\n</details>\n" + issue),
         }]})
 
+    def test_archived_security_metadata_title_has_specific_read_projection(self) -> None:
+        self.hosted_display_run(title="Broken Authentication")
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = (
+            "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_\n"
+            "**Broken Authentication**\n**Reachability:** External\n**Exploitability:** Difficult\n**CWE:** CWE-294\n"
+            "**Quarantine replay admission after marker loss.** Keep the fence closed.")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["title"], "Broken Authentication")
+        self.assertEqual(finding["display_title"], "Quarantine replay admission after marker loss.")
+        self.assertEqual(finding["display_detail"], "Keep the fence closed.")
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_title"], finding["display_title"])
+
+    def test_hosted_severity_history_and_incoming_routes_are_read_only(self) -> None:
+        self.hosted_display_run()
+        for badge, expected in (("**Major**", "Major"), ("No badge", None),
+                                ("**Major**\n**Minor**", None)):
+            with self.subTest(badge=badge):
+                archive = json.loads(self.hosted_display_archive())
+                archive["comments"][0]["body"] = badge + "\n**Validate the target.**\nIssue explanation."
+                # Set up each retained archive before the protected read snapshot.
+                with sqlite3.connect(self.database) as connection:
+                    connection.execute("DELETE FROM imported_artifacts WHERE run_id = 'display-run'")
+                self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+                with sqlite3.connect(self.database) as connection:
+                    before = list(connection.iterdump())
+                with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
+                    source = self.records.history(2839)
+                    incoming = self.records.history(2879)
+                    routes = self.records.list_routes(status="all", source_pr=2839)
+                self.assertEqual(source["findings"][0]["display_severity"], expected)
+                for route in [*source["routes"], *incoming["routes"], *routes]:
+                    self.assertEqual(route["display_severity"], expected)
+                self.assertEqual(source["findings"][0]["title"], "<details>")
+                with sqlite3.connect(self.database) as connection:
+                    self.assertEqual(list(connection.iterdump()), before)
+
     def test_hosted_display_reads_full_archive_once_and_preserves_history(self) -> None:
         self.hosted_display_run()
         archive = self.hosted_display_archive()
@@ -1257,7 +1295,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             "capture_completion_marker": "capture-complete",
         }
         events = (
-            json.dumps({"type": "finding", "message": "complete source text"})
+            json.dumps({"type": "finding", "message": "complete source text", "severity": "major"})
             + "\n"
             + json.dumps(
                 {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["src/a.py"]}
@@ -1314,6 +1352,37 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             [item["attempt"]["attempt_id"] for item in self.records.completed_cli_capture_snapshots(2828)],
             [run_id],
         )
+
+    def test_cli_severity_native_unknown_missing_and_conflicting_archive(self) -> None:
+        self.test_native_cli_capture_snapshot_binds_attempt_run_artifacts_and_decisions()
+        run_id = "run.native-snapshot"
+        self.assertEqual(self.records.history(2828)["findings"][0]["display_severity"], "Major")
+        for severity in (None, "not a provider label", 7):
+            with self.subTest(severity=severity):
+                with sqlite3.connect(self.database) as connection:
+                    content = connection.execute(
+                        "SELECT content FROM review_artifacts WHERE attempt_id = ? AND kind = 'cli_events'",
+                        (run_id,),
+                    ).fetchone()[0]
+                    lines = content.splitlines()
+                    event = json.loads(lines[0])
+                    event["severity"] = severity
+                    lines[0] = json.dumps(event)
+                    connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = 'cli_events'",
+                                       ("\n".join(lines), run_id))
+                    before = list(connection.iterdump())
+                with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
+                    finding = self.records.history(2828)["findings"][0]
+                self.assertIsNone(finding["display_severity"])
+                with sqlite3.connect(self.database) as connection:
+                    self.assertEqual(list(connection.iterdump()), before)
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE review_attempts SET source_pr = 999 WHERE attempt_id = ?", (run_id,))
+        self.assertNotIn("display_severity", self.records.history(2828)["findings"][0])
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE review_attempts SET source_pr = 2828 WHERE attempt_id = ?", (run_id,))
+            connection.execute("DELETE FROM review_artifacts WHERE attempt_id = ? AND kind = 'cli_events'", (run_id,))
+        self.assertNotIn("display_severity", self.records.history(2828)["findings"][0])
 
     def test_started_cli_association_cannot_be_read_as_legacy_sql_snapshot(self) -> None:
         self.bootstrap()

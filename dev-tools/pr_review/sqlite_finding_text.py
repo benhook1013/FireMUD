@@ -47,6 +47,7 @@ _BADGE_LABELS = {
     "suggestions",
     "test",
     "testing",
+    "trivial",
     "tests",
 }
 
@@ -67,7 +68,7 @@ def _safe_finding_detail(value: Any) -> str:
 _HTML_TAG = re.compile(r"</?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?\s*/?>")
 _EVIDENCE_LABEL = re.compile(
     r"^(?:(?:supported by static analysis|script executed|analysis results?|"
-    r"committable suggestion|script output|prompt for ai agents|ai (?:agent )?prompt)\s*:?|"
+    r"committable suggestion|script output|analysis chain|suggested fix|prompt for ai agents|ai (?:agent )?prompt)\s*:?|"
     r"repository\s*:\s*`?[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+`?|"
     r"length of output\s*:\s*[0-9]+)\s*$", re.IGNORECASE
 )
@@ -96,7 +97,7 @@ def _unusable_hosted_title(value: Any) -> bool:
 
 def _strip_badge_prefix(line: str) -> str:
     for pattern in (
-        r"^_[^\n]*?_\s*\|\s*_[^\n]*?_\s*\|\s*_[^\n]*?_",
+        r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){2,3}",
         r"^(?:\*\*[^\n]*?\*\*|__[^\n]*?__)",
     ):
         match = re.match(pattern, line)
@@ -105,11 +106,20 @@ def _strip_badge_prefix(line: str) -> str:
     return line
 
 
-def _hosted_issue_markdown(value: str) -> str:
+def _hosted_issue_markdown(value: str, *, keep_badges: bool = False) -> str:
     """Remove provider presentation noise while preserving issue Markdown."""
 
     from .sqlite_hosted_capture import _markdown_fenced_ranges
 
+    original_fences = _markdown_fenced_ranges(value)
+    # An orphan/truncated provider prompt summary still owns the remaining tail.
+    for match in re.finditer(r"<summary\b[^>]*>(.*?)</summary>", value, re.DOTALL | re.IGNORECASE):
+        if any(start <= match.start() < end for start, end in original_fences):
+            continue
+        summary = _headline_text(match.group(1))
+        if re.search(r"prompt for ai agents|ai (?:agent )?prompt", summary, re.IGNORECASE):
+            value = value[:match.start()]
+            break
     # Protect ordinary samples before any HTML/metadata cleanup. Diagnostic
     # details still discard their entire block, including protected samples.
     protected = {}
@@ -125,6 +135,7 @@ def _hosted_issue_markdown(value: str) -> str:
             protected[token] = value[start:end].rstrip("\r\n")
             replacement = token + "\n"
         value = value[:start] + replacement + value[end:]
+    security_metadata = all(label in value for label in ("**Reachability:**", "**Exploitability:**", "**CWE:**"))
     value = re.sub(r"<!--.*?(?:-->|\Z)", "", value, flags=re.DOTALL)
     value = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", value, flags=re.DOTALL | re.IGNORECASE)
     value = re.sub(
@@ -136,8 +147,15 @@ def _hosted_issue_markdown(value: str) -> str:
     )
     lines = []
     for raw in value.splitlines():
-        line = _strip_badge_prefix(_headline_text(html.unescape(raw.rstrip())))
-        if line and (_is_badge_line(line) or _is_evidence_label(line)):
+        line = _headline_text(html.unescape(raw.rstrip()))
+        if not keep_badges:
+            line = _strip_badge_prefix(line)
+        if line and ((_is_badge_line(line) and not keep_badges) or _is_evidence_label(line)):
+            continue
+        if security_metadata and (
+            line.strip() == "**Broken Authentication**"
+            or re.match(r"^\*\*(?:Reachability|Exploitability|CWE):\*\*", line.strip())
+        ):
             continue
         if line.strip() in {"---", "***", "___"}:
             continue
@@ -168,6 +186,12 @@ def _first_line(value: Any) -> str | None:
         content = _bold_line_content(line)
         if content is not None and not _unusable_hosted_title(content):
             return content
+    for line in lines:
+        match = re.match(r"^(?:\*\*(.+?)\*\*|__(.+?)__)(?:\s|$)", line)
+        if match:
+            content = match.group(1) or match.group(2)
+            if not _unusable_hosted_title(content):
+                return content
     return lines[0] if lines else None
 
 
@@ -190,6 +214,10 @@ def _hosted_display_detail(value: str, title: str) -> str:
         if content == title:
             lines.pop(index)
             break
+        match = re.match(r"^(?:\*\*(.+?)\*\*|__(.+?)__)(?:\s|$)", candidate)
+        if match and (match.group(1) or match.group(2)) == title:
+            lines[index] = candidate[match.end():].lstrip()
+            break
     value = "\n".join(lines).strip()
     value, _ = _redact_archive_text(value)
     return value[:8000].rstrip()
@@ -210,14 +238,17 @@ def _is_badge_line(line: str) -> bool:
 
     candidate = re.sub(r"^#{1,6}\s*", "", line).strip()
     sections = [section.strip() for section in candidate.split("|")]
-    if len(sections) == 3 and all(
+    if len(sections) in {3, 4} and all(
         section.startswith("_") and section.endswith("_") for section in sections
     ):
-        severity_words = re.findall(r"[a-z0-9]+", sections[1].casefold())
-        effort_words = set(re.findall(r"[a-z0-9]+", sections[2].casefold()))
-        severity_labels = {"critical", "high", "major", "medium", "minor", "p0", "p1", "p2", "p3"}
+        severity_words = re.findall(r"[a-z0-9]+", sections[-2].casefold())
+        effort_words = set(re.findall(r"[a-z0-9]+", sections[-1].casefold()))
+        severity_labels = {"critical", "high", "major", "medium", "minor", "low", "trivial", "p0", "p1", "p2", "p3"}
         effort_labels = ({"quick", "win"}, {"heavy", "lift"})
-        if any(word in severity_labels for word in severity_words) and any(
+        known_tier = len(sections) == 3 or set(re.findall(r"[a-z]+", sections[1].casefold())) == {
+            "detected", "with", "advanced", "tier"
+        }
+        if known_tier and any(word in severity_labels for word in severity_words) and any(
             label == effort_words for label in effort_labels
         ):
             return True
@@ -227,3 +258,29 @@ def _is_badge_line(line: str) -> bool:
             break
     words = re.findall(r"[a-z0-9]+", candidate.casefold())
     return bool(words) and all(word in _BADGE_LABELS for word in words)
+
+
+def _hosted_display_severity(value: str) -> str | None:
+    """Read explicit provider badge labels, never narrative or sample severity."""
+
+    from .sqlite_hosted_capture import _markdown_fenced_ranges
+
+    value = _hosted_issue_markdown(value, keep_badges=True)
+    for start, end in reversed(_markdown_fenced_ranges(value)):
+        value = value[:start] + "\n" + value[end:]
+    labels = {label.casefold(): label for label in
+              ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")}
+    found = set()
+    for raw in value.splitlines():
+        line = re.sub(r"^(?:>\s*)+", "", raw.strip()).strip()
+        # Provider category | severity | effort badge, including inline prose.
+        match = re.match(r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){2,3}", line)
+        badge = match.group().split("|")[-2] if match and _is_badge_line(match.group()) else None
+        if badge is None:
+            match = re.match(r"^(?:\*\*([^\n]*?)\*\*|__([^\n]*?)__)", line)
+            if match and _is_badge_line(match.group()):
+                badge = match.group(1) or match.group(2)
+        if badge is not None:
+            words = re.findall(r"[a-z0-9]+", badge.casefold())
+            found.update(labels[word] for word in words if word in labels)
+    return next(iter(found)) if len(found) == 1 else None

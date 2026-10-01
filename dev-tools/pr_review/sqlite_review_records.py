@@ -3078,9 +3078,9 @@ class SqliteReviewRecords:
 
         from .sqlite_finding_text import _unusable_hosted_title
 
-        cache: dict[tuple[str, int], dict[str, dict[str, str]]] = {}
+        cache: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
         for record in (*observations, *routes):
-            if record.get("source_channel") != "hosted" or record.get("origin") == "legacy_controller":
+            if record.get("source_channel") not in {"hosted", "cli"} or record.get("origin") == "legacy_controller":
                 continue
             if "run_id" in record:
                 run_id, title = record["run_id"], record["title"]
@@ -3090,27 +3090,97 @@ class SqliteReviewRecords:
                 row = connection.execute(
                     "SELECT o.run_id, o.title FROM finding_observations o "
                     "JOIN review_runs r USING (run_id) JOIN findings f USING (finding_id) "
-                    "WHERE o.finding_id = ? AND o.source_pr = ? AND o.source_channel = 'hosted' "
+                    "WHERE o.finding_id = ? AND o.source_pr = ? AND o.source_channel = ? "
                     "AND f.source_finding_key = ? "
                     "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1",
-                    (record["finding_id"], record["source_pr"], record["source_finding_key"]),
+                    (record["finding_id"], record["source_pr"], record["source_channel"], record["source_finding_key"]),
                 ).fetchone()
                 if row is None:
                     continue
                 run_id, title = row
             cache_key = (run_id, record["source_pr"])
             if cache_key not in cache:
-                cache[cache_key] = self._hosted_display_titles(connection, run_id, record["source_pr"])
+                reader = self._hosted_display_titles if record["source_channel"] == "hosted" else self._cli_display_severities
+                cache[cache_key] = reader(connection, run_id, record["source_pr"])
             presentation = cache[cache_key].get(record["source_finding_key"])
             if presentation:
-                if _unusable_hosted_title(title) and presentation.get("display_title"):
+                record["display_severity"] = presentation["display_severity"]
+                if (_unusable_hosted_title(title) or title == "Broken Authentication") and presentation.get("display_title"):
                     record["display_title"] = presentation["display_title"]
                 if presentation.get("display_detail"):
                     record["display_detail"] = presentation["display_detail"]
 
+    def _cli_display_severities(
+        self, connection: sqlite3.Connection, run_id: str, source_pr: int
+    ) -> dict[str, dict[str, Any]]:
+        """Associate retained provider severity with exact validated CLI finding ordinals."""
+
+        from . import evidence
+
+        try:
+            attempts = connection.execute(
+                "SELECT attempt_id FROM review_attempts WHERE run_id = ?", (run_id,)
+            ).fetchall()
+            if attempts:
+                if attempts != [(run_id,)]:
+                    return {}
+                snapshot = self._cli_capture_snapshot(connection, run_id, source_pr=source_pr)
+                if snapshot is None:
+                    return {}
+                repository = snapshot["attempt"]["metadata"].get("repository", "")
+                capture = evidence._cli_capture_from_sql(snapshot, repository, source_pr)
+                findings, capture_id = capture.findings, run_id
+            else:
+                rows = connection.execute(
+                    "SELECT i.kind, i.content, o.repository, o.source_pr, o.channel, o.provider_id, "
+                    "o.checkpoint_id, o.checkpoint_fingerprint FROM imported_artifacts i "
+                    "JOIN provider_origins o USING (run_id) WHERE i.run_id = ? "
+                    "AND i.kind IN ('metadata', 'cli_events')", (run_id,)
+                ).fetchall()
+                if len(rows) != 2 or {row[0] for row in rows} != {"metadata", "cli_events"}:
+                    return {}
+                artifacts = {row[0]: row[1] for row in rows}
+                origin = rows[0][2:]
+                if any(row[2:] != origin for row in rows):
+                    return {}
+                metadata = json.loads(artifacts["metadata"])
+                checkpoint = evidence.Checkpoint(**metadata["checkpoint_fields"])
+                if (
+                    origin[1:3] != (source_pr, "cli")
+                    or metadata.get("repository") != origin[0]
+                    or metadata.get("pull_request") != source_pr
+                    or checkpoint.type.casefold() != "cli"
+                    or metadata.get("run_id") != checkpoint.run_id
+                    or origin[3] != f"run:{checkpoint.run_id}"
+                    or origin[4] != checkpoint.comment_id
+                    or not self._source_checkpoint_matches(connection, run_id, origin[5], checkpoint)
+                ):
+                    return {}
+                findings, _ = evidence.parse_capture_events(artifacts["cli_events"])
+                if len(findings) != checkpoint.raw_found:
+                    return {}
+                capture_id = checkpoint.run_id
+            keys = {row[0] for row in connection.execute(
+                "SELECT f.source_finding_key FROM finding_observations o JOIN findings f USING (finding_id) "
+                "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = 'cli'", (run_id, source_pr)
+            )}
+            expected = {f"cli-run:{capture_id}:finding:{index}" for index in range(1, len(findings) + 1)}
+            if keys != expected:
+                return {}
+            labels = {label.casefold(): label for label in
+                      ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")}
+            return {
+                f"cli-run:{capture_id}:finding:{index}": {
+                    "display_severity": labels.get(finding["severity"].strip().casefold())
+                    if isinstance(finding.get("severity"), str) else None,
+                } for index, finding in enumerate(findings, 1)
+            }
+        except (evidence.EvidenceError, ReviewRecordsError, KeyError, TypeError, ValueError, AttributeError):
+            return {}
+
     def _hosted_display_titles(
         self, connection: sqlite3.Connection, run_id: str, source_pr: int
-    ) -> dict[str, dict[str, str]]:
+    ) -> dict[str, dict[str, Any]]:
         """Use complete retained comments and canonical finding keys; omit uncertain evidence."""
 
         from . import github
@@ -3168,12 +3238,14 @@ class SqliteReviewRecords:
                 for finding in _hosted_comment_finding_segments(comment_id, body):
                     title = finding["title"]
                     if title.startswith(f"CodeRabbit review comment {comment_id}"):
-                        continue
-                    # Enforce the same bounded/secret-free title contract as writes.
-                    FindingObservation(source_finding_key=finding["key"], title=title)
+                        title = None
+                    else:
+                        # Enforce the same bounded/secret-free title contract as writes.
+                        FindingObservation(source_finding_key=finding["key"], title=title)
                     titles[finding["key"]] = {
                         "display_title": title,
                         "display_detail": finding["display_detail"],
+                        "display_severity": finding["display_severity"],
                     }
             return titles
         except (json.JSONDecodeError, TypeError, AttributeError, HostedCaptureError, ReviewRecordsError):
