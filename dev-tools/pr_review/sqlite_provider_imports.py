@@ -527,6 +527,7 @@ def _import_reply_only_hosted_checkpoint(
                 "trigger_state": trigger_state,
                 "zero_reply_proof": proof,
                 "checkpoint": checkpoint.as_json(),
+                "checkpoint_fields": dataclasses.asdict(checkpoint),
                 "checkpoint_fingerprint": _checkpoint_fingerprint(checkpoint),
                 "current_head": current_head,
                 "response_id": checkpoint.hosted_review_id,

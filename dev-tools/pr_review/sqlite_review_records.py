@@ -882,6 +882,12 @@ class SqliteReviewRecords:
                 )
             }
             if existing:
+                if "metadata" in existing and "metadata" in archived and self._same_checkpoint_projection(
+                    existing["metadata"][0], archived["metadata"][0]
+                ):
+                    # The added parsed projection must not rewrite any prior
+                    # immutable capture bytes, source hash or redaction count.
+                    archived["metadata"] = existing["metadata"]
                 if existing != archived:
                     raise ReviewRecordsError("imported provider artifacts conflict with existing evidence")
                 replay = True
@@ -893,6 +899,28 @@ class SqliteReviewRecords:
                     )
                 replay = False
         return {"run_id": run_id, "kinds": sorted(archived), "idempotent_replay": replay}
+
+    @staticmethod
+    def _same_checkpoint_projection(stored_content: str, incoming_content: str) -> bool:
+        """Recognize only the hash-verified projection added to older metadata."""
+
+        from .evidence import Checkpoint
+        from .sqlite_provider_imports import _checkpoint_fingerprint
+
+        try:
+            stored = json.loads(stored_content)
+            incoming = json.loads(incoming_content)
+            if not isinstance(stored, dict) or not isinstance(incoming, dict) or "checkpoint_fields" in stored:
+                return False
+            fields = incoming.pop("checkpoint_fields")
+            checkpoint = Checkpoint(**fields)
+            return (
+                incoming == stored
+                and checkpoint.as_json() == stored["checkpoint"]
+                and _checkpoint_fingerprint(checkpoint) == stored["checkpoint_fingerprint"]
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def record_historical_gap(
         self,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import hashlib
 import io
 import json
 import sqlite3
@@ -29,7 +30,7 @@ from pr_review.sqlite_records_repair import (
     archive_incomplete_checkpoint,
     repair_provider_checkpoints,
 )
-from pr_review.sqlite_review_records import FindingObservation, SqliteReviewRecords
+from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 
 HEAD = "abcdef0123456789abcdef0123456789abcdef01"
 REPO = "owner/repo"
@@ -233,6 +234,33 @@ class SqliteRecordsRepairTest(unittest.TestCase):
         live = LiveEvidence(REPO, LiveGitHub(REPO), records=self.records)
         self.assertEqual(live._source_resolution_status(PR, "cli", checkpoint, HEAD), "resolved")
         self.assertEqual(self.resolution_status(dataclasses.replace(checkpoint, comment_id=11), checkpoint.run_id, "cli"), "pending")
+
+    def test_older_import_archive_replays_without_changing_immutable_bytes(self) -> None:
+        checkpoint, imported_id = self.imported_resolution_fixture("cli")
+        with sqlite3.connect(self.database) as connection:
+            metadata_row = connection.execute(
+                "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'metadata'", (imported_id,)
+            ).fetchone()
+            metadata = json.loads(metadata_row[0])
+            metadata.pop("checkpoint_fields")
+            old_content = json.dumps(metadata, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+            connection.execute(
+                "UPDATE imported_artifacts SET content = ?, source_sha256 = ? WHERE run_id = ? AND kind = 'metadata'",
+                (old_content, hashlib.sha256(old_content.encode()).hexdigest(), imported_id),
+            )
+            before = connection.execute("SELECT * FROM imported_artifacts WHERE run_id = ? ORDER BY kind", (imported_id,)).fetchall()
+        replay = repair_provider_checkpoints(
+            self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint],
+            actor="backfill-reviewer", common=self.common, dry_run=False,
+        )
+        self.assertEqual(replay["items"][0]["action"], "already_imported")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT * FROM imported_artifacts WHERE run_id = ? ORDER BY kind", (imported_id,)).fetchall(), before)
+        supplied = {row[1]: row[2] for row in before}
+        metadata["checkpoint_fields"] = dataclasses.asdict(dataclasses.replace(checkpoint, author_login="wrong-owner"))
+        supplied["metadata"] = json.dumps(metadata)
+        with self.assertRaisesRegex(ReviewRecordsError, "artifacts conflict"):
+            self.records.archive_imported_artifacts(imported_id, supplied)
 
     def test_imported_source_checkpoint_binding_allows_only_semantically_neutral_edits(self) -> None:
         checkpoint, imported_id = self.imported_resolution_fixture("hosted")
