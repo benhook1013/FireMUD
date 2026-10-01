@@ -179,3 +179,8 @@ Entry format:
   - Context: the Game Design owner-read test loaded `application.yml` by its generic classpath name, while several modules provide that same resource name.
   - Observation: the test saw an empty method allowlist rather than the owning service's configuration. Loading the module's explicit `src/main/resources` files exposed the actual default and production lists; the corrected assertion passed without weakening the required methods. This is local configuration proof, not live workload authentication.
   - Expected pattern: use an explicit owner-module resource when proving a service's configuration, and keep runtime classpath precedence and authenticated deployment proof separate.
+
+- `2026-10-02`: Use explicit typed result extraction for jOOQ SQL fixture readback
+  - Context: repeated Account PostgreSQL fixtures supplied `Long.class` or `UUID.class` to `DSLContext.fetchValue(String, Object...)` as if that SQL overload selected a return type.
+  - Observation: the class is a bind argument, not a type selector; compilation alone did not prove correct SQL binding. Integration inspection corrected the fixtures before claiming execution.
+  - Expected pattern: bind only actual SQL parameters with `resultQuery(sql, parameters)`, then use `fetchOne(columnIndex, type)` for typed extraction and an explicit required-row check where absence is impossible. Retain separate PostgreSQL execution proof; analyzer or compiler success is not that proof.
