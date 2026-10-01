@@ -23,6 +23,8 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 class WorldsTextCommandDispatchHandlerTest {
+  private static final String ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
+
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final GameplayCatalogProperties gameplayCatalogProperties =
@@ -192,15 +194,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setOutcomeCode("CREATED")
                 .build());
     SessionContext context =
-        new SessionContext(
-            7L,
-            22L,
-            "11111111-1111-4111-8111-111111111111",
-            "emberline@example.com",
-            0L,
-            null,
-            0L,
-            "jwt");
+        new SessionContext(7L, 22L, ACCOUNT_ID, "emberline@example.com", 0L, null, 0L, "jwt");
 
     TextCommandInterpretationResult realmsResult =
         scopedHandler.handle(
@@ -248,8 +242,7 @@ class WorldsTextCommandDispatchHandlerTest {
         org.mockito.ArgumentCaptor.forClass(DirectTextConnectScopeTarget.class);
     Mockito.verify(accountClient)
         .issueDirectTextConnectScope(callerCaptor.capture(), targetCaptor.capture());
-    assertThat(callerCaptor.getValue().getAccountId())
-        .isEqualTo("d0c68a37-5126-42d2-9506-8df13e97699e");
+    assertThat(callerCaptor.getValue().getAccountId()).isEqualTo(ACCOUNT_ID);
     assertThat(callerCaptor.getValue().getSessionId()).isEqualTo("7");
     assertThat(targetCaptor.getValue().realmId()).isEqualTo(realmId.toString());
     assertThat(targetCaptor.getValue().catalogRevision()).isEqualTo(7L);
@@ -275,8 +268,7 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(requestIds.getLast()).isEqualTo(requestIds.getFirst());
     assertThat(scopeIds.getLast()).isEqualTo(scopeIds.getFirst());
     assertThat(joinContexts.getFirst().getRequestId()).isEqualTo(requestIds.getFirst());
-    assertThat(joinContexts.getFirst().getAccountId())
-        .isEqualTo("d0c68a37-5126-42d2-9506-8df13e97699e");
+    assertThat(joinContexts.getFirst().getAccountId()).isEqualTo(ACCOUNT_ID);
     assertThat(joinContexts.getFirst().getSessionId()).isEqualTo("7");
     assertThat(joinContexts.getFirst().getRealmId()).isEqualTo(realmId.toString());
     assertThat(joinContexts.getLast()).isEqualTo(joinContexts.getFirst());

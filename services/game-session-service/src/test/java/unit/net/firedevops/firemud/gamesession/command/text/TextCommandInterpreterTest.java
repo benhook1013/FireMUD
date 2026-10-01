@@ -87,6 +87,8 @@ import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
 class TextCommandInterpreterTest {
+  private static final String ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
+
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final EntityManagementClient entityManagementClient =
@@ -161,7 +163,7 @@ class TextCommandInterpreterTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("auth-token")
-                .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
+                .setAccountId(ACCOUNT_ID)
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
@@ -169,7 +171,7 @@ class TextCommandInterpreterTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          "f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "1")
+                          ACCOUNT_ID, 22L, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -402,14 +404,14 @@ class TextCommandInterpreterTest {
             lookCacheService,
             new TextPlayerOutputRenderer(new PresentationProperties()));
     when(entityManagementClient.listCharactersByAccount(
-            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+            "22", ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
         .thenReturn(
             net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
+                        .setAccountId(ACCOUNT_ID)
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -854,15 +856,7 @@ class TextCommandInterpreterTest {
     ((InMemorySessionContextService) sessionContextService)
         .save(
             new SessionContext(
-                56L,
-                22L,
-                "f2ed193b-12c1-4c96-bcad-c162229af440",
-                "demo@example.com",
-                0L,
-                null,
-                0L,
-                "R-7",
-                null));
+                56L, 22L, ACCOUNT_ID, "demo@example.com", 0L, null, 0L, "R-7", null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("56", "LOOK", false);
 

@@ -21,7 +21,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 class GameplayLocalPathReadinessProbeTest {
   private static final long PROBE_SESSION_ID_BASE = 9_223_372_036_854_770_000L;
-  private static final String PROBE_ACCOUNT_UUID = "f2ed193b-12c1-4c96-bcad-c162229af440";
+  private static final String PROBE_ACCOUNT_UUID = "ff36f51a-6cbd-4f26-8332-031535e2e3b4";
   private static final long PROBE_CHARACTER_ID = 9_223_372_036_854_770_002L;
 
   @Test

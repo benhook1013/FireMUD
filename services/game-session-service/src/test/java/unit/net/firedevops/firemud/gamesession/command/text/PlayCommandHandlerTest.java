@@ -118,7 +118,7 @@ class PlayCommandHandlerTest {
                     .echoRequestId(
                         freshMembership(
                             net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                                .active("f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "1")),
+                                .active(PLAYER_ACCOUNT_ID, 22L, "1")),
                         invocation.getArgument(0)));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -578,7 +578,8 @@ class PlayCommandHandlerTest {
                 .setError(ErrorDetail.newBuilder().setCode("UNAVAILABLE").build())
                 .build())
         .when(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", PLAYER_ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -624,14 +625,15 @@ class PlayCommandHandlerTest {
     order
         .verify(accountClient)
         .getRealmAccessGrantForRuntime(
-            Mockito.eq("123"),
+            Mockito.eq(PLAYER_ACCOUNT_ID),
             Mockito.eq("22"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
             Mockito.anyString());
     order
         .verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .listCharactersByAccount(
+            "22", PLAYER_ACCOUNT_ID, "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -1464,7 +1466,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
-            Mockito.eq("123"),
+            Mockito.eq(PLAYER_ACCOUNT_ID),
             Mockito.eq("22"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
@@ -1504,7 +1506,7 @@ class PlayCommandHandlerTest {
                         && saved.roomInstanceId() == null));
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
-            Mockito.eq("123"),
+            Mockito.eq(PLAYER_ACCOUNT_ID),
             Mockito.eq("22"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
@@ -1531,7 +1533,7 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
     Mockito.verify(accountClient)
         .getRealmAccessGrantForRuntime(
-            Mockito.eq("123"),
+            Mockito.eq(PLAYER_ACCOUNT_ID),
             Mockito.eq("22"),
             Mockito.eq("sandbox"),
             Mockito.eq("preview"),
@@ -2911,7 +2913,7 @@ class PlayCommandHandlerTest {
       String gameInstanceId, PlayableStateScope scope, Character... characters) {
     Mockito.doReturn(roster(characters))
         .when(entityManagementClient)
-        .listCharactersByAccount("22", "123", gameInstanceId, scope);
+        .listCharactersByAccount("22", PLAYER_ACCOUNT_ID, gameInstanceId, scope);
   }
 
   private static ListCharactersByAccountResponse roster(Character... characters) {
@@ -2924,7 +2926,7 @@ class PlayCommandHandlerTest {
     return Character.newBuilder()
         .setId(id)
         .setTenantId("22")
-        .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
+        .setAccountId(PLAYER_ACCOUNT_ID)
         .setName(name)
         .setPlayableStateScope(scope)
         .build();

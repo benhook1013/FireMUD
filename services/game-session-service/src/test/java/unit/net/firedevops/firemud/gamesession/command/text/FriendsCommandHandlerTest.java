@@ -989,7 +989,9 @@ class FriendsCommandHandlerTest {
     TextCommandInterpretationResult result =
         handler.handle(
             new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("ADD", "41"), "FRIENDS ADD 41"),
+                TextCommandType.FRIENDS,
+                java.util.List.of("ADD", CALLER_ACCOUNT_ID),
+                "FRIENDS ADD " + CALLER_ACCOUNT_ID),
             GAMEPLAY_CONTEXT);
 
     assertThat(result.commandResult().accepted()).isFalse();
