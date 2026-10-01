@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -86,10 +87,67 @@ public final class AccountStoredBareLoginRecoveryReader {
       AccountBareLoginExchangeIdentity identity, byte[] requestDigest) {
     Objects.requireNonNull(identity, "identity");
     requireGameSessionPeer();
-    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
-      throw new IllegalStateException(
-          "Stored bare LOGIN history readback requires an active owner transaction");
+    requireOwnerTransaction();
+    return readHistoricalStored(identity, requestDigest).evidence();
+  }
+
+  /**
+   * Correlates exact stored original exchange/source history with a separately committed, strictly
+   * current Account connect source and its independently valid current Gateway context. This is
+   * only immutable source/target correspondence evidence: it does not prove current authority or
+   * membershipVersion, original result expiry, registry state, admission postconditions, recovery
+   * eligibility, or authorization, and releases no result, credential, JWT, or signed context.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public HistoricalStoredBareLoginCorrelationEvidence readCorrelation(
+      AccountBareLoginExchangeIdentity originalIdentity,
+      byte[] originalRequestDigest,
+      AccountConnectTokenIssuanceIdentity freshIdentity,
+      String signedFreshGatewayContext) {
+    Objects.requireNonNull(originalIdentity, "originalIdentity");
+    Objects.requireNonNull(freshIdentity, "freshIdentity");
+    Objects.requireNonNull(signedFreshGatewayContext, "signedFreshGatewayContext");
+    requireGameSessionPeer();
+    requireOwnerTransaction();
+    if (originalIdentity.accountId() != freshIdentity.accountId()
+        || originalIdentity.tenantId() != freshIdentity.tenantId()) {
+      throw new IllegalArgumentException(
+          "Original and fresh source identities must belong to the same Account and tenant");
     }
+
+    // Establish the independent strict-current source first. Its Account reader checks the signed
+    // Gateway deadline again after any Account-fence wait, before this component reads the opaque
+    // stored original result frame.
+    var fresh = committedSourceReader.read(freshIdentity, signedFreshGatewayContext);
+    if (originalIdentity.sourceConnectOperationId().equals(fresh.operationId())) {
+      throw new IllegalStateException(
+          "Fresh connect proof must be a separate committed Account source operation");
+    }
+    HistoricalReadback original = readHistoricalStored(originalIdentity, originalRequestDigest);
+
+    SelectedTargetEvidence originalTarget =
+        selectedTarget(original.source().originalSourceClaims());
+    SelectedTargetEvidence freshTarget = selectedTarget(fresh.originalSourceClaims());
+    if (!originalTarget.equals(freshTarget)) {
+      throw new IllegalStateException(
+          "Fresh connect source does not select the exact original Account target");
+    }
+
+    // The original encrypted frame read can itself take time after the strict source reader's
+    // fence recheck. Re-run the unchanged strict-current path immediately before returning so an
+    // assertion that expires during history work cannot yield correlation evidence.
+    var finalFresh = committedSourceReader.read(freshIdentity, signedFreshGatewayContext);
+    requireSameCurrentReadback(fresh, finalFresh);
+
+    return new HistoricalStoredBareLoginCorrelationEvidence(
+        original.evidence(),
+        connectSourceIdentity(original.source()),
+        connectSourceIdentity(freshIdentity, finalFresh),
+        originalTarget);
+  }
+
+  private HistoricalReadback readHistoricalStored(
+      AccountBareLoginExchangeIdentity identity, byte[] requestDigest) {
     byte[] checkedRequestDigest = requireDigest(requestDigest, "request digest");
     byte[] frameBytes = null;
     byte[] originalGatewayContextBytes = null;
@@ -178,23 +236,25 @@ public final class AccountStoredBareLoginRecoveryReader {
       }
       sourceConnectTokenHash = sourceEvidence.sourceTokenHash();
 
-      return new HistoricalStoredBareLoginEvidence(
-          operation.operationId(),
-          identity.sourceConnectOperationId(),
-          identity.accountId(),
-          identity.tenantId(),
-          operation.requestId(),
-          operation.connectScopeHash(),
-          operation.requestDigestVersion(),
-          checkedRequestDigest,
-          originalResultHash,
-          sourceConnectTokenHash,
-          responseEnvelope.envelope().keyId(),
-          sourceEvidence.responseEnvelopeKeyId(),
-          sourceEvidence.accountSourceKeyId(),
-          sourceEvidence.gatewayKeyId(),
-          gatewayEvidence.integer("verifiedAt"),
-          gatewayEvidence.integer("exp"));
+      HistoricalStoredBareLoginEvidence storedEvidence =
+          new HistoricalStoredBareLoginEvidence(
+              operation.operationId(),
+              identity.sourceConnectOperationId(),
+              identity.accountId(),
+              identity.tenantId(),
+              operation.requestId(),
+              operation.connectScopeHash(),
+              operation.requestDigestVersion(),
+              checkedRequestDigest,
+              originalResultHash,
+              sourceConnectTokenHash,
+              responseEnvelope.envelope().keyId(),
+              sourceEvidence.responseEnvelopeKeyId(),
+              sourceEvidence.accountSourceKeyId(),
+              sourceEvidence.gatewayKeyId(),
+              gatewayEvidence.integer("verifiedAt"),
+              gatewayEvidence.integer("expiresAt"));
+      return new HistoricalReadback(storedEvidence, sourceEvidence);
     } finally {
       Arrays.fill(checkedRequestDigest, (byte) 0);
       wipe(frameBytes);
@@ -221,6 +281,111 @@ public final class AccountStoredBareLoginRecoveryReader {
         operation.authorityTupleDigest(),
         operation.issuanceFenceDigest(),
         operation.postconditionDigest());
+  }
+
+  private void requireOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Stored bare LOGIN history readback requires an active owner transaction");
+    }
+  }
+
+  private static ConnectSourceIdentityEvidence connectSourceIdentity(
+      HistoricalCommittedSourceEvidence evidence) {
+    Map<String, Object> claims = evidence.originalSourceClaims();
+    Map<String, Object> gateway = evidence.historicalGatewayClaims();
+    return new ConnectSourceIdentityEvidence(
+        evidence.operationId(),
+        requireText(claims, "requestId"),
+        AccountJoinDigest.tokenHash(requireText(claims, "connectScopeId")),
+        requireText(claims, "jti"),
+        evidence.sourceTokenHash(),
+        evidence.responseEnvelopeKeyId(),
+        evidence.accountSourceKeyId(),
+        evidence.gatewayKeyId(),
+        requireInteger(claims, "iat"),
+        requireInteger(claims, "exp"),
+        requireInteger(gateway, "verifiedAt"),
+        requireInteger(gateway, "expiresAt"));
+  }
+
+  private static ConnectSourceIdentityEvidence connectSourceIdentity(
+      AccountConnectTokenIssuanceIdentity identity,
+      AccountCommittedConnectSourceReader.OriginalSourceEvidence evidence) {
+    Map<String, Object> claims = evidence.originalSourceClaims();
+    Map<String, Object> gateway = evidence.gatewayContextClaims();
+    return new ConnectSourceIdentityEvidence(
+        evidence.operationId(),
+        identity.requestId(),
+        AccountJoinDigest.tokenHash(identity.connectScopeId()),
+        requireText(claims, "jti"),
+        evidence.sourceTokenHash(),
+        evidence.responseEnvelopeKeyId(),
+        null,
+        evidence.gatewayKeyId(),
+        requireInteger(claims, "iat"),
+        requireInteger(claims, "exp"),
+        requireInteger(gateway, "verifiedAt"),
+        requireInteger(gateway, "expiresAt"));
+  }
+
+  private static SelectedTargetEvidence selectedTarget(Map<String, Object> claims) {
+    return new SelectedTargetEvidence(
+        requireText(claims, "accountId"),
+        requireText(claims, "tenantId"),
+        requireText(claims, "realmId"),
+        requireText(claims, "worldSlug"),
+        requireText(claims, "realmSlug"),
+        requireText(claims, "playableStateNamespaceId"),
+        requireText(claims, "playableStateScope"),
+        requireText(claims, "gameInstanceId"),
+        requireInteger(claims, "catalogRevision"),
+        requireInteger(claims, "pointerVersion"),
+        optionalText(claims, "playtestLifecycleId"),
+        optionalInteger(claims, "playtestStateGeneration"));
+  }
+
+  private static void requireSameCurrentReadback(
+      AccountCommittedConnectSourceReader.OriginalSourceEvidence first,
+      AccountCommittedConnectSourceReader.OriginalSourceEvidence last) {
+    if (!first.operationId().equals(last.operationId())
+        || !first.responseEnvelopeKeyId().equals(last.responseEnvelopeKeyId())
+        || !MessageDigest.isEqual(first.sourceTokenHash(), last.sourceTokenHash())
+        || !first.gatewayKeyId().equals(last.gatewayKeyId())
+        || !first.originalSourceClaims().equals(last.originalSourceClaims())
+        || !first.gatewayContextClaims().equals(last.gatewayContextClaims())) {
+      throw new IllegalStateException("Fresh Account source changed during history correlation");
+    }
+  }
+
+  private static String requireText(Map<String, Object> claims, String field) {
+    Object value = claims.get(field);
+    if (!(value instanceof String text) || text.isBlank()) {
+      throw new IllegalStateException("Verified connect source is missing a required target fact");
+    }
+    return text;
+  }
+
+  private static String optionalText(Map<String, Object> claims, String field) {
+    if (!claims.containsKey(field)) {
+      return null;
+    }
+    return requireText(claims, field);
+  }
+
+  private static BigInteger requireInteger(Map<String, Object> claims, String field) {
+    Object value = claims.get(field);
+    if (!(value instanceof BigInteger integer)) {
+      throw new IllegalStateException("Verified connect source is missing a required time fact");
+    }
+    return integer;
+  }
+
+  private static BigInteger optionalInteger(Map<String, Object> claims, String field) {
+    if (!claims.containsKey(field)) {
+      return null;
+    }
+    return requireInteger(claims, field);
   }
 
   private void requireGameSessionPeer() {
@@ -252,6 +417,9 @@ public final class AccountStoredBareLoginRecoveryReader {
       Arrays.fill(bytes, (byte) 0);
     }
   }
+
+  private record HistoricalReadback(
+      HistoricalStoredBareLoginEvidence evidence, HistoricalCommittedSourceEvidence source) {}
 
   /** Immutable provenance facts only; no original result, JWT, Gateway context, or claims. */
   public record HistoricalStoredBareLoginEvidence(
@@ -312,6 +480,110 @@ public final class AccountStoredBareLoginRecoveryReader {
           + ", sourceConnectOperationId="
           + sourceConnectOperationId
           + ", requestId=<redacted>, result=<redacted>, originalGateway=<redacted>]";
+    }
+  }
+
+  /** Separate original/fresh V35 identities and selected target; not an authorization result. */
+  public record HistoricalStoredBareLoginCorrelationEvidence(
+      HistoricalStoredBareLoginEvidence originalExchange,
+      ConnectSourceIdentityEvidence originalConnectSource,
+      ConnectSourceIdentityEvidence freshConnectSource,
+      SelectedTargetEvidence selectedTarget) {
+    public HistoricalStoredBareLoginCorrelationEvidence {
+      Objects.requireNonNull(originalExchange, "originalExchange");
+      Objects.requireNonNull(originalConnectSource, "originalConnectSource");
+      Objects.requireNonNull(freshConnectSource, "freshConnectSource");
+      Objects.requireNonNull(selectedTarget, "selectedTarget");
+      if (!originalExchange.sourceConnectOperationId().equals(originalConnectSource.operationId())
+          || originalConnectSource.operationId().equals(freshConnectSource.operationId())) {
+        throw new IllegalArgumentException("Historical/fresh source identities are not distinct");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "HistoricalStoredBareLoginCorrelationEvidence[originalExchange=<redacted>, "
+          + "originalConnectSource=<redacted>, freshConnectSource=<redacted>, "
+          + "selectedTarget=<redacted>]";
+    }
+  }
+
+  /** Immutable source identity facts; connect scope is represented only by its digest. */
+  public record ConnectSourceIdentityEvidence(
+      UUID operationId,
+      String requestId,
+      String connectScopeHash,
+      String tokenIdentity,
+      byte[] sourceTokenHash,
+      String responseEnvelopeKeyId,
+      String accountSourceKeyId,
+      String gatewayKeyId,
+      BigInteger sourceIssuedAt,
+      BigInteger sourceExpiresAt,
+      BigInteger gatewayVerifiedAt,
+      BigInteger gatewayExpiresAt) {
+    public ConnectSourceIdentityEvidence {
+      Objects.requireNonNull(operationId, "operationId");
+      Objects.requireNonNull(requestId, "requestId");
+      Objects.requireNonNull(connectScopeHash, "connectScopeHash");
+      Objects.requireNonNull(tokenIdentity, "tokenIdentity");
+      sourceTokenHash = requireDigest(sourceTokenHash, "source token hash");
+      Objects.requireNonNull(responseEnvelopeKeyId, "responseEnvelopeKeyId");
+      Objects.requireNonNull(gatewayKeyId, "gatewayKeyId");
+      Objects.requireNonNull(sourceIssuedAt, "sourceIssuedAt");
+      Objects.requireNonNull(sourceExpiresAt, "sourceExpiresAt");
+      Objects.requireNonNull(gatewayVerifiedAt, "gatewayVerifiedAt");
+      Objects.requireNonNull(gatewayExpiresAt, "gatewayExpiresAt");
+    }
+
+    @Override
+    public byte[] sourceTokenHash() {
+      return sourceTokenHash.clone();
+    }
+
+    @Override
+    public String toString() {
+      return "ConnectSourceIdentityEvidence[operationId="
+          + operationId
+          + ", request=<redacted>, scope=<redacted>, tokenIdentity=<redacted>, "
+          + "sourceToken=<redacted>, gatewayContext=<redacted>]";
+    }
+  }
+
+  /** The complete canonical selected-target projection, excluding per-issuance identity/time. */
+  public record SelectedTargetEvidence(
+      String accountId,
+      String tenantId,
+      String realmId,
+      String worldSlug,
+      String realmSlug,
+      String playableStateNamespaceId,
+      String playableStateScope,
+      String gameInstanceId,
+      BigInteger catalogRevision,
+      BigInteger pointerVersion,
+      String playtestLifecycleId,
+      BigInteger playtestStateGeneration) {
+    public SelectedTargetEvidence {
+      Objects.requireNonNull(accountId, "accountId");
+      Objects.requireNonNull(tenantId, "tenantId");
+      Objects.requireNonNull(realmId, "realmId");
+      Objects.requireNonNull(worldSlug, "worldSlug");
+      Objects.requireNonNull(realmSlug, "realmSlug");
+      Objects.requireNonNull(playableStateNamespaceId, "playableStateNamespaceId");
+      Objects.requireNonNull(playableStateScope, "playableStateScope");
+      Objects.requireNonNull(gameInstanceId, "gameInstanceId");
+      Objects.requireNonNull(catalogRevision, "catalogRevision");
+      Objects.requireNonNull(pointerVersion, "pointerVersion");
+      if ((playtestLifecycleId == null) != (playtestStateGeneration == null)) {
+        throw new IllegalArgumentException("Playtest target lifecycle and generation differ");
+      }
+    }
+
+    @Override
+    public String toString() {
+      return "SelectedTargetEvidence[account=<redacted>, tenant=<redacted>, realm=<redacted>, "
+          + "world=<redacted>, runtime=<redacted>, revision=<redacted>]";
     }
   }
 }

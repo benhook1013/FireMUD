@@ -57,7 +57,9 @@ import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSour
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader.HistoricalCommittedSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader.OriginalSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountStoredBareLoginRecoveryReader;
+import net.firedevops.firemud.accountservice.service.AccountStoredBareLoginRecoveryReader.HistoricalStoredBareLoginCorrelationEvidence;
 import net.firedevops.firemud.accountservice.service.AccountStoredBareLoginRecoveryReader.HistoricalStoredBareLoginEvidence;
+import net.firedevops.firemud.accountservice.service.AccountStoredBareLoginRecoveryReader.SelectedTargetEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
@@ -261,7 +263,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     assertThat(first.accountSourceKeyId()).isEqualTo(ACCOUNT_KEY_ID);
     assertThat(first.gatewayKeyId()).isEqualTo(GATEWAY_KEY_ID);
     assertThat(first.signedGatewayVerifiedAt()).isEqualTo(source.gatewayClaims().get("verifiedAt"));
-    assertThat(first.signedGatewayExpiresAt()).isEqualTo(source.gatewayClaims().get("exp"));
+    assertThat(first.signedGatewayExpiresAt()).isEqualTo(source.gatewayClaims().get("expiresAt"));
     assertThat(first.exchangeOperationId()).isEqualTo(reread.exchangeOperationId());
     assertThat(first.sourceConnectOperationId()).isEqualTo(reread.sourceConnectOperationId());
     assertThat(first.originalResultHash()).containsExactly(reread.originalResultHash());
@@ -281,6 +283,258 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     assertThat(first.originalResultHash()).containsExactly(sha256(originalResult));
     assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(sourceBefore);
     assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
+  }
+
+  @Test
+  void correlatesExpiredOriginalFrameWithSeparateFreshCommittedSourceWithoutMutation()
+      throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceTarget target =
+        new SourceTarget(
+            "world",
+            "realm",
+            UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+            BigInteger.valueOf(3));
+    SourceFixture original = newSourceWithTarget(prepared, target);
+    byte[] originalResult = "opaque-original-result".getBytes(StandardCharsets.UTF_8);
+    StoredBareLoginFixture stored =
+        storeBareLoginFrame(prepared, original, original.gatewayEnvelope(), originalResult, null);
+    Snapshot originalSourceBefore = sourceSnapshot(prepared, original.identity());
+    BareLoginSnapshot exchangeBefore = bareLoginSnapshot(prepared, stored.operationId());
+
+    prepared.clock().advance(Duration.ofSeconds(21));
+    long now = prepared.clock().instant().getEpochSecond();
+    assertThat(((BigInteger) original.gatewayClaims().get("expiresAt")).longValue())
+        .isLessThan(now);
+    SourceFixture fresh = newSourceWithTarget(prepared, target);
+    Snapshot freshSourceBefore = sourceSnapshot(prepared, fresh.identity());
+
+    AccountStoredBareLoginRecoveryReader reader = storedReader(prepared);
+    HistoricalStoredBareLoginCorrelationEvidence first =
+        readCorrelation(reader, prepared, stored, fresh.identity(), fresh.gatewayEnvelope());
+    HistoricalStoredBareLoginCorrelationEvidence reread =
+        readCorrelation(reader, prepared, stored, fresh.identity(), fresh.gatewayEnvelope());
+
+    assertThat(first.originalExchange().exchangeOperationId()).isEqualTo(stored.operationId());
+    assertThat(first.originalExchange().requestId()).isEqualTo(stored.identity().requestId());
+    assertThat(first.originalExchange().requestDigest()).containsExactly(stored.requestDigest());
+    assertThat(first.originalExchange().connectScopeHash())
+        .isEqualTo(AccountJoinDigest.tokenHash(stored.identity().connectScopeId()));
+    assertThat(first.originalExchange().originalResultHash())
+        .containsExactly(sha256(originalResult));
+    assertThat(first.originalConnectSource().operationId())
+        .isEqualTo(stored.identity().sourceConnectOperationId());
+    assertThat(first.freshConnectSource().operationId()).isEqualTo(freshSourceBefore.operationId());
+    assertThat(first.freshConnectSource().operationId())
+        .isNotEqualTo(first.originalConnectSource().operationId());
+    assertThat(first.originalConnectSource().requestId())
+        .isEqualTo(original.identity().requestId());
+    assertThat(first.freshConnectSource().requestId()).isEqualTo(fresh.identity().requestId());
+    assertThat(first.originalConnectSource().requestId())
+        .isNotEqualTo(first.freshConnectSource().requestId());
+    assertThat(first.originalConnectSource().connectScopeHash())
+        .isEqualTo(AccountJoinDigest.tokenHash(original.identity().connectScopeId()));
+    assertThat(first.freshConnectSource().connectScopeHash())
+        .isEqualTo(AccountJoinDigest.tokenHash(fresh.identity().connectScopeId()));
+    assertThat(first.originalConnectSource().connectScopeHash())
+        .isNotEqualTo(first.freshConnectSource().connectScopeHash());
+    assertThat(first.originalConnectSource().tokenIdentity()).isEqualTo(original.tokenIdentity());
+    assertThat(first.freshConnectSource().tokenIdentity()).isEqualTo(fresh.tokenIdentity());
+    assertThat(first.originalConnectSource().sourceExpiresAt()).isLessThan(BigInteger.valueOf(now));
+    assertThat(first.freshConnectSource().gatewayExpiresAt())
+        .isGreaterThan(BigInteger.valueOf(now));
+    assertThat(first.selectedTarget())
+        .isEqualTo(
+            new SelectedTargetEvidence(
+                (String) original.sourceClaims().get("accountId"),
+                (String) original.sourceClaims().get("tenantId"),
+                (String) original.sourceClaims().get("realmId"),
+                (String) original.sourceClaims().get("worldSlug"),
+                (String) original.sourceClaims().get("realmSlug"),
+                (String) original.sourceClaims().get("playableStateNamespaceId"),
+                (String) original.sourceClaims().get("playableStateScope"),
+                (String) original.sourceClaims().get("gameInstanceId"),
+                (BigInteger) original.sourceClaims().get("catalogRevision"),
+                (BigInteger) original.sourceClaims().get("pointerVersion"),
+                (String) original.sourceClaims().get("playtestLifecycleId"),
+                (BigInteger) original.sourceClaims().get("playtestStateGeneration")));
+    assertThat(first.selectedTarget()).isEqualTo(reread.selectedTarget());
+    assertThat(first.originalConnectSource().sourceTokenHash())
+        .containsExactly(reread.originalConnectSource().sourceTokenHash());
+    byte[] mutatedHash = first.freshConnectSource().sourceTokenHash();
+    mutatedHash[0] ^= 0x01;
+    assertThat(first.freshConnectSource().sourceTokenHash())
+        .containsExactly(reread.freshConnectSource().sourceTokenHash());
+    assertThat(first.toString())
+        .doesNotContain(new String(originalResult, StandardCharsets.UTF_8))
+        .doesNotContain(original.gatewayEnvelope())
+        .doesNotContain(fresh.gatewayEnvelope());
+    assertThat(sourceSnapshot(prepared, original.identity())).isEqualTo(originalSourceBefore);
+    assertThat(sourceSnapshot(prepared, fresh.identity())).isEqualTo(freshSourceBefore);
+    assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
+
+    assertReadRejected(
+        prepared.reader(),
+        prepared,
+        original,
+        IllegalArgumentException.class,
+        "Gateway context is expired");
+  }
+
+  @Test
+  void correlationRejectsExpiredFreshContextAndReissuedContextForOriginalSource() throws Exception {
+    PreparedAccount expiredPrepared = newPreparedAccount();
+    SourceFixture expiredOriginal = newSource(expiredPrepared, SourceState.COMMITTED);
+    StoredBareLoginFixture expiredStored =
+        storeBareLoginFrame(
+            expiredPrepared,
+            expiredOriginal,
+            expiredOriginal.gatewayEnvelope(),
+            "opaque-result".getBytes(StandardCharsets.UTF_8),
+            null);
+    SourceFixture expiredFresh = newSource(expiredPrepared, SourceState.COMMITTED);
+    expiredPrepared.clock().advance(Duration.ofSeconds(21));
+    assertCorrelationReadRejected(
+        expiredPrepared,
+        storedReader(expiredPrepared),
+        expiredStored,
+        expiredFresh.identity(),
+        expiredFresh.gatewayEnvelope(),
+        IllegalArgumentException.class,
+        "Gateway context is expired");
+
+    PreparedAccount samePrepared = newPreparedAccount();
+    SourceFixture sameSource =
+        newSource(
+            samePrepared,
+            SourceState.COMMITTED,
+            new SourceOptions(false, false, false, false, false, true, false));
+    StoredBareLoginFixture sameStored =
+        storeBareLoginFrame(
+            samePrepared,
+            sameSource,
+            sameSource.gatewayEnvelope(),
+            "opaque-result".getBytes(StandardCharsets.UTF_8),
+            null);
+    samePrepared.clock().advance(Duration.ofSeconds(3));
+    String currentContextForSameSource = resignCurrentGatewayContext(samePrepared, sameSource);
+    assertCorrelationReadRejected(
+        samePrepared,
+        storedReader(samePrepared),
+        sameStored,
+        sameSource.identity(),
+        currentContextForSameSource,
+        IllegalStateException.class,
+        "separate committed Account source operation");
+  }
+
+  @Test
+  void correlationRequiresExactAccountTenantAndCompleteSelectedTarget() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceTarget originalTarget =
+        new SourceTarget(
+            "world",
+            "realm",
+            UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+            BigInteger.valueOf(3));
+    SourceFixture original = newSourceWithTarget(prepared, originalTarget);
+    StoredBareLoginFixture stored =
+        storeBareLoginFrame(
+            prepared,
+            original,
+            original.gatewayEnvelope(),
+            "opaque-result".getBytes(StandardCharsets.UTF_8),
+            null);
+    AccountStoredBareLoginRecoveryReader reader = storedReader(prepared);
+
+    SourceFixture freshMatchingTarget = newSourceWithTarget(prepared, originalTarget);
+    byte[] changedDigest = stored.requestDigest();
+    changedDigest[0] ^= 0x01;
+    assertCorrelationReadRejected(
+        prepared,
+        reader,
+        stored,
+        changedDigest,
+        freshMatchingTarget.identity(),
+        freshMatchingTarget.gatewayEnvelope(),
+        AccountBareLoginExchangeRepository.IdempotencyConflictException.class,
+        "different digest");
+
+    AccountBareLoginExchangeIdentity changedRequest =
+        new AccountBareLoginExchangeIdentity(
+            stored.identity().sourceConnectOperationId(),
+            stored.identity().accountId(),
+            stored.identity().tenantId(),
+            stored.identity().connectScopeId(),
+            stored.identity().requestId() + "-different");
+    assertCorrelationReadRejected(
+        prepared,
+        reader,
+        stored,
+        changedRequest,
+        stored.requestDigest(),
+        freshMatchingTarget.identity(),
+        freshMatchingTarget.gatewayEnvelope(),
+        IllegalStateException.class,
+        "exchange identity was reused with different source or binding");
+
+    SourceFixture changedWorld =
+        newSourceWithTarget(prepared, new SourceTarget("other-world", "realm", null, null));
+    assertCorrelationReadRejected(
+        prepared,
+        reader,
+        stored,
+        stored.requestDigest(),
+        changedWorld.identity(),
+        changedWorld.gatewayEnvelope(),
+        IllegalStateException.class,
+        "exact original Account target");
+
+    AccountConnectTokenIssuanceIdentity wrongPlayer =
+        new AccountConnectTokenIssuanceIdentity(
+            original.identity().accountId() + 1,
+            original.identity().tenantId(),
+            "fresh-scope-player",
+            "fresh-request-player");
+    assertCorrelationIdentityRejected(prepared, reader, stored, wrongPlayer);
+    AccountConnectTokenIssuanceIdentity wrongTenant =
+        new AccountConnectTokenIssuanceIdentity(
+            original.identity().accountId(),
+            original.identity().tenantId() + 1,
+            "fresh-scope-tenant",
+            "fresh-request-tenant");
+    assertCorrelationIdentityRejected(prepared, reader, stored, wrongTenant);
+
+    SourceFixture changedLifecycle =
+        newSourceWithTarget(
+            prepared,
+            new SourceTarget(
+                "world",
+                "realm",
+                UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff"),
+                BigInteger.valueOf(3)));
+    assertCorrelationReadRejected(
+        prepared,
+        reader,
+        stored,
+        changedLifecycle.identity(),
+        changedLifecycle.gatewayEnvelope(),
+        IllegalStateException.class,
+        "exact original Account target");
+
+    SourceFixture changedGeneration =
+        newSourceWithTarget(
+            prepared,
+            new SourceTarget(
+                "world", "realm", originalTarget.playtestLifecycleId(), BigInteger.valueOf(4)));
+    assertCorrelationReadRejected(
+        prepared,
+        reader,
+        stored,
+        changedGeneration.identity(),
+        changedGeneration.gatewayEnvelope(),
+        IllegalStateException.class,
+        "exact original Account target");
   }
 
   @Test
@@ -717,6 +971,14 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
   @Test
   void doesNotReturnWhenAccountFenceWaitOutlivesTheUnchangedGatewayDeadline() throws Exception {
     PreparedAccount prepared = newPreparedAccount();
+    SourceFixture original = newSource(prepared, SourceState.COMMITTED);
+    StoredBareLoginFixture stored =
+        storeBareLoginFrame(
+            prepared,
+            original,
+            original.gatewayEnvelope(),
+            "opaque-result".getBytes(StandardCharsets.UTF_8),
+            null);
     SourceFixture source =
         newSource(
             prepared,
@@ -750,7 +1012,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                     }));
     try {
       assertThat(accountRowLocked.await(5, TimeUnit.SECONDS)).isTrue();
-      Future<OriginalSourceEvidence> reader =
+      Future<HistoricalStoredBareLoginCorrelationEvidence> reader =
           executor.submit(
               () ->
                   withPeer(
@@ -762,9 +1024,12 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                                 readerBackendPid.set(
                                     requirePositiveBackendPid(prepared.db().dsl()));
                                 readerBackendIdentified.countDown();
-                                return prepared
-                                    .reader()
-                                    .read(source.identity(), source.gatewayEnvelope());
+                                return storedReader(prepared)
+                                    .readCorrelation(
+                                        stored.identity(),
+                                        stored.requestDigest(),
+                                        source.identity(),
+                                        source.gatewayEnvelope());
                               })));
       if (!readerBackendIdentified.await(5, TimeUnit.SECONDS)) {
         try {
@@ -803,6 +1068,107 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
               });
     } finally {
       releaseAccountRow.countDown();
+      blocker.get(10, TimeUnit.SECONDS);
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void correlationRechecksFreshDeadlineAfterStoredFrameReadWait() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture original = newSource(prepared, SourceState.COMMITTED);
+    StoredBareLoginFixture stored =
+        storeBareLoginFrame(
+            prepared,
+            original,
+            original.gatewayEnvelope(),
+            "opaque-result".getBytes(StandardCharsets.UTF_8),
+            null);
+    SourceFixture fresh =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            new SourceOptions(false, false, false, false, false, true, false));
+    Snapshot originalBefore = sourceSnapshot(prepared, original.identity());
+    Snapshot freshBefore = sourceSnapshot(prepared, fresh.identity());
+    BareLoginSnapshot exchangeBefore = bareLoginSnapshot(prepared, stored.operationId());
+
+    CountDownLatch envelopeTableLocked = new CountDownLatch(1);
+    CountDownLatch releaseEnvelopeTable = new CountDownLatch(1);
+    CountDownLatch readerBackendIdentified = new CountDownLatch(1);
+    AtomicInteger blockerBackendPid = new AtomicInteger();
+    AtomicInteger readerBackendPid = new AtomicInteger();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    Future<?> blocker =
+        executor.submit(
+            () ->
+                inTransaction(
+                    prepared.db().transaction(),
+                    () -> {
+                      blockerBackendPid.set(requirePositiveBackendPid(prepared.db().dsl()));
+                      prepared
+                          .db()
+                          .dsl()
+                          .execute(
+                              "LOCK TABLE account_bare_login_response_envelopes "
+                                  + "IN ACCESS EXCLUSIVE MODE");
+                      envelopeTableLocked.countDown();
+                      if (!await(releaseEnvelopeTable, 20, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException(
+                            "V37 envelope-table blocker was not released");
+                      }
+                      return null;
+                    }));
+    try {
+      assertThat(envelopeTableLocked.await(5, TimeUnit.SECONDS)).isTrue();
+      Future<HistoricalStoredBareLoginCorrelationEvidence> reader =
+          executor.submit(
+              () ->
+                  withPeer(
+                      peer(WORKLOAD_NAMESPACE, "game-session-service"),
+                      () ->
+                          inTransaction(
+                              prepared.db().transaction(),
+                              () -> {
+                                readerBackendPid.set(
+                                    requirePositiveBackendPid(prepared.db().dsl()));
+                                readerBackendIdentified.countDown();
+                                return storedReader(prepared)
+                                    .readCorrelation(
+                                        stored.identity(),
+                                        stored.requestDigest(),
+                                        fresh.identity(),
+                                        fresh.gatewayEnvelope());
+                              })));
+      assertThat(readerBackendIdentified.await(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(
+              awaitRelationLockBlock(
+                  prepared.db().dsl(),
+                  readerBackendPid.get(),
+                  blockerBackendPid.get(),
+                  Duration.ofSeconds(5)))
+          .as(
+              "correlation passed its first strict source read and reached stored-envelope readback")
+          .isTrue();
+
+      prepared.clock().advance(Duration.ofSeconds(3));
+      releaseEnvelopeTable.countDown();
+      assertThatThrownBy(() -> reader.get(10, TimeUnit.SECONDS))
+          .satisfies(
+              thrown -> {
+                Throwable cause = thrown;
+                while (cause.getCause() != null) {
+                  cause = cause.getCause();
+                }
+                assertThat(cause)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Gateway context is expired");
+              });
+      assertThat(sourceSnapshot(prepared, original.identity())).isEqualTo(originalBefore);
+      assertThat(sourceSnapshot(prepared, fresh.identity())).isEqualTo(freshBefore);
+      assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
+    } finally {
+      releaseEnvelopeTable.countDown();
       blocker.get(10, TimeUnit.SECONDS);
       executor.shutdownNow();
     }
@@ -952,6 +1318,28 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       String requestId,
       String connectScopeId)
       throws Exception {
+    return newSource(prepared, state, options, requestId, connectScopeId, SourceTarget.NORMAL);
+  }
+
+  private SourceFixture newSourceWithTarget(PreparedAccount prepared, SourceTarget target)
+      throws Exception {
+    return newSource(
+        prepared,
+        SourceState.COMMITTED,
+        SourceOptions.NORMAL,
+        "source-request-" + UUID.randomUUID(),
+        "source-scope-" + UUID.randomUUID(),
+        target);
+  }
+
+  private SourceFixture newSource(
+      PreparedAccount prepared,
+      SourceState state,
+      SourceOptions options,
+      String requestId,
+      String connectScopeId,
+      SourceTarget target)
+      throws Exception {
     long sourceTenantId =
         options.unmappedTenant() ? prepared.tenantId() + 1000L : prepared.tenantId();
     UUID sourceTenantUuid = options.unmappedTenant() ? UUID.randomUUID() : prepared.tenantUuid();
@@ -961,7 +1349,12 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     String tokenIdentity = "source-jti-" + UUID.randomUUID();
     Map<String, Object> sourceClaims =
         sourceClaims(
-            prepared.accountUuid(), sourceTenantUuid, identity, tokenIdentity, prepared.clock());
+            prepared.accountUuid(),
+            sourceTenantUuid,
+            identity,
+            tokenIdentity,
+            prepared.clock(),
+            target);
     KeyPair tokenSigner =
         options.unknownSourceKey() ? prepared.unknownAccountKeyPair() : prepared.accountKeyPair();
     String tokenKeyId = options.unknownSourceKey() ? "unregistered-account-key" : ACCOUNT_KEY_ID;
@@ -1221,7 +1614,8 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       UUID tenantUuid,
       AccountConnectTokenIssuanceIdentity identity,
       String tokenIdentity,
-      Clock clock) {
+      Clock clock,
+      SourceTarget target) {
     BigInteger one = BigInteger.ONE;
     BigInteger now = BigInteger.valueOf(clock.instant().getEpochSecond());
     Map<String, Object> tenantGeneration = Map.of(tenantUuid.toString(), one);
@@ -1240,13 +1634,28 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
             "account:auth-authority:v1:tenant/" + tenantUuid,
             "outboxSequence",
             one);
+    List<?> privateRealmGrantVersions =
+        target.playtestLifecycleId() == null
+            ? List.of()
+            : List.of(
+                Map.of(
+                    "tenantId",
+                    tenantUuid.toString(),
+                    "worldSlug",
+                    target.worldSlug(),
+                    "realmSlug",
+                    target.realmSlug(),
+                    "playtestLifecycleId",
+                    target.playtestLifecycleId().toString(),
+                    "grantVersion",
+                    one));
     Map<String, Object> authorityTuple =
         Map.of(
             "issuerAuthGeneration", one,
             "accountAuthorityGeneration", one,
             "tenantAuthorityGeneration", tenantGeneration,
             "membershipAuthorityGeneration", tenantGeneration,
-            "privateRealmGrantVersions", List.of(),
+            "privateRealmGrantVersions", privateRealmGrantVersions,
             "accountSecurityCutoff", accountSecurityCutoff,
             "tenantBillingCutoff", Map.of(tenantUuid.toString(), tenantBillingCutoffEntry));
     Map<String, Object> claims = new LinkedHashMap<>();
@@ -1258,8 +1667,8 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     claims.put("accountId", accountUuid.toString());
     claims.put("tenantId", tenantUuid.toString());
     claims.put("realmId", UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb").toString());
-    claims.put("worldSlug", "world");
-    claims.put("realmSlug", "realm");
+    claims.put("worldSlug", target.worldSlug());
+    claims.put("realmSlug", target.realmSlug());
     claims.put(
         "playableStateNamespaceId",
         UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc").toString());
@@ -1273,6 +1682,10 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     claims.put("authorityTuple", authorityTuple);
     claims.put("membershipVersion", tenantGeneration);
     claims.put("replayAdmissionFence", one);
+    if (target.playtestLifecycleId() != null) {
+      claims.put("playtestLifecycleId", target.playtestLifecycleId().toString());
+      claims.put("playtestStateGeneration", target.playtestStateGeneration());
+    }
     return claims;
   }
 
@@ -1415,6 +1828,29 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     return false;
   }
 
+  private static boolean awaitRelationLockBlock(
+      DSLContext dsl, int readerBackendPid, int blockerBackendPid, Duration timeout)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    while (System.nanoTime() < deadline) {
+      Boolean blocked =
+          dsl.resultQuery(
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity waiting "
+                      + "JOIN pg_locks waiting_lock ON waiting_lock.pid = waiting.pid "
+                      + "WHERE waiting.pid = ? AND waiting.wait_event_type = 'Lock' "
+                      + "AND waiting_lock.locktype = 'relation' AND NOT waiting_lock.granted "
+                      + "AND ? = ANY(pg_blocking_pids(waiting.pid)))",
+                  readerBackendPid,
+                  blockerBackendPid)
+              .fetchOne(0, Boolean.class);
+      if (Boolean.TRUE.equals(blocked)) {
+        return true;
+      }
+      Thread.sleep(10L);
+    }
+    return false;
+  }
+
   private static boolean await(CountDownLatch latch, long timeout, TimeUnit unit) {
     try {
       return latch.await(timeout, unit);
@@ -1504,6 +1940,140 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
   }
 
+  private static HistoricalStoredBareLoginCorrelationEvidence readCorrelation(
+      AccountStoredBareLoginRecoveryReader reader,
+      PreparedAccount prepared,
+      StoredBareLoginFixture stored,
+      AccountConnectTokenIssuanceIdentity freshIdentity,
+      String signedFreshGatewayContext) {
+    return readCorrelation(
+        reader,
+        prepared,
+        stored.identity(),
+        stored.requestDigest(),
+        freshIdentity,
+        signedFreshGatewayContext);
+  }
+
+  private static HistoricalStoredBareLoginCorrelationEvidence readCorrelation(
+      AccountStoredBareLoginRecoveryReader reader,
+      PreparedAccount prepared,
+      AccountBareLoginExchangeIdentity originalIdentity,
+      byte[] originalRequestDigest,
+      AccountConnectTokenIssuanceIdentity freshIdentity,
+      String signedFreshGatewayContext) {
+    return withPeer(
+        peer(WORKLOAD_NAMESPACE, "game-session-service"),
+        () ->
+            inTransaction(
+                prepared.db().transaction(),
+                () ->
+                    reader.readCorrelation(
+                        originalIdentity,
+                        originalRequestDigest,
+                        freshIdentity,
+                        signedFreshGatewayContext)));
+  }
+
+  private static void assertCorrelationReadRejected(
+      PreparedAccount prepared,
+      AccountStoredBareLoginRecoveryReader reader,
+      StoredBareLoginFixture stored,
+      AccountConnectTokenIssuanceIdentity freshIdentity,
+      String signedFreshGatewayContext,
+      Class<? extends Throwable> exceptionType,
+      String messageFragment) {
+    assertCorrelationReadRejected(
+        prepared,
+        reader,
+        stored,
+        stored.identity(),
+        stored.requestDigest(),
+        freshIdentity,
+        signedFreshGatewayContext,
+        exceptionType,
+        messageFragment);
+  }
+
+  private static void assertCorrelationReadRejected(
+      PreparedAccount prepared,
+      AccountStoredBareLoginRecoveryReader reader,
+      StoredBareLoginFixture stored,
+      byte[] originalRequestDigest,
+      AccountConnectTokenIssuanceIdentity freshIdentity,
+      String signedFreshGatewayContext,
+      Class<? extends Throwable> exceptionType,
+      String messageFragment) {
+    assertCorrelationReadRejected(
+        prepared,
+        reader,
+        stored,
+        stored.identity(),
+        originalRequestDigest,
+        freshIdentity,
+        signedFreshGatewayContext,
+        exceptionType,
+        messageFragment);
+  }
+
+  private static void assertCorrelationReadRejected(
+      PreparedAccount prepared,
+      AccountStoredBareLoginRecoveryReader reader,
+      StoredBareLoginFixture stored,
+      AccountBareLoginExchangeIdentity originalIdentity,
+      byte[] originalRequestDigest,
+      AccountConnectTokenIssuanceIdentity freshIdentity,
+      String signedFreshGatewayContext,
+      Class<? extends Throwable> exceptionType,
+      String messageFragment) {
+    Snapshot originalSourceBefore = sourceSnapshot(prepared, stored.sourceIdentity());
+    Snapshot freshSourceBefore = sourceSnapshot(prepared, freshIdentity);
+    BareLoginSnapshot exchangeBefore = bareLoginSnapshot(prepared, stored.operationId());
+    assertThatThrownBy(
+            () ->
+                readCorrelation(
+                    reader,
+                    prepared,
+                    originalIdentity,
+                    originalRequestDigest,
+                    freshIdentity,
+                    signedFreshGatewayContext))
+        .isInstanceOf(exceptionType)
+        .hasMessageContaining(messageFragment);
+    assertThat(sourceSnapshot(prepared, stored.sourceIdentity())).isEqualTo(originalSourceBefore);
+    assertThat(sourceSnapshot(prepared, freshIdentity)).isEqualTo(freshSourceBefore);
+    assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
+  }
+
+  private static void assertCorrelationIdentityRejected(
+      PreparedAccount prepared,
+      AccountStoredBareLoginRecoveryReader reader,
+      StoredBareLoginFixture stored,
+      AccountConnectTokenIssuanceIdentity freshIdentity) {
+    Snapshot originalSourceBefore = sourceSnapshot(prepared, stored.sourceIdentity());
+    BareLoginSnapshot exchangeBefore = bareLoginSnapshot(prepared, stored.operationId());
+    assertThatThrownBy(
+            () ->
+                readCorrelation(
+                    reader, prepared, stored, freshIdentity, "unused-unverified-context"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("same Account and tenant");
+    assertThat(sourceSnapshot(prepared, stored.sourceIdentity())).isEqualTo(originalSourceBefore);
+    assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
+  }
+
+  private static String resignCurrentGatewayContext(PreparedAccount prepared, SourceFixture source)
+      throws Exception {
+    Map<String, Object> currentClaims =
+        GatewayConnectContextCodec.projectVerifiedAccountGameplayConnectClaims(
+            source.sourceClaims(),
+            prepared.clock().instant().getEpochSecond(),
+            "gateway-request-" + UUID.randomUUID());
+    byte[] payload = JSON.writeValueAsBytes(currentClaims);
+    return GatewayConnectContextSignature.sign(
+        payload, GATEWAY_KEY_ID, prepared.gatewayKeyPair().getPrivate());
+  }
+
   private static <T> T withPeer(GrpcPeerIdentity peer, Supplier<T> action) {
     Context scoped = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     Context previous = scoped.attach();
@@ -1567,6 +2137,21 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       boolean unmappedTenant) {
     private static final SourceOptions NORMAL =
         new SourceOptions(false, false, false, false, false, false, false);
+  }
+
+  private record SourceTarget(
+      String worldSlug,
+      String realmSlug,
+      UUID playtestLifecycleId,
+      BigInteger playtestStateGeneration) {
+    private static final SourceTarget NORMAL = new SourceTarget("world", "realm", null, null);
+
+    private SourceTarget {
+      if ((playtestLifecycleId == null) != (playtestStateGeneration == null)) {
+        throw new IllegalArgumentException(
+            "Playtest lifecycle and generation must appear together");
+      }
+    }
   }
 
   private record TestContext(
