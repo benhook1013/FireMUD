@@ -120,6 +120,26 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_unheaded_hosted_issue_body_and_low_value_badge_are_preserved(self) -> None:
+        issue = "The incoming workflow request must match the existing request identity. " * 5
+        body = "_📐 Maintainability & Code Quality_ | _🔵 Trivial_ | _💤 Low value_\n" + issue
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, body)[0]
+        self.assertEqual(finding["display_severity"], "Trivial")
+        self.assertEqual(finding["display_detail"], issue.strip())
+        self.assertNotIn("Low value", finding["title"])
+
+    def test_explicit_nested_provider_tools_block_is_removed(self) -> None:
+        sample = "```xml\n<Tools>ordinary example</Tools>\n```"
+        body = ("**Align the security summary.**\nPreserve the actual explanation.\n" + sample +
+                "\n<details>\n<summary>🧰 Tools</summary>\n<details>\n"
+                "<summary>🪛 Checkov (3.3.17)</summary>\nCKV_OPENAPI_4/5 diagnostic output\n"
+                "</details>\n</details>\n<details><summary>Ordinary evidence</summary>Keep this prose.</details>")
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(4151800013, body)[0]
+        self.assertNotIn("Checkov", finding["display_detail"])
+        self.assertNotIn("CKV_OPENAPI", finding["display_detail"])
+        self.assertIn(sample, finding["display_detail"])
+        self.assertIn("Keep this prose.", finding["display_detail"])
+
     def test_actual_security_and_orphan_prompt_display_shapes(self) -> None:
         header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
         body = (header + "\n<details>\n<summary>🧩 Analysis chain</summary>\n"
@@ -191,7 +211,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(findings[0]["title"], issue)
         self.assertEqual(findings[0]["key"], "hosted-comment:4142913648")
         self.assertNotIn(issue, findings[0]["detail"])
-        self.assertEqual(findings[0]["display_detail"], "")
+        self.assertEqual(findings[0]["display_detail"], issue)
         self.assertEqual(sqlite_provider_imports._first_line(body + "\n**Check the request identity.**"),
                          "Check the request identity.")
 

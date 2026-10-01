@@ -125,6 +125,52 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                      "```\n</details>\n" + issue),
         }]})
 
+    def test_existing_legacy_aggregate_exposes_both_sections_without_new_findings(self) -> None:
+        self.hosted_display_run(title="First actual issue.")
+        for second_severity, expected in (("Major", "Major"), ("Minor", None)):
+            with self.subTest(second_severity=second_severity):
+                archive = json.loads(self.hosted_display_archive())
+                archive["comments"][0]["body"] = (
+                    "_Bug_ | _Major_ | _Quick win_\n**First actual issue.**\nFirst issue explanation.\n"
+                    "<!-- cr-comment:v1:" + "a" * 24 + " -->\n"
+                    f"_Bug_ | _{second_severity}_ | _Quick win_\n**Second actual issue.**\nSecond issue explanation.\n"
+                    "<!-- cr-comment:v1:" + "b" * 24 + " -->")
+                with sqlite3.connect(self.database) as connection:
+                    connection.execute("DELETE FROM imported_artifacts WHERE run_id = 'display-run'")
+                self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+                with sqlite3.connect(self.database) as connection:
+                    before = list(connection.iterdump())
+                history = self.records.history(2839)
+                self.assertEqual(len(history["findings"]), 1)
+                self.assertEqual(history["runs"][0]["counts"], {"found": 1, "accepted": 0, "routed": 1})
+                self.assertEqual(len(history["decisions"]), 1)
+                finding = history["findings"][0]
+                self.assertEqual(finding["title"], "First actual issue.")
+                self.assertEqual(finding["source_finding_key"], "hosted-comment:4142913648")
+                self.assertEqual(finding["display_severity"], expected)
+                self.assertEqual(finding["display_detail"],
+                                 "Historical aggregate: 2 provider findings were recorded as one item\n\n"
+                                 "First issue explanation.\n\n**Second actual issue.**\n\nSecond issue explanation.")
+                self.assertEqual(self.records.history(2879)["routes"][0]["display_detail"], finding["display_detail"])
+                with sqlite3.connect(self.database) as connection:
+                    self.assertEqual(list(connection.iterdump()), before)
+
+    def test_malformed_hosted_sibling_does_not_hide_exact_valid_projection(self) -> None:
+        self.hosted_display_run()
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"].append({"id": 4144044340, "user": {"login": "coderabbitai[bot]"},
+                                   "body": "**Invalid sibling.**\n<!-- cr-comment:v1:" + "a" * 24 + " -->\nUnmarked tail."})
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        history = self.records.history(2839)
+        finding = history["findings"][0]
+        self.assertEqual(finding["display_title"], "Check the existing workflow request identity.")
+        self.assertIn("Keep `requestId` consistent", finding["display_detail"])
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_title"], finding["display_title"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
     def test_archived_security_metadata_title_has_specific_read_projection(self) -> None:
         self.hosted_display_run(title="Broken Authentication")
         archive = json.loads(self.hosted_display_archive())
@@ -257,6 +303,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertNotIn("display_title", finding)
         self.assertEqual(finding["title"], "Existing meaningful title.")
         self.assertEqual(finding["display_detail"],
+                         "Check the existing workflow request identity.\n\n"
                          "Keep `requestId` consistent with [the contract](https://example.test/contract).")
         incoming = self.records.history(2879)["routes"][0]
         self.assertEqual(incoming["title"], finding["title"])
@@ -270,8 +317,12 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         )
         self.records.archive_imported_artifacts("grouped-old", {"hosted_comments": json.dumps(archive)})
         finding = next(item for item in self.records.history(2839)["findings"] if item["run_id"] == "grouped-old")
-        # An old comment-grouped key cannot be relabeled with either new atom.
-        self.assertNotIn("display_title", finding)
+        # The old aggregate remains one record, with both archived sections explicitly labelled.
+        self.assertEqual(finding["source_finding_key"], "hosted-comment:4142913648")
+        self.assertEqual(finding["title"], "<details>")
+        self.assertEqual(finding["display_title"], "First issue.")
+        self.assertIn("Historical aggregate: 2 provider findings were recorded as one item", finding["display_detail"])
+        self.assertIn("Second issue.", finding["display_detail"])
 
     def test_new_subagent_start_bounds_coverage_before_persisting(self) -> None:
         self.bootstrap()

@@ -140,7 +140,8 @@ def _hosted_issue_markdown(value: str, *, keep_badges: bool = False) -> str:
     value = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", value, flags=re.DOTALL | re.IGNORECASE)
     value = re.sub(
         r"<details\b[^>]*>\s*<summary\b[^>]*>(.*?)</summary>(.*?)</details>",
-        lambda match: "" if _is_evidence_label(_headline_text(match.group(1)))
+        lambda match: "" if (_is_evidence_label(_headline_text(match.group(1)))
+                              or re.fullmatch(r"[^a-zA-Z0-9]*Tools\s*", _headline_text(match.group(1))))
         else match.group(1) + "\n" + match.group(2),
         value,
         flags=re.DOTALL | re.IGNORECASE,
@@ -211,7 +212,7 @@ def _hosted_display_detail(value: str, title: str) -> str:
             continue
         candidate = re.sub(r"^(?:>\s*)+", "", line.strip()).strip()
         content = _bold_line_content(candidate) or re.sub(r"^#{1,6}\s*", "", candidate)
-        if content == title:
+        if content == title and (_bold_line_content(candidate) is not None or re.match(r"^#{1,6}\s", candidate)):
             lines.pop(index)
             break
         match = re.match(r"^(?:\*\*(.+?)\*\*|__(.+?)__)(?:\s|$)", candidate)
@@ -244,7 +245,7 @@ def _is_badge_line(line: str) -> bool:
         severity_words = re.findall(r"[a-z0-9]+", sections[-2].casefold())
         effort_words = set(re.findall(r"[a-z0-9]+", sections[-1].casefold()))
         severity_labels = {"critical", "high", "major", "medium", "minor", "low", "trivial", "p0", "p1", "p2", "p3"}
-        effort_labels = ({"quick", "win"}, {"heavy", "lift"})
+        effort_labels = ({"quick", "win"}, {"heavy", "lift"}, {"low", "value"})
         known_tier = len(sections) == 3 or set(re.findall(r"[a-z]+", sections[1].casefold())) == {
             "detected", "with", "advanced", "tier"
         }
