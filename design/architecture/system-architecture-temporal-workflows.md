@@ -80,12 +80,12 @@ The current `businessStepKey` is an incomplete implementation encoding, not the 
 Guidance:
 
 - `workflowFamily` is a stable design-level family such as `world-lifecycle` or `script-patch-readiness`.
-- `scopeKey` is the narrow workflow scope that matters operationally, such as `world-instance`, `version`, or `game-instance`.
-- `businessKey` is the stable caller-visible request identity or domain identity that makes retries idempotent.
+- `scopeKey` is the narrow workflow scope that matters operationally, such as `world-instance`, `version`, or `game-instance`; for World lifecycle it is `game-instance`.
+- `businessKey` is the stable caller-visible request identity or domain identity that makes retries idempotent. For World lifecycle it is `gameInstanceId`, a domain identity scoped by `tenantId` and `scopeKey`, not necessarily a globally unique token.
 
 Current adopter examples:
 
-- `world-lifecycle` uses stable world-instance identity for its workflow business key.
+- `world-lifecycle` uses `gameInstanceId` as its business key within the `tenantId` and `game-instance` scope.
 - full Game Design publish uses the caller-supplied `publish_request_id` from `PublishVersionRequest`, so retries converge on the same caller-visible durable workflow instead of minting a fresh internal UUID.
 - script-patch readiness uses the stable patch/readiness domain tuple documented in Automation Scripting.
 

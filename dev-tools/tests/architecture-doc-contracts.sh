@@ -1958,9 +1958,10 @@ require_contains(
     "design/architecture/system-architecture-tick-incident-runbook.md",
     [
         "**Maintenance admission applies to both branches:**",
-        "Before either verifier CAS may mutate a ledger row, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged with the reconciliation evidence.",
-        "Owner, epoch, executor, manifest, or participant proof does not replace this external admission.",
-        "If the handoff is missing or unproved, make no mutation and use the existing fail-closed [Current Operator Fallback]",
+        "Before a maintenance verifier CAS may mutate a ledger row, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged with the reconciliation evidence.",
+        "An owner may omit that maintenance handoff only for a specifically classified non-conflicting routine replay with durably recorded classification/evidence and applicable fence, epoch, and scope proof",
+        "never infer this exemption from owner, epoch, executor, manifest, or participant proof alone.",
+        "If neither the exact handoff nor the owner-recorded routine-replay evidence is complete, make no mutation and use the existing fail-closed [Current Operator Fallback]",
         "this incident remediation is maintenance, not ordinary crash replay.",
         "Before its first mutation, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged",
         "Missing or unproved handoff means no mutation: use the fail-closed [Current Operator Fallback]",
@@ -2465,6 +2466,110 @@ for term in (
             "design/architecture/microservices/game-design-service/operations.md: "
             f"missing full-version publication availability qualification {term!r}"
         )
+
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "record execution results in PR/CI evidence, and update the owning implementation tracker when capability or proof status changes",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    ["record execution results in PR/CI evidence or the owning implementation tracker"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-runtime-execution.md",
+    [
+        "one `script_work_items` row carries the applicable identity from the pre-DSL trigger through evaluation and handoff processing",
+        "separate evaluated-work-item records and descriptor replay remain target-state only",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    [
+        "A stale or mismatched presented scope fails closed for reuse until authoritative evidence is reconciled and exact validation succeeds",
+        "Only reconciled matching scope with unchanged authority may reuse the existing namespace-keyed identity",
+        "an authority-proven scope transition starts a new playable-state lifecycle and namespace",
+        "[Timer Resume Rule](../system-architecture-scripting-scheduler-and-timers.md#timer-resume-rule-normative)",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    ["stale presented scope with unchanged authority may reuse the existing identity"],
+)
+
+require_contains(
+    "design/architecture/decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md",
+    [
+        "a command root's enclosing root is its own persisted `EffectId`",
+        "its parent is explicitly absent (`null`)",
+        "retry and replay reuse the same scalar and binding",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
+    [
+        "source tenant/game-instance ownership (`tenantId`, `gameInstanceId`) and `playableStateNamespaceId`/region identity",
+        "optional distinct target game-instance ownership and namespace/region identity",
+        "[normative Command-Handoff Identity](../../system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state)",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/world-management-service/world-creation-workflow.md",
+    [
+        "canonical Temporal workflow ID is `world-lifecycle:<tenantId>:game-instance:<gameInstanceId>`, stable per `(tenantId, gameInstanceId)`",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-temporal-workflows.md",
+    [
+        "for World lifecycle it is `game-instance`",
+        "For World lifecycle it is `gameInstanceId`, a domain identity scoped by `tenantId` and `scopeKey`, not necessarily a globally unique token",
+        "`world-lifecycle` uses `gameInstanceId` as its business key within the `tenantId` and `game-instance` scope",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "Before a maintenance verifier CAS may mutate a ledger row, validate the exact ADR 0085 external maintenance handoff",
+        "An owner may omit that maintenance handoff only for a specifically classified non-conflicting routine replay with durably recorded classification/evidence and applicable fence, epoch, and scope proof",
+        "never infer this exemption from owner, epoch, executor, manifest, or participant proof alone",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "authoritative evidence proves no committed batch, effect materialization, or application",
+        "ingress status or a missing batch ID alone is insufficient",
+        "Otherwise the command remains unresolved for evidence-qualified reconciliation",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "every eligible ledger row in that tick's complete expected current-epoch participant set",
+        "required-versus-optional classification affects command-result aggregation, not tick commit",
+        "serialized scheduler payloads use `regionEpoch`, while the tick-event offset record uses `region_epoch`",
+        "Each serialized value must include `{tenantId, gameInstanceId, regionId, consumerId, region_epoch, latestTickId, streamOffset}`",
+        "The producer and reader remain unimplemented",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-gateway.md",
+    [
+        "logical typed Gateway-owned readiness-probe operation",
+        "one pinned Coordination Redis connection",
+        "The operation and its producer/consumer proof are currently unimplemented",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "Gateway's typed readiness-probe operation",
+        "[Gateway replay readiness](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake)",
+        "currently unimplemented, so the checklist is not yet executable for this gate",
+    ],
+)
 
 print("architecture doc contracts passed")
 PY
