@@ -35,6 +35,31 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_admission_history_refreshes_actual_cached_channel_projection(self) -> None:
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel), tempfile.TemporaryDirectory() as directory:
+                other = "cli" if channel == "hosted" else "hosted"
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+                observer._payloads[42] = {"stale": True}
+                observer._histories[(42, channel)] = [{"checkpoint": "stale-selection"}]
+                observer._histories[(42, other)] = [{"checkpoint": "other-channel"}]
+                observer._records_histories[42] = {"stale": True}
+                observer._payloads[99] = {"unrelated": True}
+                payload = self._payload()
+                payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+                with (
+                    patch.object(github, "fetch_pull_request", return_value=payload) as fetch,
+                    patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                ):
+                    self.assertEqual(observer.history(42, channel), [{"checkpoint": "stale-selection"}])
+                    fresh = observer.admission_history(42, channel)
+                fetch.assert_called_once_with("owner/repo", 42)
+                self.assertNotIn("stale-selection", [value.get("checkpoint") for value in fresh])
+                self.assertEqual(observer._histories[(42, channel)], fresh)
+                self.assertEqual(observer._histories[(42, other)], [{"checkpoint": "other-channel"}])
+                self.assertEqual(observer._payloads[99], {"unrelated": True})
+                self.assertNotIn(42, observer._records_histories)
+
     def test_hosted_source_resolution_retries_transient_history_failure_and_casefolds_repository(self) -> None:
         origin = {
             "source_pr": 42,

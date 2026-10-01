@@ -95,13 +95,13 @@ def _unusable_hosted_title(value: Any) -> bool:
     return not text or _is_badge_line(text) or _is_evidence_label(text) or bool(re.fullmatch(r"[\s#>*_~`-]+", text))
 
 
-def _strip_badge_prefix(line: str) -> str:
+def _strip_badge_prefix(line: str, *, allow_two_field: bool = False) -> str:
     for pattern in (
-        r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){2,3}",
+        r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}",
         r"^(?:\*\*[^\n]*?\*\*|__[^\n]*?__)",
     ):
         match = re.match(pattern, line)
-        if match and _is_badge_line(match.group()):
+        if match and _is_badge_line(match.group(), allow_two_field=allow_two_field):
             return line[match.end():].strip()
     return line
 
@@ -173,13 +173,18 @@ def _hosted_issue_markdown(
         return header + "\n"
     value = pattern.sub(strip_classification, value)
     lines = []
+    header_position = True
     for raw in value.splitlines():
         line = _headline_text(html.unescape(raw.rstrip()))
-        if not keep_badges:
-            line = _strip_badge_prefix(line)
-        if line and ((_is_badge_line(line) and not keep_badges) or _is_evidence_label(line)):
+        if _is_evidence_label(line) or line.strip() in {"---", "***", "___"}:
             continue
-        if line.strip() in {"---", "***", "___"}:
+        allow_two_field = header_position
+        if line:
+            header_position = False
+        if not keep_badges:
+            line = _strip_badge_prefix(line, allow_two_field=allow_two_field)
+        if line and ((_is_badge_line(line, allow_two_field=allow_two_field) and not keep_badges)
+                     or _is_evidence_label(line)):
             continue
         if line or not lines or lines[-1]:
             lines.append(line)
@@ -278,11 +283,18 @@ def _explicit_severity_label(value: str, *, priority_badge: bool = False) -> str
     return labels.get(candidate.casefold())
 
 
-def _is_badge_line(line: str) -> bool:
+def _is_badge_line(line: str, *, allow_two_field: bool = False) -> bool:
     """Identify severity/category-only lines so they cannot become a title."""
 
     candidate = re.sub(r"^#{1,6}\s*", "", line).strip()
     sections = [section.strip() for section in candidate.split("|")]
+    if len(sections) == 2 and all(
+        section.startswith("_") and section.endswith("_") for section in sections
+    ):
+        known_categories = {"bug", "data integrity & integration", "functional correctness", "maintainability & code quality",
+                            "security & privacy", "stability & availability"}
+        return (allow_two_field and _badge_label_text(sections[0]).casefold() in known_categories
+                and _explicit_severity_label(sections[1]) is not None)
     if len(sections) in {3, 4} and all(
         section.startswith("_") and section.endswith("_") for section in sections
     ):
@@ -309,14 +321,23 @@ def _hosted_display_severity(value: str) -> str | None:
     from .sqlite_hosted_capture import _markdown_fenced_ranges
 
     value = _hosted_issue_markdown(value, keep_badges=True)
+    leading_line = next((line.strip() for line in value.splitlines() if line.strip()), None)
     for start, end in reversed(_markdown_fenced_ranges(value)):
         value = value[:start] + "\n" + value[end:]
     found = set()
+    header_position = True
     for raw in value.splitlines():
         line = re.sub(r"^(?:>\s*)+", "", raw.strip()).strip()
-        # Provider category | severity | effort badge, including inline prose.
-        match = re.match(r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){2,3}", line)
-        badge = match.group().split("|")[-2] if match and _is_badge_line(match.group()) else None
+        # Determine the leading position before removing samples, which are authored content.
+        allow_two_field = header_position and raw.strip() == leading_line
+        if line:
+            header_position = False
+        # Provider category | severity badge, optionally with tier/effort, including inline prose.
+        match = re.match(r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}", line)
+        fields = match.group().split("|") if match and _is_badge_line(
+            match.group(), allow_two_field=allow_two_field
+        ) else []
+        badge = fields[-1] if len(fields) == 2 else fields[-2] if fields else None
         if badge is None:
             match = re.match(r"^(?:\*\*([^\n]*?)\*\*|__([^\n]*?)__)", line)
             if match and _is_badge_line(match.group()):

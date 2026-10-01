@@ -2847,6 +2847,98 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(after_new_result["completed_count"], 1)
         self.assertTrue(after_new_result["taper_complete"])
 
+    def test_exhausted_cap_advances_only_its_channel_with_source_obligations_intact(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                other = "cli" if channel == "hosted" else "hosted"
+                values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
+                evidence = {
+                    (number, lane): [self.allocation_evidence(
+                        number, HEAD_1 if number == 1 else HEAD_2, "before-allocation",
+                        channel=lane, completed=False,
+                        parent_identity="develop" if number == 1 else "1",
+                        parent_head=BASE if number == 1 else HEAD_1,
+                    )]
+                    for number in (1, 2) for lane in ("hosted", "cli")
+                }
+                controller = self.grant_bounded_allocation(
+                    channel=channel, checkpoint=None, cap=1, minimum=1,
+                    evidence=evidence, values=values,
+                    heads={"develop": BASE, "feature-1": HEAD_1, "feature-2": HEAD_2},
+                )
+                accepted = self.allocation_evidence(
+                    checkpoint="accepted-cap-result", channel=channel, accepted=1,
+                    source_resolution_status="pending",
+                )
+                evidence[(1, channel)].append(accepted)
+                before = [dict(item) for item in evidence[(1, channel)]]
+                report = controller.status()
+                allocation = report["prs"][0]["allocations"][channel]
+                self.assertEqual(allocation["status"], "CAP_EXHAUSTED_PENDING")
+                self.assertEqual(allocation["reason"], "cap exhausted; findings pending")
+                self.assertEqual(allocation["stop_basis"], "human_cap")
+                self.assertEqual(allocation["selection_control"], "maximum")
+                self.assertEqual((allocation["used"], allocation["remaining"], allocation["accepted"]), (1, 0, 1))
+                self.assertFalse(allocation["taper_complete"])
+                self.assertEqual(report["review_targets"][channel]["pr"], 2)
+                self.assertEqual(controller.select_target(channel)["pr"], 2)
+                self.assertEqual(controller.select_target(other)["pr"], 1)
+                resolver = controller.resolve_hosted_target if channel == "hosted" else controller.resolve_cli_target
+                with self.assertRaises(ControllerError):
+                    resolver(expected_pr=1)
+                self.assertTrue(controller._accepted_findings_pending(accepted, HEAD_1))
+                self.assertEqual(evidence[(1, channel)], before)
+
+                # A still-admitted review is checked before the human-cap stop.
+                active = {"pr": 1, "head": HEAD_1, "checkpoint": "active-admitted-result", "active_review": True}
+                evidence[(1, channel)].append(active)
+                selected = controller.select_target(channel)
+                self.assertEqual((selected["pr"], selected["status"]), (1, "HELD"))
+                self.assertIn(active, evidence[(1, channel)])
+
+    def test_admission_reselects_after_final_cap_result_arrives_for_both_channels(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
+                histories = {
+                    (number, lane): [self.allocation_evidence(
+                        number, HEAD_1 if number == 1 else HEAD_2, "before-allocation",
+                        channel=lane, completed=False,
+                        parent_identity="develop" if number == 1 else "1",
+                        parent_head=BASE if number == 1 else HEAD_1,
+                    )]
+                    for number in (1, 2) for lane in ("hosted", "cli")
+                }
+                controller = self.grant_bounded_allocation(
+                    channel=channel, checkpoint=None, cap=1, minimum=1,
+                    evidence=histories, values=values,
+                    heads={"develop": BASE, "feature-1": HEAD_1, "feature-2": HEAD_2},
+                )
+                selections, reservations = [], []
+
+                def adapter(target, *, admit, selections=selections, histories=histories,
+                            channel=channel, reservations=reservations, **kwargs):
+                    number = target.snapshot.number
+                    selections.append(number)
+                    if number == 1:
+                        # Another run completed after this process selected, before it acquired exclusion.
+                        histories[(1, channel)].append(self.allocation_evidence(
+                            checkpoint="final-cap-result", channel=channel, accepted=1,
+                            source_resolution_status="pending",
+                        ))
+                    admit(lambda: reservations.append(number))
+                    return number
+
+                controller.hosted_adapter = controller.cli_adapter = adapter
+                run = controller.run_hosted if channel == "hosted" else controller.run_cli
+                self.assertEqual(run(), 2)
+                self.assertEqual(selections, [1, 2])
+                self.assertEqual(reservations, [2])
+                allocation = controller.status()["prs"][0]["allocations"][channel]
+                self.assertEqual((allocation["used"], allocation["accepted"]), (1, 1))
+                self.assertEqual(allocation["status"], "CAP_EXHAUSTED_PENDING")
+                self.assertEqual(controller.select_target("cli" if channel == "hosted" else "hosted")["pr"], 1)
+
     def test_maximum_stop_is_not_taper_and_does_not_waive_findings(self):
         evidence = {
             (1, "hosted"): [self.allocation_evidence(checkpoint="before-allocation", completed=False, channel="hosted")]
@@ -2866,9 +2958,11 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(allocation["status"], "CAP_EXHAUSTED_PENDING")
         self.assertEqual(allocation["completed_count"], 1)
         self.assertFalse(allocation["taper_complete"])
-        self.assertEqual(allocation["selection_control"], "unresolved_work")
+        self.assertEqual(allocation["selection_control"], "maximum")
+        self.assertEqual(allocation["stop_basis"], "human_cap")
         self.assertEqual(allocation["controlling_reason"], "cap exhausted; findings pending")
-        with self.assertRaisesRegex(ControllerError, "cap exhausted; findings pending"):
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "HUMAN_STOPPED")
+        with self.assertRaisesRegex(ControllerError, "complete or explicitly stopped"):
             controller.resolve_hosted_target()
 
         values = controller.github.values
@@ -2936,7 +3030,8 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(pending["used"], 2)
         self.assertEqual(pending["status"], "CAP_EXHAUSTED_PENDING")
         self.assertEqual(pending["reason"], "cap exhausted; findings pending")
-        with self.assertRaisesRegex(ControllerError, "cap exhausted; findings pending"):
+        self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "HUMAN_STOPPED")
+        with self.assertRaisesRegex(ControllerError, "complete or explicitly stopped"):
             controller.resolve_hosted_target()
 
         values[1] = pr(1, HEAD_3)

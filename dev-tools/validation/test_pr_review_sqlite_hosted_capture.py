@@ -127,6 +127,61 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_two_field_provider_badges_preserve_issue_and_explicit_severity(self) -> None:
+        headline = "Before promoting this change, check that the scheduled backup runs build 6."
+        explanation = "Check that the status site and the shared controller run the same build."
+        for category in ("🩺 Stability & Availability", "📐 Maintainability & Code Quality", "🔒 Security & Privacy",
+                         "Data Integrity & Integration", "Functional Correctness", "Bug"):
+            with self.subTest(category=category):
+                body = f"_{category}_ | _🔵 Trivial_\n\n**{headline}**\n\n{explanation}"
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(4155240659, body)[0]
+                self.assertEqual(finding["title"], headline)
+                self.assertEqual(finding["display_detail"], explanation)
+                self.assertEqual(finding["display_severity"], "Trivial")
+        inline = "_🩺 Stability & Availability_ | _🔵 Trivial_ " + explanation
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(4155240659, inline)[0]
+        self.assertEqual(finding["display_detail"], explanation)
+
+    def test_two_field_security_badge_does_not_prove_classification_metadata(self) -> None:
+        body = ("_🔒 Security & Privacy_ | _🟠 Major_\n**Authored classification**\n"
+                "**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**\nKeep the prose.")
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+        self.assertEqual(finding["classification_titles"], [])
+        self.assertEqual(finding["title"], "Authored classification")
+        self.assertEqual(finding["display_severity"], "Major")
+        self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+        self.assertIn("**Keep the authored remedy.**", finding["display_detail"])
+
+    def test_authored_italic_pairs_and_code_samples_are_not_two_field_badges(self) -> None:
+        for pair in ("_Authored point_ | _Trivial_", "_Stability & Availability narrative_ | _Trivial_",
+                     "_Stability & Availability_ | _Major impact_", "_Stability & Availability_ | _Unknown_",
+                     "```md\n_🩺 Stability & Availability_ | _🔵 Trivial_\n```"):
+            with self.subTest(pair=pair):
+                body = "**Preserve the authored issue.**\n" + pair + "\nActual issue prose."
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+                self.assertIn(pair, finding["display_detail"])
+                self.assertIsNone(finding["display_severity"])
+
+    def test_recognized_two_field_examples_after_headline_are_authored_content(self) -> None:
+        for category in ("Bug", "Functional Correctness", "🔒 Security & Privacy", "🩺 Stability & Availability"):
+            with self.subTest(category=category):
+                pair = f"_{category}_ | _Major_"
+                body = "**Document the format.**\n" + pair + "\nThis is an authored example."
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+                self.assertEqual(finding["title"], "Document the format.")
+                self.assertEqual(finding["display_detail"], pair + "\nThis is an authored example.")
+                self.assertIsNone(finding["display_severity"])
+        sample_then_example = "```md\nAn ordinary example.\n```\n_Bug_ | _Major_\n**Document the format.**"
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, sample_then_example)[0]
+        self.assertIn("_Bug_ | _Major_", finding["display_detail"])
+        self.assertIsNone(finding["display_severity"])
+
+    def test_leading_two_field_severity_does_not_read_authored_later_examples(self) -> None:
+        body = "_Bug_ | _Trivial_\n**Document the format.**\n_Bug_ | _Major_\nThis is an authored example."
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+        self.assertEqual(finding["display_severity"], "Trivial")
+        self.assertIn("_Bug_ | _Major_", finding["display_detail"])
+
     def test_security_header_binds_only_its_adjacent_classification_block(self) -> None:
         header = "_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_"
         classification = "**Authored classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**\nKeep the prose."
