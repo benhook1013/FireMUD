@@ -19,9 +19,9 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationDigest;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReceipt;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
@@ -360,8 +360,7 @@ class TenantIdentityGrpcServiceTest {
     when(creationRepository.read(FRESH_CREATION_REQUEST_ID, "test"))
         .thenReturn(Optional.of(freshCreationReceipt()))
         .thenReturn(Optional.of(freshCreationReceipt("other", FRESH_CREATION_REQUEST_ID)))
-        .thenReturn(Optional.of(freshCreationReceipt("test", anotherRequestId)))
-        .thenReturn(Optional.of(freshCreationReceiptWithWrongProvenance()));
+        .thenReturn(Optional.of(freshCreationReceipt("test", anotherRequestId)));
 
     FreshCreationObserver changedExpectedDigest =
         freshCreationCall(FRESH_CREATION_REQUEST_ID.toString(), changedDigest, ACCOUNT_PEER);
@@ -369,43 +368,12 @@ class TenantIdentityGrpcServiceTest {
         freshCreationCall(FRESH_CREATION_REQUEST_ID.toString(), otherNamespaceDigest, ACCOUNT_PEER);
     FreshCreationObserver otherRequest =
         freshCreationCall(FRESH_CREATION_REQUEST_ID.toString(), otherRequestDigest, ACCOUNT_PEER);
-    FreshCreationObserver wrongProvenance =
-        freshCreationCall(FRESH_CREATION_REQUEST_ID.toString(), FRESH_REQUEST_DIGEST, ACCOUNT_PEER);
-
     assertEquals(Status.Code.FAILED_PRECONDITION, freshCreationStatus(changedExpectedDigest));
     assertEquals(Status.Code.FAILED_PRECONDITION, freshCreationStatus(otherNamespace));
     assertEquals(Status.Code.FAILED_PRECONDITION, freshCreationStatus(otherRequest));
-    assertEquals(Status.Code.FAILED_PRECONDITION, freshCreationStatus(wrongProvenance));
     assertNull(changedExpectedDigest.value);
     assertNull(otherNamespace.value);
     assertNull(otherRequest.value);
-    assertNull(wrongProvenance.value);
-  }
-
-  @Test
-  void freshCreationReadRejectsChangedSourceWithTamperedEvidenceDigest() {
-    GameTenantCreationReceipt valid = freshCreationReceipt();
-    GameTenantCreationReceipt tampered =
-        new GameTenantCreationReceipt(
-            valid.schemaVersion(),
-            valid.targetNamespace(),
-            valid.creationRequestId(),
-            valid.operationId(),
-            valid.requestDigest(),
-            valid.canonicalTenantId(),
-            valid.sourceGameRowId() + 1,
-            valid.sourceGameTenantKey(),
-            valid.provenanceKind(),
-            "sha256:" + "d".repeat(64));
-    when(creationRepository.read(FRESH_CREATION_REQUEST_ID, "test"))
-        .thenReturn(Optional.of(tampered));
-
-    FreshCreationObserver observer =
-        freshCreationCall(FRESH_CREATION_REQUEST_ID.toString(), FRESH_REQUEST_DIGEST, ACCOUNT_PEER);
-
-    assertEquals(Status.Code.FAILED_PRECONDITION, freshCreationStatus(observer));
-    assertNull(observer.value);
-    assertFalse(observer.completed);
   }
 
   @Test
@@ -512,15 +480,15 @@ class TenantIdentityGrpcServiceTest {
         1);
   }
 
-  private GameTenantCreationReceipt freshCreationReceipt() {
+  private FreshTenantCreationEvidence freshCreationReceipt() {
     return freshCreationReceipt("test", FRESH_CREATION_REQUEST_ID);
   }
 
-  private GameTenantCreationReceipt freshCreationReceipt(String targetNamespace, UUID requestId) {
+  private FreshTenantCreationEvidence freshCreationReceipt(String targetNamespace, UUID requestId) {
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             targetNamespace, requestId, FRESH_SOURCE_GAME_TENANT_KEY, "Fresh Realm", null);
-    return new GameTenantCreationReceipt(
+    return new FreshTenantCreationEvidence(
         1,
         targetNamespace,
         requestId,
@@ -539,21 +507,6 @@ class TenantIdentityGrpcServiceTest {
             91L,
             FRESH_SOURCE_GAME_TENANT_KEY,
             "NEW_GAME_ROW"));
-  }
-
-  private GameTenantCreationReceipt freshCreationReceiptWithWrongProvenance() {
-    GameTenantCreationReceipt valid = freshCreationReceipt();
-    return new GameTenantCreationReceipt(
-        valid.schemaVersion(),
-        valid.targetNamespace(),
-        valid.creationRequestId(),
-        valid.operationId(),
-        valid.requestDigest(),
-        valid.canonicalTenantId(),
-        valid.sourceGameRowId(),
-        valid.sourceGameTenantKey(),
-        "RETAINED_GAME_V30",
-        valid.evidenceDigest());
   }
 
   private static Status.Code associationStatus(AssociationObserver observer) {

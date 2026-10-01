@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.UUID;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationDigest;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.junit.jupiter.api.Test;
 
 class GameTenantCreationDigestTest {

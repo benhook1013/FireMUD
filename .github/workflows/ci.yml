@@ -943,7 +943,7 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" ]]; then
+          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" || "${{ matrix.module }}" == "game-design-service" ]]; then
             ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache --no-configuration-cache
           else
             ./gradlew :${{ matrix.module }}:check -PfullCheck
@@ -985,6 +985,17 @@ jobs:
             --require-suite integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExactCommittedOriginalSourceAndLostResultWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#doesNotReturnWhenAccountFenceWaitOutlivesTheUnchangedGatewayDeadline()' \
+            account-service
+
+      - name: Verify Account fresh tenant association PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest#exactRetryReadbackGenerationInitializationAndImmutabilityStayAccountLocal()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest#concurrentRetainedAndFreshUuidClaimsSerializeOnTheSharedPrimaryKey()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest#generationFailureRollsBackFreshAssociationAndCanonicalClaim()' \
             account-service
 
       - name: Verify Game Design fresh tenant creation PostgreSQL proof

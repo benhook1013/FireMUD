@@ -15,9 +15,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationDigest;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReceipt;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -68,7 +68,7 @@ class GameTenantCreationRepositoryIntegrationTest {
   @Test
   void createCandidateExactRetryReturnsCommittedReceiptWithoutSecondGameWrite() throws Exception {
     Fixture fixture = fixture();
-    GameTenantCreationReceipt first =
+    FreshTenantCreationEvidence first =
         fixture.inTransaction(
             () ->
                 fixture.repository.createCandidate(
@@ -76,7 +76,7 @@ class GameTenantCreationRepositoryIntegrationTest {
     String firstGameXmin = gameXmin(fixture.dsl, SOURCE_KEY);
 
     assertThat(fixture.repository.read(REQUEST_ID, NAMESPACE)).contains(first);
-    GameTenantCreationReceipt exactRetry =
+    FreshTenantCreationEvidence exactRetry =
         fixture.inTransaction(
             () ->
                 fixture.repository.createCandidate(
@@ -247,7 +247,7 @@ class GameTenantCreationRepositoryIntegrationTest {
   @Test
   void completedOperationCannotBeUpdatedOrDeleted() throws Exception {
     Fixture fixture = fixture();
-    GameTenantCreationReceipt receipt =
+    FreshTenantCreationEvidence receipt =
         fixture.inTransaction(
             () ->
                 fixture.repository.createCandidate(
@@ -281,7 +281,7 @@ class GameTenantCreationRepositoryIntegrationTest {
   @Test
   void readFailsClosedWhenGameSourceTupleChangesOrSourceRowDisappears() throws Exception {
     Fixture changedFixture = fixture();
-    GameTenantCreationReceipt changedReceipt =
+    FreshTenantCreationEvidence changedReceipt =
         changedFixture.inTransaction(
             () ->
                 changedFixture.repository.createCandidate(
@@ -316,7 +316,7 @@ class GameTenantCreationRepositoryIntegrationTest {
         .hasMessageContaining("source tuple no longer matches");
 
     Fixture missingFixture = fixture();
-    GameTenantCreationReceipt missingReceipt =
+    FreshTenantCreationEvidence missingReceipt =
         missingFixture.inTransaction(
             () ->
                 missingFixture.repository.createCandidate(
@@ -346,12 +346,12 @@ class GameTenantCreationRepositoryIntegrationTest {
     AtomicInteger secondBackendPid = new AtomicInteger();
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
-      Future<GameTenantCreationReceipt> first =
+      Future<FreshTenantCreationEvidence> first =
           executor.submit(
               () ->
                   fixture.transactionTemplate.execute(
                       status -> {
-                        GameTenantCreationReceipt receipt =
+                        FreshTenantCreationEvidence receipt =
                             fixture.repository.createCandidate(
                                 NAMESPACE,
                                 REQUEST_ID,
@@ -365,7 +365,7 @@ class GameTenantCreationRepositoryIntegrationTest {
                       }));
       assertThat(firstOperationCreated.await(10, TimeUnit.SECONDS)).isTrue();
 
-      Future<GameTenantCreationReceipt> second =
+      Future<FreshTenantCreationEvidence> second =
           executor.submit(
               () ->
                   fixture.transactionTemplate.execute(
@@ -379,8 +379,8 @@ class GameTenantCreationRepositoryIntegrationTest {
       awaitDatabaseBlocking(fixture.dataSource, secondBackendPid.get(), firstBackendPid.get());
       allowFirstCommit.countDown();
 
-      GameTenantCreationReceipt firstReceipt = first.get(10, TimeUnit.SECONDS);
-      GameTenantCreationReceipt secondReceipt = second.get(10, TimeUnit.SECONDS);
+      FreshTenantCreationEvidence firstReceipt = first.get(10, TimeUnit.SECONDS);
+      FreshTenantCreationEvidence secondReceipt = second.get(10, TimeUnit.SECONDS);
       assertThat(secondReceipt).isEqualTo(firstReceipt);
       assertThat(secondReceipt.canonicalTenantId()).isEqualTo(firstReceipt.canonicalTenantId());
       assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
@@ -394,9 +394,10 @@ class GameTenantCreationRepositoryIntegrationTest {
   private Fixture fixture() {
     String schema = "game_design_creation_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    dataSource.setUrl(postgres.getJdbcUrl() + "?currentSchema=" + schema);
+    dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
@@ -410,6 +411,8 @@ class GameTenantCreationRepositoryIntegrationTest {
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    assertThat(dsl.select(DSL.field("current_schema()", String.class)).fetchSingle().value1())
+        .isEqualTo(schema);
     GameRepository gameRepository = new GameRepository(dsl);
     GameTenantCreationRepository repository = new GameTenantCreationRepository(dsl, gameRepository);
     return new Fixture(dataSource, dsl, repository, transactionTemplate);

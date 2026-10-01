@@ -5,6 +5,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.entity.Game;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -68,7 +70,7 @@ public class GameTenantCreationRepository {
    * committing.
    */
   @Transactional(propagation = Propagation.MANDATORY)
-  public GameTenantCreationReceipt createCandidate(
+  public FreshTenantCreationEvidence createCandidate(
       String targetNamespace,
       UUID creationRequestId,
       String sourceGameTenantKey,
@@ -159,7 +161,8 @@ public class GameTenantCreationRepository {
 
   /** Reads only a complete operation whose persisted source tuple still matches its game row. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
-  public Optional<GameTenantCreationReceipt> read(UUID creationRequestId, String targetNamespace) {
+  public Optional<FreshTenantCreationEvidence> read(
+      UUID creationRequestId, String targetNamespace) {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
           "Fresh tenant creation read requires a committed-outcome owner read");
@@ -253,7 +256,7 @@ public class GameTenantCreationRepository {
     }
   }
 
-  private GameTenantCreationReceipt toReceipt(Record record) {
+  private FreshTenantCreationEvidence toReceipt(Record record) {
     Integer schemaVersion = record.get(SCHEMA_VERSION_FIELD);
     String namespace = record.get(TARGET_NAMESPACE);
     UUID creationRequestId = record.get(CREATION_REQUEST_ID);
@@ -338,7 +341,7 @@ public class GameTenantCreationRepository {
       throw invalidEvidence("Stored creation operation evidence digest does not match its tuple");
     }
 
-    return new GameTenantCreationReceipt(
+    return new FreshTenantCreationEvidence(
         schemaVersion,
         namespace,
         creationRequestId,

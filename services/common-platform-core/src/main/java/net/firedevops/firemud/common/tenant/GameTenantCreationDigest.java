@@ -1,4 +1,4 @@
-package net.firedevops.firemud.gamedesign.repository;
+package net.firedevops.firemud.common.tenant;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -76,7 +76,7 @@ public final class GameTenantCreationDigest {
         provenanceKind);
   }
 
-  static int utf8ByteLength(String value) {
+  public static int utf8ByteLength(String value) {
     Objects.requireNonNull(value, "value");
     int byteLength = 0;
     for (int index = 0; index < value.length(); index++) {
@@ -100,7 +100,7 @@ public final class GameTenantCreationDigest {
     return byteLength;
   }
 
-  static boolean isDigest(String value) {
+  public static boolean isDigest(String value) {
     return value != null && value.matches("sha256:[0-9a-f]{64}");
   }
 

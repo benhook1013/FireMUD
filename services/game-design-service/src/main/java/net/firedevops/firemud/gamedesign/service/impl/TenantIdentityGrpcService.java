@@ -7,9 +7,9 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationDigest;
-import net.firedevops.firemud.gamedesign.repository.GameTenantCreationReceipt;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
@@ -211,7 +211,7 @@ public class TenantIdentityGrpcService
       return;
     }
 
-    Optional<GameTenantCreationReceipt> resolved;
+    Optional<FreshTenantCreationEvidence> resolved;
     try {
       resolved = creationRepository.read(creationRequestId, workloadNamespace);
     } catch (GameTenantCreationRepository.InvalidCreationEvidenceException ex) {
@@ -258,7 +258,7 @@ public class TenantIdentityGrpcService
       return;
     }
 
-    GameTenantCreationReceipt receipt = resolved.orElseThrow();
+    FreshTenantCreationEvidence receipt = resolved.orElseThrow();
     boolean exactReceipt =
         receipt.schemaVersion() == 1
             && workloadNamespace.equals(receipt.targetNamespace())
