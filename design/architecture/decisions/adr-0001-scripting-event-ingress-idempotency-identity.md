@@ -33,6 +33,10 @@ Retry identity and handler materialization follow the current Trigger Identity a
 
 Current implementation and proof obligations are owned by [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md) and the canonical identity matrix and scheduler-preimage requirements in [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Select and report checks under [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); this superseded ADR is not an independent proof authority.
 
+## Supersession
+
+- Replacement ADR: [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md)
+
 ## References
 
 - `design/architecture/system-architecture-scripting-contracts.md`

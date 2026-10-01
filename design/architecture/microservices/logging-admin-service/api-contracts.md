@@ -112,8 +112,19 @@ The internal admission-pointer service/owner paths represent exactly one of two 
 - Replacing or rolling back `OPEN(old)` to `OPEN(new)` is a prepared cutover, not a generic open. It must use the internal `ExecutePreparedVersionCutover` control-plane operation with one durable `preparedVersionUpgradeId`; that operation revalidates the preparation, source and target identities, and CAS version before atomically swapping the route. Preparation is proof for cutover, not a substitute for route-version concurrency control.
 - Game Session remains the sole routing-state writer and audits the transition under the same identity and CAS result. Internal callers must not maintain a competing pointer or infer `tenantId` from `worldSlug` or `realmSlug`; Logging & Admin's public REST surface reads the resulting state and audit evidence only.
 
+The deployed Gateway URL and listener are environment-owned; this document does not assign an HTTPS port. For an HTTPS route, set the URL to the environment's published Logging & Admin `/ping` URL and provide the issuing CA bundle so curl verifies the server certificate. The route continues to use its current privileged-JWT authentication; TLS does not imply that the target health authorization policy is implemented.
+
 ```bash
-curl -H 'Authorization: Bearer <privileged-jwt>' http://localhost:8080/ping
+curl --cacert "$FIREMUD_HTTPS_CA_CERT_PATH" \
+  -H 'Authorization: Bearer <short-lived privileged JWT>' \
+  "$FIREMUD_LOGGING_ADMIN_HTTPS_URL"
+```
+
+The current local HTTP harness listens on `localhost:8080` without TLS. Use only a disposable, non-production privileged JWT with that loopback-only harness; never send a real operator token over it. Gateway TLS termination and the current in-cluster HTTP forwarding exception are described in [Security Architecture](../../system-architecture-security.md#tls-termination-for-gateway) and [Cross-Service Trust](../../system-architecture-security.md#cross-service-trust).
+
+```bash
+curl -H 'Authorization: Bearer <disposable non-production privileged JWT>' \
+  http://localhost:8080/ping
 ```
 
 ## gRPC
@@ -148,12 +159,23 @@ curl -H 'Authorization: Bearer <privileged-jwt>' http://localhost:8080/ping
 - `ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse)` – target owner-forwarding contract, unavailable until the minimum schema/authorization gate above and the complete [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md) durable, idempotent, fenced owner-execution contract are implemented and proved. The current gRPC ingress preserves admin-role, positive-tenant, and feature-name validation, then returns an application-level `UNAVAILABLE` error without invoking a service or owner. Once enabled, Logging & Admin is the audited forwarding ingress; Game Session owns the feature-flag mutation and its durable result.
 - Tick-remediation is not a Logging & Admin-owned state-mutation gRPC surface. Its HTTP ingress is hard fail closed and no Logging & Admin pause/resume forwarding method remains callable internally; the target owner contract remains unavailable until the minimum schema/authorization gate above and the complete [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md) durable, idempotent, fenced owner-execution contract are implemented and proved. Once enabled, Logging & Admin audits and forwards to Game Session, which owns tick state, fencing, idempotency, and the durable result. Future recovery operations require separate named typed owner contracts; no generic `remediate` RPC is reserved.
 
-```bash
-grpcurl -plaintext -H 'Authorization: Bearer <jwt>' localhost:6565 logging_admin.v1.LoggingAdminService/Ping
+Internal gRPC examples use the configured CA and workload certificate to verify the server and present a client identity. The target for the command is supplied by the environment; this transport example does not claim that current receiver-side workload/method authorization is implemented. The JWT shown for `CreateReport` reflects the current interim receiver contract and must be disposable/non-production.
 
-# Non-production local harness only; production callers require the target internal workload/method authorization, which remains unproved by the current transport configuration.
-grpcurl -plaintext -d '{"tenant_id":"1","reporter_account_id":"1","target_account_id":"2","type":"BUG","description":"example"}' \
-  localhost:6565 logging_admin.v1.ReportService/CreateReport
+```bash
+grpcurl -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  -H 'Authorization: Bearer <disposable non-production JWT>' \
+  "$FIREMUD_LOGGING_ADMIN_GRPC_TARGET" \
+  logging_admin.v1.LoggingAdminService/Ping
+
+grpcurl -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  -H 'Authorization: Bearer <disposable non-production internal-service JWT>' \
+  -d '{"tenant_id":"1","reporter_account_id":"1","target_account_id":"2","type":"BUG","description":"example"}' \
+  "$FIREMUD_LOGGING_ADMIN_GRPC_TARGET" \
+  logging_admin.v1.ReportService/CreateReport
 ```
 
 ## Endpoint Authentication Classes

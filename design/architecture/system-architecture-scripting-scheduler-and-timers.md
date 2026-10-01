@@ -40,11 +40,13 @@ The following classification applies to Automation-owned scheduler data; it does
 - Durable schedule instances and due state are S2 mapping-dependent runtime state. Their durable identity uses the tenant, `playableStateNamespaceId`, and owning schedule identity; the persisted `gameInstanceId` is separately exact-validated active-instance authorization evidence. Replacement requires explicit continuity or replacement mapping, exact target validation, and that active-instance fence. A namespace transition retires the old generation before target admission and never reuses its due point implicitly.
 - Correctness-bearing one-shot intent is retained under its owner-defined durable identity (S1 when namespace-owned); an in-flight claim remains fenced and reconciled under its original instance, namespace, epoch, and pin evidence rather than being remapped into a new runtime.
 - Durable recurring candidate/claim evidence remains under its original identity until its declared firing, skip, or reconciliation outcome. Advisory/cosmetic candidate state is S3-disposable only where the authored recovery policy permits dropping it; a retained candidate audit is immutable history, not replay authority.
-- Redis timer indexes, scheduler progress hints, queue pointers, and other rebuildable projections are S3 coordination state. Reset, epoch, namespace, or leader changes may discard them, but only durable owner state may rebuild or authorize scheduling.
+- **Target state only:** Redis timer indexes, scheduler progress hints, queue pointers, and other rebuildable projections are S3 coordination state. Reset, epoch, namespace, or leader changes may discard them, but only durable owner state may rebuild or authorize scheduling. The current PostgreSQL schedule-definition and schedule-instance substrate, and its recovery/fence gaps, remain as recorded in [Implementation Status](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
 
 Old-instance schedule state and correctness-bearing claims therefore block cleanup while nonterminal or reconciliation-required. A new target row or identity may admit only after the applicable old generation is fenced and the target's exact namespace, runtime, pin, and owner evidence has been validated.
 
 ### Script Timers vs Tick Timers
+
+The end-to-end lifecycle and reload behavior in this target-state section, including rebuilding timer indexes from durable owner state, is not a description of current implementation. Current PostgreSQL schedule storage and the remaining convergence gaps are listed above and tracked by [Automation and Scheduler Runtime](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
 
 Plugin timer admission carries the owner lifecycle fence as evidence separate from schedule identity: the stable schedule row carries the mutable current reconciled `(pluginActivationEpoch, lifecycleRevision)` pair, while each due candidate and firing claim captures the pair as immutable evidence; a new firing requires the exact current tuple. `DRAINING` cannot authorize a new firing; only same-version/same-epoch work whose winning admission CAS durably committed the immediately preceding `ENABLED` revision before the durable Automation-owned `DRAINING` admission barrier was created may retain it under ADR 0119. A revision change alone does not create a new candidate identity.
 
@@ -175,6 +177,8 @@ The interval admission, durable-claim, artifact-estimate reservation, and retry/
 - Because the authoritative schedule configuration lives in PostgreSQL and Redis holds only coordination state (timer indexes and checkpoints), leader changes do not reset cadences; they only introduce a bounded delay before the new leader catches up.
 
 #### Script Reload
+
+This reload sequence is target-state behavior; the current implementation status above does not establish Redis-index rebuild or end-to-end reload/recovery proof.
 
 - During reload, leaders set `reloadState=RELOADING` for the affected runtime scope after observing that Game Session has pinned a tenant-`READY` patch for that instance. `onLoad` is not part of this instance reload path; it has already completed as part of tenant patch readiness. Existing timer entries in the region index `automation:timer:{tenantRegionTag}` and any derived per-script projections remain in Redis but are treated as pending until reconciliation completes.
 - Once the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` is committed and reconciliation succeeds, the leader:
