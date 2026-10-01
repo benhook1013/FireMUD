@@ -50,6 +50,7 @@ import net.firedevops.firemud.accountservice.security.AccountEnvelopeCryptoExcep
 import net.firedevops.firemud.accountservice.security.AccountEnvelopePurpose;
 import net.firedevops.firemud.accountservice.security.AccountGameplayConnectSourceVerifier;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader;
+import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader.HistoricalCommittedSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader.OriginalSourceEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -128,6 +129,165 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                     .put("extra", BigInteger.ONE))
         .isInstanceOf(UnsupportedOperationException.class);
     assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(before);
+  }
+
+  @Test
+  void readsExpiredCommittedSourceOnlyThroughHistoricalEvidenceWithoutMutation() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture source = newSource(prepared, SourceState.COMMITTED);
+    AccountCommittedConnectSource committed =
+        inTransaction(
+            prepared.db().transaction(),
+            () ->
+                prepared
+                    .db()
+                    .issuanceRepository()
+                    .readCommittedResponseEnvelope(source.identity())
+                    .orElseThrow());
+    Snapshot before = sourceSnapshot(prepared, source.identity());
+
+    // Both the Account token and its projected Gateway context expire after twenty seconds.
+    prepared.clock().advance(Duration.ofSeconds(21));
+    HistoricalCommittedSourceEvidence historical =
+        withPeer(
+            peer(WORKLOAD_NAMESPACE, "game-session-service"),
+            () ->
+                inTransaction(
+                    prepared.db().transaction(),
+                    () ->
+                        prepared
+                            .reader()
+                            .readHistorical(source.identity(), source.gatewayEnvelope())));
+
+    assertThat(historical.operationId()).isEqualTo(committed.operation().operationId());
+    assertThat(historical.responseEnvelopeKeyId())
+        .isEqualTo(committed.responseEnvelope().envelope().keyId());
+    assertThat(historical.sourceTokenHash()).containsExactly(committed.operation().tokenHash());
+    assertThat(historical.accountSourceKeyId()).isEqualTo(ACCOUNT_KEY_ID);
+    assertThat(historical.gatewayKeyId()).isEqualTo(GATEWAY_KEY_ID);
+    assertThat(historical.originalSourceClaims()).isEqualTo(source.sourceClaims());
+    assertThat(historical.historicalGatewayClaims()).isEqualTo(source.gatewayClaims());
+    assertThat(historical.originalSourceClaims().get("jti")).isEqualTo(source.tokenIdentity());
+    assertThat(historical.toString())
+        .doesNotContain(source.identity().connectScopeId())
+        .doesNotContain(source.tokenIdentity())
+        .doesNotContain(source.gatewayEnvelope());
+    byte[] modifiedHash = historical.sourceTokenHash();
+    modifiedHash[0] ^= 0x01;
+    assertThat(historical.sourceTokenHash()).containsExactly(committed.operation().tokenHash());
+    assertThatThrownBy(() -> historical.originalSourceClaims().put("extra", "value"))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThatThrownBy(
+            () ->
+                ((Map<String, Object>) historical.originalSourceClaims().get("authorityTuple"))
+                    .put("extra", BigInteger.ONE))
+        .isInstanceOf(UnsupportedOperationException.class);
+    assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(before);
+
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer(WORKLOAD_NAMESPACE, "game-session-service"),
+                    () ->
+                        inTransaction(
+                            prepared.db().transaction(),
+                            () ->
+                                prepared
+                                    .reader()
+                                    .read(source.identity(), source.gatewayEnvelope()))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Gateway context is expired");
+    assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(before);
+  }
+
+  @Test
+  void historicalReadRejectsRequestTargetHashAndTokenIdentityMismatches() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture source = newSource(prepared, SourceState.COMMITTED);
+    SourceFixture wrongHash =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            new SourceOptions(false, true, false, false, false, false, false));
+    SourceFixture wrongJti =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            new SourceOptions(false, false, true, false, false, false, false));
+    SourceFixture wrongTarget =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            new SourceOptions(false, false, false, true, false, false, false));
+
+    assertHistoricalReadRejected(prepared, wrongHash, IllegalStateException.class, "token hash");
+    assertHistoricalReadRejected(prepared, wrongJti, IllegalStateException.class, "token identity");
+    assertHistoricalReadRejected(
+        prepared, wrongTarget, IllegalArgumentException.class, "does not exactly preserve");
+
+    Snapshot before = sourceSnapshot(prepared, source.identity());
+    AccountConnectTokenIssuanceIdentity wrongRequestIdentity =
+        new AccountConnectTokenIssuanceIdentity(
+            source.identity().accountId(),
+            source.identity().tenantId(),
+            source.identity().connectScopeId() + "-different",
+            source.identity().requestId());
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer(WORKLOAD_NAMESPACE, "game-session-service"),
+                    () ->
+                        inTransaction(
+                            prepared.db().transaction(),
+                            () ->
+                                prepared
+                                    .reader()
+                                    .readHistorical(
+                                        wrongRequestIdentity, source.gatewayEnvelope()))))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("request identity");
+    assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(before);
+  }
+
+  @Test
+  void historicalReadRequiresCommittedSuccess() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture absent = newSource(prepared, SourceState.ABSENT);
+    SourceFixture pending = newSource(prepared, SourceState.PENDING);
+    SourceFixture failed = newSource(prepared, SourceState.FAILED);
+
+    assertHistoricalReadRejected(
+        prepared, absent, IllegalStateException.class, "Committed Account source is absent");
+    assertHistoricalReadRejected(
+        prepared, pending, IllegalStateException.class, "not a complete committed success");
+    assertHistoricalReadRejected(
+        prepared, failed, IllegalStateException.class, "not a complete committed success");
+  }
+
+  @Test
+  void historicalReadRequiresRegisteredGatewayAndAccountSigningKeys() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture unknownGateway =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            new SourceOptions(false, false, false, false, true, false, false));
+    SourceFixture unknownAccount =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            new SourceOptions(true, false, false, false, false, false, false));
+
+    assertHistoricalReadRejected(
+        prepared,
+        unknownGateway,
+        IllegalArgumentException.class,
+        "unknown Gateway verification key");
+    assertHistoricalReadRejected(
+        prepared,
+        unknownAccount,
+        IllegalArgumentException.class,
+        "invalid Account gameplay-connect source JWT");
   }
 
   @Test
@@ -278,6 +438,11 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         unmappedTenant,
         IllegalStateException.class,
         "approved Account tenant association is absent");
+    assertHistoricalReadRejected(
+        prepared,
+        unmappedTenant,
+        IllegalStateException.class,
+        "approved Account tenant association is absent");
 
     SourceFixture changedRetainedEvidence = newSource(prepared, SourceState.COMMITTED);
     inTransaction(
@@ -292,6 +457,11 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                         + "WHERE legacy_tenant_id = ?",
                     prepared.tenantId()));
     assertReadRejected(
+        prepared,
+        changedRetainedEvidence,
+        IllegalStateException.class,
+        "approved Account source evidence differs from retained rows");
+    assertHistoricalReadRejected(
         prepared,
         changedRetainedEvidence,
         IllegalStateException.class,
@@ -346,6 +516,21 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         source,
         AccountEnvelopeCryptoException.class,
         "AUTHENTICATION_FAILED");
+    assertHistoricalReadRejected(
+        wrongKeyReader,
+        prepared,
+        source,
+        AccountEnvelopeCryptoException.class,
+        "AUTHENTICATION_FAILED");
+
+    AccountCommittedConnectSourceReader missingRingReader =
+        readerWithCrypto(prepared, missingKeyRingCrypto());
+    assertHistoricalReadRejected(
+        missingRingReader,
+        prepared,
+        source,
+        AccountEnvelopeCryptoException.class,
+        "KEY_RING_UNAVAILABLE");
   }
 
   @Test
@@ -676,6 +861,11 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     return new AccountEnvelopeCrypto(manifest);
   }
 
+  private AccountEnvelopeCrypto missingKeyRingCrypto() {
+    return new AccountEnvelopeCrypto(
+        tempDir.resolve("missing-account-response-ring-" + UUID.randomUUID() + ".v1"));
+  }
+
   private static AccountCommittedConnectSourceReader readerWithCrypto(
       PreparedAccount prepared, AccountEnvelopeCrypto crypto) {
     return new AccountCommittedConnectSourceReader(
@@ -901,6 +1091,37 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                             () -> reader.read(source.identity(), source.gatewayEnvelope()))))
         .isInstanceOf(exceptionType)
         .hasMessageContaining(messageFragment);
+  }
+
+  private static void assertHistoricalReadRejected(
+      PreparedAccount prepared,
+      SourceFixture source,
+      Class<? extends Throwable> exceptionType,
+      String messageFragment) {
+    assertHistoricalReadRejected(
+        prepared.reader(), prepared, source, exceptionType, messageFragment);
+  }
+
+  private static void assertHistoricalReadRejected(
+      AccountCommittedConnectSourceReader reader,
+      PreparedAccount prepared,
+      SourceFixture source,
+      Class<? extends Throwable> exceptionType,
+      String messageFragment) {
+    Snapshot before = sourceSnapshot(prepared, source.identity());
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer(WORKLOAD_NAMESPACE, "game-session-service"),
+                    () ->
+                        inTransaction(
+                            prepared.db().transaction(),
+                            () ->
+                                reader.readHistorical(
+                                    source.identity(), source.gatewayEnvelope()))))
+        .isInstanceOf(exceptionType)
+        .hasMessageContaining(messageFragment);
+    assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(before);
   }
 
   private static <T> T withPeer(GrpcPeerIdentity peer, Supplier<T> action) {

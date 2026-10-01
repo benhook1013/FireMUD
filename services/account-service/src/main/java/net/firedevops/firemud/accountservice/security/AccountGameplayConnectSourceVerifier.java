@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
+import net.firedevops.firemud.common.security.HistoricalGatewayConnectEvidence;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.core.json.JsonFactory;
 import tools.jackson.databind.DeserializationFeature;
@@ -105,13 +106,61 @@ public final class AccountGameplayConnectSourceVerifier {
    */
   public Map<String, Object> verify(String compactJwt) {
     try {
-      return verifyInternal(compactJwt);
+      SignedCompactSource source = verifySignedCompactSource(compactJwt);
+      Instant now = clock.instant();
+      validateIssuerAudienceAndTimeAt(source.claims(), now);
+      GatewayConnectContextCodec.projectVerifiedAccountGameplayConnectClaims(
+          source.claims(), now.getEpochSecond(), SAFE_PROJECTION_CORRELATION_ID);
+      return deepImmutableObject(source.claims());
     } catch (RuntimeException | GeneralSecurityException ex) {
       throw invalidToken();
     }
   }
 
-  private Map<String, Object> verifyInternal(String compactJwt) throws GeneralSecurityException {
+  /**
+   * Verifies an Account gameplay-connect source only as historical evidence for an already
+   * signature-verified Gateway assertion. The Gateway assertion's signed {@code verifiedAt} is the
+   * source-time anchor; this method does not change or backdate this verifier's clock.
+   *
+   * <p>The returned value is deliberately distinct from the current source claim map. It proves the
+   * Account signature and closed source profile, plus exact correspondence to the supplied
+   * historical Gateway projection. It does not prove that Gateway accepted the assertion, that the
+   * source was durably issued, or that any current authority, registry, recovery, or admission
+   * condition holds. The compact Account JWT is not retained.
+   *
+   * <p>Every verification failure has the same sanitized exception message. Neither the source
+   * token nor detailed parser or cryptographic failures are retained.
+   *
+   * @param compactJwt compact Account-signed JWT
+   * @param historicalGatewayEvidence Gateway evidence produced by the historical Gateway codec
+   * @return immutable Account source claims and their historical Gateway correspondence
+   * @throws IllegalArgumentException if either assertion is malformed, untrusted, or mismatched
+   */
+  public HistoricalAccountGameplayConnectEvidence verifyHistorical(
+      String compactJwt, HistoricalGatewayConnectEvidence historicalGatewayEvidence) {
+    try {
+      if (historicalGatewayEvidence == null) {
+        throw invalidToken();
+      }
+      SignedCompactSource source = verifySignedCompactSource(compactJwt);
+      BigInteger gatewayVerifiedAt = historicalGatewayEvidence.integer("verifiedAt");
+      if (gatewayVerifiedAt == null || gatewayVerifiedAt.signum() <= 0) {
+        throw invalidToken();
+      }
+      Instant originalGatewayVerificationTime =
+          Instant.ofEpochSecond(gatewayVerifiedAt.longValueExact());
+      validateIssuerAudienceAndTimeAt(source.claims(), originalGatewayVerificationTime);
+      GatewayConnectContextCodec.requireVerifiedAccountSourceMatchesHistoricalGatewayEvidence(
+          source.claims(), historicalGatewayEvidence);
+      return new HistoricalAccountGameplayConnectEvidence(
+          source.keyId(), deepImmutableObject(source.claims()), historicalGatewayEvidence);
+    } catch (RuntimeException | GeneralSecurityException ex) {
+      throw invalidToken();
+    }
+  }
+
+  private SignedCompactSource verifySignedCompactSource(String compactJwt)
+      throws GeneralSecurityException {
     String[] segments = splitCanonicalCompactJwt(compactJwt);
     byte[] protectedHeaderBytes = decodeCanonicalBase64Url(segments[0]);
     byte[] payloadBytes = decodeCanonicalBase64Url(segments[1]);
@@ -133,12 +182,7 @@ public final class AccountGameplayConnectSourceVerifier {
     verifySignature(segments[0], segments[1], signatureBytes, key, jcaAlgorithm);
 
     Map<String, Object> sourceClaims = parseJsonObject(payloadBytes);
-    Instant now = clock.instant();
-    validateIssuerAudienceAndTime(sourceClaims, now);
-
-    GatewayConnectContextCodec.projectVerifiedAccountGameplayConnectClaims(
-        sourceClaims, now.getEpochSecond(), SAFE_PROJECTION_CORRELATION_ID);
-    return deepImmutableObject(sourceClaims);
+    return new SignedCompactSource(kid, sourceClaims);
   }
 
   private String[] splitCanonicalCompactJwt(String compactJwt) {
@@ -246,7 +290,7 @@ public final class AccountGameplayConnectSourceVerifier {
     }
   }
 
-  private void validateIssuerAudienceAndTime(Map<String, Object> claims, Instant now) {
+  private void validateIssuerAudienceAndTimeAt(Map<String, Object> claims, Instant validationTime) {
     if (!exactIssuer.equals(claims.get("iss"))
         || !(claims.get("iss") instanceof String)
         || !"gameplay-connect".equals(claims.get("aud"))) {
@@ -260,9 +304,9 @@ public final class AccountGameplayConnectSourceVerifier {
     try {
       Instant issuedAtInstant = Instant.ofEpochSecond(issuedAt.longValueExact());
       Instant expiresAtInstant = Instant.ofEpochSecond(expiresAt.longValueExact());
-      if (!now.isBefore(expiresAtInstant)
+      if (!validationTime.isBefore(expiresAtInstant)
           || issuedAt
-                  .subtract(BigInteger.valueOf(now.getEpochSecond()))
+                  .subtract(BigInteger.valueOf(validationTime.getEpochSecond()))
                   .compareTo(BigInteger.valueOf(MAX_FUTURE_ISSUED_AT_SECONDS))
               > 0) {
         throw invalidToken();
@@ -334,4 +378,6 @@ public final class AccountGameplayConnectSourceVerifier {
   private static IllegalArgumentException invalidToken() {
     return new IllegalArgumentException(INVALID_TOKEN_MESSAGE);
   }
+
+  private record SignedCompactSource(String keyId, Map<String, Object> claims) {}
 }
