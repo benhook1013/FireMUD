@@ -562,7 +562,9 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.authenticateForGameplay("demo@example.com", "password"))
-        .thenReturn(new net.firedevops.firemud.accountservice.dto.AuthenticationResult(9L, "jwt"));
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
+                ACCOUNT_UUID, "jwt"));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<AuthenticateResponse> observer = new RecordingObserver<>();
@@ -577,7 +579,7 @@ class AccountGrpcServiceTest {
                     .build(),
                 observer));
 
-    assertEquals("9", observer.response().getAccountId());
+    assertEquals(ACCOUNT_UUID, observer.response().getAccountId());
     assertEquals("jwt", observer.response().getAuthToken());
     assertTrue(observer.completed());
     Mockito.verify(accountService).authenticateForGameplay("demo@example.com", "password");
@@ -619,7 +621,9 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.verifyEmailLoginOtp("demo@example.com", "123456"))
-        .thenReturn(new net.firedevops.firemud.accountservice.dto.AuthenticationResult(9L, "jwt"));
+        .thenReturn(
+            new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
+                ACCOUNT_UUID, "jwt"));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
@@ -646,7 +650,7 @@ class AccountGrpcServiceTest {
                 }));
 
     assertNotNull(ref.get());
-    assertEquals("9", ref.get().getAccountId());
+    assertEquals(ACCOUNT_UUID, ref.get().getAccountId());
     assertEquals("jwt", ref.get().getAuthToken());
   }
 
@@ -831,6 +835,8 @@ class AccountGrpcServiceTest {
   void getProfileReturnsProfile() throws Exception {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
     Mockito.when(accountService.getProfile(1L, 2L))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.ProfileDto(
@@ -839,12 +845,12 @@ class AccountGrpcServiceTest {
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     AtomicReference<GetProfileResponse> ref = new AtomicReference<>();
-    SessionContext.setContext("2", List.of("player"), Map.of());
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
     withPeer(
         SOCIAL_GROUPS_PEER,
         () ->
             service.getProfile(
-                GetProfileRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
                 new StreamObserver<GetProfileResponse>() {
                   @Override
                   public void onNext(GetProfileResponse value) {
@@ -872,6 +878,30 @@ class AccountGrpcServiceTest {
             .readTree(ref.get().getProfileJson())
             .path("presenceVisibilityPolicy")
             .asText());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+  }
+
+  @Test
+  void getProfileRejectsUnmappedUuidBeforeProfileRead() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenThrow(new IllegalArgumentException("Account not found"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetProfileResponse> observer = new RecordingObserver<>();
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
+                observer));
+
+    assertEquals("NOT_FOUND", observer.response().getError().getCode());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService, Mockito.never()).getProfile(1L, 2L);
   }
 
   @Test
@@ -903,7 +933,7 @@ class AccountGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    assertEquals("accountId must be a canonical non-nil UUID", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(accountService);
   }
 
@@ -924,13 +954,16 @@ class AccountGrpcServiceTest {
       AccountGrpcService service =
           new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
       RecordingObserver<GetProfileResponse> observer = new RecordingObserver<>();
-      SessionContext.setContext("2", List.of("player"), Map.of());
+      SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
 
       withPeer(
           peer,
           () ->
               service.getProfile(
-                  GetProfileRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+                  GetProfileRequest.newBuilder()
+                      .setTenantId("1")
+                      .setAccountId(ACCOUNT_UUID)
+                      .build(),
                   observer));
 
       assertEquals("PERMISSION_DENIED", observer.response().getError().getCode());
@@ -948,13 +981,21 @@ class AccountGrpcServiceTest {
           new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
       RecordingObserver<GetProfileResponse> observer = new RecordingObserver<>();
       SessionContext.setContext(
-          internalService ? "2" : "3", List.of(), Map.of(), internalService, "", "");
+          internalService ? ACCOUNT_UUID : OTHER_ACCOUNT_UUID,
+          List.of(),
+          Map.of(),
+          internalService,
+          "",
+          "");
 
       withPeer(
           SOCIAL_GROUPS_PEER,
           () ->
               service.getProfile(
-                  GetProfileRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+                  GetProfileRequest.newBuilder()
+                      .setTenantId("1")
+                      .setAccountId(ACCOUNT_UUID)
+                      .build(),
                   observer));
 
       assertEquals("PERMISSION_DENIED", observer.response().getError().getCode());
@@ -975,7 +1016,7 @@ class AccountGrpcServiceTest {
         SOCIAL_GROUPS_PEER,
         () ->
             service.getProfile(
-                GetProfileRequest.newBuilder().setTenantId("1").setAccountId("2").build(),
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
                 observer));
 
     assertEquals("PERMISSION_DENIED", observer.response().getError().getCode());
@@ -1377,18 +1418,20 @@ class AccountGrpcServiceTest {
   void updateProfileAllowsExactSocialPeerWithMatchingSubject() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
-    SessionContext.setContext("2", List.of("player"), Map.of());
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
     withPeer(
         SOCIAL_GROUPS_PEER,
         () ->
             service.updateProfile(
                 UpdateProfileRequest.newBuilder()
                     .setTenantId("1")
-                    .setAccountId("2")
+                    .setAccountId(ACCOUNT_UUID)
                     .setProfileJson(
                         "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                     .build(),
@@ -1401,6 +1444,7 @@ class AccountGrpcServiceTest {
             org.mockito.ArgumentCaptor.forClass(
                 net.firedevops.firemud.accountservice.dto.UpdateProfileRequest.class);
     Mockito.verify(accountService).updateProfile(captor.capture());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
     assertEquals(1L, captor.getValue().tenantId());
     assertEquals(2L, captor.getValue().accountId());
     assertEquals("demo", captor.getValue().displayName());
@@ -1416,7 +1460,9 @@ class AccountGrpcServiceTest {
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
-    SessionContext.setContext("2", List.of("player"), Map.of());
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
 
     withPeer(
         SOCIAL_GROUPS_PEER,
@@ -1424,7 +1470,7 @@ class AccountGrpcServiceTest {
             service.updateProfile(
                 UpdateProfileRequest.newBuilder()
                     .setTenantId("1")
-                    .setAccountId("2")
+                    .setAccountId(ACCOUNT_UUID)
                     .setProfileJson(
                         "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                     .build(),
@@ -1452,7 +1498,7 @@ class AccountGrpcServiceTest {
       AccountGrpcService service =
           new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
       RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
-      SessionContext.setContext("2", List.of("player"), Map.of());
+      SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
 
       withPeer(
           peer,
@@ -1460,7 +1506,7 @@ class AccountGrpcServiceTest {
               service.updateProfile(
                   UpdateProfileRequest.newBuilder()
                       .setTenantId("1")
-                      .setAccountId("2")
+                      .setAccountId(ACCOUNT_UUID)
                       .setProfileJson(
                           "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                       .build(),
@@ -1481,7 +1527,12 @@ class AccountGrpcServiceTest {
           new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
       RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
       SessionContext.setContext(
-          internalService ? "2" : "3", List.of(), Map.of(), internalService, "", "");
+          internalService ? ACCOUNT_UUID : OTHER_ACCOUNT_UUID,
+          List.of(),
+          Map.of(),
+          internalService,
+          "",
+          "");
 
       withPeer(
           SOCIAL_GROUPS_PEER,
@@ -1489,7 +1540,7 @@ class AccountGrpcServiceTest {
               service.updateProfile(
                   UpdateProfileRequest.newBuilder()
                       .setTenantId("1")
-                      .setAccountId("2")
+                      .setAccountId(ACCOUNT_UUID)
                       .setProfileJson(
                           "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                       .build(),
@@ -1516,7 +1567,7 @@ class AccountGrpcServiceTest {
             service.updateProfile(
                 UpdateProfileRequest.newBuilder()
                     .setTenantId("1")
-                    .setAccountId("2")
+                    .setAccountId(ACCOUNT_UUID)
                     .setProfileJson(
                         "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                     .build(),
@@ -1535,14 +1586,14 @@ class AccountGrpcServiceTest {
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
     AtomicReference<UpdateProfileResponse> ref = new AtomicReference<>();
-    SessionContext.setContext("2", List.of("player"), Map.of());
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
     withPeer(
         SOCIAL_GROUPS_PEER,
         () ->
             service.updateProfile(
                 UpdateProfileRequest.newBuilder()
                     .setTenantId("0")
-                    .setAccountId("2")
+                    .setAccountId(ACCOUNT_UUID)
                     .setProfileJson(
                         "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
                     .build(),

@@ -114,6 +114,7 @@ message AuthenticateRequest {
 
 message AuthenticateResponse {
   string auth_token = 1;
+  // Canonical non-nil Account UUID from the authenticated persisted source row, never its numeric PK.
   string account_id = 2;
   shared.v1.ErrorDetail error = 3;
 }
@@ -261,6 +262,7 @@ message GetTenantEntitlementsForRuntimeResponse {
 
 message GetProfileRequest {
   string tenant_id = 1;
+  // Canonical non-nil Account UUID, exactly matching the authenticated caller subject.
   string account_id = 2;
 }
 
@@ -287,6 +289,7 @@ message ListPresenceVisibilityPoliciesResponse {
 
 message UpdateProfileRequest {
   string tenant_id = 1;
+  // Canonical non-nil Account UUID, exactly matching the authenticated caller subject.
   string account_id = 2;
   string profile_json = 3;
 }

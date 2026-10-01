@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountDataExportDto;
 import net.firedevops.firemud.accountservice.dto.AccountDto;
 import net.firedevops.firemud.accountservice.dto.AccountLoginAuthModesDto;
@@ -45,8 +46,9 @@ public class AccountController {
   @GetMapping("/{accountId}/login-auth-modes")
   public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> getLoginAuthModes(
       @PathVariable String accountId) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
+    Long parsedAccountId = accountService.resolveAccountStorageId(parsedAccountUuid);
     return ResponseEntity.ok(
         ApiResponse.success(accountService.getLoginAuthModes(parsedAccountId)));
   }
@@ -55,8 +57,8 @@ public class AccountController {
   public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> updateLoginAuthModes(
       @PathVariable String accountId,
       @Valid @RequestBody UpdateAccountLoginAuthModesRequest request) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
     throw new org.springframework.web.server.ResponseStatusException(
         HttpStatus.NOT_IMPLEMENTED,
         "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism");
@@ -65,8 +67,9 @@ public class AccountController {
   @GetMapping("/{accountId}/export")
   public ResponseEntity<ApiResponse<AccountDataExportDto>> exportAccount(
       @PathVariable String accountId) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
+    Long parsedAccountId = accountService.resolveAccountStorageId(parsedAccountUuid);
     AccountDataExportDto data = accountService.exportAccountData(parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(data));
   }
@@ -74,9 +77,12 @@ public class AccountController {
   @GetMapping("/{accountId}/tenant-export")
   public ResponseEntity<ApiResponse<TenantDataExportDto>> exportTenantData(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
-    SessionContext.requireAccountAccess(parsedTenantId, parsedAccountId);
+    if (!isCurrentAccount(parsedAccountUuid) && !SessionContext.hasTenantAccess(parsedTenantId)) {
+      throw new org.springframework.web.server.ResponseStatusException(
+          HttpStatus.FORBIDDEN, "Account access required");
+    }
     throw new org.springframework.web.server.ResponseStatusException(
         HttpStatus.NOT_IMPLEMENTED,
         "Tenant-admin export is unavailable until the tenant-wide export contract is implemented");
@@ -84,18 +90,22 @@ public class AccountController {
 
   @DeleteMapping("/{accountId}")
   public ResponseEntity<ApiResponse<Void>> deleteAccount(@PathVariable String accountId) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
-    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
+    requireCurrentAccountOrGlobalPrivilegedRole(parsedAccountUuid);
     throw new net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException(
         "ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE",
         "Account deletion is unavailable until its provider reconciliation and data retention workflow is implemented");
   }
 
-  private void requireCurrentAccountOrGlobalPrivilegedRole(Long accountId) {
-    if (SessionContext.isCurrentAccount(accountId) || SessionContext.hasGlobalPrivilegedRole()) {
+  private void requireCurrentAccountOrGlobalPrivilegedRole(UUID accountUuid) {
+    if (isCurrentAccount(accountUuid) || SessionContext.hasGlobalPrivilegedRole()) {
       return;
     }
     throw new org.springframework.web.server.ResponseStatusException(
         org.springframework.http.HttpStatus.FORBIDDEN, "Account access required");
+  }
+
+  private static boolean isCurrentAccount(UUID accountUuid) {
+    return accountUuid.toString().equals(SessionContext.getAccountId());
   }
 }

@@ -128,6 +128,7 @@ public class AccountServiceImpl implements AccountService {
   public static final String ACCOUNT_JWT_ISSUER = "firemud-account-service";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
+  private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
   private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
 
@@ -259,9 +260,29 @@ public class AccountServiceImpl implements AccountService {
   private void requireCanonicalPersistedIdentity(Account account) {
     if (account == null
         || account.getId() == null
+        || account.getId() <= 0L
         || account.getAccountUuid() == null
+        || NIL_ACCOUNT_UUID.equals(account.getAccountUuid())
         || account.getAccountUuidProvenance() != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
         || !account.getId().equals(account.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
+  }
+
+  private void requireAuthenticationPersistedIdentity(Account account) {
+    AccountIdentityProvenance provenance =
+        account == null ? null : account.getAccountUuidProvenance();
+    if (account == null
+        || account.getId() == null
+        || account.getId() <= 0L
+        || account.getAccountUuid() == null
+        || NIL_ACCOUNT_UUID.equals(account.getAccountUuid())
+        || account.getAccountUuidSourceNumericId() == null
+        || !account.getId().equals(account.getAccountUuidSourceNumericId())
+        || (provenance != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
+            && provenance != AccountIdentityProvenance.ACCOUNT_V29_MIGRATION
+            && provenance != AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT)) {
       throw new IllegalStateException(
           "Account UUID readback did not match its exact persisted source row");
     }
@@ -274,16 +295,17 @@ public class AccountServiceImpl implements AccountService {
       String username, String password) {
     PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
+    requireAuthenticationPersistedIdentity(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
-            account.getId().toString(),
+            account.getAccountUuid().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims("control-ui", account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+        account.getAccountUuid().toString(), token);
   }
 
   @Override
@@ -298,16 +320,17 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
+    requireAuthenticationPersistedIdentity(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
-            account.getId().toString(),
+            account.getAccountUuid().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+        account.getAccountUuid().toString(), token);
   }
 
   @Override
@@ -372,16 +395,17 @@ public class AccountServiceImpl implements AccountService {
       throw invalidCredentials();
     }
     requireAuthenticationEligible(account);
+    requireAuthenticationPersistedIdentity(account);
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
         mintToken(
-            account.getId().toString(),
+            account.getAccountUuid().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+        account.getAccountUuid().toString(), token);
   }
 
   @Override
@@ -1905,7 +1929,7 @@ public class AccountServiceImpl implements AccountService {
         "aud",
         audience,
         "accountId",
-        account.getId(),
+        account.getAccountUuid().toString(),
         "globalRoles",
         globalRoles,
         "jti",
@@ -1960,6 +1984,24 @@ public class AccountServiceImpl implements AccountService {
       case "active", "trialing", "past_due" -> true;
       default -> false;
     };
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Long resolveAccountStorageId(UUID accountUuid) {
+    if (accountUuid == null || NIL_ACCOUNT_UUID.equals(accountUuid)) {
+      throw new IllegalArgumentException("A canonical non-nil Account UUID is required");
+    }
+    Account account =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    requireAuthenticationPersistedIdentity(account);
+    if (!accountUuid.equals(account.getAccountUuid())) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match the requested persisted identity");
+    }
+    return account.getId();
   }
 
   @Override

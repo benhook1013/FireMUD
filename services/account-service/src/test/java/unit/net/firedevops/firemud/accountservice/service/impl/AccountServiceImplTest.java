@@ -1581,6 +1581,7 @@ class AccountServiceImplTest {
   void emailLoginOtpVerificationAuthenticatesAndConsumesMatchingChallenge() {
     Account account = new Account();
     account.setId(9L);
+    setPersistedAuthenticationIdentity(account);
     account.setEmail("verified@example.com");
     account.setEmailVerified(true);
     account.setRole("player");
@@ -1613,7 +1614,7 @@ class AccountServiceImplTest {
     AuthenticationResult result =
         service.verifyEmailLoginOtp("verified@example.com", codeMatcher.group(1));
 
-    assertEquals(9L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     assertNotNull(result.authToken());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository)
         .delete(challengeCaptor.getValue());
@@ -1629,6 +1630,7 @@ class AccountServiceImplTest {
   void authenticateUsesMatchingEmailLoginOtpBeforePasswordFallback() {
     Account account = new Account();
     account.setId(9L);
+    setPersistedAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -1643,7 +1645,7 @@ class AccountServiceImplTest {
 
     AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "123456");
 
-    assertEquals(9L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).delete(challenge);
     org.mockito.Mockito.verify(sessionService)
         .storeAccountSession(9L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
@@ -1654,6 +1656,7 @@ class AccountServiceImplTest {
   void authenticateFallsBackToPasswordWithoutBurningUnmatchedEmailLoginOtp() {
     Account account = new Account();
     account.setId(9L);
+    setPersistedAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -1668,7 +1671,7 @@ class AccountServiceImplTest {
 
     AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
-    assertEquals(9L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
         .delete(challenge);
     org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
@@ -1735,6 +1738,7 @@ class AccountServiceImplTest {
   void emailLoginOtpVerificationLocksChallengeBeforeConsumingIt() {
     Account account = new Account();
     account.setId(9L);
+    setPersistedAuthenticationIdentity(account);
     account.setEmail("verified@example.com");
     account.setRole("player");
     net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
@@ -1750,10 +1754,11 @@ class AccountServiceImplTest {
 
     AuthenticationResult result = service.verifyEmailLoginOtp("verified@example.com", "123456");
 
-    assertEquals(9L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
     assertEquals("account-service", claims.getAudience().iterator().next());
-    assertEquals(9L, claims.get("accountId", Long.class));
+    assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+    assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
     org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(accountEmailLoginChallengeRepository);
     inOrder.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(9L);
     inOrder.verify(accountEmailLoginChallengeRepository).findByAccountId(9L);
@@ -1764,6 +1769,7 @@ class AccountServiceImplTest {
   void authenticateReturnsControlUiTokenWithoutGameplayMembership() {
     Account account = new Account();
     account.setId(1L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1771,10 +1777,11 @@ class AccountServiceImplTest {
     AuthenticationResult result = service.authenticate("demo", "password");
 
     assertNotNull(result.authToken());
-    assertEquals(1L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
     assertEquals("control-ui", claims.getAudience().iterator().next());
-    assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+    assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
     assertEquals(java.util.List.of(), claims.get("globalRoles"));
     assertNotNull(claims.get("jti"));
     assertFalse(claims.containsKey("tenantId"));
@@ -1809,6 +1816,7 @@ class AccountServiceImplTest {
   void authenticateForGameplayReturnsTokenWhenPasswordMatches() {
     Account account = new Account();
     account.setId(1L);
+    setPersistedAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
@@ -1817,10 +1825,11 @@ class AccountServiceImplTest {
     AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
     assertNotNull(result.authToken());
-    assertEquals(1L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     var claims = new JwtUtil(JWT_SECRET, 3600000L).parseToken(result.authToken()).getPayload();
     assertEquals("account-service", claims.getAudience().iterator().next());
-    assertEquals(1L, claims.get("accountId", Long.class));
+    assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+    assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
     assertEquals(java.util.List.of(), claims.get("globalRoles"));
     assertNotNull(claims.get("jti"));
     org.mockito.Mockito.verify(sessionService)
@@ -1828,10 +1837,131 @@ class AccountServiceImplTest {
     verifyNoInteractions(accountTenantMembershipRepository);
   }
 
+  @ParameterizedTest
+  @EnumSource(AccountIdentityProvenance.class)
+  void resolveAccountStorageIdAcceptsEveryExactPersistedUuidProvenance(
+      AccountIdentityProvenance provenance) {
+    UUID accountUuid = UUID.randomUUID();
+    Account account = new Account();
+    account.setId(31L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(provenance);
+    account.setAccountUuidSourceNumericId(31L);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertEquals(31L, service.resolveAccountStorageId(accountUuid));
+
+    verify(accountRepository).findByAccountUuid(accountUuid);
+    verifyNoInteractions(profileRepository);
+  }
+
+  @ParameterizedTest
+  @EnumSource(InvalidAuthenticationIdentity.class)
+  void resolveAccountStorageIdRejectsUnprovedUuidBeforeProfileOperations(
+      InvalidAuthenticationIdentity invalidIdentity) {
+    UUID accountUuid = UUID.randomUUID();
+    Account account = new Account();
+    account.setId(32L);
+    setPersistedAuthenticationIdentity(account);
+    assignInvalidAuthenticationIdentity(account, invalidIdentity);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(accountUuid));
+
+    verify(accountRepository).findByAccountUuid(accountUuid);
+    verifyNoInteractions(profileRepository);
+  }
+
+  @Test
+  void resolveAccountStorageIdRejectsMissingOrNilUuidBeforeLookup() {
+    assertThrows(IllegalArgumentException.class, () -> service.resolveAccountStorageId(null));
+    assertThrows(
+        IllegalArgumentException.class, () -> service.resolveAccountStorageId(new UUID(0L, 0L)));
+
+    verifyNoInteractions(accountRepository, profileRepository);
+  }
+
+  @Test
+  void resolveAccountStorageIdRejectsMissingAccountBeforeProfileOperations() {
+    UUID accountUuid = UUID.randomUUID();
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class, () -> service.resolveAccountStorageId(accountUuid));
+
+    verify(accountRepository).findByAccountUuid(accountUuid);
+    verifyNoInteractions(profileRepository);
+  }
+
+  @Test
+  void resolveAccountStorageIdRejectsReadbackForAnotherUuid() {
+    UUID requestedUuid = UUID.randomUUID();
+    Account account = new Account();
+    account.setId(33L);
+    setPersistedAuthenticationIdentity(account);
+    when(accountRepository.findByAccountUuid(requestedUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(requestedUuid));
+
+    verifyNoInteractions(profileRepository);
+  }
+
+  @ParameterizedTest
+  @EnumSource(AccountIdentityProvenance.class)
+  void authenticateAcceptsEveryExactPersistedUuidProvenance(AccountIdentityProvenance provenance) {
+    Account account = new Account();
+    account.setId(31L);
+    account.setEmail("retained@example.com");
+    account.setPasswordHash(hash("password"));
+    setPersistedAuthenticationIdentity(account, provenance);
+    when(accountRepository.findByEmail("retained@example.com")).thenReturn(Optional.of(account));
+
+    AuthenticationResult result =
+        service.authenticateForGameplay("retained@example.com", "password");
+
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
+    var claims = parseClaims(result.authToken());
+    assertEquals(account.getAccountUuid().toString(), claims.getSubject());
+    assertEquals(account.getAccountUuid().toString(), claims.get("accountId", String.class));
+    assertFalse(claims.containsKey("tenantId"));
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(31L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
+  }
+
+  @ParameterizedTest
+  @EnumSource(InvalidAuthenticationIdentity.class)
+  void authenticationRejectsUnprovedIdentityBeforeConsumingChallengeOrStoringSession(
+      InvalidAuthenticationIdentity invalidIdentity) {
+    Account account = new Account();
+    account.setId(32L);
+    account.setEmail("unproved@example.com");
+    assignInvalidAuthenticationIdentity(account, invalidIdentity);
+    net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge challenge =
+        new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
+    challenge.setId(8L);
+    challenge.setAccountId(32L);
+    challenge.setCodeHash(hash("123456"));
+    challenge.setExpiresAt(java.time.LocalDateTime.now().plusMinutes(5));
+    when(accountRepository.findByEmail("unproved@example.com")).thenReturn(Optional.of(account));
+    when(accountEmailLoginChallengeRepository.findByAccountId(32L))
+        .thenReturn(Optional.of(challenge));
+
+    assertThrows(
+        IllegalStateException.class,
+        () -> service.authenticateForGameplay("unproved@example.com", "123456"));
+
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).lockAccountChallenge(32L);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository).findByAccountId(32L);
+    org.mockito.Mockito.verify(accountEmailLoginChallengeRepository, org.mockito.Mockito.never())
+        .delete(challenge);
+    verifyNoInteractions(sessionService);
+  }
+
   @Test
   void accountJwtMintPathsRemainCanonicalAndConnectTokenFailsClosedWithoutAuthorityTuple() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
@@ -1841,9 +1971,13 @@ class AccountServiceImplTest {
     AuthenticationResult controlUi = service.authenticate("demo", "password");
     AuthenticationResult gameplayDelegation =
         service.authenticateForGameplay("demo@example.com", "password");
-    assertCanonicalIssuerAndClaims(controlUi.authToken(), "control-ui", 11L);
+    assertEquals(account.getAccountUuid().toString(), controlUi.accountId());
+    assertEquals(account.getAccountUuid().toString(), gameplayDelegation.accountId());
+    assertCanonicalIssuerAndClaims(
+        controlUi.authToken(), "control-ui", account.getAccountUuid().toString());
     assertEquals(java.util.List.of(), parseClaims(controlUi.authToken()).get("globalRoles"));
-    assertCanonicalIssuerAndClaims(gameplayDelegation.authToken(), "account-service", 11L);
+    assertCanonicalIssuerAndClaims(
+        gameplayDelegation.authToken(), "account-service", account.getAccountUuid().toString());
     assertEquals(
         java.util.List.of(), parseClaims(gameplayDelegation.authToken()).get("globalRoles"));
 
@@ -1878,6 +2012,7 @@ class AccountServiceImplTest {
 
     Account otpAccount = new Account();
     otpAccount.setId(12L);
+    setPersistedAuthenticationIdentity(otpAccount);
     otpAccount.setEmail("otp@example.com");
     otpAccount.setLoginAuthModes("EMAIL_OTP");
     var challenge = new net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge();
@@ -1888,7 +2023,9 @@ class AccountServiceImplTest {
     when(accountEmailLoginChallengeRepository.findByAccountId(12L))
         .thenReturn(Optional.of(challenge));
     AuthenticationResult otpDelegation = service.verifyEmailLoginOtp("otp@example.com", "123456");
-    assertCanonicalIssuerAndClaims(otpDelegation.authToken(), "account-service", 12L);
+    assertEquals(otpAccount.getAccountUuid().toString(), otpDelegation.accountId());
+    assertCanonicalIssuerAndClaims(
+        otpDelegation.authToken(), "account-service", otpAccount.getAccountUuid().toString());
     assertEquals(java.util.List.of(), parseClaims(otpDelegation.authToken()).get("globalRoles"));
   }
 
@@ -2529,6 +2666,7 @@ class AccountServiceImplTest {
   void authenticateForGameplayUsesNormalizedEmailLookup() {
     Account account = new Account();
     account.setId(1L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
@@ -2538,7 +2676,7 @@ class AccountServiceImplTest {
         service.authenticateForGameplay("  DEMO@example.com ", "password");
 
     assertNotNull(result.authToken());
-    assertEquals(1L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     org.mockito.Mockito.verify(sessionService)
         .storeAccountSession(1L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
     verifyNoInteractions(accountTenantMembershipRepository);
@@ -2573,12 +2711,13 @@ class AccountServiceImplTest {
   void authenticateAllowsGlobalIdentityWithoutTenantMembership() {
     Account account = new Account();
     account.setId(7L);
+    setPersistedAuthenticationIdentity(account);
     account.setEmail("demo@example.com");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByEmail("demo@example.com")).thenReturn(Optional.of(account));
     AuthenticationResult result = service.authenticateForGameplay("demo@example.com", "password");
 
-    assertEquals(7L, result.accountId());
+    assertEquals(account.getAccountUuid().toString(), result.accountId());
     assertNotNull(result.authToken());
     org.mockito.Mockito.verify(sessionService)
         .storeAccountSession(7L, result.authToken(), jwtAuthProperties.getJwtExpirationMs());
@@ -5223,6 +5362,49 @@ class AccountServiceImplTest {
     assertEquals(expectedAudience, claims.getAudience().iterator().next());
     assertEquals(expectedAccountId, claims.get("accountId", Long.class));
     assertNotNull(claims.get("jti"));
+  }
+
+  private void assertCanonicalIssuerAndClaims(
+      String token, String expectedAudience, String expectedAccountUuid) {
+    var claims = parseClaims(token);
+    assertEquals("firemud-account-service", claims.getIssuer());
+    assertEquals(expectedAudience, claims.getAudience().iterator().next());
+    assertEquals(expectedAccountUuid, claims.getSubject());
+    assertEquals(expectedAccountUuid, claims.get("accountId", String.class));
+    assertNotNull(claims.get("jti"));
+    assertFalse(claims.containsKey("tenantId"));
+  }
+
+  private static void setPersistedAuthenticationIdentity(Account account) {
+    setPersistedAuthenticationIdentity(
+        account, AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+  }
+
+  private static void setPersistedAuthenticationIdentity(
+      Account account, AccountIdentityProvenance provenance) {
+    account.setAccountUuid(UUID.randomUUID());
+    account.setAccountUuidProvenance(provenance);
+    account.setAccountUuidSourceNumericId(account.getId());
+  }
+
+  private static void assignInvalidAuthenticationIdentity(
+      Account account, InvalidAuthenticationIdentity failure) {
+    setPersistedAuthenticationIdentity(account);
+    switch (failure) {
+      case MISSING_UUID -> account.setAccountUuid(null);
+      case NIL_UUID -> account.setAccountUuid(new UUID(0L, 0L));
+      case MISSING_PROVENANCE -> account.setAccountUuidProvenance(null);
+      case MISSING_SOURCE_ROW -> account.setAccountUuidSourceNumericId(null);
+      case CONTRADICTORY_SOURCE_ROW -> account.setAccountUuidSourceNumericId(33L);
+    }
+  }
+
+  private enum InvalidAuthenticationIdentity {
+    MISSING_UUID,
+    NIL_UUID,
+    MISSING_PROVENANCE,
+    MISSING_SOURCE_ROW,
+    CONTRADICTORY_SOURCE_ROW
   }
 
   private io.jsonwebtoken.Claims parseClaims(String token) {
