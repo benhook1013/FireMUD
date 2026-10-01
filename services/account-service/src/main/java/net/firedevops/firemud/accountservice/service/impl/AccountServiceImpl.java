@@ -253,7 +253,7 @@ public class AccountServiceImpl implements AccountService {
         "platform",
         null,
         "ACCOUNT_REGISTERED",
-        "{\"accountId\":" + saved.getId() + "}");
+        "{\"accountId\":\"" + saved.getAccountUuid() + "\"}");
     return accountMapper.toDto(saved);
   }
 
@@ -2139,6 +2139,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.export")
   public AccountDataExportDto exportAccountData(Long accountId) {
     Account account = requireAccount(accountId);
+    requirePersistedAccountUuid(account);
     List<ProfileDto> profiles =
         profileRepository.findByAccountId(accountId).stream().map(profileMapper::toDto).toList();
     return new AccountDataExportDto(accountMapper.toDto(account), profiles);

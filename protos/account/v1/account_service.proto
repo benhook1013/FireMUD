@@ -97,7 +97,7 @@ message CreateAccountRequest {
 
 // Result of a CreateAccount call.
 message CreateAccountResponse {
-  // Unique identifier of the newly created account.
+  // Canonical non-nil Account UUID of the newly created account.
   string account_id = 1;
   // Details about why the creation failed, if applicable.
   shared.v1.ErrorDetail error = 2;

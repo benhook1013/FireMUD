@@ -36,7 +36,9 @@ components:
       type: object
       properties:
         id:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical non-nil Account UUID; never the numeric database primary key.
         username:
           type: string
         email:

@@ -130,13 +130,34 @@ class AccountAuthenticationUuidIntegrationTest {
     String username = "repo-" + suffix;
     String email = username + "@example.com";
     var created = accountService.createAccount(new CreateAccountRequest(username, email, PASSWORD));
-    Account persisted = accountRepository.findById(created.id()).orElseThrow();
+    UUID returnedAccountUuid = UUID.fromString(created.id());
+    long accountId = accountService.resolveAccountStorageId(returnedAccountUuid);
+    Account persisted = accountRepository.findById(accountId).orElseThrow();
+
+    assertThat(created.id())
+        .isEqualTo(persisted.getAccountUuid().toString())
+        .isNotEqualTo(Long.toString(accountId));
 
     assertThat(persisted.getAccountUuidProvenance())
         .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
-    assertThat(persisted.getAccountUuidSourceNumericId()).isEqualTo(created.id());
+    assertThat(persisted.getAccountUuidSourceNumericId()).isEqualTo(accountId);
+    assertThat(accountService.resolveAccountStorageId(returnedAccountUuid)).isEqualTo(accountId);
+    var registrationAudit =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT payload FROM account_audit_outbox "
+                        + "WHERE scope = 'platform' AND tenant_id IS NULL "
+                        + "AND producer_service = 'account-service' "
+                        + "AND event_type = 'ACCOUNT_REGISTERED'")
+                .fetchOne(),
+            "Expected durable ACCOUNT_REGISTERED platform audit row");
+    String registrationAuditPayload =
+        Objects.requireNonNull(
+            registrationAudit.get(0, String.class), "Expected registration audit payload");
+    assertThat(registrationAuditPayload)
+        .isEqualTo("{\"accountId\":\"" + returnedAccountUuid + "\"}");
 
-    assertAuthenticationAndPrivateLookup(username, created.id(), persisted.getAccountUuid());
+    assertAuthenticationAndPrivateLookup(username, accountId, persisted.getAccountUuid());
   }
 
   @Test
@@ -408,20 +429,21 @@ class AccountAuthenticationUuidIntegrationTest {
     String username = "profile-" + suffix;
     String email = username + "@example.com";
     var created = accountService.createAccount(new CreateAccountRequest(username, email, PASSWORD));
+    long accountId = accountService.resolveAccountStorageId(UUID.fromString(created.id()));
     dsl.execute(
         "INSERT INTO account_tenant_membership "
             + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
             + "membership_version, membership_authority_generation, authority_provenance) "
             + "VALUES (?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
-        created.id(),
+        accountId,
         PROFILE_TENANT_ID);
     dsl.execute(
         "INSERT INTO profiles (account_id, tenant_id, display_name, bio) VALUES (?, ?, ?, ?)",
-        created.id(),
+        accountId,
         PROFILE_TENANT_ID,
         "original-display-name",
         "original-bio");
-    String profileBefore = profileRowJson(created.id());
+    String profileBefore = profileRowJson(accountId);
 
     UUID unmappedUuid = UUID.randomUUID();
     String testToken =
@@ -434,7 +456,7 @@ class AccountAuthenticationUuidIntegrationTest {
     UpdateProfileRequest request =
         new UpdateProfileRequest(
             PROFILE_TENANT_ID,
-            created.id(),
+            accountId,
             "must-not-be-written",
             "must-not-be-written",
             ProfilePresenceVisibilityPolicy.PRIVATE);
@@ -443,7 +465,7 @@ class AccountAuthenticationUuidIntegrationTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Account not found");
 
-    assertThat(profileRowJson(created.id())).isEqualTo(profileBefore);
+    assertThat(profileRowJson(accountId)).isEqualTo(profileBefore);
   }
 
   private void assertAuthenticationAndPrivateLookup(
@@ -491,9 +513,10 @@ class AccountAuthenticationUuidIntegrationTest {
     String username = prefix + "-" + UUID.randomUUID();
     String email = username + "@example.com";
     var created = accountService.createAccount(new CreateAccountRequest(username, email, PASSWORD));
-    assertThat(dsl.execute("UPDATE accounts SET email_verified = TRUE WHERE id = ?", created.id()))
+    long accountId = accountService.resolveAccountStorageId(UUID.fromString(created.id()));
+    assertThat(dsl.execute("UPDATE accounts SET email_verified = TRUE WHERE id = ?", accountId))
         .isEqualTo(1);
-    return accountRepository.findById(created.id()).orElseThrow();
+    return accountRepository.findById(accountId).orElseThrow();
   }
 
   private String requestEmailLoginOtpAndCaptureCode(String email) {
