@@ -2231,6 +2231,7 @@ require_contains(
         "bounded batches per complete recovery scope `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>`",
         "fairness cursors and deficit/cost accounting are keyed by the complete recovery scope",
         "service startup for each complete recovery scope",
+        "`entity_enqueue_seq` is allocated monotonically within the complete allocation scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, entityId)`",
     ],
 )
 require_absent(
@@ -2239,6 +2240,7 @@ require_absent(
         "bounded batches per `<tenantId, gameInstanceId, regionId>`",
         "scheduling across regions rather than draining one region completely",
         "service startup for each region to converge",
+        "complete allocation scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch)`",
     ],
 )
 for tick_commit_path in (
@@ -2544,6 +2546,29 @@ require_contains(
         "authoritative evidence proves no committed batch, effect materialization, or application",
         "ingress status or a missing batch ID alone is insufficient",
         "Otherwise the command remains unresolved for evidence-qualified reconciliation",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "For spatial or ambient maintenance or reset mutations invoked through either API",
+        "including in recovery paths that perform maintenance or reset mutations",
+        "Ordinary owner-local routine replay or reconciliation outside maintenance and reset may preserve the original `EffectId` only when the owner has explicitly classified it as non-conflicting and the recorded exemption matches.",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "For spatial or ambient maintenance, recovery, or reset mutations invoked through either API",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "stream publication uses `XADD` with bounded `MAXLEN` as a best-effort coordination hint, not durable stream or work authority",
+        "[Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream)",
+        "its workload-facing principal is read-only (`GET`) for offset keys",
+        "absent that registration Automation uses the owner API/heartbeat contract and receives no direct stream or offset grant",
     ],
 )
 require_contains(
