@@ -538,6 +538,11 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             "CLI", "<!-- firemud-cli-run: run.Repair1 -->", accepted=0, routed=1
         )
 
+        # The partial native archive cannot be used by ordinary SQL-first
+        # reads, but explicit repair can recover it from the exact raw capture.
+        with self.assertRaisesRegex(evidence.CaptureInvalid, "records are incomplete or unavailable"):
+            evidence.load_cli_capture(checkpoint, REPO, PR, self.common, records=self.records)
+
         report = repair_provider_checkpoints(
             self.records,
             repo=REPO,

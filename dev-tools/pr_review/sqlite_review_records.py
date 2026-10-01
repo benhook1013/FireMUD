@@ -60,6 +60,10 @@ class AttemptNotFound(ReviewRecordsError):
     """Raised when an exact attempt ID is not present in the records store."""
 
 
+class CliCaptureTerminalFailure(ReviewRecordsError):
+    """A CLI attempt is terminal but did not produce a completed source run."""
+
+
 class RecordsSchemaIncompatible(ReviewRecordsError):
     """Raised when the controller or review-records schema is incompatible."""
 
@@ -981,6 +985,205 @@ class SqliteReviewRecords:
             "checkpoint_id": checkpoint_id,
             "kinds": sorted(archived),
             "idempotent_replay": replay,
+        }
+
+    @_translate_database_errors
+    def cli_capture_snapshot(self, attempt_id: str, *, source_pr: int) -> dict[str, Any] | None:
+        """Read one native CLI attempt, linked source run, artifacts, and decisions atomically.
+
+        ``None`` means the run ID has no structured association and may use the
+        retained historical capture path. Any partial or conflicting SQL
+        association raises instead of allowing a raw-file fallback.
+        """
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        source_pr = _positive_pr(source_pr, "source PR")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            return self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+
+    @_translate_database_errors
+    def completed_cli_capture_snapshots(self, source_pr: int) -> list[dict[str, Any]]:
+        """Read all completed native CLI captures for one PR from one snapshot."""
+
+        source_pr = _positive_pr(source_pr, "source PR")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            attempt_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT attempt_id AS run_id FROM review_attempts "
+                    "WHERE source_pr = ? AND channel = 'cli' AND state = 'completed' "
+                    "UNION SELECT r.run_id FROM review_runs r WHERE r.source_pr = ? AND r.channel = 'cli' "
+                    "AND r.outcome = 'completed' AND NOT EXISTS ("
+                    "SELECT 1 FROM review_attempts a WHERE a.attempt_id = r.run_id) "
+                    "AND NOT EXISTS (SELECT 1 FROM imported_artifacts i WHERE i.run_id = r.run_id) "
+                    "AND NOT EXISTS (SELECT 1 FROM provider_origins o WHERE o.run_id = r.run_id) "
+                    "ORDER BY run_id",
+                    (source_pr, source_pr),
+                )
+            ]
+            snapshots = []
+            for attempt_id in attempt_ids:
+                snapshot = self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+                if snapshot is None:
+                    raise ReviewRecordsError("completed CLI attempt has no structured association")
+                snapshots.append(snapshot)
+            return snapshots
+
+    @staticmethod
+    def _cli_capture_snapshot(
+        connection: sqlite3.Connection, attempt_id: str, *, source_pr: int
+    ) -> dict[str, Any] | None:
+        attempt = connection.execute(
+            "SELECT source_pr, channel, candidate_sha, state, started_at, finished_at, duration_seconds, "
+            "exit_status, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        linked_attempt = connection.execute(
+            "SELECT attempt_id FROM review_attempts WHERE run_id = ? AND attempt_id != ? LIMIT 1",
+            (attempt_id, attempt_id),
+        ).fetchone()
+        run = connection.execute(
+            "SELECT source_pr, channel, source_head, outcome, attributable, started_at, finished_at, "
+            "found_count, accepted_count, routed_count, finalized FROM review_runs WHERE run_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        origin = connection.execute(
+            "SELECT repository, source_pr, channel, run_id FROM provider_origins WHERE run_id = ? LIMIT 1",
+            (attempt_id,),
+        ).fetchone()
+        imported = connection.execute(
+            "SELECT 1 FROM imported_artifacts WHERE run_id = ? LIMIT 1", (attempt_id,)
+        ).fetchone()
+        artifacts = {
+            row[0]: row[1]
+            for row in connection.execute(
+                "SELECT kind, content FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
+            )
+        }
+        if not any((attempt, linked_attempt, run, origin, imported, artifacts)):
+            return None
+        if attempt is None:
+            raise ReviewRecordsError("CLI SQL association is missing its attempt")
+        if linked_attempt is not None:
+            raise ReviewRecordsError("CLI SQL run ID is linked to a different attempt")
+        if attempt[0] != source_pr or attempt[1] != "cli" or attempt[8] not in (None, attempt_id):
+            raise ReviewRecordsError("CLI SQL attempt does not match its exact source run and PR")
+        if attempt[3] in {"failed", "rate_limited", "timed_out", "ambiguous"}:
+            raise CliCaptureTerminalFailure("CLI SQL attempt ended without a completed source run")
+        if attempt[3] != "completed":
+            raise ReviewRecordsError("CLI SQL attempt is not terminally completed")
+        if attempt[8] != attempt_id or run is None:
+            raise ReviewRecordsError("CLI SQL association is missing its exact linked source run")
+        if run[0] != source_pr or run[1] != "cli":
+            raise ReviewRecordsError("CLI SQL source run does not match its exact attempt and PR")
+        if origin is not None and (origin[1] != source_pr or origin[2] != "cli"):
+            raise ReviewRecordsError("CLI provider origin conflicts with its source run")
+        try:
+            attempt_metadata = json.loads(attempt[9])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ReviewRecordsError("CLI SQL attempt metadata is malformed") from exc
+        if not isinstance(attempt_metadata, dict):
+            raise ReviewRecordsError("CLI SQL attempt metadata is not an object")
+        if "cli_raw_output" in artifacts:
+            raise ReviewRecordsError("completed CLI SQL attempt contains conflicting raw output")
+        if not {"cli_events", "metadata"} <= artifacts.keys():
+            raise ReviewRecordsError("completed CLI SQL attempt lacks complete archived events or metadata")
+        if attempt[3] != "completed" or attempt[7] != 0:
+            raise ReviewRecordsError("CLI SQL attempt is not a successful terminal completion")
+        if run[3] != "completed" or not run[4] or run[2] != attempt[2]:
+            raise ReviewRecordsError("CLI SQL source run is not completed, attributable, and linked to its head")
+
+        rows = connection.execute(
+            "SELECT f.source_finding_key, o.disposition, d.decision, d.reason, c.decision, c.reason, "
+            "(SELECT COUNT(*) FROM decisions d2 WHERE d2.run_id = o.run_id "
+            "AND d2.finding_id = o.finding_id AND d2.decision_scope = 'source') "
+            "FROM finding_observations o JOIN findings f USING (finding_id) "
+            "LEFT JOIN decisions d ON d.run_id = o.run_id AND d.finding_id = o.finding_id "
+            "AND d.decision_scope = 'source' "
+            "LEFT JOIN source_decision_corrections c ON c.sequence = ("
+            "SELECT MAX(sequence) FROM source_decision_corrections "
+            "WHERE run_id = o.run_id AND finding_id = o.finding_id) "
+            "WHERE o.run_id = ? ORDER BY f.source_finding_key",
+            (attempt_id,),
+        ).fetchall()
+        observations: list[dict[str, Any]] = []
+        decisions: dict[int, tuple[str, str]] = {}
+        prefix = f"cli-run:{attempt_id}:finding:"
+        for key, disposition, decision, reason, correction, correction_reason, decision_count in rows:
+            if not isinstance(key, str) or not key.startswith(prefix) or not key[len(prefix) :].isdigit():
+                raise ReviewRecordsError("CLI source finding has an invalid finding key")
+            suffix = key[len(prefix) :]
+            index = int(suffix)
+            if str(index) != suffix:
+                raise ReviewRecordsError("CLI source finding index is not canonical")
+            if index in decisions or any(item["index"] == index for item in observations):
+                raise ReviewRecordsError("CLI source finding index is duplicated")
+            if decision_count > 1:
+                raise ReviewRecordsError("CLI source finding has duplicate decisions")
+            if correction is not None and decision_count != 1:
+                raise ReviewRecordsError("CLI source correction has no exact original decision")
+            effective_decision = correction or decision
+            effective_reason = correction_reason if correction is not None else reason
+            if disposition == "unresolved":
+                if effective_decision is not None:
+                    raise ReviewRecordsError("unresolved CLI source finding has a stored decision")
+            elif (
+                disposition not in {"accepted", "routed", "rejected"}
+                or effective_decision != disposition
+                or not isinstance(effective_reason, str)
+            ):
+                raise ReviewRecordsError("CLI source decisions conflict with stored finding dispositions")
+            else:
+                decisions[index] = (effective_decision, effective_reason)
+            observations.append({"index": index, "source_finding_key": key, "disposition": disposition})
+        if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(
+            range(1, run[7] + 1)
+        ):
+            raise ReviewRecordsError("CLI SQL source findings do not match the stored run count")
+        accepted = sum(item["disposition"] == "accepted" for item in observations)
+        routed = sum(item["disposition"] == "routed" for item in observations)
+        if (run[8], run[9]) != (accepted, routed):
+            raise ReviewRecordsError("CLI SQL decisions do not match stored source counts")
+        if run[10] and (
+            len(decisions) != run[7] or any(item["disposition"] == "unresolved" for item in observations)
+        ):
+            raise ReviewRecordsError("finalized CLI SQL source run has incomplete decisions")
+        return {
+            "attempt": {
+                "attempt_id": attempt_id,
+                "source_pr": attempt[0],
+                "channel": attempt[1],
+                "candidate_sha": attempt[2],
+                "state": attempt[3],
+                "started_at": attempt[4],
+                "finished_at": attempt[5],
+                "duration_seconds": attempt[6],
+                "exit_status": attempt[7],
+                "run_id": attempt[8],
+                "metadata": attempt_metadata,
+            },
+            "run": {
+                "run_id": attempt_id,
+                "source_pr": run[0],
+                "channel": run[1],
+                "source_head": run[2],
+                "outcome": run[3],
+                "attributable": bool(run[4]),
+                "started_at": run[5],
+                "finished_at": run[6],
+                "counts": {"found": run[7], "accepted": run[8], "routed": run[9]},
+                "finalized": bool(run[10]),
+            },
+            "artifacts": artifacts,
+            "observations": observations,
+            "decisions": decisions,
+            "provider_origin": origin,
         }
 
     @_translate_database_errors

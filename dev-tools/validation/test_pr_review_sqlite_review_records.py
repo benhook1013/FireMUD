@@ -1011,6 +1011,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
     def test_cli_marker_without_sql_association_retains_legacy_handling(self) -> None:
         self.bootstrap()
+        self.assertIsNone(self.records.cli_capture_snapshot("run.legacy", source_pr=2828))
         self.assertIsNone(
             self.records.source_resolution_status(
                 "run.legacy",
@@ -1020,6 +1021,93 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 accepted_count=1,
             )
         )
+
+    def test_native_cli_capture_snapshot_binds_attempt_run_artifacts_and_decisions(self) -> None:
+        self.bootstrap()
+        run_id = "run.native-snapshot"
+        head = "a" * 40
+        metadata = {
+            "run_id": run_id,
+            "kind": "cli",
+            "pull_request": 2828,
+            "candidate_sha": head,
+            "child_head_sha": head,
+            "parent_pr": None,
+            "parent_ref": "main",
+            "parent_sha": "b" * 40,
+            "merge_base": "b" * 40,
+            "patch_identity": "c" * 64,
+            "candidate_files": 1,
+            "capture_completion_marker": "capture-complete",
+        }
+        events = (
+            json.dumps({"type": "finding", "message": "complete source text"})
+            + "\n"
+            + json.dumps(
+                {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["src/a.py"]}
+            )
+            + "\n"
+        )
+        result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
+        self.records.start_attempt(
+            attempt_id=run_id,
+            source_pr=2828,
+            channel="cli",
+            candidate_sha=head,
+            started_at="2026-09-30T00:00:00Z",
+            metadata=metadata,
+        )
+        self.records.complete_attempt_run(
+            run_id,
+            finish={
+                "state": "completed",
+                "finished_at": "2026-09-30T00:00:09Z",
+                "duration_seconds": 9,
+                "exit_status": 0,
+                "artifacts": {"cli_events": events, "metadata": json.dumps(result_metadata)},
+            },
+            run={
+                "run_id": run_id,
+                "source_pr": 2828,
+                "channel": "cli",
+                "source_head": head,
+                "reviewer": "CodeRabbit CLI",
+                "scope": "broad",
+                "started_at": "2026-09-30T00:00:00Z",
+                "finished_at": "2026-09-30T00:00:09Z",
+                "findings": (self.observation(f"cli-run:{run_id}:finding:1"),),
+            },
+        )
+        self.records.record_source_decision(
+            run_id,
+            f"cli-run:{run_id}:finding:1",
+            decision_id=f"{run_id}.decision.1",
+            decision="accepted",
+            actor="reviewer",
+            reason="Useful finding",
+        )
+        self.records.finalize_run(run_id, finalized_at="2026-09-30T00:00:10Z")
+
+        snapshot = self.records.cli_capture_snapshot(run_id, source_pr=2828)
+        self.assertEqual(snapshot["attempt"]["state"], "completed")
+        self.assertEqual(snapshot["run"]["counts"], {"found": 1, "accepted": 1, "routed": 0})
+        self.assertIn("cli_events", snapshot["artifacts"])
+        self.assertIn("metadata", snapshot["artifacts"])
+        self.assertEqual(snapshot["decisions"], {1: ("accepted", "Useful finding")})
+        self.assertEqual(
+            [item["attempt"]["attempt_id"] for item in self.records.completed_cli_capture_snapshots(2828)],
+            [run_id],
+        )
+
+    def test_started_cli_association_cannot_be_read_as_legacy_sql_snapshot(self) -> None:
+        self.bootstrap()
+        run_id = "run.started-snapshot"
+        self.records.start_attempt(
+            attempt_id=run_id, source_pr=2828, channel="cli", candidate_sha="a" * 40
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "not terminally completed"):
+            self.records.cli_capture_snapshot(run_id, source_pr=2828)
+        self.assertEqual(self.records.completed_cli_capture_snapshots(2828), [])
 
     def test_partial_cli_association_cannot_fall_back_to_legacy_handling(self) -> None:
         self.bootstrap()

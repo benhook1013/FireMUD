@@ -453,6 +453,21 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertTrue(sqlite_backup._looks_secret("-----BEGIN OPENSSH PRIVATE KEY-----"))
         self.assertFalse(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
 
+    def test_restore_rejects_source_resolution_hidden_from_history(self) -> None:
+        malformed = self.root / "orphan-source-resolution.sqlite3"
+        with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:
+            connection.backup(copied)
+        with sqlite3.connect(malformed) as connection:
+            connection.execute(
+                "UPDATE source_finding_resolutions SET finding_id = ?", ("0" * 64,)
+            )
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
+        destination = self.root / "orphan-resolution-restore.sqlite3"
+
+        with self.assertRaisesRegex(BackupError, "indexed review-history readback"):
+            restore_snapshot(malformed, destination)
+        self.assertFalse(destination.exists())
+
     def test_restore_rejects_integral_database_with_invalid_controller_state(self) -> None:
         malformed = self.root / "malformed-state.sqlite3"
         with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:

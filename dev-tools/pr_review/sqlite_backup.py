@@ -478,6 +478,7 @@ def _validate_database(path: Path, label: str) -> None:
                     "UNION SELECT decision_pr FROM decisions "
                     "UNION SELECT source_pr FROM routes UNION SELECT target_pr FROM routes WHERE target_pr IS NOT NULL "
                     "UNION SELECT resolution_pr FROM resolutions "
+                    "UNION SELECT source_pr FROM source_finding_resolutions "
                     "UNION SELECT source_pr FROM historical_provider_gaps"
                 )
             }
@@ -514,6 +515,9 @@ def _validate_database(path: Path, label: str) -> None:
                     connection.execute(
                         "SELECT COUNT(*) FROM historical_gap_artifacts WHERE source_pr = ?", (pr,)
                     ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM source_finding_resolutions WHERE source_pr = ?", (pr,)
+                    ).fetchone()[0],
                 )
             actual = (
                 len(history["runs"]), len(history["findings"]),
@@ -521,6 +525,7 @@ def _validate_database(path: Path, label: str) -> None:
                 len(history["corrections"]), len(history["provider_origins"]),
                 len(history["imported_artifacts"]), len(history["historical_gaps"]),
                 len(history["historical_gap_artifacts"]),
+                len(history["source_resolutions"]),
             )
             if actual != expected:
                 raise BackupError("indexed review-history readback does not match persisted record counts")

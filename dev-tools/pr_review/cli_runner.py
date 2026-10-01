@@ -1070,6 +1070,7 @@ def run_cli_review(
                 )
                 metadata: dict[str, Any] = {
                     "run_id": run_id,
+                    "repository": target.repository or str(getattr(github, "repo", "unknown/unknown")),
                     "kind": "cli",
                     "capture_completion_marker": "capture-complete",
                     "pull_request": target.snapshot.number,

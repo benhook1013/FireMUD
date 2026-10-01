@@ -497,6 +497,11 @@ class RuntimeTest(unittest.TestCase):
                         runner._assert_no_other_active_reservations(42, Path(directory))
 
     def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        context = patch.object(evidence, "git_common_dir", return_value=Path(directory.name))
+        context.start()
+        self.addCleanup(context.stop)
         def quiet_repository(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 43, "state": "open"}]
@@ -2857,6 +2862,14 @@ class RuntimeTest(unittest.TestCase):
             @staticmethod
             def cli_source_decisions(_run_id):
                 return None
+
+            @staticmethod
+            def cli_capture_snapshot(_run_id, *, source_pr):
+                return None
+
+            @staticmethod
+            def completed_cli_capture_snapshots(_pr):
+                return []
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)

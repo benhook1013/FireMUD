@@ -174,7 +174,7 @@ def import_cli_checkpoint(
     _validate_checkpoint(checkpoint, "CLI")
     if checkpoint.run_id is None:
         raise ProviderImportError("CLI checkpoint has no exact run marker")
-    capture = evidence.load_cli_capture(checkpoint, repo, pr_number, common, records=records)
+    capture = evidence.load_cli_capture_for_repair(checkpoint, repo, pr_number, common, records=records)
     source_head = capture.metadata.get("candidate_sha", "")
     if not evidence.EXACT_SHA.fullmatch(source_head):
         raise ProviderImportError("CLI capture has no exact candidate head")
