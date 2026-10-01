@@ -48,6 +48,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
+import org.springframework.data.redis.serializer.SerializationException;
 
 class PlayCommandHandlerTest {
   private static final String PLAY_COMMAND_NAME = "PLAY";
@@ -956,6 +957,66 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
     assertThat(joinedOutputText(result.outputs()))
         .isEqualTo("ERROR CONNECT_CONTEXT_INVALID Connect context invalid");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void firstPartyPlayRejectsUnreadableRegistryContextWithoutPersistedFallback(
+      boolean serializationFailure) {
+    SessionContext persisted =
+        new SessionContext(
+            1L,
+            22L,
+            PLAYER_ACCOUNT_ID,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "persisted-scope",
+            "persisted-request");
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(persisted));
+    RuntimeException decodeFailure =
+        serializationFailure
+            ? new SerializationException("legacy numeric Account carrier")
+            : new ClassCastException("legacy numeric Account carrier");
+    when(firstPartyConnectContextRegistry.find(1L)).thenThrow(decodeFailure);
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_CONTEXT_INVALID");
+    assertThat(joinedOutputText(result.outputs()))
+        .isEqualTo("ERROR CONNECT_CONTEXT_INVALID Connect context invalid");
+    Mockito.verify(accountClient, Mockito.never()).getTenantMembershipForRuntime(Mockito.any());
+    Mockito.verify(accountClient, Mockito.never())
+        .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+    Mockito.verify(accountClient, Mockito.never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verify(entityManagementClient, Mockito.never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
+    Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
+    Mockito.verify(gameplayPresenceLifecycleService, Mockito.never())
+        .registerConnected(Mockito.any());
+    Mockito.verify(scriptEventPublisher, Mockito.never())
+        .publishCommandEvent(Mockito.any(), Mockito.any(GameplayCommand.class));
   }
 
   @Test

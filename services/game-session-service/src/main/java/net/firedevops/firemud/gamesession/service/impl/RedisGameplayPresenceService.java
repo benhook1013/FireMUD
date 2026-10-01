@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -112,7 +113,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   @Override
   public void removeBySessionId(long sessionId) {
-    GameplayPresence existing = readPresence(presenceKey(sessionId));
+    GameplayPresence existing = readPresenceForMutation(presenceKey(sessionId));
     redisTemplate.delete(presenceKey(sessionId));
     if (existing != null) {
       String gameInstanceKey = gameInstanceKey(existing.tenantId(), existing.gameInstanceId());
@@ -203,7 +204,13 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
         setOps.remove(gameInstanceKey, sessionIdText);
         continue;
       }
-      GameplayPresence presence = readPresence(presenceKey);
+      GameplayPresence presence;
+      try {
+        presence = readPresenceForMutation(presenceKey);
+      } catch (SerializationException | ClassCastException ex) {
+        // Keep the index member until its retained presence value can be read safely.
+        continue;
+      }
       if (presence == null) {
         setOps.remove(gameInstanceKey, sessionIdText);
         continue;
@@ -247,7 +254,13 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
           setOps.remove(accountKey, sessionIdText);
           continue;
         }
-        GameplayPresence presence = readPresence(presenceKey);
+        GameplayPresence presence;
+        try {
+          presence = readPresenceForMutation(presenceKey);
+        } catch (SerializationException | ClassCastException ex) {
+          // Keep the index member until its retained presence value can be read safely.
+          continue;
+        }
         if (presence == null) {
           setOps.remove(accountKey, sessionIdText);
           continue;
@@ -275,12 +288,19 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
     try {
       return (GameplayPresence) valueOps.get(key);
-    } catch (org.springframework.data.redis.serializer.SerializationException
-        | ClassCastException ex) {
+    } catch (SerializationException | ClassCastException ex) {
       // An older numeric Account carrier cannot be mapped to a UUID. Fail closed without
       // mutating the retained record; the session must authenticate through its context path.
       return null;
     }
+  }
+
+  private GameplayPresence readPresenceForMutation(String key) {
+    ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
+    // Unlike read-only lookups, mutation cleanup must distinguish absence from a retained value
+    // that cannot be decoded under the current Account carrier. Propagate these decode failures
+    // so callers do not delete or overwrite the record or its indexes.
+    return (GameplayPresence) valueOps.get(key);
   }
 
   private String presenceKey(long sessionId) {
