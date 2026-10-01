@@ -2464,6 +2464,87 @@ class HostedRunner:
                     current.setdefault(int(match.group(1)), []).append(trigger_path)
         return current
 
+    def _closed_repository_cooldown_until(
+        self,
+        pr: int,
+        paths: Sequence[Path],
+    ) -> datetime | None:
+        """Return only a future cooldown proved by an archived terminal capture."""
+
+        if self.records is None:
+            return None
+        now = datetime.now(timezone.utc)
+        cooldowns: list[datetime] = []
+        for path in paths:
+            try:
+                record = hosted.load_trigger_reservation(path, self.repo, pr)
+                trigger = record.get("trigger")
+                attempt_id = record.get("sqlite_attempt_id")
+                if (
+                    record.get("status") == "retired"
+                    or not isinstance(trigger, Mapping)
+                    or not isinstance(attempt_id, str)
+                    or not attempt_id
+                ):
+                    continue
+                trigger_id = trigger.get("id")
+                if isinstance(trigger_id, bool) or not isinstance(trigger_id, int) or trigger_id <= 0:
+                    continue
+                attempts = [item for item in self.records.attempt_history(pr) if item.get("attempt_id") == attempt_id]
+                if len(attempts) != 1:
+                    continue
+                attempt = attempts[0]
+                if (
+                    attempt.get("channel") != "hosted"
+                    or attempt.get("state") != "rate_limited"
+                    or attempt.get("candidate_sha") != record.get("head_sha")
+                    or attempt.get("trigger_id") != str(trigger_id)
+                ):
+                    continue
+                artifacts = self.records.attempt_artifacts(attempt_id)
+                metadata = json.loads(artifacts["metadata"])
+                archived = json.loads(artifacts["hosted_comments"])
+                if (
+                    not isinstance(metadata, dict)
+                    or metadata.get("state") != "rate_limited"
+                    or metadata.get("terminal") is not True
+                    or metadata.get("attributable") is not True
+                    or metadata.get("repository") != self.repo
+                    or metadata.get("pull_request") != pr
+                    or metadata.get("head_sha") != record.get("head_sha")
+                    or metadata.get("trigger_id") != trigger_id
+                    or not isinstance(metadata.get("response_id"), int)
+                    or isinstance(metadata.get("response_id"), bool)
+                    or attempt.get("provider_review_id") != str(metadata["response_id"])
+                    or not isinstance(archived, dict)
+                    or not isinstance(archived.get("comments"), list)
+                ):
+                    continue
+                terminal_at = hosted.parse_timestamp(metadata.get("observed_at"))
+                finished_at = hosted.parse_timestamp(attempt.get("finished_at"))
+                if terminal_at is None or finished_at is None or terminal_at != finished_at:
+                    continue
+                responses = [
+                    item
+                    for item in archived["comments"]
+                    if isinstance(item, dict)
+                    and github.immutable_database_id(item) == metadata["response_id"]
+                ]
+                if len(responses) != 1:
+                    continue
+                response = responses[0]
+                author = response.get("author")
+                login = author.get("login") if isinstance(author, Mapping) else None
+                body = response.get("body")
+                if not github.is_coderabbit_login(login) or not isinstance(body, str):
+                    continue
+                reset = hosted._rate_limit(body, terminal_at)
+            except Exception:  # noqa: BLE001 - missing closed-history proof cannot retain an execution slot
+                reset = None
+            if reset is not None and reset > now and reset not in cooldowns:
+                cooldowns.append(reset)
+        return max(cooldowns, default=None)
+
     def _assert_no_other_active_reservations(
         self,
         pr: int,
@@ -2492,30 +2573,14 @@ class HostedRunner:
         open_prs.discard(pr)
 
         # Closing a PR releases its execution slot, including unknown requests.
-        # A positively attributed provider cooldown still applies repository-wide.
+        # Preserve a repository cooldown only when an exact local terminal
+        # capture proves an attributed rate limit that has not expired.
         for closed_pr, paths in current.items():
             if closed_pr == pr or closed_pr in open_prs:
                 continue
-            for path in paths:
-                try:
-                    record = hosted.load_trigger_reservation(path, self.repo, closed_pr)
-                    if record.get("status") == "retired":
-                        continue
-                    payload = github.fetch_pull_request(self.repo, closed_pr)
-                    state = hosted.trigger_state(self.repo, closed_pr, payload, record, path)
-                    reset = hosted.parse_timestamp(state.cooldown_until) if state.state == "rate_limited" else None
-                except Exception as exc:
-                    raise ControllerError(
-                        f"current Hosted reservation for closed PR #{closed_pr} cannot be verified"
-                    ) from exc
-                if (
-                    state.state == "rate_limited"
-                    and state.terminal is True
-                    and state.attributed is True
-                    and reset is not None
-                    and reset > datetime.now(timezone.utc)
-                ):
-                    raise ControllerError(f"Hosted repository cooldown remains active on closed PR #{closed_pr}")
+            reset = self._closed_repository_cooldown_until(closed_pr, paths)
+            if reset is not None:
+                raise ControllerError(f"Hosted repository cooldown remains active on closed PR #{closed_pr}")
 
         comments_by_pr: dict[int, dict[str, Any]] = {}
         for other_pr in sorted(open_prs):
