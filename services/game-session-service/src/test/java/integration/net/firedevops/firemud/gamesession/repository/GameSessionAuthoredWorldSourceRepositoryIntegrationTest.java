@@ -3,6 +3,7 @@ package integration.net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -33,7 +34,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SuppressWarnings("resource")
 class GameSessionAuthoredWorldSourceRepositoryIntegrationTest {
   private static final String NAMESPACE = "authored-world-intake-test";
-  private static final String MIGRATION_LOCATION = "classpath:db/migration";
+  // The integration runtime includes other services' db/migration resources; scan this module only.
+  private static final String MIGRATION_LOCATION =
+      "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
   private static final Table<?> TENANT_BINDINGS =
       DSL.table(DSL.name("game_session_authored_world_tenant_source_binding"));
   private static final Table<?> INTAKES =
