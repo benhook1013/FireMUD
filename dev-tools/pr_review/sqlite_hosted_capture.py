@@ -261,7 +261,7 @@ _HOSTED_COMMENT_AUXILIARY_PREFIXES = (
     "cr-comment:v1:",
 )
 _HOSTED_COMMENT_FOOTER = re.compile(
-    r"\A[ \t\r\n]*(?:_Source: (?:Path instructions|Learnings|Coding guidelines)_[ \t]*\r?\n[ \t\r\n]*)?"
+    r"\A[ \t\r\n]*(?:_Source: (?:Path instructions|Learnings|Coding guidelines|Linters/SAST tools)_[ \t]*\r?\n[ \t\r\n]*)?"
     r"<!-- This is an auto-generated comment by CodeRabbit -->[ \t\r\n]*\Z"
 )
 
