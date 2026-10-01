@@ -24,7 +24,7 @@ from .cli_runner import (
     ReviewTarget,
     run_cli_review,
 )
-from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
+from .controller import ControllerError, DefaultGitProvider, HostedAdmissionBusy, ReviewController, StaleReviewTarget
 from .sqlite_review_records import RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
 from .state import (
     ControllerStateStore,
@@ -2690,7 +2690,10 @@ class HostedRunner:
                 repo_lock = locks.enter_context(repo_lock_path.open("a+", encoding="utf-8"))
                 fcntl.flock(repo_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise ControllerError(f"another Hosted request is active for repository {self.repo}") from exc
+                raise HostedAdmissionBusy(
+                    f"Hosted admission lock is busy for repository {self.repo}; this does not establish an active "
+                    "Hosted provider request for this attempt"
+                ) from exc
             except OSError as exc:
                 raise ControllerError(
                     f"could not acquire the Hosted repository admission lock for {self.repo}"
@@ -2699,7 +2702,10 @@ class HostedRunner:
                 lock = locks.enter_context(lock_path.open("a+", encoding="utf-8"))
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise ControllerError(f"another Hosted request is active for PR #{pr}") from exc
+                raise HostedAdmissionBusy(
+                    f"Hosted admission lock is busy for PR #{pr}; this does not establish an active "
+                    "Hosted provider request for this attempt"
+                ) from exc
             except OSError as exc:
                 raise ControllerError(f"could not acquire the Hosted request lock for PR #{pr}") from exc
             archive_current_path: Path | None = None

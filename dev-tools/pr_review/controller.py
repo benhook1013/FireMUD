@@ -62,6 +62,10 @@ class StaleReviewTarget(ControllerError):
     """A direct-to-default target's base advanced before review could begin."""
 
 
+class HostedAdmissionBusy(ControllerError):
+    """A Hosted admission lock is held; provider activity is not implied."""
+
+
 class _SelectionChanged(ControllerError):
     """Durable selection inputs changed before provider admission."""
 
@@ -5306,6 +5310,11 @@ class ReviewController:
                 if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
                     raise
                 selected = self._target(policy.Channel.HOSTED, selected.pr)
+                self._ensure_runnable(selected)
+            except HostedAdmissionBusy:
+                if attempt == MAX_BASE_RESELECTIONS:
+                    raise
+                selected = self._target(policy.Channel.HOSTED, expected_pr)
                 self._ensure_runnable(selected)
         raise AssertionError("bounded Hosted reselection loop exhausted unexpectedly")
 

@@ -26,6 +26,7 @@ from pr_review.controller import (
     HOSTED_CLI_OVERLAP_HOLD_REASON,
     ControllerError,
     DefaultGitProvider,
+    HostedAdmissionBusy,
     LivePullRequest,
     PullRequestSnapshot,
     ReviewController,
@@ -6258,6 +6259,93 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(selected.snapshot.head_sha, HEAD_1)
         self.assertEqual(selected.parent.head_sha, advanced_base)
         self.assertTrue(selected.default_base_front)
+
+    def test_hosted_admission_contention_reselects_expected_target_before_one_post(self):
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            heads={"develop": BASE, "feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        attempted_heads = []
+        posts = []
+        reservations = []
+        with tempfile.TemporaryDirectory() as directory:
+            request_lock_path = Path(directory) / "request.lock"
+            request_lock_path.touch()
+            with request_lock_path.open("a+") as request_lock:
+                fcntl.flock(request_lock.fileno(), fcntl.LOCK_EX)
+
+                def adapter(target, *, expect_pr, admit, **_kwargs):
+                    self.assertEqual(expect_pr, 1)
+                    attempted_heads.append(target.snapshot.head_sha)
+                    with request_lock_path.open("a+") as attempt_lock:
+                        try:
+                            fcntl.flock(attempt_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError as exc:
+                            if len(attempted_heads) == 1:
+                                controller.github.values[1] = pr(1, HEAD_2)
+                                controller.git.heads["feature-1"] = HEAD_2
+                            raise HostedAdmissionBusy(
+                                "Hosted admission lock is busy for PR #1; this does not establish an active Hosted "
+                                "provider request for this attempt"
+                            ) from exc
+                        admit(lambda: reservations.append((target.snapshot.number, target.snapshot.head_sha)))
+                        posts.append((target.snapshot.number, target.snapshot.head_sha))
+                        fcntl.flock(attempt_lock.fileno(), fcntl.LOCK_UN)
+                    return {"status": "posted", "pr": target.snapshot.number, "head": target.snapshot.head_sha}
+
+                controller.hosted_adapter = adapter
+                original_target = controller._target
+                target_selections = 0
+
+                def release_cli_preflight_and_reselect(channel, expected_pr=None):
+                    nonlocal target_selections
+                    target_selections += 1
+                    if target_selections == 2:
+                        fcntl.flock(request_lock.fileno(), fcntl.LOCK_UN)
+                    return original_target(channel, expected_pr)
+
+                controller._target = release_cli_preflight_and_reselect
+                result = controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(attempted_heads, [HEAD_1, HEAD_2])
+        self.assertEqual(reservations, [(1, HEAD_2)])
+        self.assertEqual(posts, [(1, HEAD_2)])
+        self.assertEqual(result, {"status": "posted", "pr": 1, "head": HEAD_2})
+
+    def test_hosted_admission_contention_is_bounded_and_remains_admission_error(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        attempts = []
+
+        def adapter(_target, **_kwargs):
+            attempts.append("busy")
+            raise HostedAdmissionBusy(
+                "Hosted admission lock is busy for PR #1; this does not establish an active Hosted provider request"
+            )
+
+        controller.hosted_adapter = adapter
+
+        with self.assertRaisesRegex(HostedAdmissionBusy, "admission lock is busy.*does not establish"):
+            controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(len(attempts), 3)
+
+    def test_hosted_admission_retries_only_typed_lock_contention(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        attempts = []
+
+        def adapter(_target, **_kwargs):
+            attempts.append("attempted")
+            raise ControllerError("could not acquire the Hosted request lock")
+
+        controller.hosted_adapter = adapter
+
+        with self.assertRaisesRegex(ControllerError, "could not acquire the Hosted request lock"):
+            controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(attempts, ["attempted"])
 
     def test_default_base_advance_does_not_relax_stacked_child_ancestry(self):
         advanced_base = "9" * 40
