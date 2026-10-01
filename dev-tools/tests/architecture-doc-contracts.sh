@@ -1710,8 +1710,72 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-scripting-contracts.md",
     [
+        "The `(automationDispatchId, commandOrdinal)` pair is only an identity suffix and is insufficient by itself",
+        "Participant-guard identity follows the owner-classified rules in [Transaction Strategies](./system-architecture-transactions.md#tick-effects-are-at-least-once-idempotency-is-mandatory): S1/S2 use the `(tenantId, playableStateNamespaceId)` partition, and only explicitly classified S3 uses `(tenantId, gameInstanceId)`; `playableStateScope` and `requestDigest` are exact-validated evidence, not uniqueness dimensions, and unclassified families fail before admission.",
         "always-isolated test-only breaker or gate",
         "no environment, tenant, or request opt-in may cross that boundary",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    ["(automationDispatchId, commandOrdinal)` pair is only a display suffix"],
+)
+require_contains(
+    "design/architecture/microservices/entity-management-service/operations.md",
+    [
+        "a conflict-safe insert or a same-transaction savepoint around marker handling while keeping the marker and mutation atomic, never an isolated marker transaction",
+        "Actual PostgreSQL concurrent proof remains unavailable.",
+        "retain the admitted command/source identity for source evidence, and use the complete Command-Handoff Identity for automation handoff and deduplication",
+        "the handoff identity is not a mandatory input to root `EffectId` allocation or lookup",
+        "Root allocation and lookup details remain proposal-only under pending [ADR 0183]",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/entity-management-service/operations.md",
+    ["is an input to allocating or looking up that command's stable root `EffectId`"],
+)
+require_contains(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    [
+        "A new identity may be re-driven only after authoritative participant/domain evidence conclusively terminalizes the original effect as `ABANDONED` and the owning source command/claim is terminalized; ordinary retry/replay retains the original command/effect identity.",
+        "A new identity may be re-driven only after that conclusive terminalization and terminalization of the owning source command/claim; ordinary retry/replay must retain the original command/effect identity.",
+        "Root allocation details remain proposal-only under [ADR 0183]",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    [
+        "only a conclusive post-abandon re-drive allocates a new command ID and root",
+        "A post-abandon re-drive is the only path that may allocate a new command ID/root",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/game-design-service/version-control.md",
+    [
+        "Current Game Design revision rows reference concrete domain objects",
+        "Target durable commits will group those revisions and retain their domain-object references",
+        "that branch/commit model and its APIs are not implemented, while current version-scoped revision history remains available",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    [
+        "Before any future rebuild can release that scope, owner reconciliation must establish a definitive stage-aware disposition for ambiguous post-DSL handoffs from a durable evaluated descriptor, retaining durable handoff intent without replaying the DSL, then complete owner CAS fencing and exact readback.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-event-registry.md",
+    [
+        "Gameplay/runtime and scheduler candidate identity also includes the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple",
+        "The paired nonblank `scriptPinControlPlaneRequestId` and captured `lifecycleRevision` travel alongside as required, exact-compared non-identity owner/fence evidence; they are excluded from candidate, firing-claim, work-item, and derived event identity.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-ticks.md",
+    [
+        "Only wall-clock timer admission assigns a separate tick-ordering coordinate",
+        "Tick timers reuse their persisted `dueTickId` as both source due point and ordering coordinate.",
+        "Wall-clock timestamps and tick IDs are different domains and must not be compared numerically or aliased.",
     ],
 )
 require_absent(
@@ -1873,6 +1937,13 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-tick-incident-runbook.md",
     [
+        "**Maintenance admission applies to both branches:**",
+        "Before either verifier CAS may mutate a ledger row, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged with the reconciliation evidence.",
+        "Owner, epoch, executor, manifest, or participant proof does not replace this external admission.",
+        "If the handoff is missing or unproved, make no mutation and use the existing fail-closed [Current Operator Fallback]",
+        "this incident remediation is maintenance, not ordinary crash replay.",
+        "Before its first mutation, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged",
+        "Missing or unproved handoff means no mutation: use the fail-closed [Current Operator Fallback]",
         "may be applied as an initial emergency fence",
         "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
