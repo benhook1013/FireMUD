@@ -97,7 +97,7 @@ def _unusable_hosted_title(value: Any) -> bool:
 
 def _strip_badge_prefix(line: str) -> str:
     for pattern in (
-        r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){2,3}",
+        r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}",
         r"^(?:\*\*[^\n]*?\*\*|__[^\n]*?__)",
     ):
         match = re.match(pattern, line)
@@ -283,6 +283,13 @@ def _is_badge_line(line: str) -> bool:
 
     candidate = re.sub(r"^#{1,6}\s*", "", line).strip()
     sections = [section.strip() for section in candidate.split("|")]
+    if len(sections) == 2 and all(
+        section.startswith("_") and section.endswith("_") for section in sections
+    ):
+        known_categories = {"bug", "data integrity & integration", "maintainability & code quality",
+                            "security & privacy", "stability & availability"}
+        return (_badge_label_text(sections[0]).casefold() in known_categories
+                and _explicit_severity_label(sections[1]) is not None)
     if len(sections) in {3, 4} and all(
         section.startswith("_") and section.endswith("_") for section in sections
     ):
@@ -314,9 +321,10 @@ def _hosted_display_severity(value: str) -> str | None:
     found = set()
     for raw in value.splitlines():
         line = re.sub(r"^(?:>\s*)+", "", raw.strip()).strip()
-        # Provider category | severity | effort badge, including inline prose.
-        match = re.match(r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){2,3}", line)
-        badge = match.group().split("|")[-2] if match and _is_badge_line(match.group()) else None
+        # Provider category | severity badge, optionally with tier/effort, including inline prose.
+        match = re.match(r"^_[^\n]*?_(?:\s*\|\s*_[^\n]*?_){1,3}", line)
+        fields = match.group().split("|") if match and _is_badge_line(match.group()) else []
+        badge = fields[-1] if len(fields) == 2 else fields[-2] if fields else None
         if badge is None:
             match = re.match(r"^(?:\*\*([^\n]*?)\*\*|__([^\n]*?)__)", line)
             if match and _is_badge_line(match.group()):

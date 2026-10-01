@@ -125,6 +125,28 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                      "```\n</details>\n" + issue),
         }]})
 
+    def test_two_field_badge_archive_projects_full_body_without_repeated_heading(self) -> None:
+        headline = "Before promoting this change, check that the scheduled backup runs build 6."
+        explanation = "Existing backup promotion checks must remain attributable. " * 25
+        explanation += "Check that the status site and the shared controller run the same build."
+        self.hosted_display_run(title=headline)
+        archive = self.hosted_display_archive(issue="_🩺 Stability & Availability_ | _🔵 Trivial_\n\n"
+                                              f"**{headline}**\n\n{explanation}")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        history = self.records.history(2839)
+        finding = history["findings"][0]
+        self.assertEqual(finding["title"], headline)
+        self.assertEqual(finding["detail"], "Old bounded detail")
+        self.assertEqual(finding["display_detail"], explanation)
+        self.assertEqual(finding["display_severity"], "Trivial")
+        route = self.records.history(2879)["routes"][0]
+        self.assertEqual(route["display_detail"], explanation)
+        self.assertEqual(route["display_severity"], "Trivial")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
     def test_invalid_and_ambiguous_comment_ids_leave_independent_archive_siblings(self) -> None:
         self.hosted_display_run()
         archive = json.loads(self.hosted_display_archive())
