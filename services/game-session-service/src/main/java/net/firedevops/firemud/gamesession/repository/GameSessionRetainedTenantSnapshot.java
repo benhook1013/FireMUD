@@ -26,7 +26,7 @@ public record GameSessionRetainedTenantSnapshot(
     String legacyGameSessionTenantId,
     String canonicalJson,
     String evidenceDigest) {
-  private static final String DIGEST_DOMAIN = "game-session/retained-tenant-identity-snapshot/v1";
+  private static final String DIGEST_DOMAIN = "game-session/retained-tenant-identity-snapshot/v2";
   private static final Pattern CANONICAL_DECIMAL =
       Pattern.compile("(?:0|[1-9][0-9]*|-[1-9][0-9]*)");
   private static final Pattern CANONICAL_UUID =
@@ -57,6 +57,7 @@ public record GameSessionRetainedTenantSnapshot(
           "runtime_version",
           "script_patch_version",
           "owner_account_id",
+          "owner_account_uuid",
           "status",
           "row_version",
           "game_template_id",
@@ -118,6 +119,8 @@ public record GameSessionRetainedTenantSnapshot(
           "execution_control_plane_request_id");
   private static final Set<String> NULLABLE_INSTANCE_FIELDS =
       Set.of(
+          "owner_account_id",
+          "owner_account_uuid",
           "script_patch_version",
           "game_template_id",
           "launch_descriptor_id",
@@ -216,8 +219,8 @@ public record GameSessionRetainedTenantSnapshot(
     if (schemaVersion == null
         || !schemaVersion.isIntegralNumber()
         || !schemaVersion.canConvertToInt()
-        || schemaVersion.intValue() != 1) {
-      throw new IllegalArgumentException("snapshot.schemaVersion must be integer 1");
+        || schemaVersion.intValue() != 2) {
+      throw new IllegalArgumentException("snapshot.schemaVersion must be integer 2");
     }
     requireExactText(object, "targetNamespace", targetNamespace, "snapshot");
     requireExactText(object, "legacyGameSessionTenantId", legacyGameSessionTenantId, "snapshot");
@@ -249,7 +252,7 @@ public record GameSessionRetainedTenantSnapshot(
             "version_state_epoch",
             "script_pin_epoch"),
         Set.of("row_version"),
-        Set.of(),
+        Set.of("owner_account_uuid"),
         Set.of(),
         NULLABLE_INSTANCE_FIELDS,
         "id",
@@ -382,6 +385,12 @@ public record GameSessionRetainedTenantSnapshot(
         throw new IllegalArgumentException(path + " must be strictly sorted by " + sortField);
       }
       previousSortValue = sortValue;
+      if ("instances".equals(path)
+          && object.get("owner_account_id").isNull()
+          && object.get("owner_account_uuid").isNull()) {
+        throw new IllegalArgumentException(
+            rowPath + " must preserve a raw or canonical owner account identity");
+      }
     }
   }
 
@@ -465,7 +474,7 @@ public record GameSessionRetainedTenantSnapshot(
       String field = fields.next();
       if (!expected.contains(field)) {
         throw new IllegalArgumentException(
-            path + "." + field + " is not declared by schema version 1");
+            path + "." + field + " is not declared by schema version 2");
       }
     }
     for (String field : expected) {

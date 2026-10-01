@@ -59,7 +59,7 @@ public class GameSessionRetainedTenantSnapshotRepository {
     }
 
     ObjectNode envelope = JSON.createObjectNode();
-    envelope.put("schemaVersion", 1);
+    envelope.put("schemaVersion", 2);
     envelope.put("targetNamespace", targetNamespace);
     envelope.put("legacyGameSessionTenantId", legacyGameSessionTenantId);
     envelope.set("instances", readInstances(tenantId));
@@ -116,7 +116,8 @@ public class GameSessionRetainedTenantSnapshotRepository {
 
   private ArrayNode readInstances(long tenantId) {
     return readRows(
-        "SELECT id, tenant_id, runtime_version, script_patch_version, owner_account_id, status, "
+        "SELECT id, tenant_id, runtime_version, script_patch_version, owner_account_id, "
+            + "owner_account_uuid, status, "
             + "row_version, game_template_id, launch_descriptor_id, version_id, release_bundle_id, "
             + "version_state_epoch, generation_config_revision, remap_set_id, "
             + "script_patch_pinned_control_plane_request_id, script_pin_epoch "
@@ -128,7 +129,8 @@ public class GameSessionRetainedTenantSnapshotRepository {
           putLong(row, record, "tenant_id");
           putText(row, record, "runtime_version");
           putNullableText(row, record, "script_patch_version");
-          putLong(row, record, "owner_account_id");
+          putNullableLong(row, record, "owner_account_id");
+          putUuid(row, record, "owner_account_uuid");
           putText(row, record, "status");
           putLong(row, record, "row_version");
           putNullableLong(row, record, "game_template_id");

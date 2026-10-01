@@ -20,7 +20,7 @@ public record GameInstanceDto(
     Long versionStateEpoch,
     String generationConfigRevision,
     String remapSetId,
-    @NotNull Long ownerAccountId,
+    String ownerAccountId,
     @NotNull @Size(max = 20) String status)
     implements Serializable {
   private static final long serialVersionUID = 1L;
@@ -43,7 +43,7 @@ public record GameInstanceDto(
       Long releaseBundleId,
       Long versionStateEpoch,
       String generationConfigRevision,
-      @NotNull Long ownerAccountId,
+      String ownerAccountId,
       @NotNull @Size(max = 20) String status) {
     this(
         id,

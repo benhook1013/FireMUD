@@ -7,7 +7,7 @@ import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPol
 public record ProfileDto(
     Long id,
     @NotNull Long tenantId,
-    @NotNull Long accountId,
+    @NotNull String accountId,
     @Size(max = 100) String displayName,
     @Size(max = 255) String bio,
     @NotNull ProfilePresenceVisibilityPolicy presenceVisibilityPolicy) {}

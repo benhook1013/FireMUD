@@ -88,7 +88,7 @@ import org.mockito.Mockito;
 @SuppressWarnings("unchecked")
 class TextCommandInterpreterTest {
   private static final String ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
-
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final EntityManagementClient entityManagementClient =
@@ -342,7 +342,7 @@ class TextCommandInterpreterTest {
               GameInstance instance = new GameInstance();
               instance.setId(sessionId);
               instance.setTenantId(22L);
-              instance.setOwnerAccountId(123L);
+              instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
               return Optional.of(instance);
             });
 

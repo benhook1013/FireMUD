@@ -49,6 +49,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
     })
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionLoginIntegrationTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
   @LocalServerPort private int port;
 
   @MockitoBean private AccountClient accountClient;
@@ -109,7 +110,7 @@ class GameSessionLoginIntegrationTest {
     GameInstance instance = new GameInstance();
     instance.setId(1L);
     instance.setTenantId(42L);
-    instance.setOwnerAccountId(7L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(anyLong())).thenReturn(Optional.of(instance));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(42L, 1L))
         .thenReturn(

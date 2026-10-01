@@ -138,7 +138,7 @@ public final class GameSessionGrpcService
       String clientIp = request.getClientIp();
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
-      long ownerAccountId = parseOwnerAccountId(request.getOwnerAccountId());
+      String ownerAccountId = parseOwnerAccountUuid(request.getOwnerAccountId());
       long gameTemplateId =
           ControlPlaneRequestParser.parsePositiveLong(
               request.getGameTemplateId(), "gameTemplateId");
@@ -229,8 +229,11 @@ public final class GameSessionGrpcService
     }
   }
 
-  private long parseOwnerAccountId(String ownerAccountIdText) {
-    return ControlPlaneRequestParser.parsePositiveLong(ownerAccountIdText, "ownerAccountId");
+  private String parseOwnerAccountUuid(String ownerAccountId) {
+    if (!AccountIds.isCanonicalNonNilUuid(ownerAccountId)) {
+      throw new IllegalArgumentException("ownerAccountId must be a canonical non-nil UUID");
+    }
+    return ownerAccountId;
   }
 
   private List<String> parseAccountIds(List<String> accountIds) {
@@ -245,7 +248,7 @@ public final class GameSessionGrpcService
         .toList();
   }
 
-  private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
+  private void requireTenantAndOwnerAccess(long tenantId, String ownerAccountId) {
     requireTenantAccess(tenantId);
     if (isCurrentAccount(ownerAccountId)) {
       return;
@@ -799,8 +802,11 @@ public final class GameSessionGrpcService
     return isCurrentAccount(instance.getOwnerAccountId());
   }
 
-  private boolean isCurrentAccount(long ownerAccountId) {
-    return SessionContext.isCurrentAccount(ownerAccountId);
+  private boolean isCurrentAccount(String ownerAccountId) {
+    String currentAccountId = SessionContext.getAccountId();
+    return AccountIds.isCanonicalNonNilUuid(ownerAccountId)
+        && AccountIds.isCanonicalNonNilUuid(currentAccountId)
+        && ownerAccountId.equals(currentAccountId);
   }
 
   private net.firedevops.firemud.gamesession.v1.GameplayRealm toGameplayRealm(
