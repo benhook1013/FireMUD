@@ -182,6 +182,16 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(finding["title"], "Authorization Bypass")
         self.assertEqual(finding["classification_titles"], [])
 
+    def test_atx_headline_levels_and_quotes_share_title_detail_normalization(self) -> None:
+        for level in range(1, 7):
+            for quote in ("", "> ", "> > "):
+                with self.subTest(level=level, quote=quote):
+                    body = quote + "#" * level + " Preserve retry identity.\n\nKeep the substantive explanation."
+                    finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+                    self.assertEqual(finding["title"], "Preserve retry identity.")
+                    self.assertEqual(finding["display_detail"], "Keep the substantive explanation.")
+                    self.assertFalse(finding["display_title_is_excerpt"])
+
     def test_unheaded_hosted_issue_body_and_low_value_badge_are_preserved(self) -> None:
         issue = "The incoming workflow request must match the existing request identity. " * 5
         body = "_📐 Maintainability & Code Quality_ | _🔵 Trivial_ | _💤 Low value_\n" + issue

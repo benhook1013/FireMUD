@@ -165,6 +165,19 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(finding["display_detail"], paragraph.strip())
         self.assertTrue(self.records.history(2879)["routes"][0]["display_title_is_excerpt"])
 
+    def test_archived_atx_heading_projects_clean_title_and_only_body(self) -> None:
+        self.hosted_display_run()
+        archive = self.hosted_display_archive(issue="### Preserve retry identity.\n\nKeep the substantive explanation.")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["title"], "<details>")
+        self.assertEqual(finding["display_title"], "Preserve retry identity.")
+        self.assertEqual(finding["display_detail"], "Keep the substantive explanation.")
+        self.assertNotIn("display_title_is_excerpt", finding)
+        route = self.records.history(2879)["routes"][0]
+        self.assertEqual(route["display_title"], finding["display_title"])
+        self.assertEqual(route["display_detail"], finding["display_detail"])
+
     def test_authored_heading_does_not_acquire_excerpt_signal(self) -> None:
         self.hosted_display_run(title="Preserve the actual authored headline.")
         archive = json.loads(self.hosted_display_archive())

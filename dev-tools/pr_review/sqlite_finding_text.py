@@ -218,7 +218,11 @@ def _hosted_title_choice(value: Any) -> tuple[str | None, bool]:
             content = match.group(1) or match.group(2)
             if not _unusable_hosted_title(content):
                 return content, False
-    return (lines[0], not bool(re.match(r"^#{1,6}\s", lines[0]))) if lines else (None, False)
+    if not lines:
+        return None, False
+    if re.match(r"^#{1,6}\s", lines[0]):
+        return re.sub(r"^#{1,6}\s*", "", lines[0]), False
+    return lines[0], True
 
 
 def _hosted_display_detail(value: str, title: str) -> str:
