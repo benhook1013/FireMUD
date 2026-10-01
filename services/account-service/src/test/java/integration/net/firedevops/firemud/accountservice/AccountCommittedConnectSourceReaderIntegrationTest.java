@@ -33,6 +33,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeIdentity;
+import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountBareLoginResponseEnvelope;
 import net.firedevops.firemud.accountservice.repository.AccountCommittedConnectSource;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceOperation.Lifecycle;
@@ -49,9 +52,12 @@ import net.firedevops.firemud.accountservice.security.AccountEnvelopeCryptoExcep
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeCryptoException.Failure;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopePurpose;
 import net.firedevops.firemud.accountservice.security.AccountGameplayConnectSourceVerifier;
+import net.firedevops.firemud.accountservice.security.BareLoginRecoveryPayload;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader.HistoricalCommittedSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader.OriginalSourceEvidence;
+import net.firedevops.firemud.accountservice.service.AccountStoredBareLoginRecoveryReader;
+import net.firedevops.firemud.accountservice.service.AccountStoredBareLoginRecoveryReader.HistoricalStoredBareLoginEvidence;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
@@ -201,6 +207,177 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
   }
 
   @Test
+  void readsCommittedStoredFrameAndOriginalSourceAfterGatewayContextExpiryWithoutMutation()
+      throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture source = newSource(prepared, SourceState.COMMITTED);
+    byte[] originalResult = "opaque-original-bare-login-result".getBytes(StandardCharsets.UTF_8);
+    StoredBareLoginFixture stored =
+        storeBareLoginFrame(prepared, source, source.gatewayEnvelope(), originalResult, null);
+    AccountCommittedConnectSource committedSource =
+        inTransaction(
+            prepared.db().transaction(),
+            () ->
+                prepared
+                    .db()
+                    .issuanceRepository()
+                    .readCommittedResponseEnvelope(source.identity())
+                    .orElseThrow());
+    Snapshot sourceBefore = sourceSnapshot(prepared, source.identity());
+    BareLoginSnapshot exchangeBefore = bareLoginSnapshot(prepared, stored.operationId());
+    AccountStoredBareLoginRecoveryReader reader = storedReader(prepared);
+
+    prepared.clock().advance(Duration.ofSeconds(21));
+    HistoricalStoredBareLoginEvidence first =
+        withPeer(
+            peer(WORKLOAD_NAMESPACE, "game-session-service"),
+            () ->
+                inTransaction(
+                    prepared.db().transaction(),
+                    () -> reader.readHistorical(stored.identity(), stored.requestDigest())));
+    HistoricalStoredBareLoginEvidence reread =
+        withPeer(
+            peer(WORKLOAD_NAMESPACE, "game-session-service"),
+            () ->
+                inTransaction(
+                    prepared.db().transaction(),
+                    () -> reader.readHistorical(stored.identity(), stored.requestDigest())));
+
+    assertThat(first.exchangeOperationId()).isEqualTo(stored.operationId());
+    assertThat(first.sourceConnectOperationId())
+        .isEqualTo(stored.identity().sourceConnectOperationId());
+    assertThat(first.accountId()).isEqualTo(source.identity().accountId());
+    assertThat(first.tenantId()).isEqualTo(source.identity().tenantId());
+    assertThat(first.requestId()).isEqualTo(stored.identity().requestId());
+    assertThat(first.requestDigestVersion()).isEqualTo(1);
+    assertThat(first.connectScopeHash())
+        .isEqualTo(AccountJoinDigest.tokenHash(source.identity().connectScopeId()));
+    assertThat(first.requestDigest()).containsExactly(stored.requestDigest());
+    assertThat(first.originalResultHash()).containsExactly(sha256(originalResult));
+    assertThat(first.sourceConnectTokenHash())
+        .containsExactly(committedSource.operation().tokenHash());
+    assertThat(first.responseEnvelopeKeyId()).isEqualTo("test-key");
+    assertThat(first.sourceResponseEnvelopeKeyId()).isEqualTo("test-key");
+    assertThat(first.accountSourceKeyId()).isEqualTo(ACCOUNT_KEY_ID);
+    assertThat(first.gatewayKeyId()).isEqualTo(GATEWAY_KEY_ID);
+    assertThat(first.signedGatewayVerifiedAt()).isEqualTo(source.gatewayClaims().get("verifiedAt"));
+    assertThat(first.signedGatewayExpiresAt()).isEqualTo(source.gatewayClaims().get("exp"));
+    assertThat(first.exchangeOperationId()).isEqualTo(reread.exchangeOperationId());
+    assertThat(first.sourceConnectOperationId()).isEqualTo(reread.sourceConnectOperationId());
+    assertThat(first.originalResultHash()).containsExactly(reread.originalResultHash());
+    byte[] changedRequestDigest = first.requestDigest();
+    changedRequestDigest[0] ^= 0x01;
+    assertThat(first.requestDigest()).containsExactly(stored.requestDigest());
+    byte[] changedSourceHash = first.sourceConnectTokenHash();
+    changedSourceHash[0] ^= 0x01;
+    assertThat(first.sourceConnectTokenHash())
+        .containsExactly(committedSource.operation().tokenHash());
+    assertThat(first.toString())
+        .doesNotContain(new String(originalResult, StandardCharsets.UTF_8))
+        .doesNotContain(source.gatewayEnvelope())
+        .doesNotContain(source.identity().connectScopeId());
+    byte[] changedHash = first.originalResultHash();
+    changedHash[0] ^= 0x01;
+    assertThat(first.originalResultHash()).containsExactly(sha256(originalResult));
+    assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(sourceBefore);
+    assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
+  }
+
+  @Test
+  void storedHistoryRejectsChangedDigestSourceContextResultHashAndKey() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture source = newSource(prepared, SourceState.COMMITTED);
+    byte[] result = "opaque-original-result".getBytes(StandardCharsets.UTF_8);
+    StoredBareLoginFixture stored =
+        storeBareLoginFrame(prepared, source, source.gatewayEnvelope(), result, null);
+    byte[] wrongRequestDigest = stored.requestDigest();
+    wrongRequestDigest[0] ^= 0x01;
+    assertStoredReadRejected(
+        storedReader(prepared),
+        prepared,
+        stored,
+        wrongRequestDigest,
+        AccountBareLoginExchangeRepository.IdempotencyConflictException.class,
+        "different digest");
+
+    SourceFixture linkedSource = newSource(prepared, SourceState.COMMITTED);
+    SourceFixture sameScopeOtherSource =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            SourceOptions.NORMAL,
+            linkedSource.identity().connectScopeId());
+    Snapshot contextSourceBefore = sourceSnapshot(prepared, sameScopeOtherSource.identity());
+    StoredBareLoginFixture linkedToWrongSource =
+        storeBareLoginFrame(
+            prepared, linkedSource, sameScopeOtherSource.gatewayEnvelope(), result, null);
+    assertStoredReadRejected(
+        storedReader(prepared),
+        prepared,
+        linkedToWrongSource,
+        linkedToWrongSource.requestDigest(),
+        IllegalStateException.class,
+        "does not match its original Gateway context");
+    assertThat(sourceSnapshot(prepared, sameScopeOtherSource.identity()))
+        .isEqualTo(contextSourceBefore);
+
+    SourceFixture changedContextSource =
+        newSource(
+            prepared,
+            SourceState.COMMITTED,
+            new SourceOptions(false, false, false, true, false, false, false));
+    StoredBareLoginFixture changedContext =
+        storeBareLoginFrame(
+            prepared, changedContextSource, changedContextSource.gatewayEnvelope(), result, null);
+    assertStoredReadRejected(
+        storedReader(prepared),
+        prepared,
+        changedContext,
+        changedContext.requestDigest(),
+        IllegalArgumentException.class,
+        "invalid Account gameplay-connect source JWT");
+
+    byte[] differentStoredHash = sha256("different-result".getBytes(StandardCharsets.UTF_8));
+    SourceFixture resultHashSource = newSource(prepared, SourceState.COMMITTED);
+    StoredBareLoginFixture changedResultHash =
+        storeBareLoginFrame(
+            prepared,
+            resultHashSource,
+            resultHashSource.gatewayEnvelope(),
+            result,
+            differentStoredHash);
+    assertStoredReadRejected(
+        storedReader(prepared),
+        prepared,
+        changedResultHash,
+        changedResultHash.requestDigest(),
+        IllegalStateException.class,
+        "result hash does not match");
+
+    SourceFixture oldPayloadSource = newSource(prepared, SourceState.COMMITTED);
+    StoredBareLoginFixture oldOpaquePayload =
+        storeOpaqueBareLoginPayload(
+            prepared,
+            oldPayloadSource,
+            "legacy unframed response payload".getBytes(StandardCharsets.UTF_8));
+    assertStoredReadRejected(
+        storedReader(prepared),
+        prepared,
+        oldOpaquePayload,
+        oldOpaquePayload.requestDigest(),
+        IllegalArgumentException.class,
+        "payload header is invalid");
+
+    assertStoredReadRejected(
+        storedReader(prepared, differentConnectPurposeKey()),
+        prepared,
+        stored,
+        stored.requestDigest(),
+        AccountEnvelopeCryptoException.class,
+        "AUTHENTICATION_FAILED");
+  }
+
+  @Test
   void historicalReadRejectsRequestTargetHashAndTokenIdentityMismatches() throws Exception {
     PreparedAccount prepared = newPreparedAccount();
     SourceFixture source = newSource(prepared, SourceState.COMMITTED);
@@ -222,8 +399,12 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
 
     assertHistoricalReadRejected(prepared, wrongHash, IllegalStateException.class, "token hash");
     assertHistoricalReadRejected(prepared, wrongJti, IllegalStateException.class, "token identity");
+    // Source verification deliberately sanitizes signature/profile/projection failure details.
     assertHistoricalReadRejected(
-        prepared, wrongTarget, IllegalArgumentException.class, "does not exactly preserve");
+        prepared,
+        wrongTarget,
+        IllegalArgumentException.class,
+        "invalid Account gameplay-connect source JWT");
 
     Snapshot before = sourceSnapshot(prepared, source.identity());
     AccountConnectTokenIssuanceIdentity wrongRequestIdentity =
@@ -707,6 +888,8 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         Map.of(GATEWAY_KEY_ID, gatewayKeyPair.getPublic());
     AccountConnectTokenIssuanceRepository issuanceRepository =
         new AccountConnectTokenIssuanceRepository(dsl);
+    AccountBareLoginExchangeRepository bareLoginExchangeRepository =
+        new AccountBareLoginExchangeRepository(dsl);
     AccountRepository accountRepository = new AccountRepository(dsl);
     AccountTenantIdentityResolver tenantResolver =
         new AccountTenantIdentityResolver(associations, sourceEvidence, WORKLOAD_NAMESPACE);
@@ -722,7 +905,9 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
             gatewayKeys,
             clock,
             WORKLOAD_NAMESPACE);
-    TestContext db = new TestContext(dsl, transaction, issuanceRepository, envelopeCrypto);
+    TestContext db =
+        new TestContext(
+            dsl, transaction, issuanceRepository, bareLoginExchangeRepository, envelopeCrypto);
     return new PreparedAccount(
         db,
         accountId,
@@ -750,6 +935,23 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       PreparedAccount prepared, SourceState state, SourceOptions options) throws Exception {
     String requestId = "source-request-" + UUID.randomUUID();
     String connectScopeId = "source-scope-" + UUID.randomUUID();
+    return newSource(prepared, state, options, requestId, connectScopeId);
+  }
+
+  private SourceFixture newSource(
+      PreparedAccount prepared, SourceState state, SourceOptions options, String connectScopeId)
+      throws Exception {
+    String requestId = "source-request-" + UUID.randomUUID();
+    return newSource(prepared, state, options, requestId, connectScopeId);
+  }
+
+  private SourceFixture newSource(
+      PreparedAccount prepared,
+      SourceState state,
+      SourceOptions options,
+      String requestId,
+      String connectScopeId)
+      throws Exception {
     long sourceTenantId =
         options.unmappedTenant() ? prepared.tenantId() + 1000L : prepared.tenantId();
     UUID sourceTenantUuid = options.unmappedTenant() ? UUID.randomUUID() : prepared.tenantUuid();
@@ -859,6 +1061,140 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
             + "\n";
     Files.writeString(manifest, ringManifest, StandardCharsets.US_ASCII);
     return new AccountEnvelopeCrypto(manifest);
+  }
+
+  private StoredBareLoginFixture storeBareLoginFrame(
+      PreparedAccount prepared,
+      SourceFixture source,
+      String originalGatewayContext,
+      byte[] originalResult,
+      byte[] operationResultHash)
+      throws Exception {
+    byte[] encodedFrame =
+        BareLoginRecoveryPayload.of(originalGatewayContext, originalResult).encode();
+    byte[] storedResultHash =
+        operationResultHash == null ? sha256(originalResult) : operationResultHash.clone();
+    try {
+      return storeBareLoginResponse(prepared, source, encodedFrame, storedResultHash);
+    } finally {
+      java.util.Arrays.fill(encodedFrame, (byte) 0);
+      java.util.Arrays.fill(storedResultHash, (byte) 0);
+    }
+  }
+
+  private StoredBareLoginFixture storeOpaqueBareLoginPayload(
+      PreparedAccount prepared, SourceFixture source, byte[] opaquePayload) throws Exception {
+    byte[] resultHash = sha256(opaquePayload);
+    try {
+      return storeBareLoginResponse(prepared, source, opaquePayload, resultHash);
+    } finally {
+      java.util.Arrays.fill(resultHash, (byte) 0);
+    }
+  }
+
+  private StoredBareLoginFixture storeBareLoginResponse(
+      PreparedAccount prepared,
+      SourceFixture source,
+      byte[] encryptedPlaintext,
+      byte[] storedResultHash)
+      throws Exception {
+    AccountCommittedConnectSource committedSource =
+        inTransaction(
+            prepared.db().transaction(),
+            () ->
+                prepared
+                    .db()
+                    .issuanceRepository()
+                    .readCommittedResponseEnvelope(source.identity())
+                    .orElseThrow());
+    AccountBareLoginExchangeIdentity identity =
+        new AccountBareLoginExchangeIdentity(
+            committedSource.operation().operationId(),
+            source.identity().accountId(),
+            source.identity().tenantId(),
+            source.identity().connectScopeId(),
+            "exchange-request-" + UUID.randomUUID());
+    byte[] requestDigest = randomDigest();
+    byte[] contextEvidenceDigest = randomDigest();
+    byte[] authorityTupleDigest = randomDigest();
+    byte[] issuanceFenceDigest = randomDigest();
+    byte[] postconditionDigest = randomDigest();
+    String resultTokenIdentity = "stored-result-jti-" + UUID.randomUUID();
+    try {
+      AccountBareLoginResponseEnvelope stored =
+          inTransaction(
+              prepared.db().transaction(),
+              () -> {
+                var claim =
+                    prepared.db().bareLoginExchangeRepository().claim(identity, requestDigest);
+                prepared
+                    .db()
+                    .bareLoginExchangeRepository()
+                    .recordPendingEvidence(
+                        claim,
+                        requestDigest,
+                        resultTokenIdentity,
+                        storedResultHash,
+                        contextEvidenceDigest,
+                        authorityTupleDigest,
+                        issuanceFenceDigest,
+                        postconditionDigest);
+                AccountEnvelopeBinding binding =
+                    new AccountEnvelopeBinding(
+                        AccountEnvelopeBinding.OperationKind.BARE_LOGIN_EXCHANGE,
+                        claim.operation().operationId().toString(),
+                        identity.requestId(),
+                        Long.toString(identity.accountId()),
+                        Long.toString(identity.tenantId()),
+                        identity.connectScopeId(),
+                        identity.sourceConnectOperationId().toString(),
+                        requestDigest,
+                        contextEvidenceDigest,
+                        authorityTupleDigest,
+                        issuanceFenceDigest,
+                        postconditionDigest);
+                AccountEncryptedEnvelope encrypted =
+                    prepared
+                        .db()
+                        .envelopeCrypto()
+                        .encrypt(
+                            AccountEnvelopePurpose.BARE_LOGIN_RESPONSE,
+                            binding,
+                            encryptedPlaintext);
+                return prepared
+                    .db()
+                    .bareLoginExchangeRepository()
+                    .completeWithEnvelope(
+                        claim,
+                        requestDigest,
+                        resultTokenIdentity,
+                        storedResultHash,
+                        binding,
+                        encrypted);
+              });
+      return new StoredBareLoginFixture(
+          identity, requestDigest, source.identity(), stored.operationId());
+    } finally {
+      java.util.Arrays.fill(contextEvidenceDigest, (byte) 0);
+      java.util.Arrays.fill(authorityTupleDigest, (byte) 0);
+      java.util.Arrays.fill(issuanceFenceDigest, (byte) 0);
+      java.util.Arrays.fill(postconditionDigest, (byte) 0);
+    }
+  }
+
+  private static AccountStoredBareLoginRecoveryReader storedReader(PreparedAccount prepared) {
+    return storedReader(prepared, prepared.db().envelopeCrypto());
+  }
+
+  private static AccountStoredBareLoginRecoveryReader storedReader(
+      PreparedAccount prepared, AccountEnvelopeCrypto crypto) {
+    return new AccountStoredBareLoginRecoveryReader(
+        prepared.db().bareLoginExchangeRepository(),
+        prepared.joinRepository(),
+        crypto,
+        prepared.reader(),
+        prepared.gatewayKeys(),
+        WORKLOAD_NAMESPACE);
   }
 
   private AccountEnvelopeCrypto missingKeyRingCrypto() {
@@ -1036,6 +1372,27 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
             row.get(3, Long.class));
   }
 
+  private static BareLoginSnapshot bareLoginSnapshot(PreparedAccount prepared, UUID operationId) {
+    Record row =
+        prepared
+            .db()
+            .dsl()
+            .resultQuery(
+                "SELECT operation_id, status, updated_at::text, "
+                    + "(SELECT count(*) FROM account_bare_login_response_envelopes e "
+                    + "WHERE e.operation_id = o.operation_id) "
+                    + "FROM account_bare_login_exchange_operations o WHERE operation_id = ?",
+                operationId)
+            .fetchOne();
+    return row == null
+        ? new BareLoginSnapshot(null, null, null, 0L)
+        : new BareLoginSnapshot(
+            row.get(0, UUID.class),
+            row.get(1, String.class),
+            row.get(2, String.class),
+            row.get(3, Long.class));
+  }
+
   private static boolean awaitAccountFenceBlock(
       DSLContext dsl, int readerBackendPid, int blockerBackendPid, Duration timeout)
       throws InterruptedException {
@@ -1124,6 +1481,29 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(before);
   }
 
+  private static void assertStoredReadRejected(
+      AccountStoredBareLoginRecoveryReader reader,
+      PreparedAccount prepared,
+      StoredBareLoginFixture stored,
+      byte[] requestDigest,
+      Class<? extends Throwable> exceptionType,
+      String messageFragment) {
+    Snapshot sourceBefore = sourceSnapshot(prepared, stored.sourceIdentity());
+    BareLoginSnapshot exchangeBefore = bareLoginSnapshot(prepared, stored.operationId());
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer(WORKLOAD_NAMESPACE, "game-session-service"),
+                    () ->
+                        inTransaction(
+                            prepared.db().transaction(),
+                            () -> reader.readHistorical(stored.identity(), requestDigest))))
+        .isInstanceOf(exceptionType)
+        .hasMessageContaining(messageFragment);
+    assertThat(sourceSnapshot(prepared, stored.sourceIdentity())).isEqualTo(sourceBefore);
+    assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
+  }
+
   private static <T> T withPeer(GrpcPeerIdentity peer, Supplier<T> action) {
     Context scoped = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer);
     Context previous = scoped.attach();
@@ -1150,6 +1530,12 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
 
   private static byte[] digest(String value) {
     return sha256(value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static byte[] randomDigest() {
+    byte[] value = new byte[32];
+    FIXTURE_RANDOM.nextBytes(value);
+    return value;
   }
 
   private static byte[] sha256(byte[] value) {
@@ -1187,6 +1573,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       DSLContext dsl,
       TransactionTemplate transaction,
       AccountConnectTokenIssuanceRepository issuanceRepository,
+      AccountBareLoginExchangeRepository bareLoginExchangeRepository,
       AccountEnvelopeCrypto envelopeCrypto) {}
 
   private record PreparedAccount(
@@ -1214,7 +1601,25 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       Map<String, Object> gatewayClaims,
       String tokenIdentity) {}
 
+  private record StoredBareLoginFixture(
+      AccountBareLoginExchangeIdentity identity,
+      byte[] requestDigest,
+      AccountConnectTokenIssuanceIdentity sourceIdentity,
+      UUID operationId) {
+    private StoredBareLoginFixture {
+      requestDigest = requestDigest.clone();
+    }
+
+    @Override
+    public byte[] requestDigest() {
+      return requestDigest.clone();
+    }
+  }
+
   private record Snapshot(UUID operationId, String status, String updatedAt, long envelopeCount) {}
+
+  private record BareLoginSnapshot(
+      UUID operationId, String status, String updatedAt, long envelopeCount) {}
 
   private static final class TestClock extends Clock {
     private volatile Instant now;
