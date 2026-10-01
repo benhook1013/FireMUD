@@ -1008,6 +1008,20 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#concurrentDuplicateCreationRequestsConvergeOnOneUuidAndReceipt()' \
             game-design-service
 
+      - name: Verify Account fresh UUID pair and snapshot PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryIntegrationTest \
+            --require-suite net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryIntegrationTest#v39PreservesRetainedPairHistoryAndEnforcesUuidOnlyFreshRows()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryIntegrationTest#v39RefusesToRewriteAnExistingFreshNumericPair()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#freshUuidSnapshotEnrollsExactNonAdmittingBaselineAndRetriesWithoutSideEffects()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#freshUuidSnapshotRejectsAdvancedTenantGenerationAndRollsBackBaselineWrites()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#concurrentFreshUuidSnapshotCallsInitializeOneExactPairBaseline()' \
+            account-service
+
       - name: 🔎 Verify Game Session PostgreSQL proof case
         if: ${{ matrix.module == 'game-session-service' }}
         run: |

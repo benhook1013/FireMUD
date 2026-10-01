@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairTransition;
@@ -12,6 +14,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
@@ -27,14 +30,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
 class AccountMembershipPairAuthorityRepositoryIntegrationTest {
-  private static final String SCHEMA = "account_membership_pair_authority_proof";
+  private static final String SCHEMA_PREFIX = "pair_authority_proof_";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
   void immutableValueTypesRejectContradictoryAuthorityEvidence() {
-    VerifiedTenantProvenance provenance = provenance(701L, TenantProvenanceKind.FRESH_GAME_DESIGN);
+    VerifiedTenantProvenance provenance = provenance(null, TenantProvenanceKind.FRESH_GAME_DESIGN);
     UUID accountUuid = UUID.randomUUID();
     UUID tenantUuid = UUID.randomUUID();
 
@@ -61,23 +64,283 @@ class AccountMembershipPairAuthorityRepositoryIntegrationTest {
     assertThatThrownBy(
             () ->
                 new VerifiedTenantProvenance(
-                    701L,
+                    null,
                     TenantProvenanceKind.FRESH_GAME_DESIGN,
                     UUID.randomUUID(),
                     "SHA256:" + "a".repeat(64)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("canonical lowercase SHA-256");
+    assertThatThrownBy(
+            () ->
+                new VerifiedTenantProvenance(
+                    701L, TenantProvenanceKind.FRESH_GAME_DESIGN, UUID.randomUUID(), digest(1)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("must not carry a legacy");
+    assertThatThrownBy(
+            () ->
+                new VerifiedTenantProvenance(
+                    null, TenantProvenanceKind.APPROVED_RETAINED, UUID.randomUUID(), digest(1)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("positive legacy tenant ID");
     assertThatThrownBy(() -> new ProvenPositiveCheckpoint(1L, 1L, 0L, "event", digest(1), false))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("incomplete");
   }
 
   @Test
-  void enrollmentAndTransitionsPreserveExactPositiveAuthorityAndProvenance() {
+  void freshPairsUseUuidIdentityWithoutLegacyAliasesAndRequireTheOwnerTransaction() {
+    TestContext context = newTestContext();
+    UUID accountUuid = insertAccount(context.setupDsl());
+    UUID firstTenantUuid = UUID.randomUUID();
+    UUID secondTenantUuid = UUID.randomUUID();
+    VerifiedTenantProvenance firstFresh = provenance(null, TenantProvenanceKind.FRESH_GAME_DESIGN);
+    VerifiedTenantProvenance secondFresh = provenance(null, TenantProvenanceKind.FRESH_GAME_DESIGN);
+
+    assertThatThrownBy(() -> context.repository().readForUpdate(accountUuid, firstTenantUuid))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
+
+    PairAuthority first =
+        inTransaction(
+            context.transaction(),
+            () -> context.repository().enrollAbsence(accountUuid, firstTenantUuid, firstFresh));
+    PairAuthority second =
+        inTransaction(
+            context.transaction(),
+            () -> context.repository().enrollAbsence(accountUuid, secondTenantUuid, secondFresh));
+    assertThat(first.provenance().legacyTenantId()).isNull();
+    assertThat(second.provenance().legacyTenantId()).isNull();
+    assertThat(
+            Objects.requireNonNull(
+                    context
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT count(*) FROM account_membership_pair_authority "
+                                + "WHERE account_uuid = ? "
+                                + "AND tenant_provenance_kind = 'FRESH_GAME_DESIGN' "
+                                + "AND legacy_tenant_id IS NULL",
+                            accountUuid),
+                    "Fresh pair count query must return a row")
+                .get(0, Long.class))
+        .isEqualTo(2L);
+
+    VerifiedTenantProvenance retained = provenance(705L, TenantProvenanceKind.APPROVED_RETAINED);
+    UUID retainedTenantUuid = UUID.randomUUID();
+    inTransaction(
+        context.transaction(),
+        () -> context.repository().enrollAbsence(accountUuid, retainedTenantUuid, retained));
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () ->
+                        context
+                            .repository()
+                            .enrollAbsence(
+                                accountUuid,
+                                UUID.randomUUID(),
+                                provenance(705L, TenantProvenanceKind.APPROVED_RETAINED))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("conflicts with an existing pair authority");
+
+    UUID rolledBackTenantUuid = UUID.randomUUID();
+    assertThatThrownBy(
+            () ->
+                context
+                    .transaction()
+                    .execute(
+                        status -> {
+                          context
+                              .repository()
+                              .enrollAbsence(accountUuid, rolledBackTenantUuid, firstFresh);
+                          throw new IllegalStateException("rollback pair enrollment");
+                        }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("rollback pair enrollment");
+    assertThat(
+            Objects.requireNonNull(
+                    context
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT count(*) FROM account_membership_pair_authority "
+                                + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                            accountUuid,
+                            rolledBackTenantUuid),
+                    "Rolled-back pair count query must return a row")
+                .get(0, Long.class))
+        .isZero();
+  }
+
+  @Test
+  void databaseRejectsRetainedNullAndFreshNumericLegacyKeys() {
+    TestContext context = newTestContext();
+    UUID accountUuid = insertAccount(context.setupDsl());
+
+    assertThatThrownBy(
+            () ->
+                insertPair(
+                    context.setupDsl(),
+                    accountUuid,
+                    UUID.randomUUID(),
+                    null,
+                    TenantProvenanceKind.APPROVED_RETAINED))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () ->
+                insertPair(
+                    context.setupDsl(),
+                    accountUuid,
+                    UUID.randomUUID(),
+                    706L,
+                    TenantProvenanceKind.FRESH_GAME_DESIGN))
+        .isInstanceOf(DataAccessException.class);
+  }
+
+  @Test
+  void v39PreservesRetainedPairHistoryAndEnforcesUuidOnlyFreshRows() {
+    TestContext context = newTestContext(newSchema(), "38");
+    UUID accountUuid = insertAccount(context.setupDsl());
+    UUID retainedTenantUuid = UUID.randomUUID();
+    VerifiedTenantProvenance retained = provenance(707L, TenantProvenanceKind.APPROVED_RETAINED);
+    insertPair(
+        context.setupDsl(),
+        accountUuid,
+        retainedTenantUuid,
+        retained.legacyTenantId(),
+        retained.kind(),
+        retained.sourceOperationId(),
+        retained.digest());
+    org.jooq.Record retainedBefore =
+        context
+            .setupDsl()
+            .fetchOne(
+                "SELECT * FROM account_membership_pair_authority "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                accountUuid,
+                retainedTenantUuid);
+
+    UUID advancedTenantUuid = UUID.randomUUID();
+    VerifiedTenantProvenance advancedRetained =
+        provenance(709L, TenantProvenanceKind.APPROVED_RETAINED);
+    ProvenPositiveCheckpoint advancedCheckpoint =
+        new ProvenPositiveCheckpoint(8L, 3L, 11L, "retained-event-11", digest(9), true);
+    PairAuthority advancedAuthority =
+        inTransaction(
+            context.transaction(),
+            () ->
+                context
+                    .repository()
+                    .enrollProvenPositive(
+                        accountUuid, advancedTenantUuid, advancedRetained, advancedCheckpoint));
+    org.jooq.Record advancedBefore =
+        context
+            .setupDsl()
+            .fetchOne(
+                "SELECT * FROM account_membership_pair_authority "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                accountUuid,
+                advancedTenantUuid);
+
+    flyway(context.dataSource(), context.schema(), null).migrate();
+    org.jooq.Record retainedAfter =
+        context
+            .setupDsl()
+            .fetchOne(
+                "SELECT * FROM account_membership_pair_authority "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                accountUuid,
+                retainedTenantUuid);
+    org.jooq.Record advancedAfter =
+        context
+            .setupDsl()
+            .fetchOne(
+                "SELECT * FROM account_membership_pair_authority "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                accountUuid,
+                advancedTenantUuid);
+    assertThat(retainedAfter).isEqualTo(retainedBefore);
+    assertThat(advancedAfter).isEqualTo(advancedBefore);
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().readForUpdate(accountUuid, retainedTenantUuid)))
+        .contains(
+            new PairAuthority(
+                accountUuid, retainedTenantUuid, retained, false, 1L, 1L, 0L, null, null, false));
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().readForUpdate(accountUuid, advancedTenantUuid)))
+        .contains(advancedAuthority);
+
+    PairAuthority firstFresh =
+        inTransaction(
+            context.transaction(),
+            () ->
+                context
+                    .repository()
+                    .enrollAbsence(
+                        accountUuid,
+                        UUID.randomUUID(),
+                        provenance(null, TenantProvenanceKind.FRESH_GAME_DESIGN)));
+    PairAuthority secondFresh =
+        inTransaction(
+            context.transaction(),
+            () ->
+                context
+                    .repository()
+                    .enrollAbsence(
+                        accountUuid,
+                        UUID.randomUUID(),
+                        provenance(null, TenantProvenanceKind.FRESH_GAME_DESIGN)));
+    assertThat(firstFresh.tenantUuid()).isNotEqualTo(secondFresh.tenantUuid());
+    assertThat(firstFresh.provenance().legacyTenantId()).isNull();
+    assertThat(secondFresh.provenance().legacyTenantId()).isNull();
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () ->
+                        context
+                            .repository()
+                            .enrollAbsence(
+                                accountUuid,
+                                UUID.randomUUID(),
+                                provenance(707L, TenantProvenanceKind.APPROVED_RETAINED))))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("conflicts with an existing pair authority");
+  }
+
+  @Test
+  void v39RefusesToRewriteAnExistingFreshNumericPair() {
+    TestContext context = newTestContext(newSchema(), "38");
+    UUID accountUuid = insertAccount(context.setupDsl());
+    UUID tenantUuid = UUID.randomUUID();
+    insertPair(
+        context.setupDsl(), accountUuid, tenantUuid, 708L, TenantProvenanceKind.FRESH_GAME_DESIGN);
+
+    assertThatThrownBy(() -> flyway(context.dataSource(), context.schema(), null).migrate())
+        .isInstanceOf(FlywayException.class);
+    assertThat(
+            Objects.requireNonNull(
+                    context
+                        .setupDsl()
+                        .fetchOne(
+                            "SELECT legacy_tenant_id FROM account_membership_pair_authority "
+                                + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                            accountUuid,
+                            tenantUuid),
+                    "Rejected migration must leave the existing pair row")
+                .get(0, Long.class))
+        .isEqualTo(708L);
+  }
+
+  @Test
+  void enrollmentAndTransitionsPreserveExactAuthorityAndProvenance() {
     TestContext context = newTestContext();
     UUID accountUuid = insertAccount(context.setupDsl());
     UUID tenantUuid = UUID.randomUUID();
-    VerifiedTenantProvenance fresh = provenance(702L, TenantProvenanceKind.FRESH_GAME_DESIGN);
+    VerifiedTenantProvenance fresh = provenance(null, TenantProvenanceKind.FRESH_GAME_DESIGN);
 
     PairAuthority baseline =
         inTransaction(
@@ -192,7 +455,7 @@ class AccountMembershipPairAuthorityRepositoryIntegrationTest {
 
     VerifiedTenantProvenance wrongProvenance =
         new VerifiedTenantProvenance(
-            702L, TenantProvenanceKind.FRESH_GAME_DESIGN, UUID.randomUUID(), digest(4));
+            null, TenantProvenanceKind.FRESH_GAME_DESIGN, UUID.randomUUID(), digest(4));
     assertThatThrownBy(
             () ->
                 inTransaction(
@@ -203,20 +466,6 @@ class AccountMembershipPairAuthorityRepositoryIntegrationTest {
                             .enrollAbsence(accountUuid, tenantUuid, wrongProvenance)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("conflicts with verified association provenance");
-    assertThatThrownBy(
-            () ->
-                inTransaction(
-                    context.transaction(),
-                    () ->
-                        context
-                            .repository()
-                            .enrollAbsence(
-                                accountUuid,
-                                UUID.randomUUID(),
-                                provenance(702L, TenantProvenanceKind.FRESH_GAME_DESIGN))))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("conflicts with an existing pair authority");
-
     assertThatThrownBy(
             () ->
                 inTransaction(
@@ -335,7 +584,7 @@ class AccountMembershipPairAuthorityRepositoryIntegrationTest {
                             .enrollProvenPositive(
                                 accountUuid,
                                 tenantUuid,
-                                provenance(703L, TenantProvenanceKind.FRESH_GAME_DESIGN),
+                                provenance(null, TenantProvenanceKind.FRESH_GAME_DESIGN),
                                 checkpoint)))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("approved retained tenant provenance");
@@ -375,27 +624,45 @@ class AccountMembershipPairAuthorityRepositoryIntegrationTest {
   }
 
   private TestContext newTestContext() {
+    return newTestContext(newSchema(), null);
+  }
+
+  private TestContext newTestContext(String schema, String targetVersion) {
     DriverManagerDataSource dataSource = new DriverManagerDataSource();
-    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
-    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + SCHEMA);
+    dataSource.setUrl(postgres.getJdbcUrl());
     dataSource.setUsername(postgres.getUsername());
     dataSource.setPassword(postgres.getPassword());
-    Flyway.configure()
-        .dataSource(dataSource)
-        .schemas(SCHEMA)
-        .defaultSchema(SCHEMA)
-        .placeholders(Map.of("serviceSchema", SCHEMA))
-        .locations("classpath:db/migration")
-        .load()
-        .migrate();
+    dataSource.setSchema(schema);
+    flyway(dataSource, schema, targetVersion).migrate();
 
     DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    assertThat(setupDsl.fetchOne("SELECT current_schema()").get(0, String.class)).isEqualTo(schema);
     DSLContext transactionDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     return new TestContext(
+        schema,
+        dataSource,
         setupDsl,
         new AccountMembershipPairAuthorityRepository(transactionDsl),
         new TransactionTemplate(new DataSourceTransactionManager(dataSource)));
+  }
+
+  private String newSchema() {
+    return SCHEMA_PREFIX + UUID.randomUUID().toString().replace("-", "");
+  }
+
+  private Flyway flyway(DataSource dataSource, String schema, String targetVersion) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (targetVersion != null) {
+      configuration.target(targetVersion);
+    }
+    return configuration.load();
   }
 
   private UUID insertAccount(DSLContext dsl) {
@@ -409,8 +676,40 @@ class AccountMembershipPairAuthorityRepositoryIntegrationTest {
         .fetchOne(0, UUID.class);
   }
 
-  private VerifiedTenantProvenance provenance(long legacyTenantId, TenantProvenanceKind kind) {
+  private VerifiedTenantProvenance provenance(Long legacyTenantId, TenantProvenanceKind kind) {
     return new VerifiedTenantProvenance(legacyTenantId, kind, UUID.randomUUID(), digest(1));
+  }
+
+  private void insertPair(
+      DSLContext dsl,
+      UUID accountUuid,
+      UUID tenantUuid,
+      Long legacyTenantId,
+      TenantProvenanceKind kind) {
+    insertPair(dsl, accountUuid, tenantUuid, legacyTenantId, kind, UUID.randomUUID(), digest(1));
+  }
+
+  private void insertPair(
+      DSLContext dsl,
+      UUID accountUuid,
+      UUID tenantUuid,
+      Long legacyTenantId,
+      TenantProvenanceKind kind,
+      UUID sourceOperationId,
+      String evidenceDigest) {
+    dsl.execute(
+        "INSERT INTO account_membership_pair_authority "
+            + "(account_uuid, tenant_uuid, legacy_tenant_id, tenant_provenance_kind, "
+            + "tenant_source_operation_id, tenant_provenance_digest, membership_exists, "
+            + "membership_version, membership_authority_generation, last_event_sequence, "
+            + "last_event_id, last_event_digest, last_transition_invalidated) "
+            + "VALUES (?, ?, ?, ?, ?, ?, FALSE, 1, 1, 0, NULL, NULL, FALSE)",
+        accountUuid,
+        tenantUuid,
+        legacyTenantId,
+        kind.name(),
+        sourceOperationId,
+        evidenceDigest);
   }
 
   private String digest(int digit) {
@@ -423,6 +722,8 @@ class AccountMembershipPairAuthorityRepositoryIntegrationTest {
   }
 
   private record TestContext(
+      String schema,
+      DataSource dataSource,
       DSLContext setupDsl,
       AccountMembershipPairAuthorityRepository repository,
       TransactionTemplate transaction) {}
