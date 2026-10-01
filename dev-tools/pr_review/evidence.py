@@ -174,7 +174,7 @@ class _SqlCaptureInvalid(CaptureInvalid):
 
 
 class _SqlCaptureNotCounted(CaptureInvalid):
-    """A terminal SQL attempt failed and is not a completed review capture."""
+    """A native SQL attempt is in progress or failed and is not countable evidence."""
 
 
 _UNRESOLVED_RECORDS = object()
@@ -753,7 +753,16 @@ def _cli_capture_from_sql(
     observations = snapshot.get("observations")
     if not isinstance(observations, list) or len(observations) != len(findings):
         raise CaptureInvalid("linked SQLite CLI findings lack their source projections")
-    by_index = {item["index"]: item for item in observations}
+    by_index: dict[int, dict[str, Any]] = {}
+    for observation in observations:
+        if not isinstance(observation, dict):
+            raise CaptureInvalid("linked SQLite CLI finding observation is malformed")
+        index = observation.get("index")
+        if type(index) is not int or index <= 0 or index > len(findings):
+            raise CaptureInvalid("linked SQLite CLI finding observation has an invalid index")
+        if index in by_index:
+            raise CaptureInvalid("linked SQLite CLI finding observations contain duplicate indices")
+        by_index[index] = observation
     # Writer titles truncate before redaction; redacted archive titles cannot
     # reproduce that original boundary. Details redact before their bound.
     compare_titles = snapshot.get("artifact_redactions", {}).get("cli_events", 0) == 0
@@ -804,6 +813,7 @@ def _load_cli_capture(
     common: Path | None,
     *,
     validate_checkpoint_decisions: bool,
+    validate_sql_checkpoint: bool = True,
     records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
     sql_first: bool = True,
 ) -> CaptureData:
@@ -813,6 +823,7 @@ def _load_cli_capture(
         raise CaptureInvalid("checkpoint has invalid visible/hidden duration evidence")
     common, selected_records = resolve_cli_capture_context(common, records)
     from .sqlite_review_records import (
+        CliCaptureInProgress,
         CliCaptureTerminalFailure,
         RecordsNotBootstrapped,
         RecordsSchemaIncompatible,
@@ -824,6 +835,8 @@ def _load_cli_capture(
             snapshot = selected_records.cli_capture_snapshot(checkpoint.run_id, source_pr=pr_number)
         except RecordsNotBootstrapped:
             snapshot = None
+        except CliCaptureInProgress as exc:
+            raise _SqlCaptureNotCounted("linked SQLite CLI records show an attempt still in progress") from exc
         except CliCaptureTerminalFailure as exc:
             raise _SqlCaptureNotCounted("linked SQLite CLI attempt ended without a completed result") from exc
         except RecordsSchemaIncompatible as exc:
@@ -834,7 +847,9 @@ def _load_cli_capture(
             raise _SqlCaptureInvalid("linked SQLite CLI records are incomplete or unavailable") from exc
         if snapshot is not None:
             try:
-                capture = _cli_capture_from_sql(snapshot, repo, pr_number, checkpoint)
+                capture = _cli_capture_from_sql(
+                    snapshot, repo, pr_number, checkpoint if validate_sql_checkpoint else None
+                )
             except EvidenceError as exc:
                 raise _SqlCaptureInvalid(str(exc)) from exc
             if validate_checkpoint_decisions:
@@ -1089,6 +1104,7 @@ def discover_cli_captures(
                         pr_number,
                         common,
                         validate_checkpoint_decisions=False,
+                        validate_sql_checkpoint=False,
                         records=records,
                     )
                 )

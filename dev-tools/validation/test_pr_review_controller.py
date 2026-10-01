@@ -3797,18 +3797,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(hosted_records.calls[0][0], "hosted-run")
         self.assertEqual(hosted_records.calls[0][1]["accepted_count"], 2)
 
-        mismatched_records = RecordsReader(
-            [
-                {
-                    "source_pr": 42,
-                    "channel": "hosted",
-                    "checkpoint_id": 7001,
-                    "checkpoint_fingerprint": sqlite_provider_imports._checkpoint_fingerprint(hosted_checkpoint),
-                    "provider_id": "9002",
-                    "run_id": "wrong-provider-run",
-                }
-            ]
-        )
+        mismatched_origin = dict(hosted_records.origins[0])
+        mismatched_origin["provider_id"] = "review:9002"
+        mismatched_records = RecordsReader([mismatched_origin])
         mismatched_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=mismatched_records)
         self.assertEqual(
             mismatched_evidence._source_resolution_status(42, "hosted", hosted_checkpoint, HEAD_1),

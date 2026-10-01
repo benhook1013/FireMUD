@@ -37,7 +37,12 @@ class ReviewRecordsCliTest(unittest.TestCase):
         ]
         parsed = cli._parser().parse_args([*prefix, "a" * 40, "--actor", "owner", "--proof-note", "verified"])
         self.assertEqual(parsed.fix_sha, "a" * 40)
-        for invalid_sha in ("a" * 12, "g" * 40, "a" * 39):
+        uppercase = "A" * 40
+        parsed_uppercase = cli._parser().parse_args(
+            [*prefix, uppercase, "--actor", "owner", "--proof-note", "verified"]
+        )
+        self.assertEqual(parsed_uppercase.fix_sha, uppercase)
+        for invalid_sha in ("a" * 12, "g" * 40, "a" * 39, "a" * 41):
             with self.subTest(invalid_sha=invalid_sha), self.assertRaises(SystemExit):
                 cli._parser().parse_args(
                     [*prefix, invalid_sha, "--actor", "owner", "--proof-note", "verified"]
