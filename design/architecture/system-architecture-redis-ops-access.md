@@ -470,7 +470,7 @@ The table above is the canonical post-reset verification checklist. Other runboo
 
 After recovery release, the first real fenced staging/release step separately verifies that the staging CAS advances exactly `-1 → 0` and `APPLIED → STAGED`; later ticks use the immediate-next terminal transition.
 
-**Target state only, once the canonical gated coordination-maintenance operation is implemented and proven:** Direct `redis-cli` writes to coordination prefixes are reserved for **break-glass scenarios** and must follow the incident guidelines in `system-architecture-redis.md` (auditing, post-incident reset, and verification). **Current deployments authorize no raw Coordination-prefix writes; any observed write is unsupported incident evidence and requires preserving the evidence, keeping the affected scope fenced, and escalating.** As an additional guardrail:
+**Target state only, once the canonical gated coordination-maintenance operation is implemented and proven:** Direct `redis-cli` writes to coordination prefixes are not an operator write path. Target incident break-glass mutations must use the owner-authorized gated wrapper and follow the incident guidelines in `system-architecture-redis.md` (auditing, scoped reset, and verification); operators must not issue raw Redis writes. **Current deployments authorize no raw Coordination-prefix writes and do not yet provide this wrapper; any observed write is unsupported incident evidence and requires preserving the evidence, keeping the affected scope fenced, and escalating.** As an additional guardrail:
 
 - When target reset tooling exists, any break-glass write that mutates `tick:*`, `timer:*`, `retry:*`, `remote:*`, `session:*`, `tick-executor-lease:*`, `tick-events:*`, `tick-events-offset:*`, or `tick-events-lease:*` must be followed by a reset/cleanup scope that actually covers the mutated prefix before normal tick processing resumes. Without that tooling, preserve the incident evidence, keep the affected scope fenced, and escalate through [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback) rather than attempting an unsupported follow-up reset:
   - For registered tagged region-scoped families (target `tick:{tenantRegionTag}:*`, excluding the legacy untagged `tick:lock:<tenantId>:<entityId>` family, plus `timer:*`, `retry:*`, and `tick-executor-lease:*`), run a region- or tenant-scoped coordination reset as appropriate.
@@ -484,7 +484,7 @@ Manual mutations of Account-owned `session:auth:account:*`, `session:auth:tenant
 
 - **Current fallback:** after such writes, preserve incident evidence, keep the affected scope fenced, and escalate through [Current Operator Fallback](./system-architecture-redis-reset-and-recovery.md#current-operator-fallback). The Coordination Reset Model is target-state only and applies after its canonical gated coordination-maintenance operation is implemented and proven.
 
-- When target reset tooling exists, break-glass flows should go through a small wrapper (CLI or Logging & Admin action) that:
+- When target reset tooling exists, break-glass flows must go through the owner-authorized gated wrapper (CLI or Logging & Admin action) that:
   - Executes the minimal required Redis mutation.
   - Immediately triggers the appropriate scoped coordination reset.
   - Emits a structured audit event (for example `coordination_break_glass`) recording:
@@ -516,7 +516,7 @@ This ensures that operators use the same abstractions as application code and re
 - Target state: the coordination maintenance CLI is shipped as part of the normal build/release pipeline under the canonical command name `coordination-maintenance`; environment packaging may wrap that command in a Gradle task, container entrypoint, or `dev-tools/` script. Once implemented and proven, target-state runbooks and Helm hooks may reference the bounded public operation names above. Current runbooks and Helm hooks must not invoke this unavailable command.
 - Target-state version rule: once the CLI is implemented and proven, operators must use only a version that matches the deployed services and Lua registry:
   - If the target CLI build version does **not** match the image tag or Git commit used for the running deployment, the target-state operator must not attempt coordination recovery actions; the operator must use the same artifact version or perform a coordinated upgrade.
-  - In the target state, break-glass or manual `redis-cli` operations are not an acceptable substitute for a mismatched maintenance CLI; they still require a scoped coordination reset afterwards and should be treated as incident-only paths. This does not make the unavailable CLI a current operator path.
+  - In the target state, manual `redis-cli` operations are not an acceptable substitute for a mismatched or unavailable maintenance CLI. Incident-only break-glass mutation must use the owner-authorized gated wrapper, which performs the scoped coordination reset and required verification; this does not make the unavailable wrapper or CLI a current operator path.
 
 Target-state runbooks may call the maintenance CLI entrypoint explicitly, after the implementation and proof gates above are complete, and should avoid embedding raw Redis commands. Current runbooks must not call the unavailable entrypoint.
 
