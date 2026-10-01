@@ -55,7 +55,7 @@ Every suppression produces durable evidence containing:
 
 - root and parent identities;
 - authored feature, script, and version identity;
-- deterministic child ordinal;
+- recorded owner-allocated child ordinal, with its persisted replay-stable mapping;
 - limit reason: depth, count, cost, or per-target;
 - actual and configured limit values;
 - required or optional classification; and

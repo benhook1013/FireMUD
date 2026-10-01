@@ -47,7 +47,7 @@ Within one entity's eligible queue, work uses persisted deterministic ordering:
 
 `(priority, due_tick_id, entity_enqueue_seq, source_kind, commandId_or_effectKey)`
 
-`entity_enqueue_seq` is monotonic within the entity's current region epoch and assigned by the owning Game Session admission/scheduling path. Same-tick derived children use the persisted parent order plus deterministic child ordinals rather than completion timing. New sources map into this tuple and do not introduce private tie-breakers.
+`entity_enqueue_seq` is monotonic within the entity's current region epoch and assigned by the owning Game Session admission/scheduling path. Same-tick derived children use the persisted parent order plus recorded owner-allocated child ordinals rather than completion timing. New sources map into this tuple and do not introduce private tie-breakers.
 
 The historical final tuple label `commandId_or_effectKey` is one normalized, persisted, source-specific stable identity slot: `command` uses `commandId`; `timer` uses the timer member ID; `retry` uses the persisted retry member/effect identity required by its owning contract; `remote_followup` uses the durable follow-up row ID; and `generated_effect` uses its recorded child `EffectId` as the slot value. Parent/root identity and child ordinal remain recorded audit and ordering context; they do not replace the child effect identity. The selected manifest retains the source-to-slot mapping and that context for each item; this does not introduce a second tuple or schema field. For generated children, the owner-defined ordinal and durable owner-scope/root/parent/ordinal-to-child-`EffectId` mapping are mandatory and replay-stable under accepted [ADR 0075](./adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md). Only scalar choices and additional allocator mechanics remain pending in [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md); that proposal does not defer the accepted child identity or mapping requirement.
 
@@ -87,7 +87,7 @@ Deferred because entity locks do not prove independence from shared room or mult
 
 ## Implementation and Proof Obligations
 
-Proof must cover one actor action plus bounded effects, per-entity ordering, deterministic child ordinals, cost-aware rotating/deficit fairness, bounded non-best-effort deferral, reserved lane budgets, source-flood resistance, crash before and after batch persistence, replay from the recorded manifest, epoch reset, scheduler-state recovery, and the prohibition on staging tick `N+1` before matching cleanup of tick `N`.
+Proof must cover one actor action plus bounded effects, per-entity ordering, owner-allocated persisted child ordinals and replay-stable mappings, cost-aware rotating/deficit fairness, bounded non-best-effort deferral, reserved lane budgets, source-flood resistance, crash before and after batch persistence, replay from the recorded manifest, epoch reset, scheduler-state recovery, and the prohibition on staging tick `N+1` before matching cleanup of tick `N`.
 
 The current runtime remains narrower and game-instance scoped; this decision does not claim the region scheduler or proof exists.
 
