@@ -1710,9 +1710,14 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-scripting-contracts.md",
     [
+        "The `(automationDispatchId, commandOrdinal)` pair is only an identity suffix and is insufficient by itself",
         "always-isolated test-only breaker or gate",
         "no environment, tenant, or request opt-in may cross that boundary",
     ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    ["(automationDispatchId, commandOrdinal)` pair is only a display suffix"],
 )
 require_absent(
     "design/architecture/system-architecture-scripting-contracts.md",
@@ -1873,6 +1878,13 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-tick-incident-runbook.md",
     [
+        "**Maintenance admission applies to both branches:**",
+        "Before either verifier CAS may mutate a ledger row, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged with the reconciliation evidence.",
+        "Owner, epoch, executor, manifest, or participant proof does not replace this external admission.",
+        "If the handoff is missing or unproved, make no mutation and use the existing fail-closed [Current Operator Fallback]",
+        "this incident remediation is maintenance, not ordinary crash replay.",
+        "Before its first mutation, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged",
+        "Missing or unproved handoff means no mutation: use the fail-closed [Current Operator Fallback]",
         "may be applied as an initial emergency fence",
         "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
