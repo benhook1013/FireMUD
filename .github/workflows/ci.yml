@@ -976,6 +976,7 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentFirstJoinCannotMixWithCompleteFencedRuntimeMembershipSnapshot()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#canonicalExistingPairBoundPositiveMembershipSnapshotRepeatsWithoutMutation()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#leftCommitsClosedAuthorityAndRetainedInactiveRuntimeSnapshot()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#auditAppendReadsBackExactStoredTimestampAndEnvelope()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentExactLeftRetriesAndReplayAfterReactivationDoNotChurnCurrentAuthority()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#committedLeftWithLostAcknowledgementReadsBackExactReceiptWithoutChurn()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#reusedLeftAndJoinRequestIdsAreRejectedWithoutCrossScopeMutation()' \

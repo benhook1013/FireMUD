@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -409,6 +410,46 @@ class AccountJoinPostgresIntegrationTest {
         .contains(left.receiptDigest());
     assertThat(audit.get("payload_digest", String.class))
         .isEqualTo(net.firedevops.firemud.accountservice.dto.AccountAuditDigest.ofPayload(payload));
+  }
+
+  @Test
+  void auditAppendReadsBackExactStoredTimestampAndEnvelope() {
+    JoinFixture fixture = fixture("active");
+    UUID auditEventId = UUID.randomUUID();
+    String payload =
+        "{\"accountUuid\":\""
+            + fixture.accountUuid()
+            + "\",\"tenantUuid\":\""
+            + fixture.tenantUuid()
+            + "\",\"evidence\":\"exact UTF-8 payload\"}";
+
+    List<AccountAuditEnvelope> appendedAndReadBack =
+        new TransactionTemplate(transactionManager)
+            .execute(
+                status -> {
+                  AccountAuditEnvelope appended =
+                      auditOutboxRepository.append(
+                          auditEventId,
+                          "tenant",
+                          fixture.tenantId(),
+                          "ACCOUNT_MEMBERSHIP_LEFT",
+                          payload);
+                  AccountAuditEnvelope durable =
+                      auditOutboxRepository
+                          .findMembershipLeftEnvelopeForUpdate(auditEventId, fixture.tenantId())
+                          .orElseThrow();
+                  return List.of(appended, durable);
+                });
+
+    assertThat(appendedAndReadBack).hasSize(2);
+    AccountAuditEnvelope appended = appendedAndReadBack.get(0);
+    AccountAuditEnvelope durable = appendedAndReadBack.get(1);
+    assertThat(appended).isEqualTo(durable);
+    assertThat(appended.payload()).isEqualTo(payload);
+    assertThat(appended.payloadDigest())
+        .isEqualTo(net.firedevops.firemud.accountservice.dto.AccountAuditDigest.ofPayload(payload));
+    assertThat(appended.occurredAt().getNano() % 1_000).isZero();
+    assertThat(countLeftAuditEvents(fixture)).isEqualTo(1L);
   }
 
   @Test

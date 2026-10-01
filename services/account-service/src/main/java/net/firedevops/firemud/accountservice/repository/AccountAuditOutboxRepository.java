@@ -50,6 +50,7 @@ public class AccountAuditOutboxRepository {
     row.setPayload(payload);
     row.setDeliveryStatus("PENDING");
     row.store();
+    row.refresh();
     return toEnvelope(row);
   }
 
