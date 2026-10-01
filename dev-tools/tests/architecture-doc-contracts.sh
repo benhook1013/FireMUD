@@ -2229,6 +2229,9 @@ automation_runtime = (
 game_design_version_control = (
     root / "design/architecture/microservices/game-design-service/version-control.md"
 ).read_text(encoding="utf-8")
+game_design_operations = (
+    root / "design/architecture/microservices/game-design-service/operations.md"
+).read_text(encoding="utf-8")
 deployment_environments = (
     root / "design/architecture/infrastructure/deployment-environments.md"
 ).read_text(encoding="utf-8")
@@ -2359,6 +2362,18 @@ for path, text in (
     ):
         if term not in text:
             raise SystemExit(f"{path}: missing Game Design V26 rollout-compatibility term {term!r}")
+
+for term in (
+    "This implemented success path is behind the required participant digest gate",
+    "ordinary full-version requests currently cannot reach it because Game Logic rejects the required full-version participant request",
+    "script-patch publication does not require the Game Logic participant",
+    "[Version Control](./version-control.md#owner-to-owner-digest-authorization-and-tenant-identity)",
+):
+    if term not in game_design_operations:
+        raise SystemExit(
+            "design/architecture/microservices/game-design-service/operations.md: "
+            f"missing full-version publication availability qualification {term!r}"
+        )
 
 print("architecture doc contracts passed")
 PY
