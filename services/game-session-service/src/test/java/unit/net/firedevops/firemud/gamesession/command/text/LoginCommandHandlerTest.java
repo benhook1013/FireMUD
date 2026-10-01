@@ -42,9 +42,12 @@ import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationSer
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.springframework.data.redis.serializer.SerializationException;
 
 @SuppressWarnings("unchecked")
 class LoginCommandHandlerTest {
@@ -705,6 +708,50 @@ class LoginCommandHandlerTest {
     assertEquals(
         "ERROR CONNECT_CONTEXT_INVALID Connect context invalid",
         joinedOutputText(result.outputs()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void bareLoginRejectsUnreadableRegistryContextWithoutPersistedFallback(
+      boolean serializationFailure) {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    SessionContext persisted =
+        new SessionContext(
+            1L,
+            22L,
+            ACCOUNT_77,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "persisted-scope",
+            "persisted-request");
+    stubSessionContext(persisted);
+    RuntimeException decodeFailure =
+        serializationFailure
+            ? new SerializationException("legacy numeric Account carrier")
+            : new ClassCastException("legacy numeric Account carrier");
+    when(firstPartyConnectContextRegistry.find(1L)).thenThrow(decodeFailure);
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    assertEquals(
+        "ERROR CONNECT_CONTEXT_INVALID Connect context invalid",
+        joinedOutputText(result.outputs()));
+    verify(accountClient, never()).authenticate(anyString(), anyString());
+    verify(accountClient, never()).requestEmailLoginOtp(anyString());
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
   }
 
   @Test

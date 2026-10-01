@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service;
 
 import java.util.Objects;
 import java.util.Optional;
+import org.springframework.data.redis.serializer.SerializationException;
 
 public record FirstPartyConnectContextResolution(
     Optional<FirstPartyConnectContext> connectContext, boolean invalid) {
@@ -16,8 +17,14 @@ public record FirstPartyConnectContextResolution(
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry) {
     Objects.requireNonNull(
         firstPartyConnectContextRegistry, "firstPartyConnectContextRegistry must not be null");
-    Optional<FirstPartyConnectContext> registryContext =
-        firstPartyConnectContextRegistry.find(sessionId);
+    Optional<FirstPartyConnectContext> registryContext;
+    try {
+      registryContext = firstPartyConnectContextRegistry.find(sessionId);
+    } catch (SerializationException | ClassCastException ex) {
+      // A retained value using the old numeric Account carrier is not an absent registry entry:
+      // treating it as absent would permit fallback to persisted session context.
+      return new FirstPartyConnectContextResolution(Optional.empty(), true);
+    }
     if (registryContext.isPresent()) {
       FirstPartyConnectContext connectContext = registryContext.orElseThrow();
       return new FirstPartyConnectContextResolution(

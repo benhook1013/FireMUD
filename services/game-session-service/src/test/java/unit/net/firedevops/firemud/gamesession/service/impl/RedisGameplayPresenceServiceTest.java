@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -16,6 +17,8 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SetOperations;
@@ -154,6 +157,35 @@ class RedisGameplayPresenceServiceTest {
     verify(setOperations).remove("gameplaypresence:22:7:sessions", "not-a-session");
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void listConnectedByGameInstancePreservesIndexForUnreadablePresence(
+      boolean serializationFailure) {
+    String indexKey = "gameplaypresence:22:7:sessions";
+    when(setOperations.members(indexKey)).thenReturn(new LinkedHashSet<>(List.of("5")));
+    when(valueOperations.get("gameplaypresence:session:5"))
+        .thenThrow(unreadablePresenceFailure(serializationFailure));
+
+    var result = service.listConnectedByGameInstance(22L, 7L);
+
+    assertEquals(List.of(), result);
+    verify(setOperations, Mockito.never()).remove(indexKey, "5");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void listConnectedByAccountIdsPreservesIndexForUnreadablePresence(boolean serializationFailure) {
+    String indexKey = "gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions";
+    when(setOperations.members(indexKey)).thenReturn(new LinkedHashSet<>(List.of("5")));
+    when(valueOperations.get("gameplaypresence:session:5"))
+        .thenThrow(unreadablePresenceFailure(serializationFailure));
+
+    var result = service.listConnectedByAccountIds(22L, List.of(ACCOUNT_PLAYER));
+
+    assertEquals(Map.of(), result);
+    verify(setOperations, Mockito.never()).remove(indexKey, "5");
+  }
+
   @Test
   void removeBySessionIdRemovesValueAndSetMembership() {
     when(valueOperations.get("gameplaypresence:session:3"))
@@ -179,6 +211,52 @@ class RedisGameplayPresenceServiceTest {
     verify(setOperations).remove("gameplaypresence:22:7:sessions", "3");
     verify(setOperations)
         .remove("gameplaypresence:22:account:" + ACCOUNT_PLAYER + ":sessions", "3");
+  }
+
+  @Test
+  void removeBySessionIdPreservesUnreadableRetainedPresence() {
+    String key = "gameplaypresence:session:5";
+    when(valueOperations.get(key)).thenThrow(new SerializationException("legacy record"));
+
+    assertThrows(SerializationException.class, () -> service.removeBySessionId(5L));
+
+    verifyNoPresenceMutations(key);
+  }
+
+  @Test
+  void removeBySessionIdPreservesWrongTypeRetainedPresence() {
+    String key = "gameplaypresence:session:5";
+    when(valueOperations.get(key)).thenReturn(42L);
+
+    assertThrows(ClassCastException.class, () -> service.removeBySessionId(5L));
+
+    verifyNoPresenceMutations(key);
+  }
+
+  @Test
+  void registerConnectedDoesNotOverwriteUnreadableRetainedPresence() {
+    String key = "gameplaypresence:session:1";
+    when(valueOperations.get(key)).thenThrow(new SerializationException("legacy record"));
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, ACCOUNT_PLAYER, "player@example.com", 202L, "Ben", 7L, "R-1", null);
+
+    assertThrows(SerializationException.class, () -> service.registerConnected(context));
+
+    verifyNoPresenceMutations(key);
+  }
+
+  @Test
+  void registerConnectedDoesNotOverwriteWrongTypeRetainedPresence() {
+    String key = "gameplaypresence:session:1";
+    when(valueOperations.get(key)).thenReturn(42L);
+    SessionContext context =
+        new SessionContext(
+            1L, 22L, ACCOUNT_PLAYER, "player@example.com", 202L, "Ben", 7L, "R-1", null);
+
+    assertThrows(ClassCastException.class, () -> service.registerConnected(context));
+
+    verifyNoPresenceMutations(key);
   }
 
   @Test
@@ -215,6 +293,21 @@ class RedisGameplayPresenceServiceTest {
 
     assertFalse(presence.isPresent());
     Mockito.verify(redisTemplate, Mockito.never()).delete(key);
+  }
+
+  private void verifyNoPresenceMutations(String presenceKey) {
+    verify(redisTemplate, Mockito.never()).delete(presenceKey);
+    verify(redisTemplate, Mockito.never()).expire(Mockito.anyString(), Mockito.any(Duration.class));
+    verify(valueOperations, Mockito.never())
+        .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
+    verify(setOperations, Mockito.never()).add(Mockito.anyString(), Mockito.any());
+    verify(setOperations, Mockito.never()).remove(Mockito.anyString(), Mockito.any());
+  }
+
+  private static RuntimeException unreadablePresenceFailure(boolean serializationFailure) {
+    return serializationFailure
+        ? new SerializationException("legacy record")
+        : new ClassCastException("legacy record");
   }
 
   @Test
