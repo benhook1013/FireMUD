@@ -13,6 +13,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -384,8 +385,12 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
     return gameSessionClient.listGameplayWorlds().stream()
-        .filter(world -> hasAdmissibleRealm(bootstrapContext, world.getWorldSlug()))
+        .filter(
+            world ->
+                hasAdmissibleRealm(
+                    bootstrapContext, world.getWorldSlug(), discoveryEntitlementMemo))
         .map(world -> new BootstrapWorldDto(world.getWorldSlug(), world.getDisplayName()))
         .toList();
   }
@@ -395,10 +400,13 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     return gameSessionClient.listGameplayRealms(worldSlug).stream()
-        .map(realm -> readAdmissibleDiscoveryRealm(bootstrapContext, realm))
+        .map(
+            realm ->
+                readAdmissibleDiscoveryRealm(bootstrapContext, realm, discoveryEntitlementMemo))
         .flatMap(Optional::stream)
         .map(
             realm ->
@@ -793,10 +801,15 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private boolean hasAdmissibleRealm(BootstrapContext bootstrapContext, String worldSlug) {
+  private boolean hasAdmissibleRealm(
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
     try {
       return gameSessionClient.listGameplayRealms(worldSlug).stream()
-          .map(realm -> readAdmissibleDiscoveryRealm(bootstrapContext, realm))
+          .map(
+              realm ->
+                  readAdmissibleDiscoveryRealm(bootstrapContext, realm, discoveryEntitlementMemo))
           .flatMap(Optional::stream)
           .findAny()
           .isPresent();
@@ -807,7 +820,8 @@ public class AccountServiceImpl implements AccountService {
 
   private Optional<RuntimeRealmTarget> readAdmissibleDiscoveryRealm(
       BootstrapContext bootstrapContext,
-      net.firedevops.firemud.gamesession.v1.GameplayRealm realm) {
+      net.firedevops.firemud.gamesession.v1.GameplayRealm realm,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
     final RuntimeRealmTarget target;
     try {
       target = readRuntimeRealmTarget(realm);
@@ -817,7 +831,9 @@ public class AccountServiceImpl implements AccountService {
       }
       return Optional.empty();
     }
-    return isRealmAdmissible(bootstrapContext, target) ? Optional.of(target) : Optional.empty();
+    return isDiscoveryRealmAdmissible(bootstrapContext, target, discoveryEntitlementMemo)
+        ? Optional.of(target)
+        : Optional.empty();
   }
 
   private boolean isMalformedRealmReachable(
@@ -855,6 +871,31 @@ public class AccountServiceImpl implements AccountService {
 
   private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery");
+    return entitlements.gameplayAvailable();
+  }
+
+  private boolean isDiscoveryRealmAdmissible(
+      BootstrapContext bootstrapContext,
+      RuntimeRealmTarget realm,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        discoveryEntitlementMemo.computeIfAbsent(
+            realm.tenantId(),
+            tenantId -> getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery"));
+    return entitlements.gameplayAvailable();
+  }
+
+  private boolean hasRealmAdmissionAccess(
+      BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
+    long tenantId = realm.tenantId();
     if (!isPublicProductionRealm(realm)) {
       if (accountTenantMembershipRepository
           .findByAccountIdAndTenantId(bootstrapContext.accountId(), tenantId)
@@ -867,9 +908,7 @@ public class AccountServiceImpl implements AccountService {
         return false;
       }
     }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery");
-    return entitlements.gameplayAvailable();
+    return true;
   }
 
   private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {

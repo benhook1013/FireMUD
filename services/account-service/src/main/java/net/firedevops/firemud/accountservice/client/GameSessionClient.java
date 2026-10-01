@@ -66,8 +66,7 @@ public class GameSessionClient
     try {
       var response = callStub().listGameplayWorlds(ListGameplayWorldsRequest.getDefaultInstance());
       if (response.hasError()) {
-        throw new IllegalStateException(
-            "Gameplay world discovery failed: " + response.getError().getCode());
+        throw discoveryFailure("Gameplay world discovery failed", response.getError().getCode());
       }
       return response.getWorldsList();
     } catch (StatusRuntimeException ex) {
@@ -82,8 +81,7 @@ public class GameSessionClient
               .listGameplayRealms(
                   ListGameplayRealmsRequest.newBuilder().setWorldSlug(worldSlug).build());
       if (response.hasError()) {
-        throw new IllegalStateException(
-            "Gameplay realm discovery failed: " + response.getError().getCode());
+        throw discoveryFailure("Gameplay realm discovery failed", response.getError().getCode());
       }
       return response.getRealmsList();
     } catch (StatusRuntimeException ex) {
@@ -124,6 +122,13 @@ public class GameSessionClient
 
   private GameSessionServiceGrpc.GameSessionServiceBlockingStub callStub() {
     return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private static RuntimeException discoveryFailure(String operation, String code) {
+    if ("INTERNAL".equals(code) || "UNAVAILABLE".equals(code) || "DEADLINE_EXCEEDED".equals(code)) {
+      return new AuthenticationException("AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
+    }
+    return new IllegalStateException(operation + ": " + code);
   }
 
   private static RuntimeException routingAuthorityUnavailable(StatusRuntimeException ex) {

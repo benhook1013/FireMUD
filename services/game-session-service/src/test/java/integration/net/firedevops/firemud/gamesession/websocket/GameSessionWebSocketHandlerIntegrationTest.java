@@ -307,14 +307,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .when(entityManagementClient)
         .listCharactersByAccount(
             eq("22"), eq("123"), eq("1"), eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
-    when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOGIN"), eq(false)))
-        .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(
             org.mockito.ArgumentMatchers.anyString(), eq("PLAY demo"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOOK"), eq(false)))
-        .thenReturn(CommandEnqueueResult.success());
-    when(commandService.enqueue(eq("41"), eq("LOGIN demo@example.com swordfish"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("41"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
@@ -326,8 +322,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
               gameplayPresenceService.setExplicitAfk(41L, true);
               return CommandEnqueueResult.success();
             });
-    when(commandService.enqueue(eq("42"), eq("LOGIN demo@example.com swordfish"), eq(false)))
-        .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("PLAY demo"), eq(false)))
@@ -488,7 +482,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.roomInstanceId()).isNotBlank();
             });
 
-    verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("41", "LOOK", false);
     verify(gameLogicClient)
         .resolveLook(
@@ -861,7 +855,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     && payload.contains("Emberline [lvl 12]")
                     && payload.contains("Sora [lvl 7]")
                     && payload.contains("Realm state: shared, creation: allow_new"));
-    verify(commandService).enqueue("41", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
     verify(entityManagementClient)

@@ -102,7 +102,7 @@ public final class LoginCommandHandler {
             LoginCommandConstants.INVALID_ARGUMENTS_CODE,
             LoginCommandConstants.INVALID_ARGUMENTS_MESSAGE);
       }
-      return handleVerifiedFirstPartyLogin(sessionId, command);
+      return handleVerifiedFirstPartyLogin(sessionId);
     }
     TextCommandPayload.Credentials credentials = maybeCredentials.orElseThrow();
     String canonicalLoginName = EmailCanonicalization.normalize(credentials.loginName());
@@ -196,8 +196,7 @@ public final class LoginCommandHandler {
                 LoginCommandConstants.EMAIL_LOGIN_CODE_MESSAGE, "message.login.code-sent")));
   }
 
-  private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(
-      String sessionId, TextCommand command) {
+  private LoginCommandHandlingResult handleVerifiedFirstPartyLogin(String sessionId) {
     SessionIdParsing.ParsedSessionId parsedSessionId = parseSessionId(sessionId);
     if (!parsedSessionId.valid()) {
       return invalidSessionFailure(parsedSessionId.errorMessage());

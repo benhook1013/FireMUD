@@ -19,9 +19,12 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.v1.GameSessionServiceGrpc;
 import net.firedevops.firemud.gamesession.v1.GetAdmissionPointerResponse;
+import net.firedevops.firemud.gamesession.v1.ListGameplayRealmsResponse;
 import net.firedevops.firemud.gamesession.v1.ListGameplayWorldsResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class GameSessionClientTest {
 
@@ -52,6 +55,44 @@ class GameSessionClientTest {
         assertThrows(AuthenticationException.class, () -> client.listGameplayRealms("demo"));
 
     assertUnavailable(failure, cause);
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void listGameplayWorldsMapsRetryableApplicationFailuresToUnavailable(String code)
+      throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    when(stub.listGameplayWorlds(any()))
+        .thenReturn(
+            ListGameplayWorldsResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode(code).setMessage("routing failed"))
+                .build());
+    GameSessionClient client = newClient(stub);
+
+    AuthenticationException failure =
+        assertThrows(AuthenticationException.class, client::listGameplayWorlds);
+
+    assertUnavailable(failure);
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"INTERNAL", "UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void listGameplayRealmsMapsRetryableApplicationFailuresToUnavailable(String code)
+      throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    when(stub.listGameplayRealms(any()))
+        .thenReturn(
+            ListGameplayRealmsResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode(code).setMessage("routing failed"))
+                .build());
+    GameSessionClient client = newClient(stub);
+
+    AuthenticationException failure =
+        assertThrows(AuthenticationException.class, () -> client.listGameplayRealms("demo"));
+
+    assertUnavailable(failure);
     verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
   }
 
@@ -133,6 +174,23 @@ class GameSessionClientTest {
   }
 
   @Test
+  void gameplayRealmDiscoveryPreservesNonRetryableApplicationError() throws Exception {
+    GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
+    when(stub.listGameplayRealms(any()))
+        .thenReturn(
+            ListGameplayRealmsResponse.newBuilder()
+                .setError(ErrorDetail.newBuilder().setCode("INVALID_ARGUMENT").setMessage("bad"))
+                .build());
+    GameSessionClient client = newClient(stub);
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> client.listGameplayRealms("demo"));
+
+    assertThat(failure).hasMessage("Gameplay realm discovery failed: INVALID_ARGUMENT");
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+  }
+
+  @Test
   void nonRetryableTransportStatusRetainsTransportClassification() throws Exception {
     GameSessionServiceGrpc.GameSessionServiceBlockingStub stub = mockStub();
     StatusRuntimeException cause =
@@ -152,6 +210,12 @@ class GameSessionClientTest {
     assertThat(failure.getMessage())
         .isEqualTo("Gameplay routing authority unavailable; retry later");
     assertThat(failure).hasCause(cause);
+  }
+
+  private static void assertUnavailable(AuthenticationException failure) {
+    assertThat(failure.getCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(failure.getMessage())
+        .isEqualTo("Gameplay routing authority unavailable; retry later");
   }
 
   private static GameSessionClient newClient(
