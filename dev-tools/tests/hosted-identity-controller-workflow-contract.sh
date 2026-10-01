@@ -631,6 +631,8 @@ contains "$waiter" 'publication_workloads=('
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt'
 contains "$waiter" 'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt'
+contains "$waiter" 'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt'
+contains "$waiter" 'firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt'
 for workload in \
   game-design-service \
   world-management-service \
