@@ -1385,6 +1385,131 @@ secret_expressions = [
     validation["expression"]
     for validation in secret_policy["spec"]["validations"]
 ]
+migrator_secret_retirement_allowance = (
+    "(request.userInfo.groups.exists(group, group == 'system:masters') && "
+    "request.subResource == '' && request.operation == 'DELETE' && "
+    "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$') && "
+    "request.name == 'firemud-grpc-game-design-baseline-migrator')"
+)
+
+
+def assert_migrator_secret_retirement_contract(candidate_secret_policy):
+    candidate_spec = candidate_secret_policy.get("spec", {})
+    candidate_validations = candidate_spec.get("validations", [])
+    assert len(candidate_validations) == 2, "Secret boundary must retain exactly two validations"
+    candidate_authorization = " ".join(
+        candidate_validations[0].get("expression", "").split()
+    )
+    assert candidate_authorization.count(migrator_secret_retirement_allowance) == 1
+    assert candidate_validations[0].get("message") == (
+        "managed identity and runtime TLS Secrets are writable only by the controller or "
+        "cert-manager for its owned identity Secret; system:masters may delete only the "
+        "exact migrator Secret in a runtime namespace"
+    )
+    candidate_cert_manager_guard = " ".join(
+        candidate_validations[1].get("expression", "").split()
+    )
+    assert candidate_cert_manager_guard.startswith(
+        "request.userInfo.username != 'system:serviceaccount:cert-manager:cert-manager' ||"
+    )
+    assert "request.operation in ['CREATE', 'UPDATE']" in candidate_cert_manager_guard
+    assert candidate_spec["matchConstraints"]["resourceRules"] == [
+        {
+            "apiGroups": [""],
+            "apiVersions": ["v1"],
+            "operations": ["CREATE", "UPDATE", "DELETE"],
+            "resources": ["secrets"],
+            "scope": "Namespaced",
+        }
+    ]
+    conditions = candidate_spec["matchConditions"]
+    assert len(conditions) == 1
+    condition = " ".join(conditions[0].get("expression", "").split())
+    generic_scope_start = condition.find(
+        "((request.namespace in ['dev', 'dev-identity']"
+    )
+    assert generic_scope_start >= 0
+    delete_start = condition.find("(request.operation == 'DELETE'", generic_scope_start)
+    assert delete_start > generic_scope_start
+    nondelete_start = condition.find("(request.operation != 'DELETE'", delete_start)
+    assert nondelete_start > delete_start
+    generic_scope = condition[generic_scope_start:delete_start]
+    generic_delete = condition[delete_start:nondelete_start]
+    assert "request.namespace in ['dev', 'dev-identity']" in generic_scope
+    assert "request.namespace.matches('^pr-[1-9][0-9]{0,50}$')" in generic_scope
+    assert "request.name == 'firemud-grpc-game-design-baseline-migrator'" in generic_delete
+
+
+assert_migrator_secret_retirement_contract(secret_policy)
+
+
+def master_migrator_secret_delete_is_allowed(
+    username, groups, namespace, name, operation, subresource
+):
+    # Membership in system:masters is the caller authority; username is not a
+    # separate authorization predicate in the parsed allowance above.
+    return (
+        "system:masters" in groups
+        and subresource == ""
+        and operation == "DELETE"
+        and re.fullmatch(r"(?:dev|pr-[1-9][0-9]{0,50})", namespace) is not None
+        and name == "firemud-grpc-game-design-baseline-migrator"
+    )
+
+
+assert master_migrator_secret_delete_is_allowed(
+    "operator@example.test",
+    ("system:masters",),
+    "dev",
+    "firemud-grpc-game-design-baseline-migrator",
+    "DELETE",
+    "",
+)
+assert master_migrator_secret_delete_is_allowed(
+    "operator@example.test",
+    ("system:masters",),
+    "pr-42",
+    "firemud-grpc-game-design-baseline-migrator",
+    "DELETE",
+    "",
+)
+for denied_retirement in (
+    ("system:serviceaccount:firemud-system:firemud-hosted-identity-controller", ("system:serviceaccounts",), "dev", "firemud-grpc-game-design-baseline-migrator", "DELETE", ""),
+    ("system:masters", ("system:authenticated",), "dev", "firemud-grpc-game-design-baseline-migrator", "DELETE", ""),
+    ("operator@example.test", ("system:masters",), "dev", "firemud-grpc-game-design-baseline-migrator-copy", "DELETE", ""),
+    ("operator@example.test", ("system:masters",), "dev-identity", "firemud-grpc-game-design-baseline-migrator", "DELETE", ""),
+    ("operator@example.test", ("system:masters",), "pr-42-identity", "firemud-grpc-game-design-baseline-migrator", "DELETE", ""),
+    ("operator@example.test", ("system:masters",), "production", "firemud-grpc-game-design-baseline-migrator", "DELETE", ""),
+    ("operator@example.test", ("system:masters",), "dev", "firemud-grpc-game-design-baseline-migrator", "UPDATE", ""),
+    ("operator@example.test", ("system:masters",), "dev", "firemud-grpc-game-design-baseline-migrator", "CREATE", ""),
+    ("operator@example.test", ("system:masters",), "dev", "firemud-grpc-game-design-baseline-migrator", "DELETE", "status"),
+):
+    assert not master_migrator_secret_delete_is_allowed(*denied_retirement), denied_retirement
+
+
+for retired_predicate in (
+    "request.userInfo.groups.exists(group, group == 'system:masters')",
+    "request.subResource == ''",
+    "request.operation == 'DELETE'",
+    "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')",
+    "request.name == 'firemud-grpc-game-design-baseline-migrator'",
+):
+    mutated_secret_policy = copy.deepcopy(secret_policy)
+    first_expression = mutated_secret_policy["spec"]["validations"][0]["expression"]
+    assert retired_predicate in first_expression, retired_predicate
+    mutated_secret_policy["spec"]["validations"][0]["expression"] = first_expression.replace(
+        retired_predicate, "true", 1
+    )
+    try:
+        assert_migrator_secret_retirement_contract(mutated_secret_policy)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError(
+            f"migrator Secret retirement contract accepted a missing {retired_predicate}"
+        )
+
+
 controller_secret_expression = next(
     expression
     for expression in secret_expressions
@@ -1559,7 +1684,7 @@ assert "object.metadata.name == 'dev-grpc-game-session-service'" in cert_manager
 assert "object.metadata.name == 'dev-grpc-social-groups-service'" in cert_manager_expression
 assert cert_manager_expression.count(
     "request.name == 'firemud-grpc-game-design-baseline-migrator'"
-) == 1, "migrator Secret admission match must be a single exact branch"
+) == 2, "migrator Secret must retain only its exact operator-retirement and namespace-controller branches"
 for migration_secret_gate in (
     "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')",
     "object.metadata.name == 'firemud-grpc-game-design-baseline-migrator'",
@@ -1593,6 +1718,12 @@ assert certificate_namespace_match.startswith(
     "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 )
 assert break_glass in certificate_namespace_match
+master_certificate_match_scope = (
+    "(request.userInfo.groups.exists(group, group == 'system:masters') && "
+    "(request.namespace == 'dev-identity' || "
+    "request.namespace.matches('^pr-[1-9][0-9]{0,50}-identity$')))"
+)
+assert certificate_namespace_match.count(master_certificate_match_scope) == 1
 assert "request.userInfo.username == 'system:serviceaccount:cert-manager:cert-manager' &&" in certificate_namespace_match
 assert "request.namespace.matches('^(dev-identity|pr-[1-9][0-9]{0,50}-identity)$')" in certificate_namespace_match
 assert "request.namespace == 'dev-identity'" in certificate_namespace_match
