@@ -422,14 +422,20 @@ public class AccountServiceImpl implements AccountService {
     long expiresAt = issuedAt + tokenProperties.getPlayerBootstrapExpirationMs();
     String bootstrapToken =
         mintToken(
-            String.valueOf(account.getId()),
+            account.getAccountUuid().toString(),
             tokenProperties.getPlayerBootstrapExpirationMs(),
-            Map.of("aud", "player-bootstrap", "accountId", account.getId(), "jti", jti));
+            Map.of(
+                "aud",
+                "player-bootstrap",
+                "accountId",
+                account.getAccountUuid().toString(),
+                "jti",
+                jti));
     sessionService.storeAccountSession(
         account.getId(), bootstrapToken, tokenProperties.getPlayerBootstrapExpirationMs());
     logger.info("Issued player bootstrap token for account {}", account.getId());
     return new PlayerBootstrapResult(
-        account.getId(),
+        account.getAccountUuid().toString(),
         bootstrapToken,
         Instant.ofEpochMilli(issuedAt).toString(),
         Instant.ofEpochMilli(expiresAt).toString());
@@ -543,7 +549,9 @@ public class AccountServiceImpl implements AccountService {
         || !caller.playableStateScope().equals(target.playableStateScope())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
-    requireAuthenticationEligible(requireAccount(caller.accountId()));
+    Account persistedCaller = requireAccount(caller.accountId());
+    requireAuthenticationEligible(persistedCaller);
+    UUID callerAccountUuid = requirePersistedAccountUuid(persistedCaller);
     RuntimeRealmTarget current =
         requireRealmTarget(target.tenantId(), target.worldSlug(), target.realmSlug());
     if (!isPublicProductionRealm(current)) {
@@ -562,7 +570,10 @@ public class AccountServiceImpl implements AccountService {
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     String scopeId =
         mintAndRetainConnectScope(
-            new BootstrapContext(caller.accountId()), current, evaluatedAt, expiresAt);
+            new BootstrapContext(callerAccountUuid, caller.accountId()),
+            current,
+            evaluatedAt,
+            expiresAt);
     return new DirectTextJoinScope(scopeId, expiresAt.toString());
   }
 
@@ -578,7 +589,9 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_CONTEXT_INVALID", "JOIN caller context is missing");
     }
-    requireAuthenticationEligible(requireAccount(caller.accountId()));
+    Account persistedCaller = requireAccount(caller.accountId());
+    requireAuthenticationEligible(persistedCaller);
+    requirePersistedAccountUuid(persistedCaller);
     return joinPublicProductionForTrustedCaller(
         caller.accountId(), caller.sessionId(), caller, request);
   }
@@ -1158,20 +1171,24 @@ public class AccountServiceImpl implements AccountService {
 
   private void validateDirectTextJoinScope(
       DirectTextCallerContext caller, VerifiedJoinScope scope) {
-    if (caller != null
-        && (caller.accountId() != scope.accountId()
-            || caller.tenantId() != scope.tenantId()
-            || !caller.realmId().equals(scope.realmId())
-            || caller.gameInstanceId() != scope.gameInstanceId()
-            || !caller.playableStateNamespaceId().equals(scope.playableStateNamespaceId())
-            || !caller.playableStateScope().equals(scope.playableStateScope()))) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    if (caller != null) {
+      requirePersistedAccountUuid(requireAccount(caller.accountId()));
+      if (caller.accountId() != scope.accountId()
+          || caller.tenantId() != scope.tenantId()
+          || !caller.realmId().equals(scope.realmId())
+          || caller.gameInstanceId() != scope.gameInstanceId()
+          || !caller.playableStateNamespaceId().equals(scope.playableStateNamespaceId())
+          || !caller.playableStateScope().equals(scope.playableStateScope())) {
+        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+      }
     }
   }
 
   private JoinEvaluation evaluateJoin(VerifiedJoinScope scope) {
+    UUID accountUuid = requirePersistedAccountUuid(requireAccount(scope.accountId()));
     return evaluateJoin(
         new ConnectScopeContext(
+            accountUuid,
             scope.accountId(),
             scope.tenantId(),
             scope.realmId(),
@@ -1483,15 +1500,18 @@ public class AccountServiceImpl implements AccountService {
             "CONNECT_CONTEXT_INVALID",
             "Missing bootstrap token",
             "Invalid bootstrap token");
+    UUID accountUuid;
+    long accountId;
     try {
-      long accountId = requireSignedActorAccountId(claims);
-      if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
-        throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
-      }
-      return new BootstrapContext(accountId);
-    } catch (IllegalArgumentException ex) {
+      accountUuid = requireSignedActorAccountUuid(claims);
+      accountId = resolveAccountStorageId(accountUuid);
+    } catch (IllegalArgumentException | IllegalStateException ex) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
     }
+    if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
+    }
+    return new BootstrapContext(accountUuid, accountId);
   }
 
   private RuntimeRealmTarget requireAdmissibleRealm(
@@ -1595,11 +1615,11 @@ public class AccountServiceImpl implements AccountService {
       Instant expiresAt) {
     long expirationMs = Math.max(1L, expiresAt.toEpochMilli() - evaluatedAt.toEpochMilli());
     return mintToken(
-        String.valueOf(bootstrapContext.accountId()),
+        bootstrapContext.accountUuid().toString(),
         expirationMs,
         Map.ofEntries(
             Map.entry("aud", "bootstrap-connect-scope"),
-            Map.entry("accountId", bootstrapContext.accountId()),
+            Map.entry("accountId", bootstrapContext.accountUuid().toString()),
             Map.entry("tenantId", realm.tenantId()),
             Map.entry("realmId", realm.realmId().toString()),
             Map.entry("worldSlug", realm.worldSlug()),
@@ -1615,7 +1635,7 @@ public class AccountServiceImpl implements AccountService {
                 "jti",
                 stableId(
                     "connect-scope",
-                    bootstrapContext.accountId(),
+                    bootstrapContext.accountUuid().toString(),
                     Long.toString(realm.tenantId()),
                     realm.worldSlug(),
                     realm.realmSlug(),
@@ -1672,9 +1692,8 @@ public class AccountServiceImpl implements AccountService {
             INVALID_CONNECT_SCOPE_MESSAGE,
             INVALID_CONNECT_SCOPE_MESSAGE);
     try {
-      JwtClaims.SignedGameplayRoutingClaims routingClaims =
-          JwtClaims.requireSignedGameplayRoutingClaims(
-              claims, "signed token account subject mismatch");
+      UUID accountUuid = requireSignedActorAccountUuid(claims);
+      long accountId = resolveAccountStorageId(accountUuid);
       Instant connectScopeExpiresAt = parseInstant(claims.get("connectScopeExpiresAt"));
       Instant evaluatedAt = parseInstant(claims.get("evaluatedAt"));
       if (connectScopeExpiresAt == null) {
@@ -1684,25 +1703,46 @@ public class AccountServiceImpl implements AccountService {
         throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
       }
       return new ConnectScopeContext(
-          routingClaims.accountId(),
-          routingClaims.tenantId(),
+          accountUuid,
+          accountId,
+          JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false),
           requireCanonicalRealmId(claims.get("realmId")),
-          routingClaims.worldSlug(),
-          routingClaims.realmSlug(),
+          JwtClaims.requireText(claims.get("worldSlug"), "worldSlug"),
+          JwtClaims.requireText(claims.get("realmSlug"), "realmSlug"),
           JwtClaims.requireText(claims.get("playableStateNamespaceId"), "playableStateNamespaceId"),
           JwtClaims.requireText(claims.get("playableStateScope"), "playableStateScope"),
-          routingClaims.gameInstanceId(),
+          JwtClaims.requireLong(claims.get("gameInstanceId"), "gameInstanceId", false),
           requirePositiveLong(claims.get("catalogRevision"), "catalogRevision"),
-          routingClaims.pointerVersion(),
+          JwtClaims.requireLong(claims.get("pointerVersion"), "pointerVersion", false),
           evaluatedAt,
           connectScopeExpiresAt);
-    } catch (IllegalArgumentException ex) {
+    } catch (IllegalArgumentException | IllegalStateException ex) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
     }
   }
 
-  private static long requireSignedActorAccountId(Claims claims) {
-    return JwtClaims.requireSignedActorAccountId(claims, "signed token account subject mismatch");
+  private static UUID requireSignedActorAccountUuid(Claims claims) {
+    UUID subjectAccountUuid = requireCanonicalAccountUuid(claims.getSubject(), "sub");
+    UUID claimedAccountUuid = requireCanonicalAccountUuid(claims.get("accountId"), "accountId");
+    if (!subjectAccountUuid.equals(claimedAccountUuid)) {
+      throw new IllegalArgumentException("signed token account subject mismatch");
+    }
+    return claimedAccountUuid;
+  }
+
+  private static UUID requireCanonicalAccountUuid(Object value, String claimName) {
+    if (!(value instanceof String text)) {
+      throw new IllegalArgumentException(claimName + " must be a canonical Account UUID");
+    }
+    try {
+      UUID accountUuid = UUID.fromString(text);
+      if (!accountUuid.toString().equals(text) || NIL_ACCOUNT_UUID.equals(accountUuid)) {
+        throw new IllegalArgumentException(claimName + " must be a canonical Account UUID");
+      }
+      return accountUuid;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException(claimName + " must be a canonical Account UUID", ex);
+    }
   }
 
   private Claims requireSignedTokenClaims(
@@ -1732,7 +1772,8 @@ public class AccountServiceImpl implements AccountService {
 
   private void validateConnectScopeAgainstBootstrap(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
-    if (scopeContext.accountId() != bootstrapContext.accountId()) {
+    if (!scopeContext.accountUuid().equals(bootstrapContext.accountUuid())
+        || scopeContext.accountId() != bootstrapContext.accountId()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
   }
@@ -1906,6 +1947,16 @@ public class AccountServiceImpl implements AccountService {
     return accountRepository
         .findById(accountId)
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+  }
+
+  private UUID requirePersistedAccountUuid(Account account) {
+    requireAuthenticationPersistedIdentity(account);
+    UUID accountUuid = account.getAccountUuid();
+    if (!account.getId().equals(resolveAccountStorageId(accountUuid))) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
+    return accountUuid;
   }
 
   private boolean hasRealmAccessGrant(
@@ -2343,7 +2394,7 @@ public class AccountServiceImpl implements AccountService {
         });
   }
 
-  private record BootstrapContext(long accountId) {}
+  private record BootstrapContext(UUID accountUuid, long accountId) {}
 
   private record JoinAuditPayload(
       long accountId,
@@ -2489,6 +2540,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private record ConnectScopeContext(
+      UUID accountUuid,
       long accountId,
       long tenantId,
       UUID realmId,

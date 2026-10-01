@@ -212,6 +212,108 @@ class AccountAuthenticationUuidIntegrationTest {
   }
 
   @Test
+  void playerBootstrapEmailOtpCarriesPersistedUuidAndConsumesChallengeExactlyOnce() {
+    Account persisted = createVerifiedAccount("bootstrap-otp");
+    UUID expectedAccountUuid = persisted.getAccountUuid();
+    String deliveredCode = requestEmailLoginOtpAndCaptureCode(persisted.getEmail());
+
+    var result = accountService.issuePlayerBootstrap(persisted.getEmail(), deliveredCode);
+
+    assertThat(result.accountId())
+        .isEqualTo(expectedAccountUuid.toString())
+        .isNotEqualTo(Long.toString(persisted.getId()));
+    var claims = jwtUtil.parseToken(result.bootstrapToken()).getPayload();
+    assertThat(claims.getSubject()).isEqualTo(expectedAccountUuid.toString());
+    assertThat(claims.get("accountId"))
+        .isInstanceOf(String.class)
+        .isEqualTo(expectedAccountUuid.toString());
+    assertThat(accountService.resolveAccountStorageId(expectedAccountUuid))
+        .isEqualTo(persisted.getId());
+    assertThat(challengeRepositorySpy.findByAccountId(persisted.getId())).isEmpty();
+    assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
+    assertThat(sessionService.isAccountSessionActive(persisted.getId(), result.bootstrapToken()))
+        .isTrue();
+
+    assertThatThrownBy(
+            () -> accountService.issuePlayerBootstrap(persisted.getEmail(), deliveredCode))
+        .isInstanceOf(AuthenticationException.class)
+        .hasMessage("Invalid credentials");
+    assertThat(challengeRepositorySpy.findByAccountId(persisted.getId())).isEmpty();
+    assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
+    assertThat(sessionService.isAccountSessionActive(persisted.getId(), result.bootstrapToken()))
+        .isTrue();
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(1))
+        .storeAccountSession(
+            org.mockito.ArgumentMatchers.eq(persisted.getId()),
+            org.mockito.ArgumentMatchers.eq(result.bootstrapToken()),
+            org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @Test
+  void bootstrapConsumerRejectsUnmappedAccountUuidBeforeSessionLookup() {
+    UUID unmappedAccountUuid = UUID.randomUUID();
+    String token =
+        jwtUtil.generateToken(
+            unmappedAccountUuid.toString(),
+            Map.of("aud", "player-bootstrap", "accountId", unmappedAccountUuid.toString()));
+
+    assertThatThrownBy(() -> accountService.listBootstrapWorlds(token))
+        .isInstanceOf(AuthenticationException.class)
+        .hasMessage("Invalid bootstrap token");
+
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .isAccountSessionActive(anyLong(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void bootstrapConnectScopeRejectsUnmappedAccountUuidBeforeScopeUse() {
+    Account persisted = createVerifiedAccount("boot-scope");
+    var bootstrap = accountService.issuePlayerBootstrap(persisted.getEmail(), PASSWORD);
+    UUID unmappedAccountUuid = UUID.randomUUID();
+    java.time.Instant evaluatedAt = java.time.Instant.now();
+    String connectScope =
+        jwtUtil.generateToken(
+            unmappedAccountUuid.toString(),
+            Map.ofEntries(
+                Map.entry("aud", "bootstrap-connect-scope"),
+                Map.entry("accountId", unmappedAccountUuid.toString()),
+                Map.entry("tenantId", "98123"),
+                Map.entry("realmId", UUID.randomUUID().toString()),
+                Map.entry("worldSlug", "demo"),
+                Map.entry("realmSlug", "production"),
+                Map.entry("playableStateNamespaceId", "namespace-1"),
+                Map.entry("playableStateScope", "SHARED"),
+                Map.entry("gameInstanceId", "123"),
+                Map.entry("catalogRevision", "1"),
+                Map.entry("pointerVersion", "1"),
+                Map.entry("evaluatedAt", evaluatedAt.toString()),
+                Map.entry("connectScopeExpiresAt", evaluatedAt.plusSeconds(60).toString()),
+                Map.entry("jti", "unmapped-scope")));
+    Long connectScopeRowsBefore =
+        Objects.requireNonNull(
+            dsl.resultQuery("SELECT COUNT(*) FROM account_connect_scope_records")
+                .fetchOne(0, Long.class),
+            "Expected account connect-scope record count");
+
+    assertThatThrownBy(
+            () ->
+                accountService.issueConnectToken(
+                    bootstrap.bootstrapToken(),
+                    new net.firedevops.firemud.accountservice.dto.ConnectTokenRequest(
+                        connectScope, "unmapped-scope-request")))
+        .isInstanceOfSatisfying(
+            AuthenticationException.class,
+            exception -> assertThat(exception.getCode()).isEqualTo("CONNECT_SCOPE_INVALID"));
+    assertThat(
+            Objects.requireNonNull(
+                dsl.resultQuery("SELECT COUNT(*) FROM account_connect_scope_records")
+                    .fetchOne(0, Long.class),
+                "Expected account connect-scope record count"))
+        .isEqualTo(connectScopeRowsBefore);
+    org.mockito.Mockito.verifyNoInteractions(gameSessionClient, entityManagementClient);
+  }
+
+  @Test
   void rejectedEmailOtpPersistsChallengeAttemptForControlUiAuthentication() {
     assertRejectedEmailOtpPersistsChallengeAttempt(OtpAuthenticationEntryPoint.CONTROL_UI);
   }

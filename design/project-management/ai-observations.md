@@ -184,3 +184,8 @@ Entry format:
   - Context: repeated Account PostgreSQL fixtures supplied `Long.class` or `UUID.class` to `DSLContext.fetchValue(String, Object...)` as if that SQL overload selected a return type.
   - Observation: the class is a bind argument, not a type selector; compilation alone did not prove correct SQL binding. Integration inspection corrected the fixtures before claiming execution.
   - Expected pattern: bind only actual SQL parameters with `resultQuery(sql, parameters)`, then use `fetchOne(columnIndex, type)` for typed extraction and an explicit required-row check where absence is impossible. Retain separate PostgreSQL execution proof; analyzer or compiler success is not that proof.
+
+- `2026-10-02`: Use the affected SpotBugs task's detailed log when no report is emitted
+  - Context: an Account `fullCheck` failed at `spotbugsTest` with exit code 1 but no report artifact or finding in the normal log.
+  - Observation: rerunning the affected canonical task with `-PfullCheck --info` exposed the exact unused-method finding. The obsolete numeric assertion helper was removed and the consolidated gate rerun; no analyzer suppression or disabled check was needed.
+  - Expected pattern: inspect the affected task's detailed output before searching for a report that its configuration does not emit, and keep the diagnostic run separate from the final consolidated proof.

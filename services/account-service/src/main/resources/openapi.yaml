@@ -104,7 +104,9 @@ components:
       type: object
       properties:
         accountId:
-          type: integer
+          type: string
+          format: uuid
+          description: Canonical non-nil persisted Account UUID; never the numeric database primary key.
         bootstrapToken:
           type: string
         issuedAt:
