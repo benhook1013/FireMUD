@@ -125,6 +125,30 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                      "```\n</details>\n" + issue),
         }]})
 
+    def test_invalid_and_ambiguous_comment_ids_leave_independent_archive_siblings(self) -> None:
+        self.hosted_display_run()
+        archive = json.loads(self.hosted_display_archive())
+        valid = archive["comments"][0]
+        valid["body"] = "_Bug_ | _Major_ | _Quick win_\n**Preserve the independent issue.**\nActual issue explanation."
+        ambiguous = {**valid, "id": 99, "body": "**Variant one.**"}
+        archive["comments"] += [None, "not a comment", {**valid, "id": False},
+                                {**valid, "id": "invalid"}, {**valid, "id": "²"},
+                                {**valid, "id": 100, "body": None}, ambiguous,
+                                {**ambiguous, "body": "**Variant two.**"}, ambiguous]
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+            projected = self.records._hosted_display_titles(connection, "display-run", 2839)
+        self.assertNotIn("hosted-comment:99", projected)
+        history = self.records.history(2839)
+        finding = history["findings"][0]
+        self.assertEqual(finding["display_title"], "Preserve the independent issue.")
+        self.assertEqual(finding["display_detail"], "Actual issue explanation.")
+        self.assertEqual(finding["display_severity"], "Major")
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_severity"], "Major")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
     def test_native_unheaded_title_excerpt_signal_preserves_full_body(self) -> None:
         paragraph = "An existing workflow must validate the incoming request identity before accepting repeated admission. " * 5
         captured = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, paragraph)[0]

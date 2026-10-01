@@ -120,6 +120,30 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_security_metadata_requires_complete_strict_provider_badge(self) -> None:
+        metadata = "\n**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Require durable proof.**\nKeep the prose."
+        valid = ("_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_",
+                 "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_")
+        invalid = ("_Security & Privacy_ | arbitrary authored prose",
+                   "_Security & Privacy narrative_ | _Major_ | _Heavy lift_",
+                   "_Security & Privacy_ | _Major impact_ | _Heavy lift_",
+                   "_Security & Privacy_ | _Unknown_ | _Heavy lift_",
+                   "_Security & Privacy_ | _Major_ | _Something else_",
+                   "_Security & Privacy_ | _Invented tier_ | _Major_ | _Heavy lift_",
+                   "```md\n" + valid[0] + "\n```")
+        for header in valid:
+            with self.subTest(header=header):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, header + metadata)[0]
+                self.assertEqual(finding["classification_titles"], ["Authorization Bypass"])
+                self.assertEqual(finding["title"], "Require durable proof.")
+        for header in invalid:
+            with self.subTest(header=header):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, header + metadata)[0]
+                self.assertEqual(finding["classification_titles"], [])
+                self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+                self.assertIn("**CWE:** CWE-693", finding["display_detail"])
+                self.assertIn(header, finding["display_detail"])
+
     def test_provider_security_structure_proves_classification_not_remediation(self) -> None:
         header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
         for classification, reachability, headline in (
@@ -200,7 +224,9 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         cases = [("_Potential issue_ | _🔴 Critical_ | _Quick win_", "Critical"),
                  ("_Correctness_ | _Trivial_ | _Heavy lift_", "Trivial"),
                  ("**[P1] Bug**", "P1"), ("> **Severity: High**", "High"),
-                 ("**Major**", "Major"), ("The Critical issue has Major impact.", None),
+                 ("**Major**", "Major"), ("**Major impact**", None),
+                 ("_Bug_ | _Major impact_ | _Quick win_", None),
+                 ("The Critical issue has Major impact.", None),
                  ("```md\n**Minor**\n```", None),
                  ("<details><summary>Prompt for AI Agents</summary>**Major**</details>", None),
                  ("<details><summary>Supported by static analysis</summary>**Low**</details>", None),

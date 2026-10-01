@@ -3204,6 +3204,7 @@ class SqliteReviewRecords:
             if content is not None:
                 archives.append(content)
         bodies: dict[int, str] = {}
+        ambiguous_ids: set[int] = set()
         try:
             for content in archives:
                 archive = json.loads(content)
@@ -3222,18 +3223,24 @@ class SqliteReviewRecords:
                     comments = [*comments, *nodes[:1]]
                 for comment in comments:
                     if not isinstance(comment, dict):
-                        return {}
+                        continue
                     author = comment.get("author", comment.get("user"))
                     if not isinstance(author, dict) or not github.is_coderabbit_login(author.get("login")):
                         continue
                     if comment.get("in_reply_to_id") is not None:
                         continue
-                    comment_id = github.immutable_database_id(comment)
+                    try:
+                        comment_id = github.immutable_database_id(comment)
+                    except (ValueError, TypeError, OverflowError):
+                        continue
                     body = comment.get("body")
-                    if comment_id is None or not isinstance(body, str):
-                        return {}
+                    if comment_id is None or not isinstance(body, str) or comment_id in ambiguous_ids:
+                        continue
                     if comment_id in bodies and bodies[comment_id] != body:
-                        return {}
+                        # Conflicting exact identity never picks a variant, including later repeats.
+                        ambiguous_ids.add(comment_id)
+                        bodies.pop(comment_id)
+                        continue
                     bodies[comment_id] = body
             titles = {}
             for comment_id, body in bodies.items():

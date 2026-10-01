@@ -149,7 +149,12 @@ def _hosted_issue_markdown(
     )
     # Security taxonomy is metadata only when the provider header and an
     # adjacent exploitability/CWE block prove that a later authored remediation exists.
-    if re.search(r"^_[^\n]*Security & Privacy[^\n]*_\s*\|", value, re.MULTILINE):
+    security_header = any(
+        _is_badge_line(line) and len(line.split("|")) in {3, 4}
+        and _badge_label_text(line.split("|")[0]).casefold() == "security & privacy"
+        for line in value.splitlines()
+    )
+    if security_header:
         pattern = re.compile(
             r"^\*\*([^\n*]+)\*\*[ \t]*\n[ \t\n]*"
             r"((?:\*\*(?:Reachability|Exploitability|CWE):\*\*[^\n]*\n[ \t\n]*)+)"
@@ -250,6 +255,21 @@ def _bold_line_content(line: str) -> str | None:
     return None
 
 
+def _badge_label_text(value: str) -> str:
+    return re.sub(r"^[^a-zA-Z0-9]+", "", value.strip().strip("_*")).strip()
+
+
+def _explicit_severity_label(value: str, *, priority_badge: bool = False) -> str | None:
+    labels = {label.casefold(): label for label in
+              ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")}
+    candidate = _badge_label_text(value)
+    candidate = re.sub(r"^severity\s*:\s*", "", candidate, flags=re.IGNORECASE)
+    priority = re.fullmatch(r"(P[0-3])\]?(?:\s+(?:Bug|Issue|Nit|Suggestion))?", candidate, re.IGNORECASE)
+    if priority and (priority_badge or re.fullmatch(r"P[0-3]\]?", candidate, re.IGNORECASE)):
+        candidate = priority.group(1)
+    return labels.get(candidate.casefold())
+
+
 def _is_badge_line(line: str) -> bool:
     """Identify severity/category-only lines so they cannot become a title."""
 
@@ -258,16 +278,14 @@ def _is_badge_line(line: str) -> bool:
     if len(sections) in {3, 4} and all(
         section.startswith("_") and section.endswith("_") for section in sections
     ):
-        severity_words = re.findall(r"[a-z0-9]+", sections[-2].casefold())
-        effort_words = set(re.findall(r"[a-z0-9]+", sections[-1].casefold()))
-        severity_labels = {"critical", "high", "major", "medium", "minor", "low", "trivial", "p0", "p1", "p2", "p3"}
-        effort_labels = ({"quick", "win"}, {"heavy", "lift"}, {"low", "value"})
-        known_tier = len(sections) == 3 or set(re.findall(r"[a-z]+", sections[1].casefold())) == {
-            "detected", "with", "advanced", "tier"
-        }
-        if known_tier and any(word in severity_labels for word in severity_words) and any(
-            label == effort_words for label in effort_labels
-        ):
+        category = _badge_label_text(sections[0]).casefold()
+        if category.startswith("security") and category != "security & privacy":
+            return False
+        severity = _explicit_severity_label(sections[-2])
+        effort = _badge_label_text(sections[-1]).casefold()
+        effort_labels = {"quick win", "heavy lift", "low value"}
+        known_tier = len(sections) == 3 or _badge_label_text(sections[1]).casefold() == "detected with advanced tier"
+        if known_tier and severity is not None and effort in effort_labels:
             return True
     for delimiter in ("**", "__"):
         if candidate.startswith(delimiter) and candidate.endswith(delimiter) and len(candidate) > 4:
@@ -285,8 +303,6 @@ def _hosted_display_severity(value: str) -> str | None:
     value = _hosted_issue_markdown(value, keep_badges=True)
     for start, end in reversed(_markdown_fenced_ranges(value)):
         value = value[:start] + "\n" + value[end:]
-    labels = {label.casefold(): label for label in
-              ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")}
     found = set()
     for raw in value.splitlines():
         line = re.sub(r"^(?:>\s*)+", "", raw.strip()).strip()
@@ -298,6 +314,7 @@ def _hosted_display_severity(value: str) -> str | None:
             if match and _is_badge_line(match.group()):
                 badge = match.group(1) or match.group(2)
         if badge is not None:
-            words = re.findall(r"[a-z0-9]+", badge.casefold())
-            found.update(labels[word] for word in words if word in labels)
+            label = _explicit_severity_label(badge, priority_badge=match is not None and "|" not in match.group())
+            if label is not None:
+                found.add(label)
     return next(iter(found)) if len(found) == 1 else None
