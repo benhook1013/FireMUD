@@ -2160,15 +2160,18 @@ class EntityManagementGrpcServiceTest {
   void listCharactersRejectsMalformedCurrentAccountClaimWithoutTenantAccess() {
     CharacterService characterService = Mockito.mock(CharacterService.class);
     EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
-    SessionContext.setContext("not-a-long", List.of(), Map.of());
+    try {
+      SessionContext.setContext("not-a-long", List.of(), Map.of());
 
-    ListCharactersByAccountResponse response =
-        invokeCharacterRosterWithPeer(
-            service, characterRosterRequest("1", "44", "44"), peer("game-session-service"));
+      ListCharactersByAccountResponse response =
+          invokeCharacterRosterWithPeer(
+              service, characterRosterRequest("1", "44", "44"), peer("game-session-service"));
 
-    assertEquals("PERMISSION_DENIED", response.getError().getCode());
-    verifyNoInteractions(characterService);
-    SessionContext.clear();
+      assertEquals("PERMISSION_DENIED", response.getError().getCode());
+      verifyNoInteractions(characterService);
+    } finally {
+      SessionContext.clear();
+    }
   }
 
   @Test

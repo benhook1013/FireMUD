@@ -2396,7 +2396,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapWorldsContinuesAfterOneTenantEntitlementIsUnavailable() {
+  void listBootstrapWorldsOmitsCanceledTenantAndFailsWhenEntitlementIsUnavailable() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2442,11 +2442,11 @@ class AccountServiceImplTest {
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
-    var knownAvailabilityWorlds = service.listBootstrapWorlds(bootstrap.bootstrapToken());
+    var worldsWithCanceledTenant = service.listBootstrapWorlds(bootstrap.bootstrapToken());
 
     assertEquals(
         java.util.List.of("demo"),
-        knownAvailabilityWorlds.stream().map(world -> world.worldSlug()).toList());
+        worldsWithCanceledTenant.stream().map(world -> world.worldSlug()).toList());
 
     Subscription activeSandbox = new Subscription();
     activeSandbox.setId(3L);
@@ -2455,14 +2455,15 @@ class AccountServiceImplTest {
     when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
     when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of(activeSandbox));
 
-    var worldsAfterUnavailableTenant = service.listBootstrapWorlds(bootstrap.bootstrapToken());
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
 
-    assertEquals(
-        java.util.List.of("sandbox"),
-        worldsAfterUnavailableTenant.stream().map(world -> world.worldSlug()).toList());
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.getCode());
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
         .findByTenantId(7L);
-    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
         .findByTenantId(8L);
   }
 

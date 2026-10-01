@@ -232,27 +232,13 @@ public class PlayCommandHandler {
 
         String character = selection.characterSelector();
         if (selectedRealm.requiresCharacterSelection() && !StringUtils.hasText(character)) {
-          return failure(
-              "PLAY_SELECTION_REQUIRED",
-              characterSelectionMessage(selectedWorld, selectedRealm),
-              "error.play.character-selection-required",
-              Map.of(
-                  "worldSlug",
-                  selectedWorld.slug(),
-                  "realmSlug",
-                  selectedRealm.slug(),
-                  "playUsage",
-                  playUsage(selectedWorld, selectedRealm),
-                  "charsUsage",
-                  charsUsage(selectedWorld, selectedRealm)),
-              selectedTenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              null,
-              null);
+          return characterSelectionRequiredFailure(selectedWorld, selectedRealm, selectedTenantTag);
         }
         ResolvedCharacter resolvedCharacter;
         try {
           resolvedCharacter = resolveCharacter(context, selectedRealm, character);
+        } catch (CharacterSelectionRequiredException ex) {
+          return characterSelectionRequiredFailure(selectedWorld, selectedRealm, selectedTenantTag);
         } catch (IllegalStateException ex) {
           return characterIdentityUnavailableFailure(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), character, ex);
@@ -501,7 +487,7 @@ public class PlayCommandHandler {
                           normalizeName(character.getName()), normalizeName(requestedCharacter)))
               .toList();
       if (matches.size() != 1) {
-        throw new IllegalStateException(
+        throw new CharacterSelectionRequiredException(
             matches.isEmpty()
                 ? "Selected character is not present in the authenticated account roster"
                 : "Selected character is ambiguous in the authenticated account roster");
@@ -509,7 +495,7 @@ public class PlayCommandHandler {
       selected = matches.getFirst();
     } else {
       if (roster.size() != 1) {
-        throw new IllegalStateException(
+        throw new CharacterSelectionRequiredException(
             "PLAY without a character requires exactly one current account character");
       }
       selected = roster.getFirst();
@@ -1008,6 +994,29 @@ public class PlayCommandHandler {
         + " first.";
   }
 
+  private PlayCommandHandlingResult characterSelectionRequiredFailure(
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm,
+      String tenantTag) {
+    return failure(
+        GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+        characterSelectionMessage(selectedWorld, selectedRealm),
+        "error.play.character-selection-required",
+        Map.of(
+            "worldSlug",
+            selectedWorld.slug(),
+            "realmSlug",
+            selectedRealm.slug(),
+            "playUsage",
+            playUsage(selectedWorld, selectedRealm),
+            "charsUsage",
+            charsUsage(selectedWorld, selectedRealm)),
+        tenantTag,
+        Long.toString(selectedRealm.gameInstanceId()),
+        null,
+        null);
+  }
+
   private String displaySelection(String world, String realm) {
     if (!StringUtils.hasText(realm)
         || gameplayWorldCatalog
@@ -1039,6 +1048,14 @@ public class PlayCommandHandler {
       String worldSelector, String explicitRealmSelector, String characterSelector) {}
 
   private record ResolvedCharacter(long id, String name) {}
+
+  private static final class CharacterSelectionRequiredException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private CharacterSelectionRequiredException(String message) {
+      super(message);
+    }
+  }
 
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
