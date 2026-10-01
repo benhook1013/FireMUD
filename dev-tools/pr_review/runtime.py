@@ -1730,7 +1730,7 @@ class LiveEvidence:
                 return None
             run_id = checkpoint.run_id
             if self.records is None:
-                return "pending"
+                return None
         if channel == "hosted":
             if type(checkpoint.comment_id) is not int or type(checkpoint.hosted_review_id) is not int:
                 return None

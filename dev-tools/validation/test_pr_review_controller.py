@@ -3699,6 +3699,11 @@ class ControllerTests(unittest.TestCase):
         cli_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=unreadable_records)
         cli_checkpoint = SimpleNamespace(run_id="run." + "a" * 32, comment_id=None, hosted_review_id=None, accepted=1)
         self.assertEqual(cli_evidence._source_resolution_status(42, "cli", cli_checkpoint, HEAD_1), "pending")
+        self.assertIsNone(
+            LiveEvidence("owner/repo", LiveGitHub("owner/repo"))._source_resolution_status(
+                42, "cli", cli_checkpoint, HEAD_1
+            )
+        )
 
         unlinked_records = RecordsReader([])
         unlinked_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=unlinked_records)

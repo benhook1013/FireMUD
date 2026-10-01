@@ -1523,8 +1523,8 @@ class SqliteReviewRecords:
         source_channel: ReviewChannel,
         source_head: str,
         accepted_count: int,
-    ) -> str:
-        """Return ``resolved`` only when every exact accepted observation has proof."""
+    ) -> str | None:
+        """Return proof status, or None for a CLI capture with no structured association."""
 
         run_id = _safe_identifier(run_id, "run_id", maximum=100)
         source_pr = _positive_pr(source_pr, "source PR")
@@ -1544,6 +1544,18 @@ class SqliteReviewRecords:
                 "FROM review_runs WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
+            if run is None and source_channel == "cli":
+                # CLI markers predate SQLite. Only an actual source association
+                # switches a retained capture from legacy to structured proof.
+                # Keep partial attempts/origins pending even if their run or
+                # link is missing, rather than silently downgrading to legacy.
+                associated = connection.execute(
+                    "SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? "
+                    "UNION ALL SELECT 1 FROM provider_origins WHERE run_id = ? LIMIT 1",
+                    (run_id, run_id, run_id),
+                ).fetchone()
+                if associated is None:
+                    return None
             if (
                 run is None
                 or run[0] != source_pr

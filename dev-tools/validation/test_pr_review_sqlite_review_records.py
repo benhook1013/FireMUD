@@ -1009,6 +1009,73 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 reason="too late",
             )
 
+    def test_cli_marker_without_sql_association_retains_legacy_handling(self) -> None:
+        self.bootstrap()
+        self.assertIsNone(
+            self.records.source_resolution_status(
+                "run.legacy",
+                source_pr=2828,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=1,
+            )
+        )
+
+    def test_partial_cli_association_cannot_fall_back_to_legacy_handling(self) -> None:
+        self.bootstrap()
+        run_id = "run.partial"
+        self.records.start_attempt(
+            attempt_id=run_id, source_pr=2828, channel="cli", candidate_sha="a" * 40
+        )
+        self.assertEqual(
+            self.records.source_resolution_status(
+                run_id, source_pr=2828, source_channel="cli", source_head="a" * 40, accepted_count=1
+            ),
+            "pending",
+        )
+        self.records.record_run(
+            run_id=run_id,
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            findings=(self.observation("finding"),),
+        )
+        self.records.finish_attempt(run_id, state="completed")
+        self.records.link_attempt_run(run_id, run_id)
+        # A missing run link or source row must not disguise a modern capture
+        # as legacy. Retain the attempt identity while simulating corruption.
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE review_attempts SET run_id = NULL WHERE attempt_id = ?", (run_id,))
+            connection.execute("DELETE FROM review_runs WHERE run_id = ?", (run_id,))
+        self.assertEqual(
+            self.records.source_resolution_status(
+                run_id, source_pr=2828, source_channel="cli", source_head="a" * 40, accepted_count=1
+            ),
+            "pending",
+        )
+
+    def test_sql_run_without_attempt_still_requires_exact_source_proof(self) -> None:
+        self.bootstrap()
+        self.records.record_run(
+            run_id="run.structured",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            findings=(self.observation("finding"),),
+        )
+        for source_pr in (2828, 2879):
+            with self.subTest(source_pr=source_pr):
+                self.assertEqual(
+                    self.records.source_resolution_status(
+                        "run.structured",
+                        source_pr=source_pr,
+                        source_channel="cli",
+                        source_head="a" * 40,
+                        accepted_count=1,
+                    ),
+                    "pending",
+                )
+
     def test_source_finding_resolution_requires_exact_accepted_source_and_preserves_counts(self) -> None:
         self.bootstrap()
         self.records.import_completed_run(
