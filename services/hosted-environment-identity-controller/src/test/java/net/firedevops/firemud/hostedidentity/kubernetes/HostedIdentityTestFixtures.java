@@ -62,7 +62,7 @@ public final class HostedIdentityTestFixtures {
               HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE ->
               plan.grpcIssuer();
           default -> {
-            if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+            if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
               yield plan.grpcIssuer();
             }
             throw new IllegalArgumentException("unsupported cert-manager role: " + role);
@@ -371,6 +371,48 @@ public final class HostedIdentityTestFixtures {
           .getAnnotations()
           .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "cert-manager");
     }
+    stubProjectionAndSource(
+        secretClient,
+        plan,
+        HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+        acceptedData,
+        acceptedData,
+        acceptedData);
+    secretClient
+        .runtimeSecrets()
+        .withName(secretName(plan, HostedIdentityContract.GRPC_ACCOUNT_ROLE))
+        .get()
+        .getMetadata()
+        .getAnnotations()
+        .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "cert-manager");
+    stubProjectionAndSource(
+        secretClient,
+        plan,
+        HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+        acceptedData,
+        acceptedData,
+        acceptedData);
+    secretClient
+        .runtimeSecrets()
+        .withName(secretName(plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE))
+        .get()
+        .getMetadata()
+        .getAnnotations()
+        .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "cert-manager");
+    stubProjectionAndSource(
+        secretClient,
+        plan,
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+        acceptedData,
+        acceptedData,
+        acceptedData);
+    secretClient
+        .runtimeSecrets()
+        .withName(secretName(plan, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE))
+        .get()
+        .getMetadata()
+        .getAnnotations()
+        .put(HostedIdentityContract.PROVENANCE_ANNOTATION, "cert-manager");
     SecretMaterialValidator validator = mock(SecretMaterialValidator.class);
     SecretMaterialValidator.MaterialSummary summary =
         new SecretMaterialValidator.MaterialSummary(
@@ -480,11 +522,35 @@ public final class HostedIdentityTestFixtures {
       case HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE -> plan.gatewayInternalWsSecretName();
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeSecretName();
       case HostedIdentityContract.GRPC_ROLE -> plan.grpcSecretName();
-      default -> plan.grpcPublicationSecretName(grpcPublicationWorkload(role));
+      default -> {
+        if (HostedIdentityContract.GRPC_ACCOUNT_ROLE.equals(role)) {
+          yield plan.grpcAccountSecretName();
+        }
+        if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
+          yield plan.grpcGameSessionSecretName();
+        }
+        if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
+          yield plan.grpcSocialGroupsSecretName();
+        }
+        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+          yield plan.grpcPublicationSecretName(
+              role.substring(HostedIdentityContract.GRPC_PUBLICATION_ROLE_PREFIX.length()));
+        }
+        throw new IllegalArgumentException("unsupported role");
+      }
     };
   }
 
   static String sourceSecretName(EnvironmentIdentityPlan plan, String role) {
+    if (HostedIdentityContract.GRPC_ACCOUNT_ROLE.equals(role)) {
+      return plan.grpcAccountSourceSecretName();
+    }
+    if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
+      return plan.grpcGameSessionSourceSecretName();
+    }
+    if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
+      return plan.grpcSocialGroupsSourceSecretName();
+    }
     if (HostedIdentityContract.isGrpcPublicationRole(role)) {
       return plan.grpcPublicationSourceSecretName(grpcPublicationWorkload(role));
     }

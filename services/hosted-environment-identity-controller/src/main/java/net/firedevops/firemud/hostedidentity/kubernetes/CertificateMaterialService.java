@@ -189,11 +189,60 @@ public class CertificateMaterialService {
       EnvironmentIdentityPlan plan,
       String workload,
       MaterializationBatch batch) {
-    String role = HostedIdentityContract.grpcPublicationRole(workload);
+    return grpcWorkloadIdentity(
+        client,
+        plan,
+        HostedIdentityContract.grpcPublicationRole(workload),
+        workload,
+        plan.grpcPublicationCertificateName(workload),
+        batch);
+  }
+
+  private RoleMaterial grpcAccount(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    return grpcWorkloadIdentity(
+        client,
+        plan,
+        HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+        HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD,
+        plan.grpcAccountCertificateName(),
+        batch);
+  }
+
+  private RoleMaterial grpcGameSession(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    return grpcWorkloadIdentity(
+        client,
+        plan,
+        HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+        HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD,
+        plan.grpcGameSessionCertificateName(),
+        batch);
+  }
+
+  private RoleMaterial grpcSocialGroups(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    return grpcWorkloadIdentity(
+        client,
+        plan,
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD,
+        plan.grpcSocialGroupsCertificateName(),
+        batch);
+  }
+
+  private RoleMaterial grpcWorkloadIdentity(
+      KubernetesClient client,
+      EnvironmentIdentityPlan plan,
+      String role,
+      String workload,
+      String certificateName,
+      MaterializationBatch batch) {
+    String sourceSecretName = plan.sourceSecretName(role);
     RoleExpectation expectation =
         new RoleExpectation(
-            plan.grpcPublicationDnsNames(workload),
-            List.of(plan.grpcPublicationUriSan(workload)),
+            plan.grpcWorkloadIdentityDnsNames(workload),
+            List.of(plan.grpcWorkloadIdentityUriSan(workload)),
             true,
             true,
             "kubernetes.io/tls",
@@ -202,8 +251,14 @@ public class CertificateMaterialService {
         client,
         plan,
         role,
-        certificateFactory.grpcPublication(plan, workload, properties.getGrpcRenewBefore()),
-        plan.sourceSecretName(role),
+        certificateFactory.grpcWorkloadIdentity(
+            plan,
+            role,
+            workload,
+            certificateName,
+            sourceSecretName,
+            properties.getGrpcRenewBefore()),
+        sourceSecretName,
         expectation,
         batch);
   }
@@ -342,6 +397,15 @@ public class CertificateMaterialService {
       String role = HostedIdentityContract.grpcPublicationRole(workload);
       observations.put(role, rotationObservation(client, plan, role));
     }
+    observations.put(
+        HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+        rotationObservation(client, plan, HostedIdentityContract.GRPC_ACCOUNT_ROLE));
+    observations.put(
+        HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+        rotationObservation(client, plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
+    observations.put(
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+        rotationObservation(client, plan, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE));
     String selectedRole =
         selectSerializedRole(
             observations.values().stream().map(RotationObservation::state).toList());
@@ -534,7 +598,7 @@ public class CertificateMaterialService {
         HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE.equals(role)
             || HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE.equals(role)
             || HostedIdentityContract.GRPC_ROLE.equals(role)
-            || HostedIdentityContract.isGrpcPublicationRole(role);
+            || HostedIdentityContract.isGrpcWorkloadIdentityRole(role);
     Secret validationSecret = accepted;
     String expectedType = current.expectedType();
     String expectedTrustAnchor = current.trustAnchor();
@@ -709,8 +773,8 @@ public class CertificateMaterialService {
           plan.gatewayInternalWsCertificateName();
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> plan.tcpProxyBridgeCertificateName();
       default -> {
-        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-          yield plan.grpcPublicationCertificateNames().get(role);
+        if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
+          yield plan.grpcWorkloadIdentityCertificateNames().get(role);
         }
         throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
       }
@@ -725,7 +789,7 @@ public class CertificateMaterialService {
           HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE ->
           plan.grpcIssuer();
       default -> {
-        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
+        if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
           yield plan.grpcIssuer();
         }
         throw new IllegalArgumentException("unsupported cert-manager identity role: " + role);
@@ -1215,6 +1279,18 @@ public class CertificateMaterialService {
 
     public RoleMaterial grpcPublication(String workload) {
       return CertificateMaterialService.this.grpcPublication(client, plan, workload, this);
+    }
+
+    public RoleMaterial grpcAccount() {
+      return CertificateMaterialService.this.grpcAccount(client, plan, this);
+    }
+
+    public RoleMaterial grpcGameSession() {
+      return CertificateMaterialService.this.grpcGameSession(client, plan, this);
+    }
+
+    public RoleMaterial grpcSocialGroups() {
+      return CertificateMaterialService.this.grpcSocialGroups(client, plan, this);
     }
 
     private List<GenericKubernetesResource> certificateRequests() {

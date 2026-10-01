@@ -53,17 +53,19 @@ contains_literal "$certificate_generator" \
 # These are literal source snippets; expansion would change what the contract checks.
 # shellcheck disable=SC2016
 for required in \
+  'escaped_key="${key//./\\.}"' \
   'get secret "$secret_name" --ignore-not-found -o name' \
   'failed to look up Kubernetes Secret ${namespace}/${secret_name}' \
-  "local jsonpath='{.metadata.name}'" \
   'jsonpath+="{\"|\"}{.data.${escaped_key}}"' \
+  'if read_secret_snapshot "$shared_secret"' \
+  "local jsonpath='{.metadata.name}'" \
   'jsonpath=${jsonpath}' \
   'failed to fetch Kubernetes Secret snapshot ${namespace}/${secret_name}' \
   'if ((shared_snapshot_status == 0)); then' \
   'assert_certificate_unexpired "$shared_cert"' \
   'shared gRPC TLS client certificate in Secret ${namespace}/${shared_secret}' \
   'assert_certificate_unexpired "$workload_cert"' \
-  'cert-manager publication certificate in Secret' \
+  'cert-manager workload certificate in Secret' \
   'cert-manager CA projection' \
   'openssl verify -CAfile "$workload_ca" "$workload_cert"' \
   'kubectl -n "$namespace" delete secret firemud-grpc-ca --ignore-not-found' \
@@ -80,6 +82,9 @@ for required in \
   '  world-management-service' \
   '  entity-management-service' \
   '  game-logic-service' \
+  '  account-service' \
+  '  game-session-service' \
+  '  social-groups-service' \
   '  automation-scripting-service'; do
   contains_literal "$standalone_grpc_tls" "$required"
 done
@@ -357,6 +362,35 @@ if ! grep -Eq '^Private-Key: \(2048 bit(, [0-9]+ primes)?\)$' <<<"$key_profile";
 fi
 openssl pkey -in "$certificate_fixture_dir/valid.key" -check -noout >/dev/null 2>&1 || {
   echo "generated publication key failed OpenSSL key validation" >&2
+  exit 1
+}
+"$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/social-groups.crt" "$certificate_fixture_dir/social-groups.key" \
+  pr-42 social-groups-service
+social_groups_sans="$(openssl x509 -in "$certificate_fixture_dir/social-groups.crt" \
+  -noout -ext subjectAltName)"
+grep -Fq 'URI:spiffe://firemud/ns/pr-42/sa/social-groups-service' \
+  <<<"$social_groups_sans" || {
+  echo "generated Social Groups certificate is missing its exact SPIFFE identity" >&2
+  exit 1
+}
+grep -Fq 'DNS:social-groups-service.pr-42.svc.cluster.local' \
+  <<<"$social_groups_sans" || {
+  echo "generated Social Groups certificate is missing its exact Service DNS SAN" >&2
+  exit 1
+}
+if "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/unsupported.crt" "$certificate_fixture_dir/unsupported.key" \
+  pr-42 unsupported-service >"$certificate_fixture_dir/unsupported.stdout" \
+  2>"$certificate_fixture_dir/unsupported.stderr"; then
+  echo "workload certificate helper accepted an unlisted service" >&2
+  exit 1
+fi
+grep -Fq 'unsupported gRPC workload identity: unsupported-service' \
+  "$certificate_fixture_dir/unsupported.stderr" || {
+  echo "workload certificate helper rejected an unknown service without the expected diagnostic" >&2
   exit 1
 }
 echo "dev-demo certificate fixture: canonical workload certificate generated" >&2
@@ -1715,6 +1749,9 @@ for required in (
     '"firemud-grpc-tls|grpc|tls.crt,tls.key,ca.crt,client.crt,client.key"',
     'publication_workloads=(',
     'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt',
     '    game-design-service',
     '    world-management-service',
     '    entity-management-service',
