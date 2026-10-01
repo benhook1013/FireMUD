@@ -113,7 +113,7 @@ When an explicitly preserved tick-aligned interval keeps a logical timer alive a
 
 ### End-to-End `onInterval` Timer Lifecycle
 
-This section summarizes how a single `onInterval` timer behaves across normal operation, leader changes, and script reloads, and which Redis keys are authoritative at each step.
+This section summarizes how a single `onInterval` timer behaves across normal operation, leader changes, and script reloads. Durable `script_schedule_instances` rows in PostgreSQL are authoritative schedule state; Redis keys are rebuildable coordination projections, as defined by [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md).
 
 Timer, schedule, firing, and catch-up identities must be instance-aware even when Redis keys are region-scoped for slotting and locality. The per-region scheduler runtime-progress hint is intentionally namespace-independent: its opaque key tag carries the full tenant/game/region scope, while its payload carries only `{regionEpoch, latestTickId}`; it is derived progress, never timer, due, or admission identity.
 

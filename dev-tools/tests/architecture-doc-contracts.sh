@@ -1819,6 +1819,7 @@ require_contains(
         "`eventType`",
         "`eventSchemaVersion` (admitted event and payload contract version, including tenant-readiness `onLoad`; see [normative Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields))",
         "`scriptPatchVersion`",
+        "absent with `scriptPinEpoch` for pre-instance requests such as tenant-readiness `onLoad`, while `scriptPatchVersion` remains required",
     ],
 )
 require_contains(
@@ -2020,6 +2021,7 @@ require_absent(
 require_contains(
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
     [
+        "Durable `script_schedule_instances` rows in PostgreSQL are authoritative schedule state; Redis keys are rebuildable coordination projections, as defined by [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md).",
         "resume-window record per `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun>`",
         "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "The server-derived `playableStateScope` is persisted separately as immutable policy/routing/authorization/migration-fence evidence and is exact-validated; it is not part of the window identity.",
@@ -2816,6 +2818,14 @@ require_contains(
         "**Target state only:** Redis timer indexes, scheduler progress hints, queue pointers",
         "This reload sequence is target-state behavior",
         "current PostgreSQL schedule-definition and schedule-instance substrate",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-lua-patterns.md",
+    [
+        "While an untagged legacy `jti` marker may still represent a token accepted in its original window, replay admission remains blocked.",
+        "absence of a tagged target key alone never proves the legacy token unused",
+        "Resolving that continuity condition does not release quarantine: all ADR 0029 deadline, exact fenced probe, old-writer, and owner release gates still apply.",
     ],
 )
 require_contains(
