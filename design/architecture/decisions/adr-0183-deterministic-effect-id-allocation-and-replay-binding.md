@@ -39,6 +39,8 @@ The canonical scalar `EffectId` is an opaque, lowercase, hyphenated UUIDv7 textu
 
 If accepted, Game Session would own command-root allocation, while the owner of a generated child, non-command root, or remote/fan-out leg would own its corresponding allocation boundary. Each boundary would allocate once, durably persist the value, and atomically bind it to the complete immutable owner scope, operation, exact target where applicable, request digest, enclosing root, parent, and stable ordinal. Insert-if-absent uniqueness would cover the logical mapping and scalar claim. A collision or any conflicting binding would fail closed; it would not remint or substitute an ID.
 
+Under this proposal, a command root's enclosing root is its own persisted `EffectId`, and its parent is explicitly absent (`null`). The first allocation durably binds that exact root mapping; retry and replay reuse the same scalar and binding.
+
 Retries, replay, failover, and reconciliation read and reuse the persisted mapping and exact scalar. Participants receive the persisted mutation identity and use it in their guard, ledger, response, and terminal outcome. The enclosing root remains lineage and reconciliation context for a child; it does not replace the child's identity or collapse siblings. A post-abandon re-drive receives a new explicitly linked identity under its own admission contract.
 
 ### Proposed command-root serialization refinements
