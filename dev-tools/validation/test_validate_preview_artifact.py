@@ -2058,19 +2058,18 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
             "game-session-service",
             "social-groups-service",
         ):
-            with self.subTest(mode="standalone", workload=workload):
-                with self.assertRaisesRegex(
-                    ValueError, "runtime NetworkPolicy set is not closed"
-                ):
-                    self.validator.validate_network_policies(
-                        standalone
-                        + [
-                            self._policy_document(
-                                f"{workload}-controller-ingress", {}
-                            )
-                        ],
-                        "standalone",
-                    )
+            with self.subTest(mode="standalone", workload=workload), self.assertRaisesRegex(
+                ValueError, "runtime NetworkPolicy set is not closed"
+            ):
+                self.validator.validate_network_policies(
+                    standalone
+                    + [
+                        self._policy_document(
+                            f"{workload}-controller-ingress", {}
+                        )
+                    ],
+                    "standalone",
+                )
         for workload in (
             "account-service",
             "game-session-service",
@@ -2082,13 +2081,12 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
                 if document["metadata"]["name"]
                 != f"{workload}-controller-ingress"
             ]
-            with self.subTest(mode="hosted-controller", missing=workload):
-                with self.assertRaisesRegex(
-                    ValueError, "runtime NetworkPolicy set is not closed"
-                ):
-                    self.validator.validate_network_policies(
-                        missing_policy, "hosted-controller"
-                    )
+            with self.subTest(mode="hosted-controller", missing=workload), self.assertRaisesRegex(
+                ValueError, "runtime NetworkPolicy set is not closed"
+            ):
+                self.validator.validate_network_policies(
+                    missing_policy, "hosted-controller"
+                )
 
         for workload in (
             "account-service",
