@@ -1979,11 +1979,14 @@ class EntityManagementGrpcServiceTest {
     ListCharactersByAccountRequest request = characterRosterRequest("1", "2", "44");
     SessionContext.setContext(null, List.of(), Map.of(), true, "game-session-service", "test");
 
-    ListCharactersByAccountResponse response = invokeCharacterRoster(service, request);
+    try {
+      ListCharactersByAccountResponse response = invokeCharacterRoster(service, request);
 
-    assertEquals("PERMISSION_DENIED", response.getError().getCode());
-    verifyNoInteractions(characterService);
-    SessionContext.clear();
+      assertEquals("PERMISSION_DENIED", response.getError().getCode());
+      verifyNoInteractions(characterService);
+    } finally {
+      SessionContext.clear();
+    }
   }
 
   @Test
@@ -1993,12 +1996,15 @@ class EntityManagementGrpcServiceTest {
     ListCharactersByAccountRequest request = characterRosterRequest("1", "2", "44");
     SessionContext.setContext("99", List.of(), Map.of());
 
-    ListCharactersByAccountResponse response =
-        invokeCharacterRosterWithPeer(service, request, peer("game-session-service"));
+    try {
+      ListCharactersByAccountResponse response =
+          invokeCharacterRosterWithPeer(service, request, peer("game-session-service"));
 
-    assertEquals("PERMISSION_DENIED", response.getError().getCode());
-    verifyNoInteractions(characterService);
-    SessionContext.clear();
+      assertEquals("PERMISSION_DENIED", response.getError().getCode());
+      verifyNoInteractions(characterService);
+    } finally {
+      SessionContext.clear();
+    }
   }
 
   @Test
