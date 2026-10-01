@@ -70,11 +70,103 @@ class RuntimeTest(unittest.TestCase):
                 )
                 observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
 
-                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "pending")
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "unavailable")
                 self.assertNotIn(42, observer._records_histories)
                 self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "resolved")
                 self.assertEqual(records.history.call_count, 2)
+                self.assertEqual(records.history.call_args.kwargs, {"include_display": False})
                 records.source_resolution_status.assert_called_once()
+
+    def test_hosted_source_resolution_reports_record_status_read_failures_as_unavailable(self) -> None:
+        origin = {
+            "source_pr": 42,
+            "checkpoint_id": 55,
+            "channel": "hosted",
+            "provider_id": "901",
+            "repository": "owner/repo",
+            "run_id": "hosted-run-901",
+        }
+        checkpoint = evidence.Checkpoint(
+            comment_id=55,
+            created_at="2026-09-30T12:00:00Z",
+            type="hosted",
+            raw_found=1,
+            accepted=1,
+            reviewed_sha=HEAD,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=901,
+        )
+        for failure in (
+            sqlite_review_records.ReviewRecordsError("unavailable"),
+            OSError("unavailable"),
+        ):
+            records = SimpleNamespace(
+                history=unittest.mock.Mock(return_value={"provider_origins": [origin], "attempts": []}),
+                source_resolution_status=unittest.mock.Mock(side_effect=failure),
+            )
+            observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+            with self.subTest(error=type(failure).__name__):
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "unavailable")
+
+    def test_closed_pr_archived_cooldown_uses_response_time_and_casefolds_repository(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        terminal_at = now.isoformat().replace("+00:00", "Z")
+        reservation = self._trigger_record(created=terminal_at)
+        reservation.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
+        reservation["anchor"]["pr"] = 99
+        path = Path("/unused/pr-99/trigger.json")
+
+        cases = (
+            ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True),
+            ("delayed observation", now - timedelta(minutes=20), terminal_at, "owner/repo", False),
+            ("missing response time", None, terminal_at, "owner/repo", False),
+            ("response after terminal", now + timedelta(minutes=1), terminal_at, "owner/repo", False),
+        )
+        for label, response_at, observed_at, repository, should_hold in cases:
+            with self.subTest(case=label):
+                response = {
+                    "databaseId": 11,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": "Review rate limited. Next reviews available in: 10 minutes.",
+                }
+                if response_at is not None:
+                    response["createdAt"] = response_at.isoformat().replace("+00:00", "Z")
+                artifacts = {
+                    "metadata": json.dumps(
+                        {
+                            "state": "rate_limited",
+                            "terminal": True,
+                            "attributable": True,
+                            "repository": repository,
+                            "pull_request": 99,
+                            "head_sha": HEAD,
+                            "trigger_id": 10,
+                            "response_id": 11,
+                            "observed_at": observed_at,
+                        }
+                    ),
+                    "hosted_comments": json.dumps({"comments": [response]}),
+                }
+                attempt = {
+                    "attempt_id": "attempt-99",
+                    "channel": "hosted",
+                    "state": "rate_limited",
+                    "candidate_sha": HEAD,
+                    "finished_at": observed_at,
+                    "trigger_id": "10",
+                    "provider_review_id": "11",
+                }
+                runner.records = SimpleNamespace(
+                    attempt_history=lambda _pr, attempt=attempt: [attempt],
+                    attempt_artifacts=lambda _attempt_id, artifacts=artifacts: artifacts,
+                )
+                with patch.object(hosted, "load_trigger_reservation", return_value=reservation):
+                    reset = runner._closed_repository_cooldown_until(99, [path])
+                self.assertEqual(reset is not None, should_hold)
 
     def test_hosted_source_resolution_rejects_malformed_or_foreign_origin_repository(self) -> None:
         origin = {
@@ -213,7 +305,7 @@ class RuntimeTest(unittest.TestCase):
                         runner._assert_no_other_active_reservations(42, Path(directory))
                 fetch.assert_not_called()
 
-    def test_archived_edited_rate_limit_uses_sqlite_terminal_timestamp(self) -> None:
+    def test_archived_edited_rate_limit_uses_response_creation_timestamp(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         now = datetime.now(timezone.utc).replace(microsecond=0)
         trigger_at = now - timedelta(minutes=30)
@@ -284,7 +376,6 @@ class RuntimeTest(unittest.TestCase):
                 patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
                 patch.object(github, "fetch_api_endpoint", return_value=[]),
                 patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
-                self.assertRaisesRegex(ControllerError, "cooldown.*closed PR"),
             ):
                 runner._assert_no_other_active_reservations(42, common)
             fetch.assert_not_called()

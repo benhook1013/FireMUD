@@ -2573,6 +2573,7 @@ class SqliteReviewRecords:
         pr: int,
         *,
         include_legacy_routes: bool = False,
+        include_display: bool = True,
         _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Return machine-readable source and incoming route history for one PR.
@@ -2587,6 +2588,8 @@ class SqliteReviewRecords:
         pr = _positive_pr(pr)
         if not isinstance(include_legacy_routes, bool):
             raise ReviewRecordsError("include_legacy_routes must be boolean")
+        if not isinstance(include_display, bool):
+            raise ReviewRecordsError("include_display must be boolean")
         try:
             with (
                 contextlib.closing(self._connect(read_only=True))
@@ -2829,8 +2832,9 @@ class SqliteReviewRecords:
                         (pr,),
                     )
                 ]
-                self._add_hosted_display_titles(connection, observations, routes)
-                self._add_run_durations(connection, runs)
+                if include_display:
+                    self._add_hosted_display_titles(connection, observations, routes)
+                    self._add_run_durations(connection, runs)
                 return {
                     "pr": pr,
                     "runs": runs,
@@ -2850,7 +2854,13 @@ class SqliteReviewRecords:
         except (OSError, sqlite3.DatabaseError, json.JSONDecodeError) as exc:
             raise ReviewRecordsError("cannot read SQLite review history") from exc
 
-    def history_batch(self, prs: Sequence[int], *, include_legacy_routes: bool = False) -> dict[int, dict[str, Any]]:
+    def history_batch(
+        self,
+        prs: Sequence[int],
+        *,
+        include_legacy_routes: bool = False,
+        include_display: bool = True,
+    ) -> dict[int, dict[str, Any]]:
         """Read several PR histories from one SQLite snapshot."""
 
         if isinstance(prs, (str, bytes)) or not isinstance(prs, Sequence) or not 1 <= len(prs) <= 200:
@@ -2864,7 +2874,12 @@ class SqliteReviewRecords:
                 connection.execute("BEGIN")
                 self._require_compatible(connection)
                 return {
-                    pr: self.history(pr, include_legacy_routes=include_legacy_routes, _connection=connection)
+                    pr: self.history(
+                        pr,
+                        include_legacy_routes=include_legacy_routes,
+                        include_display=include_display,
+                        _connection=connection,
+                    )
                     for pr in selected
                 }
         except ReviewRecordsError:
@@ -3281,7 +3296,10 @@ class SqliteReviewRecords:
                         title = None
                     else:
                         # Enforce the same bounded/secret-free title contract as writes.
-                        FindingObservation(source_finding_key=finding["key"], title=title)
+                        try:
+                            FindingObservation(source_finding_key=finding["key"], title=title)
+                        except ReviewRecordsError:
+                            title = None
                     titles[finding["key"]] = {
                         "display_title": title,
                         "display_detail": finding["display_detail"],
