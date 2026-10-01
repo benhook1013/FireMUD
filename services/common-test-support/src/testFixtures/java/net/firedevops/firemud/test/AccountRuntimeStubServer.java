@@ -4,6 +4,7 @@ import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -22,12 +23,18 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.account.AccountProfileJson;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
@@ -39,7 +46,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           "Authenticate",
           "GetTenantMembershipForRuntime",
           "GetRealmAccessGrantForRuntime",
-          "GetTenantEntitlementsForRuntime");
+          "GetTenantEntitlementsForRuntime",
+          "IssueDirectTextConnectScope",
+          "JoinPublicProductionMembership");
 
   private final Server server;
   private final List<AuthenticateRequest> authenticateRequests = new CopyOnWriteArrayList<>();
@@ -49,8 +58,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final AtomicBoolean allowPublicJoin = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
   private final AtomicLong defaultAccountId = new AtomicLong(1L);
+  private final AtomicLong nextConnectScopeId = new AtomicLong(1L);
   private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
   private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
+  private final Map<String, StubConnectScope> connectScopesById = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
     this.server = NettyServerBuilder.forPort(port).addService(this).build().start();
@@ -199,6 +210,109 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   @Override
+  public void issueDirectTextConnectScope(
+      IssueDirectTextConnectScopeRequest request,
+      StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
+    PlayerExecutionContext caller = request.getPlayerContext();
+    if (caller.getAccountId().isBlank()
+        || caller.getTenantId().isBlank()
+        || caller.getRealmId().isBlank()
+        || caller.getGameInstanceId().isBlank()
+        || caller.getPlayableStateNamespaceId().isBlank()
+        || caller.getPlayableStateScope().isBlank()
+        || request.getTenantId().isBlank()
+        || request.getRealmId().isBlank()
+        || request.getGameInstanceId().isBlank()
+        || request.getWorldSlug().isBlank()
+        || request.getRealmSlug().isBlank()
+        || request.getPlayableStateNamespaceId().isBlank()
+        || request.getPlayableStateScope().isBlank()
+        || !caller.getTenantId().equals(request.getTenantId())
+        || !caller.getRealmId().equals(request.getRealmId())
+        || !caller.getGameInstanceId().equals(request.getGameInstanceId())
+        || !caller.getPlayableStateNamespaceId().equals(request.getPlayableStateNamespaceId())
+        || !caller.getPlayableStateScope().equals(request.getPlayableStateScope())) {
+      responseObserver.onNext(
+          IssueDirectTextConnectScopeResponse.newBuilder()
+              .setError(
+                  ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage("Direct-text connect scope request is incomplete"))
+              .build());
+    } else {
+      String scopeId = "stub-connect-scope-" + nextConnectScopeId.getAndIncrement();
+      Instant expiresAt = Instant.now().plusSeconds(300);
+      connectScopesById.put(
+          scopeId,
+          new StubConnectScope(
+              caller.getAccountId(),
+              request.getTenantId(),
+              request.getRealmId(),
+              request.getGameInstanceId(),
+              request.getPlayableStateNamespaceId(),
+              request.getPlayableStateScope(),
+              expiresAt));
+      responseObserver.onNext(
+          IssueDirectTextConnectScopeResponse.newBuilder()
+              .setConnectScopeId(scopeId)
+              .setConnectScopeExpiresAt(expiresAt.toString())
+              .build());
+    }
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void joinPublicProductionMembership(
+      JoinPublicProductionMembershipRequest request,
+      StreamObserver<JoinPublicProductionMembershipResponse> responseObserver) {
+    PlayerExecutionContext caller = request.getPlayerContext();
+    StubConnectScope scope = connectScopesById.get(request.getConnectScopeId());
+    if (request.getConnectScopeId().isBlank()
+        || request.getRequestId().isBlank()
+        || !request.getRequestId().equals(caller.getRequestId())
+        || caller.getAccountId().isBlank()
+        || caller.getTenantId().isBlank()
+        || scope == null
+        || !scope.expiresAt().isAfter(Instant.now())
+        || !scope.accountId().equals(caller.getAccountId())
+        || !scope.tenantId().equals(caller.getTenantId())
+        || !scope.realmId().equals(caller.getRealmId())
+        || !scope.gameInstanceId().equals(caller.getGameInstanceId())
+        || !scope.playableStateNamespaceId().equals(caller.getPlayableStateNamespaceId())
+        || !scope.playableStateScope().equals(caller.getPlayableStateScope())) {
+      responseObserver.onNext(
+          JoinPublicProductionMembershipResponse.newBuilder()
+              .setError(
+                  ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage("Direct-text JOIN request is incomplete"))
+              .build());
+    } else if (!allowPublicJoin.get()) {
+      responseObserver.onNext(
+          JoinPublicProductionMembershipResponse.newBuilder()
+              .setOutcomeCode("PUBLIC_PRODUCTION_ADMISSION_DENIED")
+              .setAccountId(caller.getAccountId())
+              .setTenantId(caller.getTenantId())
+              .build());
+    } else {
+      membershipExists.set(true);
+      gameplayAdmissionAllowed.set(true);
+      responseObserver.onNext(
+          JoinPublicProductionMembershipResponse.newBuilder()
+              .setSuccess(true)
+              .setOutcomeCode("JOINED")
+              .setAccountId(caller.getAccountId())
+              .setTenantId(caller.getTenantId())
+              .setMembershipId(
+                  "stub-membership-" + caller.getAccountId() + "-" + caller.getTenantId())
+              .setMembershipVersion(1L)
+              .setMembershipAuthorityGeneration(1L)
+              .build());
+    }
+    responseObserver.onCompleted();
+  }
+
+  @Override
   public void getProfile(
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
     long accountId = Long.parseLong(request.getAccountId());
@@ -262,4 +376,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           visibilityPolicy == null ? DEFAULT_VISIBILITY_POLICY : visibilityPolicy);
     }
   }
+
+  private record StubConnectScope(
+      String accountId,
+      String tenantId,
+      String realmId,
+      String gameInstanceId,
+      String playableStateNamespaceId,
+      String playableStateScope,
+      Instant expiresAt) {}
 }

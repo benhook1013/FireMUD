@@ -6,6 +6,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
@@ -13,6 +14,7 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.HttpTestSupport;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -57,6 +59,7 @@ class AccountApplicationIntegrationTest {
 
   @LocalServerPort private int port;
   @Autowired private JwtUtil jwtUtil;
+  @Autowired private DSLContext dsl;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -67,6 +70,51 @@ class AccountApplicationIntegrationTest {
   void pingEndpointReturnsPong() {
     String body = HttpTestSupport.getBodyUnchecked("http://localhost:" + port + "/ping");
     assertThat(body).contains("pong");
+  }
+
+  @Test
+  void publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly() throws Exception {
+    String suffix = UUID.randomUUID().toString().substring(0, 8);
+    String username = "global-" + suffix;
+    String email = username + "@example.com";
+    HttpRequest request =
+        HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/accounts"))
+            .header(HttpHeaders.CONTENT_TYPE, "application/json")
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    "{\"username\":\""
+                        + username
+                        + "\",\"email\":\""
+                        + email
+                        + "\",\"password\":\"password123\",\"tenantId\":999}"))
+            .build();
+
+    HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+    assertThat(response.statusCode()).isEqualTo(200);
+    Number accountId =
+        dsl.resultQuery("SELECT id FROM accounts WHERE email = ?", email).fetchOne(0, Number.class);
+    assertThat(accountId).isNotNull();
+    assertThat(dsl.fetchValue("SELECT tenant_id FROM accounts WHERE id = ?", accountId.longValue()))
+        .isNull();
+    assertThat(dsl.fetchValue("SELECT role FROM accounts WHERE id = ?", accountId.longValue()))
+        .isNull();
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_tenant_membership WHERE account_id = ?",
+                accountId.longValue()))
+        .isEqualTo(0L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM profiles WHERE account_id = ?", accountId.longValue()))
+        .isEqualTo(0L);
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM account_audit_outbox "
+                    + "WHERE scope = 'platform' AND tenant_id IS NULL "
+                    + "AND event_type = 'ACCOUNT_REGISTERED' AND payload = ?",
+                "{\"accountId\":" + accountId.longValue() + "}"))
+        .isEqualTo(1L);
   }
 
   @Test

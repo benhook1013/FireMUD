@@ -3,6 +3,9 @@ package net.firedevops.firemud.accountservice.controller;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -13,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.BootstrapCharacterDto;
 import net.firedevops.firemud.accountservice.dto.BootstrapRealmDto;
@@ -26,6 +30,7 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import org.junit.jupiter.api.Test;
@@ -36,6 +41,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.yaml.snakeyaml.Yaml;
 import tools.jackson.databind.ObjectMapper;
 
 @WebMvcTest(AuthController.class)
@@ -46,6 +52,38 @@ class AuthControllerTest {
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @MockitoBean private AccountService accountService;
+
+  @Test
+  void publicOpenApiOmitsUnavailableBootstrapJoin() throws Exception {
+    try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
+      Map<String, Object> document = new Yaml().load(input);
+      Map<String, Object> paths = (Map<String, Object>) document.get("paths");
+      Map<String, Object> components = (Map<String, Object>) document.get("components");
+      Map<String, Object> schemas = (Map<String, Object>) components.get("schemas");
+
+      assertFalse(paths.containsKey("/auth/bootstrap/join"));
+      assertTrue(((Map<String, Object>) paths.get("/auth/player-bootstrap")).containsKey("post"));
+      assertTrue(((Map<String, Object>) paths.get("/auth/connect-token")).containsKey("post"));
+      assertFalse(schemas.containsKey("JoinPublicProductionRequest"));
+      assertFalse(schemas.containsKey("JoinPublicProductionResult"));
+    }
+  }
+
+  @Test
+  void publicOpenApiDocumentsRetryableCharacterDiscoveryOutage() throws Exception {
+    try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
+      Map<String, Object> document = new Yaml().load(input);
+      Map<String, Object> paths = (Map<String, Object>) document.get("paths");
+      Map<String, Object> characterPath =
+          (Map<String, Object>)
+              paths.get("/auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters");
+      Map<String, Object> operation = (Map<String, Object>) characterPath.get("get");
+      Map<String, Object> responses = (Map<String, Object>) operation.get("responses");
+      Map<String, Object> outage = (Map<String, Object>) responses.get("503");
+
+      assertEquals("#/components/responses/RetryableAuthenticationUnavailable", outage.get("$ref"));
+    }
+  }
 
   @Test
   void loginReturnsTokenAndAccountId() throws Exception {
@@ -170,10 +208,14 @@ class AuthControllerTest {
                 new BootstrapRealmDto(
                     "demo",
                     "production",
+                    "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
                     "Live Realm",
                     1L,
                     42L,
                     17L,
+                    23L,
+                    "8b1a9953-c461-4f4c-9f6d-1f5c5c0d2d88",
+                    "PLAYABLE_STATE_SCOPE_SHARED",
                     false,
                     "SHARED",
                     "ALLOW_NEW",
@@ -188,6 +230,13 @@ class AuthControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
         .andExpect(jsonPath("$.data[0].realmSlug").value("production"))
+        .andExpect(jsonPath("$.data[0].realmId").value("4c4b57d8-e3a2-48fe-9977-e7df0fdce901"))
+        .andExpect(jsonPath("$.data[0].catalogRevision").value(23))
+        .andExpect(
+            jsonPath("$.data[0].playableStateNamespaceId")
+                .value("8b1a9953-c461-4f4c-9f6d-1f5c5c0d2d88"))
+        .andExpect(jsonPath("$.data[0].playableStateScope").value("PLAYABLE_STATE_SCOPE_SHARED"))
+        .andExpect(jsonPath("$.data[0].stateScope").value("SHARED"))
         .andExpect(jsonPath("$.data[0].connectScopeId").value("scope-1"));
   }
 
@@ -217,6 +266,21 @@ class AuthControllerTest {
         .andExpect(status().isBadRequest());
 
     verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void listBootstrapCharactersReportsRetryableEntitlementOutage() throws Exception {
+    when(accountService.listBootstrapCharacters("boot123", "demo", "production", "scope-1"))
+        .thenThrow(new AuthenticationException("ENTITLEMENT_UNAVAILABLE", "Authority unavailable"));
+
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms/production/characters")
+                .param("connectScopeId", "scope-1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("ENTITLEMENT_UNAVAILABLE"));
   }
 
   @Test

@@ -12,6 +12,8 @@ import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResponse;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
 import net.firedevops.firemud.accountservice.dto.EmailVerificationRequest;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
+import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
@@ -19,6 +21,7 @@ import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.dto.UsernameRecoveryRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.ApiResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseCookie;
@@ -87,6 +90,19 @@ public class AuthController {
         ApiResponse.success(
             accountService.listBootstrapCharacters(
                 bootstrapToken, worldSlug, realmSlug, connectScopeId)));
+  }
+
+  @PostMapping("/bootstrap/join")
+  public ResponseEntity<ApiResponse<JoinPublicProductionResult>> joinPublicProduction(
+      @RequestHeader(value = HttpHeaders.AUTHORIZATION, required = false) String authorization,
+      @Valid @RequestBody JoinPublicProductionRequest request) {
+    JoinPublicProductionResult result =
+        accountService.joinPublicProduction(extractBearerToken(authorization), request);
+    if (!result.success()) {
+      throw new AuthenticationException(
+          result.outcomeCode(), "JOIN was denied for the selected realm");
+    }
+    return ResponseEntity.ok(ApiResponse.success(result));
   }
 
   @PostMapping("/connect-token")

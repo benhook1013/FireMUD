@@ -5,7 +5,9 @@ info:
     API for user accounts and authentication. The obsolete caller-asserted
     POST /accounts/{accountId}/external route is removed and denied at the
     public edge; no provider-linking route is available until the
-    server-verified global-account flow and its proof converge.
+    server-verified global-account flow and its proof converge. The public
+    POST /auth/bootstrap/join facade is target-only and denied until Account
+    recovery, PostgreSQL, and direct text-client proof are complete.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0
@@ -37,26 +39,20 @@ components:
   schemas:
     CreateAccountRequest:
       type: object
-      description: Current API shape requires tenantId; target global registration with explicit JOIN remains unimplemented.
+      description: Creates a global account. Tenant membership and profiles are established separately.
       properties:
-        tenantId:
-          type: integer
-          format: int64
-          minimum: 1
         username:
           type: string
         email:
           type: string
         password:
           type: string
-      required: [tenantId, username, email, password]
+      required: [username, email, password]
     AccountDto:
       type: object
       properties:
         id:
           type: integer
-        tenantId:
-          type: string
         username:
           type: string
         email:
@@ -168,11 +164,16 @@ components:
           type: string
     BootstrapRealmDto:
       type: object
+      required:
+        [worldSlug, realmSlug, realmId, catalogRevision, playableStateNamespaceId, playableStateScope]
       properties:
         worldSlug:
           type: string
         realmSlug:
           type: string
+        realmId:
+          type: string
+          format: uuid
         displayName:
           type: string
         tenantId:
@@ -181,8 +182,23 @@ components:
           type: integer
         pointerVersion:
           type: integer
+        catalogRevision:
+          type: integer
+          format: int64
+          minimum: 1
+        playableStateNamespaceId:
+          type: string
+          format: uuid
+        playableStateScope:
+          type: string
+          enum: [PLAYABLE_STATE_SCOPE_SHARED, PLAYABLE_STATE_SCOPE_ISOLATED]
         requiresCharacterSelection:
           type: boolean
+        stateScope:
+          type: string
+          enum: [SHARED, ISOLATED]
+        characterCreationPolicy:
+          type: string
         evaluatedAt:
           type: string
         connectScopeExpiresAt:
@@ -564,8 +580,9 @@ paths:
           description: Invalid request
   /accounts:
     post:
-      summary: Create a new account
+      summary: Create a new global account
       operationId: createAccount
+      description: Registration creates global account and security state only; it does not join a tenant or create a profile.
       security: []
       requestBody:
         required: true

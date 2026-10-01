@@ -186,6 +186,9 @@ public class PlayCommandHandler {
       }
 
       GameplayWorldCatalog.WorldView selectedWorld = maybeWorld.get();
+      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(selectedWorld)) {
+        return admissionPointerUnavailableFailure(tenantTag, null);
+      }
       FirstPartyConnectContextResolution connectContextResolution =
           FirstPartyConnectContextResolution.resolve(
               context.sessionId(), context, firstPartyConnectContextRegistry);
@@ -215,6 +218,10 @@ public class PlayCommandHandler {
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
       String selectedTenantTag = Long.toString(selectedRealm.tenantId());
+      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(selectedRealm.tenantId())) {
+        return admissionPointerUnavailableFailure(
+            selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
+      }
       try (GameplayLoggingContext worldContext =
           GameplayLoggingContext.open(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), null, null)) {
@@ -847,6 +854,19 @@ public class PlayCommandHandler {
         tenantTag,
         gameInstanceTag,
         Long.toString(requestedCharacterId),
+        null);
+  }
+
+  private PlayCommandHandlingResult admissionPointerUnavailableFailure(
+      String tenantTag, String gameInstanceTag) {
+    return failure(
+        "ADMISSION_POINTER_UNAVAILABLE",
+        "Gameplay admission pointer is unavailable",
+        "error.play.authority-unavailable",
+        Map.of(),
+        tenantTag,
+        gameInstanceTag,
+        null,
         null);
   }
 

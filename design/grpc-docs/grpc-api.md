@@ -41,6 +41,10 @@ for conventions on schema evolution and error handling. See each service's
     - [GetTenantEntitlementsForRuntimeResponse](#account-v1-GetTenantEntitlementsForRuntimeResponse)
     - [GetTenantMembershipForRuntimeRequest](#account-v1-GetTenantMembershipForRuntimeRequest)
     - [GetTenantMembershipForRuntimeResponse](#account-v1-GetTenantMembershipForRuntimeResponse)
+    - [IssueDirectTextConnectScopeRequest](#account-v1-IssueDirectTextConnectScopeRequest)
+    - [IssueDirectTextConnectScopeResponse](#account-v1-IssueDirectTextConnectScopeResponse)
+    - [JoinPublicProductionMembershipRequest](#account-v1-JoinPublicProductionMembershipRequest)
+    - [JoinPublicProductionMembershipResponse](#account-v1-JoinPublicProductionMembershipResponse)
     - [LinkExternalAccountRequest](#account-v1-LinkExternalAccountRequest)
     - [LinkExternalAccountResponse](#account-v1-LinkExternalAccountResponse)
     - [ListPresenceVisibilityPoliciesRequest](#account-v1-ListPresenceVisibilityPoliciesRequest)
@@ -505,8 +509,14 @@ for conventions on schema evolution and error handling. See each service's
     - [PingResponse](#logging_admin-v1-PingResponse)
     - [QueryLogsRequest](#logging_admin-v1-QueryLogsRequest)
     - [QueryLogsResponse](#logging_admin-v1-QueryLogsResponse)
+    - [ReadLogEventReceiptRequest](#logging_admin-v1-ReadLogEventReceiptRequest)
+    - [ReadLogEventReceiptResponse](#logging_admin-v1-ReadLogEventReceiptResponse)
     - [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest)
     - [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse)
+
+    - [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome)
+    - [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus)
+    - [AccountAuditScope](#logging_admin-v1-AccountAuditScope)
 
     - [LoggingAdminService](#logging_admin-v1-LoggingAdminService)
 
@@ -524,6 +534,9 @@ for conventions on schema evolution and error handling. See each service's
 
 - [shared/v1/paging.proto](#shared_v1_paging-proto)
     - [PagingRequest](#shared-v1-PagingRequest)
+
+- [shared/v1/player_execution_context.proto](#shared_v1_player_execution_context-proto)
+    - [PlayerExecutionContext](#shared-v1-PlayerExecutionContext)
 
 - [social-groups/v1/social_groups_service.proto](#social-groups_v1_social_groups_service-proto)
     - [AddFriendRequest](#social_groups-v1-AddFriendRequest)
@@ -729,7 +742,6 @@ Parameters required to register a new account.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  | Tenant that owns the new account. |
 | username | [string](#string) |  | Desired username for login and display. |
 | email | [string](#string) |  | Email address used for notifications and password recovery. |
 | password | [string](#string) |  | Raw password that the server hashes before storage. |
@@ -994,6 +1006,90 @@ Result of a CreateAccount call.
 | evaluated_at | [string](#string) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 | membership_exists | [bool](#bool) |  |  |
+| membership_lifecycle_state | [string](#string) |  |  |
+| membership_authority_generation | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-IssueDirectTextConnectScopeRequest"></a>
+
+### IssueDirectTextConnectScopeRequest
+Game Session supplies its authenticated, transport-local player context and
+exact catalog/pointer evidence. Account re-resolves the target before issuance.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| player_context | [shared.v1.PlayerExecutionContext](#shared-v1-PlayerExecutionContext) |  |  |
+| tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| realm_slug | [string](#string) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="account-v1-IssueDirectTextConnectScopeResponse"></a>
+
+### IssueDirectTextConnectScopeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| connect_scope_id | [string](#string) |  |  |
+| connect_scope_expires_at | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="account-v1-JoinPublicProductionMembershipRequest"></a>
+
+### JoinPublicProductionMembershipRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| player_context | [shared.v1.PlayerExecutionContext](#shared-v1-PlayerExecutionContext) |  |  |
+| connect_scope_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-JoinPublicProductionMembershipResponse"></a>
+
+### JoinPublicProductionMembershipResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| success | [bool](#bool) |  |  |
+| outcome_code | [string](#string) |  |  |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| membership_id | [string](#string) |  |  |
+| membership_version | [int64](#int64) |  |  |
+| membership_authority_generation | [int64](#int64) |  |  |
+| replayed | [bool](#bool) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
 
@@ -1302,6 +1398,8 @@ Basic ping response containing a greeting and optional error details.
 | GetTenantMembershipForRuntime | [GetTenantMembershipForRuntimeRequest](#account-v1-GetTenantMembershipForRuntimeRequest) | [GetTenantMembershipForRuntimeResponse](#account-v1-GetTenantMembershipForRuntimeResponse) |  |
 | GetRealmAccessGrantForRuntime | [GetRealmAccessGrantForRuntimeRequest](#account-v1-GetRealmAccessGrantForRuntimeRequest) | [GetRealmAccessGrantForRuntimeResponse](#account-v1-GetRealmAccessGrantForRuntimeResponse) |  |
 | GetTenantEntitlementsForRuntime | [GetTenantEntitlementsForRuntimeRequest](#account-v1-GetTenantEntitlementsForRuntimeRequest) | [GetTenantEntitlementsForRuntimeResponse](#account-v1-GetTenantEntitlementsForRuntimeResponse) |  |
+| IssueDirectTextConnectScope | [IssueDirectTextConnectScopeRequest](#account-v1-IssueDirectTextConnectScopeRequest) | [IssueDirectTextConnectScopeResponse](#account-v1-IssueDirectTextConnectScopeResponse) |  |
+| JoinPublicProductionMembership | [JoinPublicProductionMembershipRequest](#account-v1-JoinPublicProductionMembershipRequest) | [JoinPublicProductionMembershipResponse](#account-v1-JoinPublicProductionMembershipResponse) |  |
 | GetProfile | [GetProfileRequest](#account-v1-GetProfileRequest) | [GetProfileResponse](#account-v1-GetProfileResponse) |  |
 | ListPresenceVisibilityPolicies | [ListPresenceVisibilityPoliciesRequest](#account-v1-ListPresenceVisibilityPoliciesRequest) | [ListPresenceVisibilityPoliciesResponse](#account-v1-ListPresenceVisibilityPoliciesResponse) |  |
 | UpdateProfile | [UpdateProfileRequest](#account-v1-UpdateProfileRequest) | [UpdateProfileResponse](#account-v1-UpdateProfileResponse) |  |
@@ -7194,6 +7292,9 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | occurred_at_ms | [int64](#int64) |  |  |
 | prepared_version_upgrade_id | [string](#string) |  |  |
 | public_production_realm | [bool](#bool) |  |  |
+| catalog_revision | [int64](#int64) | optional |  |
+| realm_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
+| playable_state_namespace_id | [string](#string) |  | Empty for historical audit rows that predate durable pointer identity. |
 
 
 
@@ -7425,6 +7526,9 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | state_scope | [string](#string) |  |  |
 | character_creation_policy | [string](#string) |  |  |
 | public_production_realm | [bool](#bool) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
 
 
 
@@ -7556,6 +7660,9 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | state_scope | [string](#string) |  |  |
 | character_creation_policy | [string](#string) |  |  |
 | public_production_realm | [bool](#bool) |  |  |
+| catalog_revision | [int64](#int64) |  |  |
+| realm_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
 
 
 
@@ -9599,10 +9706,16 @@ plus scoped tick pause/resume used for rollback safety.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
 | tenant_id | [string](#string) |  |  |
-| account_id | [string](#string) |  |  |
-| type | [string](#string) |  |  |
-| message | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| producer_service | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| occurred_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload | [bytes](#bytes) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
 
 
 
@@ -9617,8 +9730,16 @@ plus scoped tick pause/resume used for rollback safety.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
+| tenant_id | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| receipt_id | [string](#string) |  |  |
 | log_event_id | [string](#string) |  |  |
-| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
+| status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
+| outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
 
 
 
@@ -9719,6 +9840,54 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
+<a name="logging_admin-v1-ReadLogEventReceiptRequest"></a>
+
+### ReadLogEventReceiptRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
+| tenant_id | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| producer_service | [string](#string) |  |  |
+| event_type | [string](#string) |  |  |
+| occurred_at | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload | [bytes](#bytes) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="logging_admin-v1-ReadLogEventReceiptResponse"></a>
+
+### ReadLogEventReceiptResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
+| tenant_id | [string](#string) |  |  |
+| audit_event_id | [string](#string) |  |  |
+| receipt_id | [string](#string) |  |  |
+| log_event_id | [string](#string) |  |  |
+| schema_version | [int32](#int32) |  |  |
+| payload_digest_version | [int32](#int32) |  |  |
+| payload_digest | [string](#string) |  |  |
+| status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
+| outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+
+
+
+
+
+
 <a name="logging_admin-v1-ToggleFeatureFlagRequest"></a>
 
 ### ToggleFeatureFlagRequest
@@ -9754,6 +9923,48 @@ plus scoped tick pause/resume used for rollback safety.
 
 
 
+<a name="logging_admin-v1-AccountAuditReceiptOutcome"></a>
+
+### AccountAuditReceiptOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_UNSPECIFIED | 0 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED | 1 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE | 2 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE | 3 |  |
+| ACCOUNT_AUDIT_RECEIPT_OUTCOME_IDEMPOTENCY_CONFLICT | 4 |  |
+
+
+
+<a name="logging_admin-v1-AccountAuditReceiptStatus"></a>
+
+### AccountAuditReceiptStatus
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_UNSPECIFIED | 0 |  |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED | 1 |  |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_MINIMIZED | 2 |  |
+| ACCOUNT_AUDIT_RECEIPT_STATUS_CONFLICT | 3 |  |
+
+
+
+<a name="logging_admin-v1-AccountAuditScope"></a>
+
+### AccountAuditScope
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| ACCOUNT_AUDIT_SCOPE_UNSPECIFIED | 0 |  |
+| ACCOUNT_AUDIT_SCOPE_PLATFORM | 1 |  |
+| ACCOUNT_AUDIT_SCOPE_TENANT | 2 |  |
+
+
+
 
 
 
@@ -9768,6 +9979,7 @@ plus scoped tick pause/resume used for rollback safety.
 | Ping | [PingRequest](#logging_admin-v1-PingRequest) | [PingResponse](#logging_admin-v1-PingResponse) |  |
 | QueryLogs | [QueryLogsRequest](#logging_admin-v1-QueryLogsRequest) | [QueryLogsResponse](#logging_admin-v1-QueryLogsResponse) |  |
 | CreateLogEvent | [CreateLogEventRequest](#logging_admin-v1-CreateLogEventRequest) | [CreateLogEventResponse](#logging_admin-v1-CreateLogEventResponse) |  |
+| ReadLogEventReceipt | [ReadLogEventReceiptRequest](#logging_admin-v1-ReadLogEventReceiptRequest) | [ReadLogEventReceiptResponse](#logging_admin-v1-ReadLogEventReceiptResponse) |  |
 | ApplyModerationAction | [ApplyModerationActionRequest](#logging_admin-v1-ApplyModerationActionRequest) | [ApplyModerationActionResponse](#logging_admin-v1-ApplyModerationActionResponse) |  |
 | EvaluateModerationPolicy | [EvaluateModerationPolicyRequest](#logging_admin-v1-EvaluateModerationPolicyRequest) | [EvaluateModerationPolicyResponse](#logging_admin-v1-EvaluateModerationPolicyResponse) |  |
 | ToggleFeatureFlag | [ToggleFeatureFlagRequest](#logging_admin-v1-ToggleFeatureFlagRequest) | [ToggleFeatureFlagResponse](#logging_admin-v1-ToggleFeatureFlagResponse) |  |
@@ -9919,6 +10131,46 @@ Standard paging request for list RPCs.
 | ----- | ---- | ----- | ----------- |
 | page | [int32](#int32) |  | 1-based page index. |
 | page_size | [int32](#int32) |  | Maximum number of items per page. |
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<a name="shared_v1_player_execution_context-proto"></a>
+<p align="right"><a href="#top">Top</a></p>
+
+## shared/v1/player_execution_context.proto
+
+
+
+<a name="shared-v1-PlayerExecutionContext"></a>
+
+### PlayerExecutionContext
+Unsigned player scope carried only by an authenticated, allowlisted gameplay workload.
+Receivers validate the required subset and equality with their own authoritative target.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| account_id | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| playable_state_namespace_id | [string](#string) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| character_id | [string](#string) |  |  |
+| session_id | [string](#string) |  |  |
+| realm_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| playable_state_scope | [string](#string) |  |  |
 
 
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -288,6 +289,27 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void blocksPublicBootstrapJoinRoute() {
+    assertBlockedPost("/api/account/auth/bootstrap/join");
+  }
+
+  @Test
+  void blocksPublicBootstrapJoinRouteAfterPathCanonicalization() {
+    assertBlockedPost("/api/account//auth/bootstrap/join/");
+    assertBlockedPost("/api/account/auth/bootstrap/join;probe=true");
+    assertBlockedPost("/api/account/auth/bootstrap/../bootstrap/join");
+    assertBlockedPost("/api%252Faccount/auth/bootstrap/join");
+    assertBlockedPost("/api/account/auth/bootstrap/%256Aoin");
+  }
+
+  @Test
+  void allowsOtherAccountAuthRoutesAndNonPostJoinPath() {
+    assertAllowed(HttpMethod.POST, "/api/account/auth/player-bootstrap");
+    assertAllowed(HttpMethod.POST, "/api/account/auth/connect-token");
+    assertAllowed(HttpMethod.GET, "/api/account/auth/bootstrap/join");
+  }
+
+  @Test
   void allowsGameplayWebSocketPath() {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/ws/game/connect").build());
@@ -304,5 +326,27 @@ class PublicInternalRouteBlockFilterTest {
       chainCalled.set(true);
       return Mono.empty();
     };
+  }
+
+  private void assertBlockedPost(String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(MockServerHttpRequest.post(path).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).as(path).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  private void assertAllowed(HttpMethod method, String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(MockServerHttpRequest.method(method, path).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).as(path).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isNull();
   }
 }
