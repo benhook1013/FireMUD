@@ -309,6 +309,100 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   /**
+   * Reads only an already-existing positive membership for exact canonical Account and tenant
+   * UUIDs, under the Account owner transaction and row fence.
+   *
+   * <p>This is membership evidence, not complete current authorization or terminal-recovery
+   * eligibility. It never prepares, enrolls, initializes, or transitions membership authority.
+   * Fresh tenant associations currently have only non-admitting membership state and are denied;
+   * retained membership must have complete exact current row, role, receipt, event, pair, and
+   * generation/fence readback. Missing, inactive, incomplete, or contradictory state fails closed.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public PositiveMembershipSnapshot readExistingPairBoundPositiveMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid) {
+    requireActiveOwnerTransaction();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+
+    Account initialAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Membership snapshot Account row is absent"));
+    requirePersistedAccountIdentity(initialAccount, accountUuid);
+    long accountId = initialAccount.getId();
+
+    // Match JOIN's lock order: the numeric Account row is private fence provenance, never a
+    // request identity or tenant alias. Re-read its immutable UUID mapping after acquiring it.
+    joinOperationRepository.lockAccount(accountId);
+    Account fencedAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Membership snapshot Account row disappeared at its fence"));
+    requirePersistedAccountIdentity(fencedAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), fencedAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != fencedAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            fencedAccount.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException(
+          "Membership snapshot Account identity changed at its row fence");
+    }
+
+    Optional<FreshTenantCreationEvidence> freshAssociation =
+        freshTenantIdentityAssociationRepository.read(tenantUuid);
+    if (freshAssociation.isPresent()) {
+      if (!tenantUuid.equals(freshAssociation.orElseThrow().canonicalTenantId())) {
+        throw new IllegalStateException(
+            "Fresh tenant association differs from its canonical UUID scope");
+      }
+      throw new IllegalStateException(
+          "Fresh tenant membership has no positive current Account membership readback");
+    }
+
+    ApprovedAssociation retainedAssociation = tenantIdentityResolver.resolve(tenantUuid);
+    if (retainedAssociation.legacyTenantId() <= 0L
+        || !tenantUuid.equals(retainedAssociation.canonicalTenantId())) {
+      throw new IllegalStateException(
+          "Retained tenant UUID has no exact approved private-row association");
+    }
+
+    PositiveMembershipSnapshot positive =
+        readCurrentPairBoundPositiveMembershipSnapshot(
+            accountId, retainedAssociation.legacyTenantId());
+    if (!accountUuid.toString().equals(positive.accountId())
+        || !tenantUuid.toString().equals(positive.tenantId())) {
+      throw new IllegalStateException(
+          "Current Account membership differs from its canonical UUID request");
+    }
+
+    // Recheck both identity sources after reading membership history. The Account lock remains
+    // held, and the resolver repeats its current retained-row digest check.
+    Account finalAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Membership snapshot Account row disappeared before readback"));
+    requirePersistedAccountIdentity(finalAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), finalAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != finalAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            finalAccount.getAccountUuidSourceNumericId())
+        || !retainedAssociation.equals(tenantIdentityResolver.resolve(tenantUuid))) {
+      throw new IllegalStateException(
+          "Canonical Account or retained tenant identity changed during membership readback");
+    }
+    return positive;
+  }
+
+  /**
    * Reads one same-fence runtime membership result from the proved active-positive or never-joined
    * sequence-zero path.
    *

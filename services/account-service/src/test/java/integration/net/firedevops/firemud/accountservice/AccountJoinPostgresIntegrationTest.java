@@ -891,6 +891,33 @@ class AccountJoinPostgresIntegrationTest {
   }
 
   @Test
+  void canonicalExistingPairBoundPositiveMembershipSnapshotRepeatsWithoutMutation() {
+    JoinFixture fixture = fixture("active");
+    JoinPublicProductionResult joined = join(fixture);
+    Map<String, Object> before = membershipAuthorityReadEvidenceSnapshot(fixture);
+
+    var first = readExistingPairBoundPositiveMembershipSnapshot(fixture);
+    var second = readExistingPairBoundPositiveMembershipSnapshot(fixture);
+
+    assertThat(joined.success()).isTrue();
+    assertThat(first.membershipExists()).isTrue();
+    assertThat(first.gameplayAdmissionAllowed()).isTrue();
+    assertThat(first.accountId()).isEqualTo(fixture.accountUuid().toString());
+    assertThat(first.tenantId()).isEqualTo(fixture.tenantUuid().toString());
+    assertThat(first.membershipVersion()).isEqualTo(second.membershipVersion());
+    assertThat(first.membershipAuthorityGeneration())
+        .isEqualTo(second.membershipAuthorityGeneration());
+    assertThat(first.roles()).containsExactly("player");
+    assertThat(second.authorityTuple()).isEqualTo(first.authorityTuple());
+    assertThat(second.issuanceFence()).isEqualTo(first.issuanceFence());
+    assertThat(second.outboxCheckpoints()).isEqualTo(first.outboxCheckpoints());
+    assertThat(second.outboxSourceEvidence()).isEqualTo(first.outboxSourceEvidence());
+    assertThat(second.transitionReceipt()).isEqualTo(first.transitionReceipt());
+    assertThat(second.authorityEvent()).isEqualTo(first.authorityEvent());
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(before);
+  }
+
+  @Test
   void positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps() {
     JoinFixture scalarVersion = fixture("active");
     assertStoredMembershipVersionFailsClosed(scalarVersion, "\"2\"");
@@ -912,9 +939,14 @@ class AccountJoinPostgresIntegrationTest {
   @Test
   void positiveMembershipSnapshotFailsClosedForAbsentMembershipOrReceipt() {
     JoinFixture absent = fixture("active");
+    Map<String, Object> absentBeforeRead = membershipAuthorityReadEvidenceSnapshot(absent);
     assertThatThrownBy(() -> readPositiveMembershipSnapshot(absent))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Current Account membership row is absent");
+    assertThatThrownBy(() -> readExistingPairBoundPositiveMembershipSnapshot(absent))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Current Account membership row is absent");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(absent)).isEqualTo(absentBeforeRead);
 
     JoinFixture missingReceipt = fixture("active");
     JoinPublicProductionResult joined = join(missingReceipt);
@@ -974,6 +1006,13 @@ class AccountJoinPostgresIntegrationTest {
     assertThatThrownBy(() -> readPositiveMembershipSnapshot(mismatchedTuple))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("differs from its V31 authority generation");
+    Map<String, Object> mismatchedBeforeStrictRead =
+        membershipAuthorityReadEvidenceSnapshot(mismatchedTuple);
+    assertThatThrownBy(() -> readExistingPairBoundPositiveMembershipSnapshot(mismatchedTuple))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("differs from its V31 authority generation");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(mismatchedTuple))
+        .isEqualTo(mismatchedBeforeStrictRead);
   }
 
   @Test
@@ -1197,6 +1236,13 @@ class AccountJoinPostgresIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining(
             "Absent Account membership differs from its durable pair authority baseline");
+    Map<String, Object> beforeStrictRead =
+        membershipAuthorityReadEvidenceSnapshot(contradictoryPair);
+    assertThatThrownBy(() -> readExistingPairBoundPositiveMembershipSnapshot(contradictoryPair))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Current Account membership row is absent");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(contradictoryPair))
+        .isEqualTo(beforeStrictRead);
   }
 
   @Test
@@ -1476,10 +1522,16 @@ class AccountJoinPostgresIntegrationTest {
         "UPDATE account_tenant_membership SET lifecycle_state = 'INACTIVE', "
             + "gameplay_admission_allowed = FALSE WHERE id = ?",
         joined.membershipId());
+    Map<String, Object> inactiveBeforeStrictRead = membershipAuthorityReadEvidenceSnapshot(fixture);
 
     assertThatThrownBy(() -> readRuntimeMembershipSnapshot(fixture))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not a positive active explicit membership");
+    assertThatThrownBy(() -> readExistingPairBoundPositiveMembershipSnapshot(fixture))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("not a positive active explicit membership");
+    assertThat(membershipAuthorityReadEvidenceSnapshot(fixture))
+        .isEqualTo(inactiveBeforeStrictRead);
     assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(pairRow);
     assertThat(authorityGeneration("MEMBERSHIP", null, fixture.accountUuid(), fixture.tenantUuid()))
         .isEqualTo(membershipGeneration);
@@ -1584,6 +1636,124 @@ class AccountJoinPostgresIntegrationTest {
             status ->
                 membershipAuthorityEventProducer.readCurrentPairBoundPositiveMembershipSnapshot(
                     fixture.accountId(), fixture.tenantId()));
+  }
+
+  private AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot
+      readExistingPairBoundPositiveMembershipSnapshot(JoinFixture fixture) {
+    return new TransactionTemplate(transactionManager)
+        .execute(
+            status ->
+                membershipAuthorityEventProducer.readExistingPairBoundPositiveMembershipSnapshot(
+                    fixture.accountUuid(), fixture.tenantUuid()));
+  }
+
+  private Map<String, Object> membershipAuthorityReadEvidenceSnapshot(JoinFixture fixture) {
+    String streamKey = authorityStreamKey(fixture);
+    Map<String, Object> snapshot = new LinkedHashMap<>();
+    snapshot.put(
+        "account",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, a.* FROM accounts a WHERE a.id = ?",
+                fixture.accountId())
+            .intoMaps());
+    snapshot.put(
+        "membership",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, m.* FROM account_tenant_membership m "
+                    + "WHERE m.account_id = ? AND m.tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .intoMaps());
+    snapshot.put(
+        "pairAuthority",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, p.* FROM account_membership_pair_authority p "
+                    + "WHERE p.account_uuid = ? AND p.tenant_uuid = ?",
+                fixture.accountUuid(),
+                fixture.tenantUuid())
+            .intoMaps());
+    snapshot.put(
+        "roleSnapshots",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, s.* "
+                    + "FROM account_tenant_membership_role_snapshots s "
+                    + "WHERE s.membership_id = (SELECT id FROM account_tenant_membership "
+                    + "WHERE account_id = ? AND tenant_id = ?)",
+                fixture.accountId(),
+                fixture.tenantId())
+            .intoMaps());
+    snapshot.put(
+        "roleSnapshotRoles",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, r.* "
+                    + "FROM account_tenant_membership_role_snapshot_roles r "
+                    + "WHERE r.membership_id = (SELECT id FROM account_tenant_membership "
+                    + "WHERE account_id = ? AND tenant_id = ?)",
+                fixture.accountId(),
+                fixture.tenantId())
+            .intoMaps());
+    snapshot.put(
+        "transitionReceipts",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, r.* "
+                    + "FROM account_membership_transition_receipts r "
+                    + "WHERE r.account_id = ? AND r.tenant_id = ? ORDER BY r.receipt_sequence",
+                fixture.accountId(),
+                fixture.tenantId())
+            .intoMaps());
+    snapshot.put(
+        "transitionReceiptStreamHead",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, h.* "
+                    + "FROM account_membership_transition_receipt_stream_heads h "
+                    + "WHERE h.account_id = ? AND h.tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .intoMaps());
+    snapshot.put(
+        "authorityGenerations",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, g.* FROM account_authority_generations g "
+                    + "WHERE (g.scope_kind = 'ACCOUNT' AND g.account_uuid = ?) "
+                    + "OR (g.scope_kind = 'TENANT' AND g.tenant_uuid = ?) "
+                    + "OR (g.scope_kind = 'MEMBERSHIP' AND g.account_uuid = ? "
+                    + "AND g.tenant_uuid = ?) ORDER BY g.scope_kind",
+                fixture.accountUuid(),
+                fixture.tenantUuid(),
+                fixture.accountUuid(),
+                fixture.tenantUuid())
+            .intoMaps());
+    snapshot.put(
+        "issuanceFence",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, f.* "
+                    + "FROM account_authority_issuance_fences f WHERE f.account_uuid = ?",
+                fixture.accountUuid())
+            .intoMaps());
+    snapshot.put(
+        "authorityOutboxStream",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, s.* FROM account_authority_outbox_streams s "
+                    + "WHERE s.outbox_stream_key = ?",
+                streamKey)
+            .intoMaps());
+    snapshot.put(
+        "authorityOutboxEvents",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, e.outbox_stream_key, e.outbox_sequence, "
+                    + "e.request_id, e.event_id, e.event_digest, encode(e.payload, 'hex') "
+                    + "AS payload_hex, e.created_at FROM account_authority_outbox_events e "
+                    + "WHERE e.outbox_stream_key = ? ORDER BY e.outbox_sequence",
+                streamKey)
+            .intoMaps());
+    snapshot.put(
+        "joinOperation",
+        dsl.fetch(
+                "SELECT xmin::text AS row_xmin, o.* FROM account_join_operations o "
+                    + "WHERE o.request_id = ?",
+                fixture.requestId())
+            .intoMaps());
+    return Map.copyOf(snapshot);
   }
 
   private Map<String, Object> membershipPairAuthorityRow(JoinFixture fixture) {

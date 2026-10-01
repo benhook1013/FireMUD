@@ -10,6 +10,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
@@ -61,7 +62,11 @@ public final class GameDesignRuntimeTenantIdentityClient
   @Override
   protected TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub buildStub(
       ManagedChannel channel) {
-    return TenantIdentityServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return TenantIdentityServiceGrpc.newBlockingStub(channel)
+        .withInterceptors(
+            new GrpcServerPeerIdentityClientInterceptor(
+                "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service"))
+        .withCompression("gzip");
   }
 
   /** Reads persisted Game Design identity and validates every returned owner field. */

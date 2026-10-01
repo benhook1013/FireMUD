@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -173,6 +174,58 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
         .isZero();
     assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
+  }
+
+  @Test
+  void strictExistingMembershipReadDeniesFreshAssociationWithoutEnrollmentOrMutation() {
+    AccountFixture account = accountFixture();
+    UUID tenantUuid = UUID.randomUUID();
+    FreshTenantCreationEvidence evidence = importFreshTenantAssociation(tenantUuid);
+    long originalIssuanceFence = issuanceFence(account.accountUuid());
+
+    assertThatThrownBy(
+            () ->
+                readExistingPairBoundPositiveMembershipSnapshot(account.accountUuid(), tenantUuid))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Fresh tenant membership has no positive current Account");
+    assertThat(countMembershipPairAuthorities(account.accountUuid(), tenantUuid)).isZero();
+    assertThat(countMembershipAuthorityGenerations(account.accountUuid(), tenantUuid)).isZero();
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+    assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+
+    // A separately established V38 sequence-zero pair remains non-admitting, and the strict
+    // existing-positive reader must neither promote it nor alter its counters.
+    readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid);
+    Map<String, Object> pairBeforeRead =
+        membershipPairAuthorityRow(account.accountUuid(), tenantUuid);
+    long tenantGeneration = authorityGeneration("TENANT", null, tenantUuid);
+    assertThatThrownBy(
+            () ->
+                readExistingPairBoundPositiveMembershipSnapshot(account.accountUuid(), tenantUuid))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Fresh tenant membership has no positive current Account");
+
+    Optional<FreshTenantCreationEvidence> associationReadback =
+        new TransactionTemplate(transactionManager)
+            .execute(status -> freshAssociationRepository.read(tenantUuid));
+    assertThat(associationReadback).contains(evidence);
+    assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid))
+        .isEqualTo(pairBeforeRead);
+    assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(tenantGeneration);
+    assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
+    assertThat(countMembershipPairAuthorities(account.accountUuid(), tenantUuid)).isEqualTo(1L);
+    assertThat(countMembershipAuthorityGenerations(account.accountUuid(), tenantUuid))
+        .isEqualTo(1L);
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+    assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
   }
 
   @Test
@@ -583,10 +636,18 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
         .execute(status -> producer.readRuntimeMembershipSnapshot(accountUuid, tenantUuid));
   }
 
+  private AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot
+      readExistingPairBoundPositiveMembershipSnapshot(UUID accountUuid, UUID tenantUuid) {
+    return new TransactionTemplate(transactionManager)
+        .execute(
+            status ->
+                producer.readExistingPairBoundPositiveMembershipSnapshot(accountUuid, tenantUuid));
+  }
+
   private Map<String, Object> membershipPairAuthorityRow(UUID accountUuid, UUID tenantUuid) {
     var row =
         dsl.resultQuery(
-                "SELECT * FROM account_membership_pair_authority "
+                "SELECT xmin::text AS row_xmin, * FROM account_membership_pair_authority "
                     + "WHERE account_uuid = ? AND tenant_uuid = ?",
                 accountUuid,
                 tenantUuid)

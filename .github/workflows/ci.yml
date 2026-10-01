@@ -960,6 +960,7 @@ jobs:
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentFirstJoinCannotMixWithCompleteFencedRuntimeMembershipSnapshot()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#canonicalExistingPairBoundPositiveMembershipSnapshotRepeatsWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
@@ -1046,7 +1047,19 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#concurrentFreshUuidSnapshotCallsInitializeOneExactPairBaseline()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadUsesFreshUuidAssociationWithoutInventingRetainedAlias()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadRejectsUnmappedTenantUuidWithoutEnrollment()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#strictExistingMembershipReadDeniesFreshAssociationWithoutEnrollmentOrMutation()' \
             account-service
+
+      - name: Verify Game Session authored-world intake PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#registersAdditionalWorldsAndReplaysExactReceiptWithoutMutation()' \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#requiresOwnerTransactionRollsBackClaimsAndReadsOnlyCommittedRows()' \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactIntakeRetriesReturnOneReceiptAndSlugRaceHasOneWinner()' \
+            game-session-service
 
       - name: 🔎 Verify Game Session PostgreSQL proof case
         if: ${{ matrix.module == 'game-session-service' }}
