@@ -19,7 +19,9 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as cli_module
 from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
-from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+from pr_review.sqlite_finding_text import _safe_finding_detail
+from pr_review.sqlite_provider_imports import _cli_detail, _cli_finding_title, _cli_headline
+from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
 
 REPO = "owner/repo"
@@ -612,6 +614,316 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
         return evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
 
+    def _native_cli_records(
+        self,
+        common: Path,
+        *,
+        repository: str | None = REPO,
+        pull_request: int = PR,
+        candidate_sha: str = HEAD,
+        finalized: bool = True,
+        decide: bool = True,
+        instructions: tuple[str, ...] = ("The complete SQL finding remains available.",),
+        legacy_projection: bool = False,
+    ) -> SqliteReviewRecords:
+        database = common / "controller.sqlite3"
+        SqliteStateStore(database).update(lambda state: state)
+        records = SqliteReviewRecords(database)
+        records.bootstrap()
+        run_id = "run.Native"
+        metadata: dict[str, object] = {
+            "run_id": run_id,
+            "kind": "cli",
+            "pull_request": pull_request,
+            "candidate_sha": candidate_sha,
+            "child_head_sha": candidate_sha,
+            "published_head_sha": candidate_sha,
+            "parent_pr": None,
+            "parent_ref": "main",
+            "parent_sha": BASE,
+            "merge_base": BASE,
+            "patch_identity": "c" * 64,
+            "candidate_files": 1,
+            "published_files": 1,
+            "published_status": "current",
+            "provisional": False,
+            "reason": "",
+            "capture_completion_marker": "capture-complete",
+        }
+        if repository is not None:
+            metadata["repository"] = repository
+        events = "\n".join(json.dumps({
+            "type": "finding", "message": "The persisted SQL finding remains readable.", "codegenInstructions": text,
+        }) for text in instructions) + "\n" + json.dumps({
+            "type": "complete", "status": "review_completed", "findings": len(instructions), "reviewedFiles": ["src/a.py"],
+        }) + "\n"
+        result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=PR,
+            channel="cli",
+            candidate_sha=candidate_sha,
+            started_at="2026-09-30T00:00:00Z",
+            metadata=metadata,
+        )
+        records.complete_attempt_run(
+            run_id,
+            finish={
+                "state": "completed",
+                "finished_at": "2026-09-30T00:00:09Z",
+                "duration_seconds": 9,
+                "exit_status": 0,
+                "artifacts": {"cli_events": events, "metadata": json.dumps(result_metadata)},
+            },
+            run={
+                "run_id": run_id,
+                "source_pr": PR,
+                "channel": "cli",
+                "findings": tuple(
+                    FindingObservation(
+                        source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                        title=(
+                            _cli_headline(text) or f"CodeRabbit CLI finding {index}"
+                            if legacy_projection else _cli_finding_title(text, f"CodeRabbit CLI finding {index}")
+                        ),
+                        detail="" if legacy_projection else _safe_finding_detail(_cli_detail(text)),
+                    ) for index, text in enumerate(instructions, 1)
+                ),
+                "source_head": candidate_sha,
+                "reviewer": "CodeRabbit CLI",
+                "scope": "broad",
+                "started_at": "2026-09-30T00:00:00Z",
+                "finished_at": "2026-09-30T00:00:09Z",
+            },
+        )
+        if decide:
+            for index in range(1, len(instructions) + 1):
+                records.record_source_decision(
+                    run_id, f"cli-run:{run_id}:finding:{index}", decision_id=f"{run_id}.decision.{index}",
+                    decision="accepted", actor="reviewer", reason="Useful source finding",
+                    decided_at="2026-09-30T00:00:10Z",
+                )
+            if finalized:
+                records.finalize_run(run_id, finalized_at="2026-09-30T00:00:11Z")
+                for index in range(1, len(instructions) + 1):
+                    records.record_source_resolution(
+                        run_id, f"cli-run:{run_id}:finding:{index}", source_pr=PR,
+                        resolution_id=f"{run_id}.resolution.{index}", fix_sha="d" * 40,
+                        actor="reviewer", proof_note="The accepted source finding has verified proof.",
+                        resolved_at="2026-09-30T00:00:12Z",
+                    )
+        return records
+
+    @staticmethod
+    def _native_cli_checkpoint(
+        *,
+        found: int = 1,
+        accepted: int = 1,
+        reviewed_sha: str = HEAD[:12],
+        file_count: int | None = 1,
+        duration: int | None = 9,
+    ) -> evidence.Checkpoint:
+        return evidence.Checkpoint(
+            comment_id=100,
+            created_at="2026-09-30T00:01:00Z",
+            type="CLI",
+            raw_found=found,
+            accepted=accepted,
+            reviewed_sha=reviewed_sha,
+            file_count=file_count,
+            correction=False,
+            updated_at=None,
+            run_id="run.Native",
+            hosted_review_id=None,
+            duration_seconds=duration,
+        )
+
+    def test_native_cli_checkpoint_loads_from_sql_after_raw_capture_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+            self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
+            self.assertEqual(capture.findings[0]["message"], "The persisted SQL finding remains readable.")
+            self.assertEqual(capture.decisions, {1: ("accepted", "Useful source finding")})
+            self.assertIsNone(capture.source_identity)
+            self.assertEqual(
+                records.source_resolution_status(
+                    "run.Native", source_pr=PR, source_channel="cli", source_head=HEAD, accepted_count=1
+                ),
+                "resolved",
+            )
+
+    def test_native_cli_sql_refuses_same_count_finding_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                row = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()
+                changed = row[0].replace("The complete SQL finding remains available.", "A different valid source finding.")
+                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+    def test_native_cli_sql_projection_preserves_redacted_bounded_findings_and_rejects_reordering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            secret = "ghp_" + "A" * 36
+            instructions = ("Validate token " + secret + " before use. " + "more detail " * 130, "Preserve the second distinct source finding.")
+            records = self._native_cli_records(common, instructions=instructions)
+            checkpoint = self._native_cli_checkpoint(found=2, accepted=2)
+            capture = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+            self.assertEqual(len(capture.findings), 2)
+            self.assertNotIn(secret, capture.findings[0]["codegenInstructions"])
+            self.assertGreater(len(capture.findings[0]["codegenInstructions"]), 1000)
+            with sqlite3.connect(records.path) as connection:
+                content = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()[0]
+                events = [json.loads(line) for line in content.splitlines()]
+                changed = "\n".join(json.dumps(event) for event in (events[1], events[0], events[2])) + "\n"
+                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_prior_native_title_only_projection_remains_readable_without_capture_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(
+                common, instructions=("Check  old  input before use.",), legacy_projection=True,
+            )
+            capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+            self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
+            self.assertEqual(capture.findings[0]["codegenInstructions"], "Check  old  input before use.")
+            self.assertEqual(capture.decisions[1][0], "accepted")
+            self.assertEqual(records.source_resolution_status(
+                "run.Native", source_pr=PR, source_channel="cli", source_head=HEAD, accepted_count=1,
+            ), "resolved")
+
+    def test_deleted_modern_detail_cannot_downgrade_to_prior_native_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute("UPDATE finding_observations SET detail = '' WHERE run_id = 'run.Native'")
+            with self.assertRaises(evidence.CaptureInvalid) as raised:
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+            self.assertIn("immutable source projection", str(raised.exception.__cause__))
+
+    def test_native_cli_sql_checkpoint_refuses_explicit_identity_and_count_mismatches(self):
+        cases = (
+            ("repository", {"repository": "other/repo"}, {}, "repository does not match"),
+            ("PR", {"pull_request": PR + 1}, {}, "PR does not match"),
+            ("head", {"candidate_sha": BASE}, {}, "candidate SHA does not match checkpoint"),
+            ("finding count", {}, {"found": 2}, "finding count does not match checkpoint"),
+            ("file count", {}, {"file_count": 2}, "file count does not match checkpoint"),
+        )
+        for label, native_args, checkpoint_args, message in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(common, **native_args)
+                checkpoint = self._native_cli_checkpoint(**checkpoint_args)
+                with self.assertRaisesRegex(evidence.CaptureInvalid, message):
+                    evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute("UPDATE review_attempts SET state = 'failed' WHERE attempt_id = 'run.Native'")
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "ended without a completed result"):
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+    def test_native_cli_partial_sql_association_never_falls_back_to_raw_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            records.start_attempt(
+                attempt_id="run.Native",
+                source_pr=PR,
+                channel="cli",
+                candidate_sha=HEAD,
+                metadata={"run_id": "run.Native", "kind": "cli", "pull_request": PR, "candidate_sha": HEAD},
+            )
+            run = common / "coderabbit-review-logs" / "run.Native"
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id=run.Native\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps({"type": "finding", "message": "raw"})
+                + "\n"
+                + json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+            (run / "decisions.tsv").write_text("1\trejected\tlegacy raw fallback\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "linked SQLite CLI records"):
+                evidence.load_cli_capture(self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records)
+
+            repaired = evidence.load_cli_capture_for_repair(
+                self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records
+            )
+            self.assertEqual(repaired.decisions, {1: ("rejected", "legacy raw fallback")})
+            self.assertEqual(repaired.findings[0]["message"], "raw")
+
+            with sqlite3.connect(database) as connection:
+                connection.execute("DROP TABLE review_records_metadata")
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "incompatible schema"):
+                evidence.load_cli_capture(
+                    self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records
+                )
+
+    def test_native_cli_discovery_loads_sql_attempts_and_deduplicates_retained_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common, finalized=False, decide=False)
+            run = common / "coderabbit-review-logs" / "run.Native"
+            run.mkdir(parents=True)
+            (run / "metadata").write_text("malformed shadow file\n", encoding="utf-8")
+
+            captures = evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(captures[0].metadata["run_id"], "run.Native")
+            self.assertEqual(captures[0].findings[0]["message"], "The persisted SQL finding remains readable.")
+            self.assertEqual(captures[0].decisions, {})
+            self.assertIsNone(captures[0].source_identity)
+
+    def test_native_cli_discovery_surfaces_completed_sql_run_missing_attempt_without_raw_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute("DELETE FROM review_attempts WHERE attempt_id = 'run.Native'")
+
+            self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "completed SQLite CLI captures are incomplete"):
+                evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+    def test_native_cli_old_metadata_without_repository_uses_selected_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common, repository=None)
+            capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+            self.assertNotIn("repository", capture.metadata)
+            self.assertEqual(capture.metadata["run_id"], "run.Native")
+
+    def test_unimported_legacy_cli_capture_remains_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = self._cli_capture(
+                Path(directory), decision_text="1\trejected\tretained legacy decision\n", records=None
+            )
+            self.assertEqual(capture.decisions, {1: ("rejected", "retained legacy decision")})
+
     def test_historical_cli_decisions_fall_back_when_records_schema_is_absent(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -829,6 +1141,14 @@ class GithubAndEvidenceTests(unittest.TestCase):
             @staticmethod
             def cli_source_decisions(_run_id):
                 return None
+
+            @staticmethod
+            def cli_capture_snapshot(_run_id, *, source_pr):
+                return None
+
+            @staticmethod
+            def completed_cli_capture_snapshots(_source_pr):
+                return []
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)

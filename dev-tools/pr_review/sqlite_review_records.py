@@ -60,6 +60,10 @@ class AttemptNotFound(ReviewRecordsError):
     """Raised when an exact attempt ID is not present in the records store."""
 
 
+class CliCaptureTerminalFailure(ReviewRecordsError):
+    """A CLI attempt is terminal but did not produce a completed source run."""
+
+
 class RecordsSchemaIncompatible(ReviewRecordsError):
     """Raised when the controller or review-records schema is incompatible."""
 
@@ -878,6 +882,12 @@ class SqliteReviewRecords:
                 )
             }
             if existing:
+                if "metadata" in existing and "metadata" in archived and self._same_checkpoint_projection(
+                    existing["metadata"][0], archived["metadata"][0]
+                ):
+                    # The added parsed projection must not rewrite any prior
+                    # immutable capture bytes, source hash or redaction count.
+                    archived["metadata"] = existing["metadata"]
                 if existing != archived:
                     raise ReviewRecordsError("imported provider artifacts conflict with existing evidence")
                 replay = True
@@ -889,6 +899,28 @@ class SqliteReviewRecords:
                     )
                 replay = False
         return {"run_id": run_id, "kinds": sorted(archived), "idempotent_replay": replay}
+
+    @staticmethod
+    def _same_checkpoint_projection(stored_content: str, incoming_content: str) -> bool:
+        """Recognize only the hash-verified projection added to older metadata."""
+
+        from .evidence import Checkpoint
+        from .sqlite_provider_imports import _checkpoint_fingerprint
+
+        try:
+            stored = json.loads(stored_content)
+            incoming = json.loads(incoming_content)
+            if not isinstance(stored, dict) or not isinstance(incoming, dict) or "checkpoint_fields" in stored:
+                return False
+            fields = incoming.pop("checkpoint_fields")
+            checkpoint = Checkpoint(**fields)
+            return (
+                incoming == stored
+                and checkpoint.as_json() == stored["checkpoint"]
+                and _checkpoint_fingerprint(checkpoint) == stored["checkpoint_fingerprint"]
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def record_historical_gap(
         self,
@@ -981,6 +1013,221 @@ class SqliteReviewRecords:
             "checkpoint_id": checkpoint_id,
             "kinds": sorted(archived),
             "idempotent_replay": replay,
+        }
+
+    @_translate_database_errors
+    def cli_capture_snapshot(self, attempt_id: str, *, source_pr: int) -> dict[str, Any] | None:
+        """Read one native CLI attempt, linked source run, artifacts, and decisions atomically.
+
+        ``None`` means the run ID has no structured association and may use the
+        retained historical capture path. Any partial or conflicting SQL
+        association raises instead of allowing a raw-file fallback.
+        """
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        source_pr = _positive_pr(source_pr, "source PR")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            return self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+
+    @_translate_database_errors
+    def completed_cli_capture_snapshots(self, source_pr: int) -> list[dict[str, Any]]:
+        """Read all completed native CLI captures for one PR from one snapshot."""
+
+        source_pr = _positive_pr(source_pr, "source PR")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            attempt_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT attempt_id AS run_id FROM review_attempts "
+                    "WHERE source_pr = ? AND channel = 'cli' AND state = 'completed' "
+                    "UNION SELECT r.run_id FROM review_runs r WHERE r.source_pr = ? AND r.channel = 'cli' "
+                    "AND r.outcome = 'completed' AND NOT EXISTS ("
+                    "SELECT 1 FROM review_attempts a WHERE a.attempt_id = r.run_id) "
+                    "AND NOT EXISTS (SELECT 1 FROM imported_artifacts i WHERE i.run_id = r.run_id) "
+                    "AND NOT EXISTS (SELECT 1 FROM provider_origins o WHERE o.run_id = r.run_id) "
+                    "ORDER BY run_id",
+                    (source_pr, source_pr),
+                )
+            ]
+            snapshots = []
+            for attempt_id in attempt_ids:
+                snapshot = self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+                if snapshot is None:
+                    raise ReviewRecordsError("completed CLI attempt has no structured association")
+                snapshots.append(snapshot)
+            return snapshots
+
+    @staticmethod
+    def _cli_capture_snapshot(
+        connection: sqlite3.Connection, attempt_id: str, *, source_pr: int
+    ) -> dict[str, Any] | None:
+        attempt = connection.execute(
+            "SELECT source_pr, channel, candidate_sha, state, started_at, finished_at, duration_seconds, "
+            "exit_status, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        linked_attempt = connection.execute(
+            "SELECT attempt_id FROM review_attempts WHERE run_id = ? AND attempt_id != ? LIMIT 1",
+            (attempt_id, attempt_id),
+        ).fetchone()
+        run = connection.execute(
+            "SELECT source_pr, channel, source_head, outcome, attributable, started_at, finished_at, "
+            "found_count, accepted_count, routed_count, finalized, import_payload_json FROM review_runs WHERE run_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        origin = connection.execute(
+            "SELECT repository, source_pr, channel, run_id FROM provider_origins WHERE run_id = ? LIMIT 1",
+            (attempt_id,),
+        ).fetchone()
+        imported = connection.execute(
+            "SELECT 1 FROM imported_artifacts WHERE run_id = ? LIMIT 1", (attempt_id,)
+        ).fetchone()
+        artifact_rows = connection.execute(
+            "SELECT kind, content, redactions FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
+        ).fetchall()
+        artifacts = {row[0]: row[1] for row in artifact_rows}
+        artifact_redactions = {row[0]: row[2] for row in artifact_rows}
+        if not any((attempt, linked_attempt, run, origin, imported, artifacts)):
+            return None
+        if attempt is None:
+            raise ReviewRecordsError("CLI SQL association is missing its attempt")
+        if linked_attempt is not None:
+            raise ReviewRecordsError("CLI SQL run ID is linked to a different attempt")
+        if attempt[0] != source_pr or attempt[1] != "cli" or attempt[8] not in (None, attempt_id):
+            raise ReviewRecordsError("CLI SQL attempt does not match its exact source run and PR")
+        if attempt[3] in {"failed", "rate_limited", "timed_out", "ambiguous"}:
+            raise CliCaptureTerminalFailure("CLI SQL attempt ended without a completed source run")
+        if attempt[3] != "completed":
+            raise ReviewRecordsError("CLI SQL attempt is not terminally completed")
+        if attempt[8] != attempt_id or run is None:
+            raise ReviewRecordsError("CLI SQL association is missing its exact linked source run")
+        if run[0] != source_pr or run[1] != "cli":
+            raise ReviewRecordsError("CLI SQL source run does not match its exact attempt and PR")
+        if origin is not None and (origin[1] != source_pr or origin[2] != "cli"):
+            raise ReviewRecordsError("CLI provider origin conflicts with its source run")
+        try:
+            attempt_metadata = json.loads(attempt[9])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ReviewRecordsError("CLI SQL attempt metadata is malformed") from exc
+        if not isinstance(attempt_metadata, dict):
+            raise ReviewRecordsError("CLI SQL attempt metadata is not an object")
+        if "cli_raw_output" in artifacts:
+            raise ReviewRecordsError("completed CLI SQL attempt contains conflicting raw output")
+        if not {"cli_events", "metadata"} <= artifacts.keys():
+            raise ReviewRecordsError("completed CLI SQL attempt lacks complete archived events or metadata")
+        if attempt[3] != "completed" or attempt[7] != 0:
+            raise ReviewRecordsError("CLI SQL attempt is not a successful terminal completion")
+        if run[3] != "completed" or not run[4] or run[2] != attempt[2]:
+            raise ReviewRecordsError("CLI SQL source run is not completed, attributable, and linked to its head")
+
+        try:
+            original_findings = json.loads(run[11])["findings"]
+            if not isinstance(original_findings, list) or not all(isinstance(item, dict) for item in original_findings):
+                raise ValueError("invalid original findings")
+            original_by_key = {item["source_finding_key"]: item for item in original_findings}
+            if len(original_by_key) != run[7] or len(original_findings) != run[7]:
+                raise ValueError("invalid original finding count")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ReviewRecordsError("CLI SQL immutable source projection is incomplete") from exc
+
+        rows = connection.execute(
+            "SELECT f.source_finding_key, o.disposition, d.decision, d.reason, c.decision, c.reason, o.title, o.detail, "
+            "(SELECT COUNT(*) FROM decisions d2 WHERE d2.run_id = o.run_id "
+            "AND d2.finding_id = o.finding_id AND d2.decision_scope = 'source') "
+            "FROM finding_observations o JOIN findings f USING (finding_id) "
+            "LEFT JOIN decisions d ON d.run_id = o.run_id AND d.finding_id = o.finding_id "
+            "AND d.decision_scope = 'source' "
+            "LEFT JOIN source_decision_corrections c ON c.sequence = ("
+            "SELECT MAX(sequence) FROM source_decision_corrections "
+            "WHERE run_id = o.run_id AND finding_id = o.finding_id) "
+            "WHERE o.run_id = ? ORDER BY f.source_finding_key",
+            (attempt_id,),
+        ).fetchall()
+        observations: list[dict[str, Any]] = []
+        decisions: dict[int, tuple[str, str]] = {}
+        prefix = f"cli-run:{attempt_id}:finding:"
+        for key, disposition, decision, reason, correction, correction_reason, title, detail, decision_count in rows:
+            if not isinstance(key, str) or not key.startswith(prefix) or not key[len(prefix) :].isdigit():
+                raise ReviewRecordsError("CLI source finding has an invalid finding key")
+            suffix = key[len(prefix) :]
+            index = int(suffix)
+            if str(index) != suffix:
+                raise ReviewRecordsError("CLI source finding index is not canonical")
+            if index in decisions or any(item["index"] == index for item in observations):
+                raise ReviewRecordsError("CLI source finding index is duplicated")
+            if decision_count > 1:
+                raise ReviewRecordsError("CLI source finding has duplicate decisions")
+            if correction is not None and decision_count != 1:
+                raise ReviewRecordsError("CLI source correction has no exact original decision")
+            effective_decision = correction or decision
+            effective_reason = correction_reason if correction is not None else reason
+            if disposition == "unresolved":
+                if effective_decision is not None:
+                    raise ReviewRecordsError("unresolved CLI source finding has a stored decision")
+            elif (
+                disposition not in {"accepted", "routed", "rejected"}
+                or effective_decision != disposition
+                or not isinstance(effective_reason, str)
+            ):
+                raise ReviewRecordsError("CLI source decisions conflict with stored finding dispositions")
+            else:
+                decisions[index] = (effective_decision, effective_reason)
+            original = original_by_key.get(key)
+            if original is None or original.get("title") != title or original.get("detail") != detail:
+                raise ReviewRecordsError("CLI SQL finding conflicts with its immutable source projection")
+            observations.append({
+                "index": index, "source_finding_key": key, "disposition": disposition,
+                "title": title, "detail": detail, "detail_recorded": detail != "",
+            })
+        if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(
+            range(1, run[7] + 1)
+        ):
+            raise ReviewRecordsError("CLI SQL source findings do not match the stored run count")
+        accepted = sum(item["disposition"] == "accepted" for item in observations)
+        routed = sum(item["disposition"] == "routed" for item in observations)
+        if (run[8], run[9]) != (accepted, routed):
+            raise ReviewRecordsError("CLI SQL decisions do not match stored source counts")
+        if run[10] and (
+            len(decisions) != run[7] or any(item["disposition"] == "unresolved" for item in observations)
+        ):
+            raise ReviewRecordsError("finalized CLI SQL source run has incomplete decisions")
+        return {
+            "attempt": {
+                "attempt_id": attempt_id,
+                "source_pr": attempt[0],
+                "channel": attempt[1],
+                "candidate_sha": attempt[2],
+                "state": attempt[3],
+                "started_at": attempt[4],
+                "finished_at": attempt[5],
+                "duration_seconds": attempt[6],
+                "exit_status": attempt[7],
+                "run_id": attempt[8],
+                "metadata": attempt_metadata,
+            },
+            "run": {
+                "run_id": attempt_id,
+                "source_pr": run[0],
+                "channel": run[1],
+                "source_head": run[2],
+                "outcome": run[3],
+                "attributable": bool(run[4]),
+                "started_at": run[5],
+                "finished_at": run[6],
+                "counts": {"found": run[7], "accepted": run[8], "routed": run[9]},
+                "finalized": bool(run[10]),
+            },
+            "artifacts": artifacts,
+            "artifact_redactions": artifact_redactions,
+            "observations": observations,
+            "decisions": decisions,
+            "provider_origin": origin,
         }
 
     @_translate_database_errors
@@ -1523,8 +1770,10 @@ class SqliteReviewRecords:
         source_channel: ReviewChannel,
         source_head: str,
         accepted_count: int,
-    ) -> str:
-        """Return ``resolved`` only when every exact accepted observation has proof."""
+        source_checkpoint: Any = None,
+        source_repository: str | None = None,
+    ) -> str | None:
+        """Return proof status, or None for a CLI capture with no structured association."""
 
         run_id = _safe_identifier(run_id, "run_id", maximum=100)
         source_pr = _positive_pr(source_pr, "source PR")
@@ -1539,11 +1788,62 @@ class SqliteReviewRecords:
         with contextlib.closing(self._connect(read_only=True)) as connection:
             connection.execute("BEGIN")
             self._require_compatible(connection)
+            if source_checkpoint is not None:
+                from .evidence import Checkpoint
+
+                if not isinstance(source_checkpoint, Checkpoint) or not isinstance(source_repository, str):
+                    raise ReviewRecordsError("source checkpoint binding requires parsed checkpoint and repository")
+                provider_ids = (
+                    (source_checkpoint.run_id, f"run:{source_checkpoint.run_id}")
+                    if source_channel == "cli"
+                    else (str(source_checkpoint.hosted_review_id), f"review:{source_checkpoint.hosted_review_id}")
+                )
+                origins = connection.execute(
+                    "SELECT repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint, run_id "
+                    "FROM provider_origins WHERE checkpoint_id = ? OR "
+                    "(source_pr = ? AND channel = ? AND provider_id IN (?, ?))",
+                    (source_checkpoint.comment_id, source_pr, source_channel, *provider_ids),
+                ).fetchall()
+                if origins:
+                    if len(origins) != 1:
+                        return "pending"
+                    origin = origins[0]
+                    if (
+                        origin[0] != source_repository.casefold()
+                        or origin[1] != source_pr
+                        or origin[2] != source_channel
+                        or origin[3] not in provider_ids
+                        or origin[4] != source_checkpoint.comment_id
+                        or not self._source_checkpoint_matches(connection, origin[6], origin[5], source_checkpoint)
+                    ):
+                        return "pending"
+                    if source_channel == "cli":
+                        if origin[6] != run_id and connection.execute(
+                            "SELECT 1 FROM review_runs WHERE run_id = ? "
+                            "UNION ALL SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? LIMIT 1",
+                            (run_id, run_id, run_id),
+                        ).fetchone() is not None:
+                            return "pending"
+                        run_id = origin[6]
+                    elif origin[6] != run_id:
+                        return "pending"
             run = connection.execute(
                 "SELECT source_pr, channel, source_head, outcome, attributable, accepted_count, finalized "
                 "FROM review_runs WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
+            if run is None and source_channel == "cli":
+                # CLI markers predate SQLite. Only an actual source association
+                # switches a retained capture from legacy to structured proof.
+                # Keep partial attempts/origins pending even if their run or
+                # link is missing, rather than silently downgrading to legacy.
+                associated = connection.execute(
+                    "SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? "
+                    "UNION ALL SELECT 1 FROM provider_origins WHERE run_id = ? LIMIT 1",
+                    (run_id, run_id, run_id),
+                ).fetchone()
+                if associated is None:
+                    return None
             if (
                 run is None
                 or run[0] != source_pr
@@ -1603,6 +1903,50 @@ class SqliteReviewRecords:
                 except ReviewRecordsError:
                     return "pending"
             return "resolved"
+
+    @staticmethod
+    def _source_checkpoint_matches(
+        connection: sqlite3.Connection, run_id: str, fingerprint: str, checkpoint: Any
+    ) -> bool:
+        """Verify retained checkpoint identity while neutralizing only its edit timestamp."""
+
+        from .sqlite_provider_imports import _checkpoint_fingerprint
+
+        row = connection.execute(
+            "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'metadata'", (run_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            metadata = json.loads(row[0])
+            stored = metadata["checkpoint"]
+            if not isinstance(stored, dict) or metadata.get("checkpoint_fingerprint") != fingerprint:
+                return False
+            if "checkpoint_fields" in metadata:
+                recorded = type(checkpoint)(**metadata["checkpoint_fields"])
+                if recorded.as_json() != stored:
+                    return False
+            else:
+                required = ("comment_id", "created_at", "type", "raw_found", "accepted", "reviewed_sha", "file_count", "correction")
+                recorded = dataclasses.replace(
+                    checkpoint,
+                    **{key: stored[key] for key in required},
+                    updated_at=stored.get("updated_at"),
+                    run_id=stored.get("run_id"),
+                    hosted_review_id=stored.get("hosted_review_id"),
+                    duration_seconds=stored.get("duration_seconds"),
+                    duration_invalid=stored.get("duration_invalid", False),
+                    routed=stored.get("routed"),
+                    author_login=stored.get("author_login", checkpoint.author_login),
+                )
+            # Only older snapshots without the author use the immutable
+            # current GitHub author, and still have to reproduce the hash.
+            return (
+                _checkpoint_fingerprint(recorded) == fingerprint
+                and _checkpoint_fingerprint(dataclasses.replace(checkpoint, updated_at=recorded.updated_at)) == fingerprint
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def import_completed_run(
         self,
@@ -2939,6 +3283,8 @@ class SqliteReviewRecords:
         self._require_controller_compatible(connection)
         tables = self._table_names(connection)
         if _RECORDS_METADATA_TABLE not in tables:
+            if tables & _RECORDS_TABLES:
+                raise RecordsSchemaIncompatible("review-records schema is partial: metadata table is missing")
             raise RecordsNotBootstrapped("review-records schema is not bootstrapped; call bootstrap() explicitly")
         try:
             row = connection.execute(

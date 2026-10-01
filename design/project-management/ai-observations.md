@@ -176,3 +176,21 @@ Entry format:
   - Expected pattern: preserve useful workers and the posted trigger, use the canonical exact-trigger native waiter when available, and do not change models, interrupt useful work, duplicate the review, or repeatedly probe for a slot.
   - Outcome: the native waiter promptly identified the attributable rate limit and its exact reset; no duplicate review was posted.
   - Reconsideration trigger: investigate slot accounting only if structural exhaustion repeatedly prevents wake-capable observation and no native wait can preserve the transition.
+
+- `2026-10-01`: Isolate implicit repository record discovery in live-adapter tests
+  - Context: PR #2916's SQL-first CLI discovery made two adapter tests without private context resolve the workspace's actual review-record database; their read-only queries reported its older schema instead of exercising their synthetic Hosted fixtures.
+  - Observation: mocking GitHub calls and capture files does not isolate the repository-scoped SQLite discovery path. No live database write or promotion occurred.
+  - Expected pattern: give adapter tests an isolated temporary Git common directory by default, overriding it only with an explicit fixture context; keep production schema checks fail closed.
+  - Outcome: the runtime test fixture now isolates implicit capture/record resolution, and the 115-test runtime suite passes without relying on live state.
+
+- `2026-10-01`: An ownership clarification is not a lane-wide stop
+  - Context: the human transferred the #2916 controller child to Overseer for review/fix cycles while Gameplay still owned #2839. Gameplay ended its turn after acknowledging the transfer, requiring an explicit resume.
+  - Observation: the child-only ownership boundary was incorrectly treated as a stopping point for the continuing parent assignment.
+  - Expected pattern: stop touching the transferred child, but continue the owned parent and independent review lanes. A coordination acknowledgement or status answer must not terminate the standing train without an explicit pause or actual blocker.
+  - Outcome: Gameplay resumed #2839, preserved the child untouched, adjudicated its complete saved CLI result, and dispatched the accepted parent-only corrections.
+
+- `2026-10-01`: Distinguish request admission contention from an active provider review
+  - Context: several closely launched #2839 Hosted/CLI commands produced a delayed Hosted refusal saying another Hosted request was active, without a new posted trigger; a guarded later request posted normally.
+  - Observation: the exact contention phase and cause remain unproven. That refusal alone does not establish that CodeRabbit is reviewing, and preparation delay consumes eligible Hosted windows independently of provider duration.
+  - Expected pattern: retain the canonical request handle and verify its actual posted or refused outcome. Investigate the narrow admission/lock boundary without bypassing duplicate-request or exact-identity safeguards; keep the other safe lane moving.
+  - Reconsideration trigger: investigate when the controller owner can reproduce the contention or another eligible Hosted window is lost; do not silently label an unposted request as an active review.

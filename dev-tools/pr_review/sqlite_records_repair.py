@@ -794,7 +794,7 @@ def archive_incomplete_checkpoint(
         try:
             capture = evidence._load_cli_capture(
                 checkpoint, repo, pr_number, common,
-                validate_checkpoint_decisions=False, records=records,
+                validate_checkpoint_decisions=False, records=records, sql_first=False,
             )
         except evidence.EvidenceError as exc:
             metadata = {

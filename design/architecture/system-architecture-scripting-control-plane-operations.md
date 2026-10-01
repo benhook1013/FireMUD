@@ -284,7 +284,7 @@ Inputs:
 
 `reason` is required and must be non-blank; Game Session validates it before reading the owned instance or purging queue/durable command state.
 
-Semantics and outputs: same as `PurgeQueuedTickCommandsForScriptPatch`, including `LOST_BEFORE_STAGING` only for commands acknowledged `ACCEPTED_VOLATILE` that remain `RECEIVED` or `ENQUEUED` with no surviving batch, while `ACCEPTED_DURABLE` pre-batch work remains under its durable retry/recovery contract; durably batch-bound retry uses `ABANDONED`. Both outcomes use `gameplayResult = NOT_APPLIED`, `failureCode = ROLLBACK_PURGED`, and the validated nonblank ingress `reason` as `failureMessage`, scoped to plugin-produced commands by the `pluginId` and `pluginVersionId` provenance carried from Automation into Game Session during handoff.
+Plugin rows are selected by their stored `pluginId` and `pluginVersionId` provenance. `LOST_BEFORE_STAGING` eligibility, the validated nonblank ingress `reason`, and evidence-qualified batch-bound handling follow [PurgeQueuedTickCommandsForScriptPatch](#purgequeuedtickcommandsforscriptpatch); inconclusive work remains nonterminal under that owner contract.
 
 ### Automation & Scripting: Drain/Purge Hooks (Rollback Support)
 

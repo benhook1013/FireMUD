@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import sys
@@ -24,7 +25,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
-from pr_review.controller import ControllerError, StaleReviewTarget, _review_activity
+from pr_review.controller import ControllerError, HostedAdmissionBusy, StaleReviewTarget, _review_activity
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
@@ -497,6 +498,11 @@ class RuntimeTest(unittest.TestCase):
                         runner._assert_no_other_active_reservations(42, Path(directory))
 
     def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        context = patch.object(evidence, "git_common_dir", return_value=Path(directory.name))
+        context.start()
+        self.addCleanup(context.stop)
         def quiet_repository(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 43, "state": "open"}]
@@ -2381,8 +2387,8 @@ class RuntimeTest(unittest.TestCase):
                     self.assertTrue(post_started.wait(timeout=5), "first Hosted request did not reach POST")
                     second = pool.submit(HostedRunner("owner/repo", lives[43]), targets[43], expect_pr=43)
                     with self.assertRaisesRegex(
-                        ControllerError,
-                        "another Hosted request is active for repository owner/repo",
+                        HostedAdmissionBusy,
+                        "admission lock is busy for repository owner/repo.*does not establish an active Hosted",
                     ):
                         second.result(timeout=5)
                 finally:
@@ -2392,6 +2398,97 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(len(posts), 1)
             self.assertTrue(paths[42].exists())
             self.assertFalse(paths[43].exists())
+
+    def test_hosted_admission_lock_contention_is_typed_and_prepost(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE, repository="owner/repo"
+        )
+        live = LiveGitHub("owner/repo")
+
+        for lock_kind in ("repository", "pr"):
+            with self.subTest(lock_kind=lock_kind), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+                lock_path = (
+                    common / "firemud" / "hosted" / "owner_repo" / "repository.request.lock"
+                    if lock_kind == "repository"
+                    else path.parent / "request.lock"
+                )
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                with lock_path.open("a+") as lock_handle:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                    with (
+                        patch.object(live, "pull_request", return_value=snapshot),
+                        patch.object(live, "branch_head", return_value=BASE),
+                        patch.object(hosted, "default_trigger_record_path", return_value=path),
+                        patch.object(evidence, "git_common_dir", return_value=common),
+                        patch("pr_review.runtime.subprocess.run") as provider_call,
+                        self.assertRaisesRegex(
+                            HostedAdmissionBusy,
+                            "admission lock is busy.*does not establish an active Hosted provider request",
+                        ),
+                    ):
+                        HostedRunner("owner/repo", live)(target, expect_pr=42)
+                    provider_call.assert_not_called()
+                    self.assertFalse(path.exists())
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    def test_concurrent_hosted_requests_for_same_pr_post_only_once(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE, repository="owner/repo"
+        )
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        comment = {
+            "id": 123,
+            "created_at": "2026-09-24T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_started = threading.Event()
+        release_post = threading.Event()
+        posts = []
+
+        def gh_call(args, **_kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            posts.append(args)
+            post_started.set()
+            if not release_post.wait(timeout=10):
+                raise AssertionError("test did not release the Hosted POST")
+            return CompletedProcess(args, 0, json.dumps(comment), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                first = pool.submit(HostedRunner("owner/repo", live), target, expect_pr=42)
+                try:
+                    self.assertTrue(post_started.wait(timeout=5), "first Hosted request did not reach POST")
+                    with self.assertRaisesRegex(
+                        HostedAdmissionBusy,
+                        "admission lock is busy.*does not establish an active Hosted provider request",
+                    ):
+                        HostedRunner("owner/repo", live)(target, expect_pr=42)
+                    self.assertTrue(path.exists())
+                finally:
+                    release_post.set()
+
+                self.assertEqual(first.result(timeout=5)["status"], "posted")
+
+            self.assertEqual(len(posts), 1)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["trigger"]["id"], 123)
 
     def test_hosted_stop_at_admission_leaves_no_post_or_started_sqlite_attempt(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -2857,6 +2954,14 @@ class RuntimeTest(unittest.TestCase):
             @staticmethod
             def cli_source_decisions(_run_id):
                 return None
+
+            @staticmethod
+            def cli_capture_snapshot(_run_id, *, source_pr):
+                return None
+
+            @staticmethod
+            def completed_cli_capture_snapshots(_pr):
+                return []
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)

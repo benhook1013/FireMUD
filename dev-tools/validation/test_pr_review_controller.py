@@ -19,13 +19,14 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli_runner, hosted, stack
+from pr_review import cli_runner, evidence, hosted, sqlite_provider_imports, stack
 from pr_review.cli import _parser
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
     HOSTED_CLI_OVERLAP_HOLD_REASON,
     ControllerError,
     DefaultGitProvider,
+    HostedAdmissionBusy,
     LivePullRequest,
     PullRequestSnapshot,
     ReviewController,
@@ -2545,6 +2546,114 @@ class ControllerTests(unittest.TestCase):
                     with self.assertRaises(ControllerError):
                         controller.resolve_hosted_target()
 
+    def test_bounded_allocation_uses_durable_resolution_for_accepted_finding_clearance(self):
+        resolved_history = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="bounded-baseline"),
+            ]
+        }
+        resolved = self.grant_bounded_allocation(
+            cap=1,
+            minimum=1,
+            evidence=resolved_history,
+        )
+        resolved_history[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="resolved-same-head",
+                accepted=1,
+                source_resolution_status="resolved",
+            )
+        )
+        progress = resolved.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(progress["status"], "CAP_AUDITED_STOP")
+
+        reconstructed_history = {
+            (1, "hosted"): [
+                self.allocation_evidence(
+                    head=HEAD_1,
+                    checkpoint="resolved-historical",
+                    accepted=1,
+                    source_resolution_status="resolved",
+                ),
+                self.allocation_evidence(head=HEAD_2, checkpoint="current-baseline"),
+                self.scope_timeline_evidence(1, "hosted", HEAD_2),
+            ]
+        }
+        reconstructed = self.make(
+            {1: pr(1, HEAD_2)},
+            reconstructed_history,
+            heads={"feature-1": HEAD_2},
+        )
+        reconstructed.set_stack([1])
+        reconstructed.git.is_ancestor = lambda _ancestor, _descendant: False
+        reopened = reconstructed.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=HEAD_2,
+            checkpoint="current-baseline",
+            min_additional_completed=1,
+            max_additional_completed=1,
+            fresh_taper=True,
+            reason="reopen bounded review after reconstructed source proof",
+        )
+        self.assertEqual(reopened["progress"]["status"], "CAP_ACTIVE")
+
+        pending_history = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="bounded-baseline"),
+            ]
+        }
+        pending = self.grant_bounded_allocation(
+            cap=1,
+            minimum=1,
+            evidence=pending_history,
+        )
+        pending_history[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="pending-descendant",
+                accepted=1,
+                source_resolution_status="pending",
+            )
+        )
+        pending.github.values[1] = pr(1, HEAD_2)
+        pending.git.heads["feature-1"] = HEAD_2
+        pending.git.is_ancestor = lambda _ancestor, _descendant: True
+
+        pending_progress = pending.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(pending_progress["status"], "CAP_EXHAUSTED_PENDING")
+        self.assertIn("accepted findings need a published corrected head", pending_progress["details"])
+
+    def test_fresh_taper_legacy_none_resolution_preserves_ancestry_waiver(self):
+        class LegacyEvidence(Evidence):
+            source_resolution_status = None
+
+        for as_object in (False, True):
+            with self.subTest(as_object=as_object):
+                legacy = self.allocation_evidence(
+                    head=HEAD_1, checkpoint="legacy-historical", accepted=1,
+                    source_resolution_status=None,
+                )
+                history = {(1, "hosted"): [
+                    LegacyEvidence.from_value(legacy) if as_object else legacy,
+                    self.allocation_evidence(head=HEAD_2, checkpoint="current-baseline"),
+                    self.scope_timeline_evidence(1, "hosted", HEAD_2),
+                ]}
+                controller = self.make({1: pr(1, HEAD_2)}, history, heads={"feature-1": HEAD_2})
+                controller.set_stack([1])
+                controller.git.is_ancestor = lambda _ancestor, _descendant: False
+                result = controller.decide_allocation(
+                    action="grant", pr=1, channel="hosted", head=HEAD_2,
+                    checkpoint="current-baseline", min_additional_completed=1,
+                    max_additional_completed=1, fresh_taper=True,
+                    reason="retain judged legacy evidence across reconstruction",
+                )
+                self.assertEqual(result["progress"]["status"], "CAP_ACTIVE")
+                controller.git.is_ancestor = lambda _ancestor, _descendant: True
+                self.assertFalse(controller._accepted_findings_pending(history[(1, "hosted")][0], HEAD_2))
+                controller.git.is_ancestor = lambda _ancestor, _descendant: False
+                self.assertTrue(controller._accepted_findings_pending(history[(1, "hosted")][0], HEAD_2))
+
     def test_fresh_taper_keeps_same_head_audit_and_active_work_holds(self):
         historical_head = "3f" * 20
         cases = (
@@ -3658,17 +3767,28 @@ class ControllerTests(unittest.TestCase):
                     "channel": "hosted",
                     "repository": "owner/repo",
                     "checkpoint_id": 7001,
+                    "checkpoint_fingerprint": "",
                     "provider_id": "review:9001",
                     "run_id": "hosted-run",
                 }
             ]
         )
         hosted_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=hosted_records)
-        hosted_checkpoint = SimpleNamespace(
-            run_id=None,
+        hosted_checkpoint = evidence.Checkpoint(
             comment_id=7001,
-            hosted_review_id=9001,
+            created_at="2026-09-30T10:00:00Z",
+            type="Hosted",
+            raw_found=2,
             accepted=2,
+            reviewed_sha=HEAD_1,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=9001,
+        )
+        hosted_records.origins[0]["checkpoint_fingerprint"] = sqlite_provider_imports._checkpoint_fingerprint(
+            hosted_checkpoint
         )
         self.assertEqual(
             hosted_evidence._source_resolution_status(42, "hosted", hosted_checkpoint, HEAD_1),
@@ -3683,6 +3803,7 @@ class ControllerTests(unittest.TestCase):
                     "source_pr": 42,
                     "channel": "hosted",
                     "checkpoint_id": 7001,
+                    "checkpoint_fingerprint": sqlite_provider_imports._checkpoint_fingerprint(hosted_checkpoint),
                     "provider_id": "9002",
                     "run_id": "wrong-provider-run",
                 }
@@ -3699,6 +3820,11 @@ class ControllerTests(unittest.TestCase):
         cli_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=unreadable_records)
         cli_checkpoint = SimpleNamespace(run_id="run." + "a" * 32, comment_id=None, hosted_review_id=None, accepted=1)
         self.assertEqual(cli_evidence._source_resolution_status(42, "cli", cli_checkpoint, HEAD_1), "pending")
+        self.assertIsNone(
+            LiveEvidence("owner/repo", LiveGitHub("owner/repo"))._source_resolution_status(
+                42, "cli", cli_checkpoint, HEAD_1
+            )
+        )
 
         unlinked_records = RecordsReader([])
         unlinked_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=unlinked_records)
@@ -3778,7 +3904,19 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(records.history(42)["provider_origins"], [])
         self.assertIsNone(records.history(42)["attempts"][0]["checkpoint_id"])
 
-        checkpoint = SimpleNamespace(run_id=None, comment_id=7001, hosted_review_id=9001, accepted=3)
+        checkpoint = evidence.Checkpoint(
+            comment_id=7001,
+            created_at="2026-09-30T10:00:00Z",
+            type="Hosted",
+            raw_found=3,
+            accepted=3,
+            reviewed_sha=HEAD_1,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=9001,
+        )
         evidence_before = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
         self.assertEqual(
             evidence_before._source_resolution_status(42, "hosted", checkpoint, HEAD_1), "pending"
@@ -6121,6 +6259,93 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(selected.snapshot.head_sha, HEAD_1)
         self.assertEqual(selected.parent.head_sha, advanced_base)
         self.assertTrue(selected.default_base_front)
+
+    def test_hosted_admission_contention_reselects_expected_target_before_one_post(self):
+        controller = self.make(
+            {1: pr(1, HEAD_1)},
+            heads={"develop": BASE, "feature-1": HEAD_1},
+        )
+        controller.set_stack([1])
+        attempted_heads = []
+        posts = []
+        reservations = []
+        with tempfile.TemporaryDirectory() as directory:
+            request_lock_path = Path(directory) / "request.lock"
+            request_lock_path.touch()
+            with request_lock_path.open("a+") as request_lock:
+                fcntl.flock(request_lock.fileno(), fcntl.LOCK_EX)
+
+                def adapter(target, *, expect_pr, admit, **_kwargs):
+                    self.assertEqual(expect_pr, 1)
+                    attempted_heads.append(target.snapshot.head_sha)
+                    with request_lock_path.open("a+") as attempt_lock:
+                        try:
+                            fcntl.flock(attempt_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        except BlockingIOError as exc:
+                            if len(attempted_heads) == 1:
+                                controller.github.values[1] = pr(1, HEAD_2)
+                                controller.git.heads["feature-1"] = HEAD_2
+                            raise HostedAdmissionBusy(
+                                "Hosted admission lock is busy for PR #1; this does not establish an active Hosted "
+                                "provider request for this attempt"
+                            ) from exc
+                        admit(lambda: reservations.append((target.snapshot.number, target.snapshot.head_sha)))
+                        posts.append((target.snapshot.number, target.snapshot.head_sha))
+                        fcntl.flock(attempt_lock.fileno(), fcntl.LOCK_UN)
+                    return {"status": "posted", "pr": target.snapshot.number, "head": target.snapshot.head_sha}
+
+                controller.hosted_adapter = adapter
+                original_target = controller._target
+                target_selections = 0
+
+                def release_cli_preflight_and_reselect(channel, expected_pr=None):
+                    nonlocal target_selections
+                    target_selections += 1
+                    if target_selections == 2:
+                        fcntl.flock(request_lock.fileno(), fcntl.LOCK_UN)
+                    return original_target(channel, expected_pr)
+
+                controller._target = release_cli_preflight_and_reselect
+                result = controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(attempted_heads, [HEAD_1, HEAD_2])
+        self.assertEqual(reservations, [(1, HEAD_2)])
+        self.assertEqual(posts, [(1, HEAD_2)])
+        self.assertEqual(result, {"status": "posted", "pr": 1, "head": HEAD_2})
+
+    def test_hosted_admission_contention_is_bounded_and_remains_admission_error(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        attempts = []
+
+        def adapter(_target, **_kwargs):
+            attempts.append("busy")
+            raise HostedAdmissionBusy(
+                "Hosted admission lock is busy for PR #1; this does not establish an active Hosted provider request"
+            )
+
+        controller.hosted_adapter = adapter
+
+        with self.assertRaisesRegex(HostedAdmissionBusy, "admission lock is busy.*does not establish"):
+            controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(len(attempts), 3)
+
+    def test_hosted_admission_retries_only_typed_lock_contention(self):
+        controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
+        controller.set_stack([1])
+        attempts = []
+
+        def adapter(_target, **_kwargs):
+            attempts.append("attempted")
+            raise ControllerError("could not acquire the Hosted request lock")
+
+        controller.hosted_adapter = adapter
+
+        with self.assertRaisesRegex(ControllerError, "could not acquire the Hosted request lock"):
+            controller.run_hosted(expected_pr=1)
+
+        self.assertEqual(attempts, ["attempted"])
 
     def test_default_base_advance_does_not_relax_stacked_child_ancestry(self):
         advanced_base = "9" * 40
