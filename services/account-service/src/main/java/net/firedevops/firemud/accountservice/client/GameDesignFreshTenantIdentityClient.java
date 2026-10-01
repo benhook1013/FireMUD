@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.client;
 
+import io.grpc.ClientInterceptors;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.util.UUID;
@@ -10,6 +11,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
@@ -24,6 +26,7 @@ public final class GameDesignFreshTenantIdentityClient
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final String workloadNamespace;
+  private final GrpcServerPeerIdentityClientInterceptor serverPeerIdentityInterceptor;
 
   public GameDesignFreshTenantIdentityClient(
       ServiceEndpointsProperties endpoints,
@@ -39,6 +42,8 @@ public final class GameDesignFreshTenantIdentityClient
       throw new IllegalArgumentException("Account workload namespace must be one DNS label");
     }
     this.workloadNamespace = workloadNamespace;
+    this.serverPeerIdentityInterceptor =
+        new GrpcServerPeerIdentityClientInterceptor(gameDesignServerPeerUri(workloadNamespace));
   }
 
   /** Initializes the normal Account workload TLS client when the owner explicitly enables it. */
@@ -59,7 +64,13 @@ public final class GameDesignFreshTenantIdentityClient
   @Override
   protected TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub buildStub(
       ManagedChannel channel) {
-    return TenantIdentityServiceGrpc.newBlockingStub(channel).withCompression("gzip");
+    return TenantIdentityServiceGrpc.newBlockingStub(
+            ClientInterceptors.intercept(channel, serverPeerIdentityInterceptor))
+        .withCompression("gzip");
+  }
+
+  private static String gameDesignServerPeerUri(String namespace) {
+    return "spiffe://firemud/ns/" + namespace + "/sa/game-design-service";
   }
 
   /** Reads the exact operation for this namespace without invoking any retained-identity RPC. */
@@ -80,6 +91,10 @@ public final class GameDesignFreshTenantIdentityClient
                     .setCreationRequestId(creationRequestId.toString())
                     .setExpectedRequestDigest(expectedRequestDigest)
                     .build());
+
+    if (!response.getUnknownFields().asMap().isEmpty()) {
+      throw new IllegalStateException("Game Design fresh tenant evidence contains unknown fields");
+    }
 
     FreshTenantCreationEvidence evidence;
     try {

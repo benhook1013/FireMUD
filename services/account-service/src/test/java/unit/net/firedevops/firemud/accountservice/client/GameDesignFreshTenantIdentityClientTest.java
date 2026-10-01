@@ -3,6 +3,9 @@ package net.firedevops.firemud.accountservice.client;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -12,8 +15,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.UnknownFieldSet;
+import io.grpc.Attributes;
+import io.grpc.CallOptions;
+import io.grpc.ClientCall;
+import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
+import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
@@ -25,6 +36,7 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
@@ -102,6 +114,15 @@ class GameDesignFreshTenantIdentityClientTest {
   }
 
   @Test
+  void rejectsUnknownFieldsInClosedFreshTenantEvidenceResponse() throws Exception {
+    UnknownFieldSet unknownFields =
+        UnknownFieldSet.newBuilder()
+            .addField(100, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+            .build();
+    assertRejected(validResponse().toBuilder().setUnknownFields(unknownFields).build());
+  }
+
+  @Test
   void rejectsMalformedSelectorsBeforeAnyRpc() throws Exception {
     TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
     GameDesignFreshTenantIdentityClient client = newClient(stub);
@@ -159,6 +180,36 @@ class GameDesignFreshTenantIdentityClientTest {
                     new ServiceEndpointsProperties(), classpathMaterial, channelFactory, "test"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("file-backed");
+
+    List<CommonGrpcClientProperties> classpathConfigurations =
+        List.of(
+            mtlsPropertiesWith(
+                "certs/account-client.crt", "classpath:account-client.key", "ca.crt"),
+            mtlsPropertiesWith(
+                "certs/account-client.crt", "account-client.key", "classpath:ca.crt"));
+    for (CommonGrpcClientProperties classpathConfiguration : classpathConfigurations) {
+      assertThatThrownBy(
+              () ->
+                  new GameDesignFreshTenantIdentityClient(
+                      new ServiceEndpointsProperties(),
+                      classpathConfiguration,
+                      channelFactory,
+                      "test"))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("file-backed");
+    }
+
+    for (String invalidNamespace : new String[] {null, "", "Upper", "not/a-label"}) {
+      assertThatThrownBy(
+              () ->
+                  new GameDesignFreshTenantIdentityClient(
+                      new ServiceEndpointsProperties(),
+                      mtlsProperties(),
+                      channelFactory,
+                      invalidNamespace))
+          .isInstanceOf(IllegalArgumentException.class)
+          .hasMessageContaining("namespace");
+    }
     verifyNoInteractions(channelFactory);
   }
 
@@ -177,7 +228,7 @@ class GameDesignFreshTenantIdentityClientTest {
   }
 
   @Test
-  void initUsesTheSharedFileBackedTlsChannelForTheConfiguredGameDesignEndpoint(
+  void initUsesFileBackedTlsAndExactGameDesignPeerIdentityForConfiguredEndpoint(
       @TempDir Path directory) throws Exception {
     CommonGrpcClientProperties tls = mtlsProperties(directory);
     ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
@@ -195,6 +246,33 @@ class GameDesignFreshTenantIdentityClientTest {
               eq(6565),
               any(CommonGrpcClientProperties.class),
               eq(true));
+      assertThat(installedServerPeerUri(client))
+          .isEqualTo("spiffe://firemud/ns/test/sa/game-design-service");
+    } finally {
+      client.close();
+    }
+  }
+
+  @Test
+  void initializedStubRejectsResponseWithoutAuthenticatedServerSession(@TempDir Path directory)
+      throws Exception {
+    UnauthenticatedResponseChannel channel = new UnauthenticatedResponseChannel(validResponse());
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    when(channelFactory.buildChannel(
+            anyString(), anyInt(), any(CommonGrpcClientProperties.class), anyBoolean()))
+        .thenReturn(channel);
+    GameDesignFreshTenantIdentityClient client =
+        new GameDesignFreshTenantIdentityClient(
+            new ServiceEndpointsProperties(), mtlsProperties(directory), channelFactory, "test");
+
+    try {
+      client.init();
+
+      assertThatThrownBy(() -> client.resolveCreation(REQUEST_ID, REQUEST_DIGEST))
+          .isInstanceOf(StatusRuntimeException.class)
+          .extracting(error -> ((StatusRuntimeException) error).getStatus().getCode())
+          .isEqualTo(Status.Code.UNAUTHENTICATED);
+      assertThat(channel.lastCallCancelled).isTrue();
     } finally {
       client.close();
     }
@@ -221,6 +299,19 @@ class GameDesignFreshTenantIdentityClientTest {
     stubField.setAccessible(true);
     stubField.set(client, stub);
     return client;
+  }
+
+  private static String installedServerPeerUri(GameDesignFreshTenantIdentityClient client)
+      throws Exception {
+    Field interceptorField =
+        GameDesignFreshTenantIdentityClient.class.getDeclaredField("serverPeerIdentityInterceptor");
+    interceptorField.setAccessible(true);
+    GrpcServerPeerIdentityClientInterceptor interceptor =
+        (GrpcServerPeerIdentityClientInterceptor) interceptorField.get(client);
+    Field expectedPeerUriField =
+        GrpcServerPeerIdentityClientInterceptor.class.getDeclaredField("expectedPeerUri");
+    expectedPeerUriField.setAccessible(true);
+    return (String) expectedPeerUriField.get(interceptor);
   }
 
   private static TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub mockStub() {
@@ -277,6 +368,15 @@ class GameDesignFreshTenantIdentityClientTest {
     return tls;
   }
 
+  private static CommonGrpcClientProperties mtlsPropertiesWith(
+      String certificate, String privateKey, String caCertificate) {
+    CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
+    tls.setCertChain(certificate);
+    tls.setPrivateKey(privateKey);
+    tls.setCaCert(caCertificate);
+    return tls;
+  }
+
   private static CommonGrpcClientProperties mtlsProperties(Path directory) throws Exception {
     CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
     tls.setCertChain(copyCertificateResource("dev-cert.pem", directory).toString());
@@ -295,5 +395,77 @@ class GameDesignFreshTenantIdentityClientTest {
       Files.copy(source, destination);
     }
     return destination;
+  }
+
+  private static final class UnauthenticatedResponseChannel extends ManagedChannel {
+    private final byte[] responseBytes;
+    private boolean lastCallCancelled;
+
+    private UnauthenticatedResponseChannel(ResolveFreshTenantCreationResponse response) {
+      this.responseBytes = response.toByteArray();
+    }
+
+    @Override
+    public String authority() {
+      return "test-authority";
+    }
+
+    @Override
+    public <ReqT, RespT> ClientCall<ReqT, RespT> newCall(
+        MethodDescriptor<ReqT, RespT> method, CallOptions callOptions) {
+      return new ClientCall<>() {
+        @Override
+        public void start(Listener<RespT> responseListener, Metadata headers) {
+          responseListener.onHeaders(new Metadata());
+          responseListener.onMessage(method.parseResponse(new ByteArrayInputStream(responseBytes)));
+          responseListener.onClose(Status.OK, new Metadata());
+        }
+
+        @Override
+        public void request(int numMessages) {}
+
+        @Override
+        public void cancel(String message, Throwable cause) {
+          lastCallCancelled = true;
+        }
+
+        @Override
+        public void halfClose() {}
+
+        @Override
+        public void sendMessage(ReqT message) {}
+
+        @Override
+        public Attributes getAttributes() {
+          // No SSL session means the server workload identity cannot be authenticated.
+          return Attributes.EMPTY;
+        }
+      };
+    }
+
+    @Override
+    public ManagedChannel shutdown() {
+      return this;
+    }
+
+    @Override
+    public boolean isShutdown() {
+      return false;
+    }
+
+    @Override
+    public boolean isTerminated() {
+      return false;
+    }
+
+    @Override
+    public ManagedChannel shutdownNow() {
+      return this;
+    }
+
+    @Override
+    public boolean awaitTermination(long timeout, TimeUnit unit) {
+      return true;
+    }
   }
 }

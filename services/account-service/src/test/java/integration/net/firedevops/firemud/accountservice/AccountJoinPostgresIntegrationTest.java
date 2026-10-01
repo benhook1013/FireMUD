@@ -913,7 +913,11 @@ class AccountJoinPostgresIntegrationTest {
     assertThat(second.outboxCheckpoints()).isEqualTo(first.outboxCheckpoints());
     assertThat(second.outboxSourceEvidence()).isEqualTo(first.outboxSourceEvidence());
     assertThat(second.transitionReceipt()).isEqualTo(first.transitionReceipt());
-    assertThat(second.authorityEvent()).isEqualTo(first.authorityEvent());
+    assertThat(second.authorityEvent().eventId()).isEqualTo(first.authorityEvent().eventId());
+    assertThat(second.authorityEvent().eventDigest())
+        .isEqualTo(first.authorityEvent().eventDigest());
+    assertThat(second.authorityEvent().canonicalJsonUtf8())
+        .containsExactly(first.authorityEvent().canonicalJsonUtf8());
     assertThat(membershipAuthorityReadEvidenceSnapshot(fixture)).isEqualTo(before);
   }
 
