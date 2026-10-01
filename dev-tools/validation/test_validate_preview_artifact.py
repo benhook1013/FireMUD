@@ -198,7 +198,7 @@ class PreviewArtifactServiceValidationTest(unittest.TestCase):
                 lambda document: document["spec"]["template"]["spec"]["volumes"][
                     0
                 ]["secret"].update({"secretName": "firemud-grpc-tls"}),
-                "unexpected grpc-tls source",
+                "distinct workload falls back to shared firemud-grpc-tls",
             ),
             (
                 "client certificate path",
@@ -895,34 +895,63 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
                     "name": "account-service",
                     "env": [
                         {
+                            "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                            "valueFrom": {
+                                "fieldRef": {"fieldPath": "metadata.namespace"}
+                            },
+                        },
+                        {
                             "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
-                            "value": "/tls/client.crt",
+                            "value": "/tls/tls.crt",
                         },
                         {
                             "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
-                            "value": "/tls/client.key",
+                            "value": "/tls/tls.key",
                         },
                         {
                             "name": "FIREMUD_GRPC_CA_CERT_PATH",
-                            "value": "/tls/ca.crt",
+                            "value": "/grpc-trust/ca.crt",
                         },
                     ],
                     "volumeMounts": [
                         {"name": "grpc-tls", "mountPath": "/tls", "readOnly": True},
+                        {"name": "grpc-trust", "mountPath": "/grpc-trust", "readOnly": True},
                         {
                             "name": "jwt-signing-keys",
                             "mountPath": "/var/run/secrets/firemud/jwt",
+                            "readOnly": True,
+                        },
+                        {
+                            "name": "jwt-jwks",
+                            "mountPath": "/var/run/secrets/firemud/jwks",
                             "readOnly": True,
                         },
                     ],
                 }
             ],
             "volumes": [
-                {"name": "grpc-tls", "secret": {"secretName": "firemud-grpc-tls"}},
+                {
+                    "name": "grpc-tls",
+                    "secret": {
+                        "secretName": "firemud-grpc-account-service",
+                        "items": [
+                            {"key": "tls.crt", "path": "tls.crt"},
+                            {"key": "tls.key", "path": "tls.key"},
+                        ],
+                    },
+                },
+                {
+                    "name": "grpc-trust",
+                    "secret": {
+                        "secretName": "firemud-grpc-tls",
+                        "items": [{"key": "ca.crt", "path": "ca.crt"}],
+                    },
+                },
                 {
                     "name": "jwt-signing-keys",
                     "secret": {"secretName": "jwt-signing-keys"},
                 },
+                {"name": "jwt-jwks", "configMap": {"name": "jwt-jwks"}},
             ],
         }
         document = {
@@ -930,6 +959,21 @@ class PreviewArtifactSecretReferenceTest(unittest.TestCase):
             "metadata": {"name": "account-service"},
             "spec": {"template": {"spec": pod}},
         }
+        with patch.object(self.validator, "SERVICE_IMAGES", {"account-service"}):
+            self.validator.validate_service_consumers(
+                [document], "pr-42", "standalone", "public"
+            )
+            fallback = copy.deepcopy(document)
+            fallback["spec"]["template"]["spec"]["volumes"][0]["secret"][
+                "secretName"
+            ] = "firemud-grpc-tls"
+            with self.assertRaisesRegex(
+                ValueError,
+                "Deployment/account-service distinct workload falls back to shared firemud-grpc-tls",
+            ):
+                self.validator.validate_service_consumers(
+                    [fallback], "pr-42", "standalone", "public"
+                )
         for field, malformed in (
             ("volumeMounts", ["not-a-mapping"]),
             ("volumes", ["not-a-mapping"]),
@@ -1839,21 +1883,26 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
             for name, spec in self.validator.EXPECTED_INTERNAL_NETWORK_POLICY_SPECS.items()
         ]
         if mode == "hosted-controller":
-            documents.append(
-                self._policy_document(
-                    "account-service-controller-ingress",
-                    {
-                        "podSelector": {"matchLabels": {"app": "account-service"}},
-                        "policyTypes": ["Ingress"],
-                        "ingress": [
-                            {
-                                "from": [controller_from],
-                                "ports": [{"protocol": "TCP", "port": 6565}],
-                            }
-                        ],
-                    },
+            for workload in (
+                "account-service",
+                "game-session-service",
+                "social-groups-service",
+            ):
+                documents.append(
+                    self._policy_document(
+                        f"{workload}-controller-ingress",
+                        {
+                            "podSelector": {"matchLabels": {"app": workload}},
+                            "policyTypes": ["Ingress"],
+                            "ingress": [
+                                {
+                                    "from": [controller_from],
+                                    "ports": [{"protocol": "TCP", "port": 6565}],
+                                }
+                            ],
+                        },
+                    )
                 )
-            )
         documents.extend(
             [
                 self._policy_document(
@@ -2021,6 +2070,40 @@ class PreviewArtifactCertificateIdentityModeTest(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
             self.validator.validate_network_policies(missing_account, "hosted-controller")
+
+        missing_game_session = [
+            document
+            for document in hosted
+            if document["metadata"]["name"]
+            != "game-session-service-controller-ingress"
+        ]
+        with self.assertRaisesRegex(ValueError, "runtime NetworkPolicy set is not closed"):
+            self.validator.validate_network_policies(
+                missing_game_session, "hosted-controller"
+            )
+
+        for field, value, message in (
+            (
+                "podSelector",
+                {"matchLabels": {"app": "account-service"}},
+                "selects an unsafe workload",
+            ),
+            ("policyTypes", ["Ingress", "Egress"], "must only govern ingress"),
+            ("ingress", [], "has an unsafe exception"),
+        ):
+            with self.subTest(mode="hosted-controller", game_session_field=field):
+                malformed = copy.deepcopy(hosted)
+                policy = next(
+                    document
+                    for document in malformed
+                    if document["metadata"]["name"]
+                    == "game-session-service-controller-ingress"
+                )
+                policy["spec"][field] = value
+                with self.assertRaisesRegex(ValueError, message):
+                    self.validator.validate_network_policies(
+                        malformed, "hosted-controller"
+                    )
 
         for mode in ("standalone", "hosted-controller"):
             with self.subTest(mode=mode, case="missing gateway egress"):

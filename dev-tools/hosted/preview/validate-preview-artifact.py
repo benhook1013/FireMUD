@@ -66,6 +66,15 @@ PUBLICATION_GRPC_WORKLOADS = {
     "game-logic-service",
     "automation-scripting-service",
 }
+ACCOUNT_GRPC_WORKLOADS = {"account-service"}
+GAME_SESSION_GRPC_WORKLOADS = {"game-session-service"}
+SOCIAL_GROUPS_GRPC_WORKLOADS = {"social-groups-service"}
+DISTINCT_GRPC_WORKLOADS = (
+    PUBLICATION_GRPC_WORKLOADS
+    | ACCOUNT_GRPC_WORKLOADS
+    | GAME_SESSION_GRPC_WORKLOADS
+    | SOCIAL_GROUPS_GRPC_WORKLOADS
+)
 EXPECTED_NAMES = {
     "Deployment": SERVICE_IMAGES | {"postgres", "redis-coord", "redis-cache", "minio"},
     "Service": SERVICE_IMAGES
@@ -78,6 +87,8 @@ EXPECTED_NAMES = {
         "internal-services",
         "internal-services-egress",
         "account-service-controller-ingress",
+        "game-session-service-controller-ingress",
+        "social-groups-service-controller-ingress",
         "spring-cloud-gateway-ingress",
         "spring-cloud-gateway-egress",
         "tcp-proxy-service-egress",
@@ -134,8 +145,8 @@ EXPECTED_SECRET_REFS = {
     "minio-credentials",
     "firemud-grpc-tls",
 }
-PUBLICATION_GRPC_SECRET_OWNERS = {
-    f"firemud-grpc-{service}": service for service in PUBLICATION_GRPC_WORKLOADS
+DISTINCT_GRPC_SECRET_OWNERS = {
+    f"firemud-grpc-{service}": service for service in DISTINCT_GRPC_WORKLOADS
 }
 CANONICAL_INGRESS_ISSUER = "letsencrypt-prod"
 ALLOCATED_TELNET_PORT_ANNOTATION = "firemud.dev/allocated-telnet-port"
@@ -225,8 +236,12 @@ def _expected_names_for_mode(certificate_identity_mode: str) -> dict[str, set[st
         kind: set(names) for kind, names in EXPECTED_NAMES.items()
     }
     if certificate_identity_mode == "standalone":
-        expected_names["NetworkPolicy"].discard(
-            "account-service-controller-ingress"
+        expected_names["NetworkPolicy"].difference_update(
+            {
+                "account-service-controller-ingress",
+                "game-session-service-controller-ingress",
+                "social-groups-service-controller-ingress",
+            }
         )
     return expected_names
 
@@ -758,14 +773,14 @@ def _is_sanitized_secret_reference(value: object) -> bool:
     )
 
 
-def _is_publication_grpc_secret_volume_source(
+def _is_distinct_grpc_secret_volume_source(
     document: object, path: str, value: object
 ) -> bool:
-    """Allow a publication TLS Secret only in its owning Deployment's grpc-tls volume."""
+    """Allow each distinct workload TLS Secret only in its owning Deployment."""
 
     if not isinstance(value, str) or not isinstance(document, dict):
         return False
-    owner = PUBLICATION_GRPC_SECRET_OWNERS.get(value)
+    owner = DISTINCT_GRPC_SECRET_OWNERS.get(value)
     if owner is None:
         return False
     metadata = document.get("metadata")
@@ -991,7 +1006,7 @@ def _validate_sanitized_secret_refs(
         for key, child in value.items():
             if key == "secretName" and not (
                 _is_sanitized_secret_reference(child)
-                or _is_publication_grpc_secret_volume_source(
+                or _is_distinct_grpc_secret_volume_source(
                     root_document, f"{path}.{key}", child
                 )
             ):
@@ -1550,7 +1565,7 @@ def validate_service_consumers(
             fail(f"Deployment/{service} has an unexpected container layout")
 
         container = containers[0]
-        if service in PUBLICATION_GRPC_WORKLOADS:
+        if service in DISTINCT_GRPC_WORKLOADS:
             workload_namespace_entries = [
                 entry
                 for entry in container.get("env", [])
@@ -1573,7 +1588,7 @@ def validate_service_consumers(
                 "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/tls.key",
                 "FIREMUD_GRPC_CA_CERT_PATH": "/grpc-trust/ca.crt",
             }
-            if service in PUBLICATION_GRPC_WORKLOADS
+            if service in DISTINCT_GRPC_WORKLOADS
             else {
                 "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/client.crt",
                 "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/client.key",
@@ -1585,6 +1600,24 @@ def validate_service_consumers(
             for entry in container.get("env", [])
             if isinstance(entry, dict)
         }
+        if service in DISTINCT_GRPC_WORKLOADS:
+            namespace_identity = next(
+                (
+                    entry
+                    for entry in container.get("env", [])
+                    if isinstance(entry, dict)
+                    and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+                ),
+                None,
+            )
+            if namespace_identity != {
+                "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+            }:
+                fail(
+                    f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
+                    "from metadata.namespace"
+                )
         for env_name, expected_path in expected_grpc_paths.items():
             if declared_grpc_paths.get(env_name) != expected_path:
                 fail(
@@ -1593,14 +1626,14 @@ def validate_service_consumers(
 
         grpc_secret_name = (
             f"firemud-grpc-{service}"
-            if service in PUBLICATION_GRPC_WORKLOADS
+            if service in DISTINCT_GRPC_WORKLOADS
             else "firemud-grpc-tls"
         )
         expected_mounts = {
             "grpc-tls": ("/tls", grpc_secret_name),
             "jwt-signing-keys": ("/var/run/secrets/firemud/jwt", "jwt-signing-keys"),
         }
-        if service in PUBLICATION_GRPC_WORKLOADS:
+        if service in DISTINCT_GRPC_WORKLOADS:
             expected_mounts["grpc-trust"] = ("/grpc-trust", "firemud-grpc-tls")
         if service == "account-service":
             expected_mounts["jwt-jwks"] = ("/var/run/secrets/firemud/jwks", "jwt-jwks")
@@ -1665,6 +1698,15 @@ def validate_service_consumers(
                     f"Deployment/{service}.spec.template.spec.volumes[{volume_name}].secret",
                 )
                 if source.get("secretName") != source_name:
+                    if (
+                        service in DISTINCT_GRPC_WORKLOADS
+                        and volume_name == "grpc-tls"
+                        and source.get("secretName") == "firemud-grpc-tls"
+                    ):
+                        fail(
+                            f"Deployment/{service} distinct workload falls back to "
+                            "shared firemud-grpc-tls"
+                        )
                     fail(f"Deployment/{service} has an unexpected {volume_name} source")
                 if volume_name == "grpc-trust":
                     expected_source = {
@@ -1673,7 +1715,7 @@ def validate_service_consumers(
                     }
                     if source != expected_source:
                         fail(f"Deployment/{service} has an unsafe grpc-trust projection")
-                if volume_name == "grpc-tls" and service in PUBLICATION_GRPC_WORKLOADS:
+                if volume_name == "grpc-tls" and service in DISTINCT_GRPC_WORKLOADS:
                     expected_source = {
                         "secretName": source_name,
                         "items": [
@@ -1794,26 +1836,28 @@ def validate_network_policies(
         },
     }
     if certificate_identity_mode == "hosted-controller":
-        controller_policy = policies["account-service-controller-ingress"]
-        spec = _require_mapping(
-            controller_policy.get("spec"),
-            "NetworkPolicy/account-service-controller-ingress.spec",
-        )
-        if spec.get("podSelector") != {"matchLabels": {"app": "account-service"}}:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress selects an unsafe workload"
+        for workload in (
+            "account-service",
+            "game-session-service",
+            "social-groups-service",
+        ):
+            policy_name = f"{workload}-controller-ingress"
+            spec = _require_mapping(
+                policies[policy_name].get("spec"),
+                f"NetworkPolicy/{policy_name}.spec",
             )
-        if spec.get("policyTypes") != ["Ingress"]:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress must only govern ingress"
-            )
-        expected_ingress = [
-            {"from": [expected_from], "ports": [{"protocol": "TCP", "port": 6565}]}
-        ]
-        if spec.get("ingress") != expected_ingress:
-            fail(
-                "NetworkPolicy/account-service-controller-ingress has an unsafe exception"
-            )
+            if spec.get("podSelector") != {"matchLabels": {"app": workload}}:
+                fail(f"NetworkPolicy/{policy_name} selects an unsafe workload")
+            if spec.get("policyTypes") != ["Ingress"]:
+                fail(f"NetworkPolicy/{policy_name} must only govern ingress")
+            expected_ingress = [
+                {
+                    "from": [expected_from],
+                    "ports": [{"protocol": "TCP", "port": 6565}],
+                }
+            ]
+            if spec.get("ingress") != expected_ingress:
+                fail(f"NetworkPolicy/{policy_name} has an unsafe exception")
 
     gateway_ingress = _require_mapping(
         policies["spring-cloud-gateway-ingress"].get("spec"),
@@ -2062,7 +2106,7 @@ def validate_manifest(
                 fail(f"{location} retains a PR-selected nodePort")
             if location.endswith(".secretName") and not (
                 _is_manifest_secret_reference(value, expected_namespace)
-                or _is_publication_grpc_secret_volume_source(
+                or _is_distinct_grpc_secret_volume_source(
                     document, location, value
                 )
             ):

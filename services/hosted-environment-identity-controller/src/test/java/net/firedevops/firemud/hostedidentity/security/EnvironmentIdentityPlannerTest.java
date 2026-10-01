@@ -51,6 +51,37 @@ class EnvironmentIdentityPlannerTest {
             "spring-cloud-gateway",
             "tcp-proxy-service"),
         plan.grpcConsumers());
+    assertEquals(
+        "pr-42-grpc-game-design-service",
+        plan.grpcPublicationSourceSecretName("game-design-service"));
+    assertEquals(
+        "firemud-grpc-game-design-service", plan.grpcPublicationSecretName("game-design-service"));
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/game-design-service",
+        plan.grpcPublicationUriSan("game-design-service"));
+    assertEquals("pr-42-grpc-account-service", plan.grpcAccountCertificateName());
+    assertEquals("pr-42-grpc-account-service", plan.grpcAccountSourceSecretName());
+    assertEquals("firemud-grpc-account-service", plan.grpcAccountSecretName());
+    assertEquals(
+        plan.grpcAccountSecretName(), plan.secretName(HostedIdentityContract.GRPC_ACCOUNT_ROLE));
+    assertEquals("pr-42-grpc-game-session-service", plan.grpcGameSessionCertificateName());
+    assertEquals("pr-42-grpc-game-session-service", plan.grpcGameSessionSourceSecretName());
+    assertEquals("firemud-grpc-game-session-service", plan.grpcGameSessionSecretName());
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/game-session-service",
+        plan.grpcWorkloadIdentityUriSan(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD));
+    assertEquals(
+        plan.grpcGameSessionSecretName(),
+        plan.secretName(HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
+    assertEquals("pr-42-grpc-social-groups-service", plan.grpcSocialGroupsCertificateName());
+    assertEquals("pr-42-grpc-social-groups-service", plan.grpcSocialGroupsSourceSecretName());
+    assertEquals("firemud-grpc-social-groups-service", plan.grpcSocialGroupsSecretName());
+    assertEquals(
+        "spiffe://firemud/ns/pr-42/sa/social-groups-service",
+        plan.grpcWorkloadIdentityUriSan(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD));
+    assertEquals(
+        plan.grpcSocialGroupsSecretName(),
+        plan.secretName(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE));
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       assertEquals("pr-42-grpc-" + workload, plan.grpcPublicationSourceSecretName(workload));
       assertEquals("firemud-grpc-" + workload, plan.grpcPublicationSecretName(workload));
@@ -189,20 +220,20 @@ class EnvironmentIdentityPlannerTest {
   void rejectsPublicationSourceSecretRoleMapsWithMissingOrExtraRoles() {
     var plan = planner.plan("pr-42");
     String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
-    var sourceSecretNames = new HashMap<>(plan.grpcPublicationSourceSecretNames());
+    var sourceSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySourceSecretNames());
     sourceSecretNames.remove(role);
     assertInvalidPublicationRoleMaps(
         plan,
-        plan.grpcPublicationCertificateNames(),
-        plan.grpcPublicationSecretNames(),
+        plan.grpcWorkloadIdentityCertificateNames(),
+        plan.grpcWorkloadIdentitySecretNames(),
         sourceSecretNames);
 
-    var extraSourceSecretNames = new HashMap<>(plan.grpcPublicationSourceSecretNames());
+    var extraSourceSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySourceSecretNames());
     extraSourceSecretNames.put("grpc-publication-unsupported-service", "unsupported-source-secret");
     assertInvalidPublicationRoleMaps(
         plan,
-        plan.grpcPublicationCertificateNames(),
-        plan.grpcPublicationSecretNames(),
+        plan.grpcWorkloadIdentityCertificateNames(),
+        plan.grpcWorkloadIdentitySecretNames(),
         extraSourceSecretNames);
   }
 
@@ -212,37 +243,37 @@ class EnvironmentIdentityPlannerTest {
     String role = HostedIdentityContract.grpcPublicationRole("game-design-service");
     String unsupportedRole = "grpc-publication-unsupported-service";
 
-    var missingCertificateNames = new HashMap<>(plan.grpcPublicationCertificateNames());
+    var missingCertificateNames = new HashMap<>(plan.grpcWorkloadIdentityCertificateNames());
     missingCertificateNames.remove(role);
     assertInvalidPublicationRoleMaps(
         plan,
         missingCertificateNames,
-        plan.grpcPublicationSecretNames(),
-        plan.grpcPublicationSourceSecretNames());
+        plan.grpcWorkloadIdentitySecretNames(),
+        plan.grpcWorkloadIdentitySourceSecretNames());
 
-    var extraCertificateNames = new HashMap<>(plan.grpcPublicationCertificateNames());
+    var extraCertificateNames = new HashMap<>(plan.grpcWorkloadIdentityCertificateNames());
     extraCertificateNames.put(unsupportedRole, "unsupported-certificate");
     assertInvalidPublicationRoleMaps(
         plan,
         extraCertificateNames,
-        plan.grpcPublicationSecretNames(),
-        plan.grpcPublicationSourceSecretNames());
+        plan.grpcWorkloadIdentitySecretNames(),
+        plan.grpcWorkloadIdentitySourceSecretNames());
 
-    var missingSecretNames = new HashMap<>(plan.grpcPublicationSecretNames());
+    var missingSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySecretNames());
     missingSecretNames.remove(role);
     assertInvalidPublicationRoleMaps(
         plan,
-        plan.grpcPublicationCertificateNames(),
+        plan.grpcWorkloadIdentityCertificateNames(),
         missingSecretNames,
-        plan.grpcPublicationSourceSecretNames());
+        plan.grpcWorkloadIdentitySourceSecretNames());
 
-    var extraSecretNames = new HashMap<>(plan.grpcPublicationSecretNames());
+    var extraSecretNames = new HashMap<>(plan.grpcWorkloadIdentitySecretNames());
     extraSecretNames.put(unsupportedRole, "unsupported-secret");
     assertInvalidPublicationRoleMaps(
         plan,
-        plan.grpcPublicationCertificateNames(),
+        plan.grpcWorkloadIdentityCertificateNames(),
         extraSecretNames,
-        plan.grpcPublicationSourceSecretNames());
+        plan.grpcWorkloadIdentitySourceSecretNames());
   }
 
   @Test

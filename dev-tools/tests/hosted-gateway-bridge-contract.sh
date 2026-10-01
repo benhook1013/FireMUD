@@ -348,28 +348,29 @@ if labelled_objects != {("Deployment", "tcp-proxy-service"), ("Service", "tcp-pr
         "certificate identity mode label rendered on an unexpected hosted object"
     )
 
-account_policy = named("NetworkPolicy", "account-service-controller-ingress")["spec"]
-if account_policy != {
-    "podSelector": {"matchLabels": {"app": "account-service"}},
-    "policyTypes": ["Ingress"],
-    "ingress": [{
-        "from": [{
-            "namespaceSelector": {
-                "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
-            },
-            "podSelector": {
-                "matchLabels": {
-                    "app.kubernetes.io/name": "hosted-environment-identity-controller",
-                    "app.kubernetes.io/component": "controller",
-                }
-            },
+for workload in ("account-service", "game-session-service"):
+    workload_policy = named("NetworkPolicy", f"{workload}-controller-ingress")["spec"]
+    if workload_policy != {
+        "podSelector": {"matchLabels": {"app": workload}},
+        "policyTypes": ["Ingress"],
+        "ingress": [{
+            "from": [{
+                "namespaceSelector": {
+                    "matchLabels": {"kubernetes.io/metadata.name": "firemud-system"}
+                },
+                "podSelector": {
+                    "matchLabels": {
+                        "app.kubernetes.io/name": "hosted-environment-identity-controller",
+                        "app.kubernetes.io/component": "controller",
+                    }
+                },
+            }],
+            "ports": [{"protocol": "TCP", "port": 6565}],
         }],
-        "ports": [{"protocol": "TCP", "port": 6565}],
-    }],
-}:
-    raise SystemExit(
-        "Hosted Account ingress policy must allow only the identity controller to TCP 6565"
-    )
+    }:
+        raise SystemExit(
+            f"Hosted {workload} ingress policy must allow only the identity controller to TCP 6565"
+        )
 
 gateway_policy = named("NetworkPolicy", "spring-cloud-gateway-ingress")["spec"]
 if gateway_policy["podSelector"] != {"matchLabels": {"app": "spring-cloud-gateway"}}:
@@ -498,11 +499,12 @@ documents = [
 ]
 if any(
     document.get("kind") == "NetworkPolicy"
-    and document.get("metadata", {}).get("name") == "account-service-controller-ingress"
+    and document.get("metadata", {}).get("name")
+    in {"account-service-controller-ingress", "game-session-service-controller-ingress"}
     for document in documents
 ):
     raise SystemExit(
-        "standalone certificate identity mode unexpectedly rendered the hosted controller Account ingress policy"
+        "standalone certificate identity mode unexpectedly rendered a hosted controller gRPC ingress policy"
     )
 for kind in ("Deployment", "Service"):
     matches = [

@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import net.firedevops.firemud.hostedidentity.contract.HostedIdentityContract;
 
 public record EnvironmentIdentityPlan(
@@ -29,22 +30,29 @@ public record EnvironmentIdentityPlan(
     String grpcIssuer,
     String caSecretName,
     List<String> grpcConsumers,
-    Map<String, String> grpcPublicationCertificateNames,
-    Map<String, String> grpcPublicationSecretNames,
-    Map<String, String> grpcPublicationSourceSecretNames) {
+    Map<String, String> grpcWorkloadIdentityCertificateNames,
+    Map<String, String> grpcWorkloadIdentitySecretNames,
+    Map<String, String> grpcWorkloadIdentitySourceSecretNames) {
   public EnvironmentIdentityPlan {
     grpcConsumers = List.copyOf(grpcConsumers);
-    grpcPublicationCertificateNames = Map.copyOf(grpcPublicationCertificateNames);
-    grpcPublicationSecretNames = Map.copyOf(grpcPublicationSecretNames);
-    grpcPublicationSourceSecretNames = Map.copyOf(grpcPublicationSourceSecretNames);
+    grpcWorkloadIdentityCertificateNames = Map.copyOf(grpcWorkloadIdentityCertificateNames);
+    grpcWorkloadIdentitySecretNames = Map.copyOf(grpcWorkloadIdentitySecretNames);
+    grpcWorkloadIdentitySourceSecretNames = Map.copyOf(grpcWorkloadIdentitySourceSecretNames);
 
-    Set<String> expectedGrpcPublicationRoles =
-        HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
-            .map(HostedIdentityContract::grpcPublicationRole)
+    Set<String> expectedGrpcWorkloadIdentityRoles =
+        Stream.concat(
+                HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
+                    .map(HostedIdentityContract::grpcPublicationRole),
+                Stream.of(
+                    HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+                    HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+                    HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE))
             .collect(Collectors.toUnmodifiableSet());
-    if (!grpcPublicationCertificateNames.keySet().equals(expectedGrpcPublicationRoles)
-        || !grpcPublicationSecretNames.keySet().equals(expectedGrpcPublicationRoles)
-        || !grpcPublicationSourceSecretNames.keySet().equals(expectedGrpcPublicationRoles)) {
+    if (!grpcWorkloadIdentityCertificateNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
+        || !grpcWorkloadIdentitySecretNames.keySet().equals(expectedGrpcWorkloadIdentityRoles)
+        || !grpcWorkloadIdentitySourceSecretNames
+            .keySet()
+            .equals(expectedGrpcWorkloadIdentityRoles)) {
       throw new IllegalArgumentException(
           "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
     }
@@ -58,8 +66,8 @@ public record EnvironmentIdentityPlan(
       case HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE -> tcpProxyBridgeSecretName;
       case HostedIdentityContract.GRPC_ROLE -> grpcSecretName;
       default -> {
-        if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-          String secretName = grpcPublicationSecretNames.get(role);
+        if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
+          String secretName = grpcWorkloadIdentitySecretNames.get(role);
           if (secretName != null) {
             yield secretName;
           }
@@ -70,11 +78,11 @@ public record EnvironmentIdentityPlan(
   }
 
   public String sourceSecretName(String role) {
-    if (HostedIdentityContract.isGrpcPublicationRole(role)) {
-      String sourceSecretName = grpcPublicationSourceSecretNames.get(role);
+    if (HostedIdentityContract.isGrpcWorkloadIdentityRole(role)) {
+      String sourceSecretName = grpcWorkloadIdentitySourceSecretNames.get(role);
       if (sourceSecretName == null) {
         throw new IllegalArgumentException(
-            "missing source Secret for gRPC publication role: " + role);
+            "missing source Secret for gRPC workload identity role: " + role);
       }
       return sourceSecretName;
     }
@@ -82,24 +90,70 @@ public record EnvironmentIdentityPlan(
   }
 
   public String grpcPublicationCertificateName(String workload) {
-    return grpcPublicationCertificateNames.get(
+    return grpcWorkloadIdentityCertificateNames.get(
         HostedIdentityContract.grpcPublicationRole(workload));
   }
 
   public String grpcPublicationSecretName(String workload) {
-    return grpcPublicationSecretNames.get(HostedIdentityContract.grpcPublicationRole(workload));
-  }
-
-  public String grpcPublicationSourceSecretName(String workload) {
-    return grpcPublicationSourceSecretNames.get(
+    return grpcWorkloadIdentitySecretNames.get(
         HostedIdentityContract.grpcPublicationRole(workload));
   }
 
+  public String grpcPublicationSourceSecretName(String workload) {
+    return grpcWorkloadIdentitySourceSecretNames.get(
+        HostedIdentityContract.grpcPublicationRole(workload));
+  }
+
+  public String grpcAccountCertificateName() {
+    return grpcWorkloadIdentityCertificateNames.get(HostedIdentityContract.GRPC_ACCOUNT_ROLE);
+  }
+
+  public String grpcAccountSecretName() {
+    return grpcWorkloadIdentitySecretNames.get(HostedIdentityContract.GRPC_ACCOUNT_ROLE);
+  }
+
+  public String grpcAccountSourceSecretName() {
+    return grpcWorkloadIdentitySourceSecretNames.get(HostedIdentityContract.GRPC_ACCOUNT_ROLE);
+  }
+
+  public String grpcGameSessionCertificateName() {
+    return grpcWorkloadIdentityCertificateNames.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+  }
+
+  public String grpcGameSessionSecretName() {
+    return grpcWorkloadIdentitySecretNames.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+  }
+
+  public String grpcGameSessionSourceSecretName() {
+    return grpcWorkloadIdentitySourceSecretNames.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+  }
+
+  public String grpcSocialGroupsCertificateName() {
+    return grpcWorkloadIdentityCertificateNames.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+  }
+
+  public String grpcSocialGroupsSecretName() {
+    return grpcWorkloadIdentitySecretNames.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+  }
+
+  public String grpcSocialGroupsSourceSecretName() {
+    return grpcWorkloadIdentitySourceSecretNames.get(
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
+  }
+
   public String grpcPublicationUriSan(String workload) {
-    return "spiffe://firemud/ns/" + runtimeNamespace + "/sa/" + workload;
+    return grpcWorkloadIdentityUriSan(workload);
   }
 
   public List<String> grpcPublicationDnsNames(String workload) {
+    return grpcWorkloadIdentityDnsNames(workload);
+  }
+
+  public String grpcWorkloadIdentityUriSan(String workload) {
+    return "spiffe://firemud/ns/" + runtimeNamespace + "/sa/" + workload;
+  }
+
+  public List<String> grpcWorkloadIdentityDnsNames(String workload) {
     return List.of(
         workload,
         workload + "." + runtimeNamespace,
@@ -131,8 +185,8 @@ public record EnvironmentIdentityPlan(
         grpcIssuer,
         caSecretName,
         consumers,
-        grpcPublicationCertificateNames,
-        grpcPublicationSecretNames,
-        grpcPublicationSourceSecretNames);
+        grpcWorkloadIdentityCertificateNames,
+        grpcWorkloadIdentitySecretNames,
+        grpcWorkloadIdentitySourceSecretNames);
   }
 }
