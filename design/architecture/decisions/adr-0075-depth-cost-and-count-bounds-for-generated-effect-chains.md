@@ -43,7 +43,9 @@ The platform retains a hard generated-effect depth ceiling with `8` as the share
 
 Platform hard ceilings bound every setting. Operators may configure lower environment bounds, and an authored feature may lower its own limits further, but a feature can never exceed the resolved operator or platform bounds.
 
-Every generated child carries an immutable parent identity, immutable root identity, depth equal to `parent.depth + 1`, and a deterministic child ordinal. The immutable root identity is the existing ADR 0069 canonical Game Session root `EffectId` binding to the typed operation, immutable request digest, required participant context, and sealed manifest; this decision introduces no second root authority. The sealed root manifest also persists the resolved platform, operator, and feature depth/count/cost/per-target limits, cost weights, and cost-model version. The ordinal is covered by the request digest. Retry, replay, and reconciliation reuse those persisted resolved values and never re-resolve them. Replay reuses the recorded child identity, lineage, ordinal, and budget accounting; it does not increment them again or mint a replacement identity.
+Every generated child carries an immutable parent identity, immutable enclosing-root lineage, depth equal to `parent.depth + 1`, and an owner-defined child ordinal allocated and persisted by the owning contract for replay-stable reuse. This decision does not define command-plan roots or `planOrdinal`; those allocation choices remain pending in [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md). The sealed chain manifest also persists the resolved platform, operator, and feature depth/count/cost/per-target limits, cost weights, and cost-model version. Retry, replay, and reconciliation reuse those persisted resolved values and never re-resolve them. Replay reuses the recorded child identity, lineage, ordinal, and budget accounting; it does not increment them again or mint a replacement identity.
+
+Independent of pending ADR 0183, the owner-scope/root/parent/ordinal mapping to each child `EffectId` is one atomic durable admission record. The owning contract must persist the child `EffectId` and complete mapping before enqueue/apply; retry, replay, and reconciliation read and reuse that mapping and its sealed accounting, while a missing or conflicting mapping fails closed rather than allocating another child identity.
 
 Count, cost, per-target, and depth admission are evaluated deterministically for the root chain. When admitting a new child would exceed a limit, only that child is suppressed. A suppressed child is not enqueued or applied, and no already committed parent or earlier child is rolled back.
 
@@ -53,7 +55,7 @@ Every suppression produces durable evidence containing:
 
 - root and parent identities;
 - authored feature, script, and version identity;
-- deterministic child ordinal;
+- recorded owner-allocated child ordinal, with its persisted replay-stable mapping;
 - limit reason: depth, count, cost, or per-target;
 - actual and configured limit values;
 - required or optional classification; and
@@ -71,7 +73,7 @@ Alerting follows the impact class:
 ## Consequences
 
 - Runaway depth, broad fan-out, excessive aggregate cost, and repeated concentration on one target are all bounded.
-- Deterministic lineage, ordinals, digests, and accounting make admission and suppression replay-stable.
+- Persisted lineage, owner-defined ordinals, digests, and accounting make admission and suppression replay-stable.
 - Already committed gameplay remains authoritative when a later child is suppressed.
 - Required and optional classifications make player outcomes and alerts reflect actual gameplay impact.
 - Durable per-suppression evidence supports precise investigation while bounded metrics avoid cardinality growth.
@@ -94,9 +96,9 @@ Rejected because the parent may already be durably committed across authoritativ
 
 ## Implementation and Proof Obligations
 
-Implement one canonical generated-chain admission and accounting path with the platform hard depth ceiling, shared depth bootstrap default of `8`, deterministic total count and cost budgets, per-target caps, operator bounds, and feature-lowering rules. Persist immutable parent and root identities, `parent.depth + 1`, digest-covered deterministic ordinals, required or optional classification, and the complete suppression evidence.
+Implement one canonical generated-chain admission and accounting path with the platform hard depth ceiling, shared depth bootstrap default of `8`, deterministic total count and cost budgets, per-target caps, operator bounds, and feature-lowering rules. Preserve the persisted enclosing-root identity under its owning contract; command-plan and root allocation details remain pending in ADR 0183. Persist immutable parent and root identities, `parent.depth + 1`, owner-defined child ordinals allocated and persisted for replay-stable reuse, required or optional classification, and the complete suppression evidence.
 
-Prove hard-ceiling and lower-bound resolution; depth, count, cost, and per-target suppression at each boundary; deterministic admission order; cost accounting; immutable lineage and ordinals; request-digest validation; crash and replay without re-incrementing accounting or reminting identity; suppression of only the new child; preservation of committed parents and earlier children; truthful `SUCCESS`, `PARTIAL`, and `FAILED` derivation; complete durable evidence; bounded metric labels and bands; raw-identity exclusion from Prometheus; audit-query retrieval; one-off optional audit behavior; repeated optional designer warnings; prompt required-suppression alerts; and operational paging for sustained aggregate suppression or tick degradation.
+Prove hard-ceiling and lower-bound resolution; depth, count, cost, and per-target suppression at each boundary; deterministic admission order; cost accounting; immutable lineage and ordinals; request-digest validation; crash and replay without re-incrementing accounting or reminting identity; suppression of only the new child; preservation of committed parents and earlier children; truthful `SUCCESS`, `PARTIAL`, and `FAILED` derivation; complete durable evidence; bounded metric labels and bands; raw-identity exclusion from Prometheus; audit-query retrieval; one-off optional audit behavior; repeated optional designer warnings; prompt required-suppression alerts; and operational paging for sustained aggregate suppression or tick degradation. The pending [ADR 0183 proposal](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) is not proved or accepted by this ADR.
 
 The current implementation, configuration resolution, authored classification, observability, alerting, and focused proof are not claimed by this decision.
 

@@ -15,7 +15,7 @@ Current status (non-authoritative summary; [Shared Runtime, Service Contracts, a
 - Automation Scripting hosts the `script-patch-readiness` workflow family for eligible non-empty `NotifyScriptVersionUpdate` notifications and durable `onLoad`/readiness progression. Target behavior reloads the complete notified patch through validation and `onLoad` to tenant `READY` before Game Session may pin or progress to it; Temporal coordinates that workflow but never becomes pin authority. Under [ADR 0115](./decisions/adr-0115-manifest-complete-onload-readiness-without-durable-game-initialization.md), an immutable manifest that proves zero handlers may complete readiness as terminal `READY` with no synthetic handler work or workflow; an identifiable notification without that proof records terminal `FAILED` with bounded reason `zero_handler_manifest_unverifiable`. The current normal Game Design integration sends an empty `affectedScripts` list, so Automation returns before creating a readiness row and the conditional workflow start is skipped; that publication has no readiness candidate or workflow and cannot establish reload, `READY`, or pin evidence.
 - `common-saga` remains the canonical substrate for short synchronous orchestration that does not need durable workflow execution.
 
-The World Management `world-lifecycle` family is the concrete lifecycle adopter governed by [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md). Temporal coordinates prepare, activation, failure, termination, retries, waits, and operator progress; World Management's durable lifecycle row and epoch remain the authority for `PREPARING`, `ACTIVE`, `FAILED_PRE_ACTIVATION`, `TERMINATING`, and `TERMINATED`. Owner cleanup acknowledgements are read from durable owner state, and routine gameplay/tick paths never query Temporal or wait on cleanup.
+The World Management `world-lifecycle` family is the concrete lifecycle adopter governed by [ADR 0123](./decisions/adr-0123-database-authoritative-temporal-coordinated-world-lifecycle.md). Temporal coordinates prepare, activation, failure, termination, retries, waits, and operator progress; World Management's durable lifecycle row and epoch remain the authority for `PREPARING`, `ACTIVE`, `FAILED_PRE_ACTIVATION`, `TERMINATING`, and `TERMINATED`. **Target-only:** owner cleanup acknowledgements are to be read from durable owner state before final termination. The current implementation has only a synchronous termination seam that calls Entity cleanup and hard-deletes a partial World runtime-row subset; it does not yet persist or read the frozen all-owner cleanup snapshot and per-owner acknowledgements required by ADR 0123. Routine gameplay/tick paths never query Temporal or wait on cleanup.
 
 ## Canonical Usage Boundary
 
@@ -80,12 +80,12 @@ The current `businessStepKey` is an incomplete implementation encoding, not the 
 Guidance:
 
 - `workflowFamily` is a stable design-level family such as `world-lifecycle` or `script-patch-readiness`.
-- `scopeKey` is the narrow workflow scope that matters operationally, such as `world-instance`, `version`, or `game-instance`.
-- `businessKey` is the stable caller-visible request identity or domain identity that makes retries idempotent.
+- `scopeKey` is the narrow workflow scope that matters operationally, such as `world-instance`, `version`, or `game-instance`; for World lifecycle it is `game-instance`.
+- `businessKey` is the stable caller-visible request identity or domain identity that makes retries idempotent. For World lifecycle it is `gameInstanceId`, a domain identity scoped by `tenantId` and `scopeKey`, not necessarily a globally unique token.
 
 Current adopter examples:
 
-- `world-lifecycle` uses stable world-instance identity for its workflow business key.
+- `world-lifecycle` uses `gameInstanceId` as its business key within the `tenantId` and `game-instance` scope.
 - full Game Design publish uses the caller-supplied `publish_request_id` from `PublishVersionRequest`, so retries converge on the same caller-visible durable workflow instead of minting a fresh internal UUID.
 - script-patch readiness uses the stable patch/readiness domain tuple documented in Automation Scripting.
 

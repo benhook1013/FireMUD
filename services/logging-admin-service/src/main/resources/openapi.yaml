@@ -1506,9 +1506,15 @@ components:
 paths:
   /ping:
     get:
-      summary: Health check endpoint
+      summary: Privileged HTTP health check endpoint
+      description: >-
+        Current HTTP behavior requires a privileged Bearer JWT through the
+        shared interceptor, whose `hasPrivilegedRole()` predicate accepts both
+        global and tenant-scoped privileged roles, so this is not proof of a
+        global-role-only boundary. The target Public/infra health
+        classification uses platform health policy; this route has not
+        converged to that exact target.
       operationId: ping
-      security: []
       responses:
         '200':
           description: Pong response
@@ -1516,6 +1522,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiResponseString'
+        '401':
+          description: Missing or invalid Bearer JWT
+        '403':
+          description: Caller lacks a privileged role under the current predicate
   /command-registry/built-in-aliases/{alias}:
     get:
       summary: Validate one built-in command alias

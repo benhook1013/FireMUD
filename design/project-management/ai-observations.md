@@ -169,3 +169,33 @@ Entry format:
   - Observation: the runtime audit flattened the active CLI observation into a generic unresolved-finding string before the controller's existing exact-identity overlap check could run. A controller regression with a mocked empty audit did not exercise that adapter interaction.
   - Expected pattern: preserve structured run/lock-owner/head/parent/patch evidence through the audit and test the real adapter-to-allocation path. Permit only positively verified same-candidate overlap; genuine pending findings and incomplete identities remain held.
   - Outcome: the bounded controller/runtime correction passes real-adapter overlap and refusal regressions; live request verification follows publication. The running CLI was not interrupted, and no duplicate Hosted request or private-state bypass was used.
+
+- `2026-10-01`: An ownership clarification is not a lane-wide stop
+  - Context: the human transferred the #2916 controller child to Overseer for review/fix cycles while Gameplay still owned #2839. Gameplay ended its turn after acknowledging the transfer, requiring an explicit resume.
+  - Observation: the child-only ownership boundary was incorrectly treated as a stopping point for the continuing parent assignment.
+  - Expected pattern: stop touching the transferred child, but continue the owned parent and independent review lanes. A coordination acknowledgement or status answer must not terminate the standing train without an explicit pause or actual blocker.
+  - Outcome: Gameplay resumed #2839, preserved the child untouched, adjudicated its complete saved CLI result, and dispatched the accepted parent-only corrections.
+
+- `2026-10-01`: Distinguish request admission contention from an active provider review
+  - Context: several closely launched #2839 Hosted/CLI commands produced a delayed Hosted refusal saying another Hosted request was active, without a new posted trigger; a guarded later request posted normally.
+  - Observation: the exact contention phase and cause remain unproven. That refusal alone does not establish that CodeRabbit is reviewing, and preparation delay consumes eligible Hosted windows independently of provider duration.
+  - Expected pattern: retain the canonical request handle and verify its actual posted or refused outcome. Investigate the narrow admission/lock boundary without bypassing duplicate-request or exact-identity safeguards; keep the other safe lane moving.
+  - Reconsideration trigger: investigate when the controller owner can reproduce the contention or another eligible Hosted window is lost; do not silently label an unposted request as an active review.
+
+- `2026-10-01`: Do not infer CLI exclusion from unpublished fixes
+  - Context: #2839's local corrections were committed at 06:20:21 UTC and Hosted finished at 06:25:38 UTC; Gameplay made no CLI attempt during that 5m 17s interval, incorrectly assuming the unpublished corrections prevented overlap.
+  - Observation: the live runner permits CLI on the exact published Hosted candidate, excluding local descendant changes. An unattempted safety assumption is not a demonstrated controller hold.
+  - Outcome: subsequent CLI requests ran independently. A later Hosted retry encountered a closed-#2750 reservation verification error before POST; its current record and attributable terminal review were valid on one read-only reproduction, and a canonical retry posted successfully. The original exception remains unknown because the wrapper hides its phase/cause; no record was edited or safety check bypassed.
+  - Expected pattern: use the canonical eligible channel, retain actual refusal evidence, and keep the other lane moving. Preserve safe phase/cause diagnostics for future reservation-verification failures rather than treating an unposted request as provider activity.
+
+- `2026-10-01`: Closed-PR history must not retain a Hosted execution slot
+  - Context: the repository-wide Hosted admission sweep reread the complete review history of merged #2750; an exception became an admission hold even though the live open-PR inventory had already excluded it.
+  - Outcome: the repair is published in #2916 and installed as a separately tested writer-build-5 backport. Confirmed closed PRs no longer require that historical network read. An exact, attributable, locally archived rate-limit response still holds the repository until its proven reset time, including a response whose terminal edit occurred after creation. No historical record, count, or taper decision was removed.
+  - Proof: 118 focused runtime tests, 883 tests against the compatible live-controller baseline, and 920 tests on the owning child passed. The original transient exception's underlying network cause remains unknown; the reproduced failure mode is now covered without weakening open-PR request safety or promoting an unmerged record schema.
+  - Observation: the Hosted admission inventory must distinguish active candidates from historical closed PRs before any history-dependent slot decision.
+  - Expected pattern: exclude confirmed closed PRs before reserving a Hosted execution slot; retain only exact, attributable rate-limit evidence as a repository-wide hold through its verified reset time.
+
+- `2026-10-01`: Keep validation-script inputs stable during execution
+  - Context: an architecture-contract run passed its test cases but then read a truncated final command after the same shell script was edited while its process was still running. A complete rerun against the finished script passed.
+  - Observation: a shell process may continue reading its script after earlier commands finish; editing that script during execution can invalidate the run independently of the corrected contract.
+  - Expected pattern: finish script edits before starting its validation, or discard the affected run as proof and rerun the complete named check after edits settle. Do not diagnose the resulting partial command as a missing repository tool without checking the input race.

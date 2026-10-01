@@ -125,9 +125,10 @@ Use this when adding or changing cache or rate‑limit prefixes (for example `in
 ### Eviction and TTL
 
 - [ ] Set explicit TTLs that match the data’s volatility and usage patterns.
+- [ ] For `automation:queue:*` pointer lists, declare `SCRIPT_OUTBOX_QUEUE_POINTER_TTL_SECONDS` and `SCRIPT_OUTBOX_QUEUE_MAX_POINTERS_PER_KEY`, apply both atomically on enqueue/rebuild, and document that expiry/truncation triggers durable owner re-drive rather than work settlement.
 - [ ] Confirm eviction is acceptable:
   - [ ] Cold caches should degrade into acceptable behavior (extra DB reads, recomputation).
-  - [ ] Rate‑limit keys may be dropped without violating security or fairness guarantees.
+  - [ ] Rate-limit keys may be dropped without violating hard authorization, security, financial, or other declared invariants; declared heuristic enforcement may temporarily weaken or tighten, and the limiter's documented unavailable-store behavior must apply.
 - [ ] For versioned caches:
   - [ ] The authoritative store exposes a version or `lastModified` field.
   - [ ] Cache invalidation logic clearly ties updates to version changes.
@@ -135,6 +136,7 @@ Use this when adding or changing cache or rate‑limit prefixes (for example `in
 ### Key Shape and Multi-Tenant Behavior
 
 - [ ] Keys include `tenantId` and any other isolation dimensions required (for example, per‑player or per‑guild).
+- [ ] Any opaque hash-tag builder uses a canonical collision-safe tuple encoding (or a proven canonical UUID parser with separator/brace rejection); add delimiter/brace collision vectors and same-scope slot golden tests before claiming the builder is canonical. Use the shared [validation and runtime-proof workflow](../developer-workflows/validation-and-runtime-proof.md) to select the proof and record delimiter/brace collision-vector and same-scope slot golden-test execution results in PR/CI or implementation-tracking evidence; it supplements, rather than replaces, these owner-local requirements.
 - [ ] For rate‑limit prefixes:
   - [ ] Bucketing strategy is documented (per‑client vs hashed buckets).
   - [ ] Memory and key count growth per tenant/time window stays within budget.
@@ -224,6 +226,11 @@ Use this when changing Redis profiles, topologies, or reset behavior.
 - [ ] Design changes explicitly state:
   - [ ] Which reset scopes are safe (region, tenant, cluster).
   - [ ] Whether reset or accept‑loss is the expected response to problems.
+- [ ] For any destructive Cache/Rate-Limit reset, require the ADR-0085-derived external durable operation/fence outside Cache Redis:
+  - [ ] Bind an immutable `operationId`, exact deployment/generation, and frozen complete writer/prefix inventory to the external fence.
+  - [ ] Require restart-surviving writer admission/acknowledgement checks, stale-operation rejection, serialized takeover/expiry/release evidence, and fail-closed ambiguity handling.
+  - [ ] Keep ordinary writers denied through deletion and verification. The Automation rebuild/re-drive exception applies only to registered Automation prefixes (currently `automation:queue:*`) and only through the target-only named ACL principal `automation_queue_rebuild_maint` bound to the same `operationId`/fence/generation and exact registered prefix/scope. Non-Automation maintenance principals and their permitted prefix/scope contracts are target-only and undefined until each owner is separately named and its exact contract is accepted; do not infer or authorize a principal for Gateway, Game Session, Entity, World, or Social from ownership alone. No generic writer or operator principal is implied; use the owner and prefix contract in the [Cache/Rate-Limit reset runbook](./system-architecture-redis-operations.md#external-cache-deployment-maintenance-gate) and [cache reference](./system-architecture-redis-cache-reference.md).
+  - [ ] Attest Cache-only endpoint/role/ACL identity and complete prefix inventory before deletion; any coordination prefix, generic legacy writer, unknown prefix, or ambiguous evidence aborts/escalates without deletion.
 - [ ] Runbooks in `system-architecture-redis-operations.md` are updated or confirmed to cover new/reset behaviors.
 - [ ] For workloads that are **reset-sensitive** rather than reset-tolerant:
   - [ ] The impact of a reset is documented (player-facing effects, operational steps).

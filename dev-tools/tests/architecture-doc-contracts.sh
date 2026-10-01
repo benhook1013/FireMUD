@@ -8,6 +8,15 @@ import re
 
 root = pathlib.Path(".")
 obsolete_public_resume_signature = "`resume(operationId, expectedPhase, scope, maintenanceLockToken, evidenceRef)`"
+obsolete_scope_resume_window_identity = re.compile(
+    r"<(?=[^<>]*\btenantId\b)"
+    r"(?=[^<>]*\bgameInstanceId\b)"
+    r"(?=[^<>]*\bregionId\b)"
+    r"(?=[^<>]*\bregionEpoch\b)"
+    r"(?=[^<>]*\bisDryRun\b)"
+    r"(?=[^<>]*\bplayableStateScope\b)"
+    r"(?=[^<>]*\bresumeGeneration\b)[^<>]*>"
+)
 obsolete_gameplay_session_selector = "session:game:{tenantInstanceTag}"
 obsolete_gameplay_character_index = "session:game:index:character:{tenantGameplayTag}:<gameInstanceId>:<characterId>"
 obsolete_gameplay_character_index_with_scope = "session:game:index:character:{tenantGameplayTag}:<playableStateNamespaceId>:<playableStateScope>:<characterId>"
@@ -1701,8 +1710,72 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-scripting-contracts.md",
     [
+        "The `(automationDispatchId, commandOrdinal)` pair is only an identity suffix and is insufficient by itself",
+        "Participant-guard identity follows the owner-classified rules in [Transaction Strategies](./system-architecture-transactions.md#tick-effects-are-at-least-once-idempotency-is-mandatory): S1/S2 use the `(tenantId, playableStateNamespaceId)` partition, and only explicitly classified S3 uses `(tenantId, gameInstanceId)`; `playableStateScope` and `requestDigest` are exact-validated evidence, not uniqueness dimensions, and unclassified families fail before admission.",
         "always-isolated test-only breaker or gate",
         "no environment, tenant, or request opt-in may cross that boundary",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    ["(automationDispatchId, commandOrdinal)` pair is only a display suffix"],
+)
+require_contains(
+    "design/architecture/microservices/entity-management-service/operations.md",
+    [
+        "a conflict-safe insert or a same-transaction savepoint around marker handling while keeping the marker and mutation atomic, never an isolated marker transaction",
+        "Actual PostgreSQL concurrent proof remains unavailable.",
+        "retain the admitted command/source identity for source evidence, and use the complete Command-Handoff Identity for automation handoff and deduplication",
+        "the handoff identity is not a mandatory input to root `EffectId` allocation or lookup",
+        "Root allocation and lookup details remain proposal-only under pending [ADR 0183]",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/entity-management-service/operations.md",
+    ["is an input to allocating or looking up that command's stable root `EffectId`"],
+)
+require_contains(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    [
+        "A new identity may be re-driven only after authoritative participant/domain evidence conclusively terminalizes the original effect as `ABANDONED` and the owning source command/claim is terminalized; ordinary retry/replay retains the original command/effect identity.",
+        "A new identity may be re-driven only after that conclusive terminalization and terminalization of the owning source command/claim; ordinary retry/replay must retain the original command/effect identity.",
+        "Root allocation details remain proposal-only under [ADR 0183]",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    [
+        "only a conclusive post-abandon re-drive allocates a new command ID and root",
+        "A post-abandon re-drive is the only path that may allocate a new command ID/root",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/game-design-service/version-control.md",
+    [
+        "Current Game Design revision rows reference concrete domain objects",
+        "Target durable commits will group those revisions and retain their domain-object references",
+        "that branch/commit model and its APIs are not implemented, while current version-scoped revision history remains available",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    [
+        "Before any future rebuild can release that scope, owner reconciliation must establish a definitive stage-aware disposition for ambiguous post-DSL handoffs from a durable evaluated descriptor, retaining durable handoff intent without replaying the DSL, then complete owner CAS fencing and exact readback.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-event-registry.md",
+    [
+        "Gameplay/runtime and scheduler candidate identity also includes the exact Game Session `(scriptPatchVersion, scriptPinEpoch)` tuple",
+        "The paired nonblank `scriptPinControlPlaneRequestId` and captured `lifecycleRevision` travel alongside as required, exact-compared non-identity owner/fence evidence; they are excluded from candidate, firing-claim, work-item, and derived event identity.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-ticks.md",
+    [
+        "Only wall-clock timer admission assigns a separate tick-ordering coordinate",
+        "Tick timers reuse their persisted `dueTickId` as both source due point and ordering coordinate.",
+        "Wall-clock timestamps and tick IDs are different domains and must not be compared numerically or aliased.",
     ],
 )
 require_absent(
@@ -1726,6 +1799,27 @@ require_contains(
         "For a core script, the Automation & Scripting Service owns the authoritative persisted `breakerState` aggregate",
         "A legacy/read-model `runtimeStatus=DISABLED_DUE_TO_ERRORS`, when exposed, is only a read-only effective-admission projection",
         "it is not persisted breaker authority and does not own transition history or reset",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-runtime-execution.md",
+    [
+        "Target state also preserves any admission/execution-start charge markers already reached in the separate durable handler charge record",
+        "as defined by [Scripting Quotas & Operations](./system-architecture-scripting-quotas-and-operations.md#budget-accounting-rules)",
+        "that record and its linkage are not claimed as current implementation",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-runtime-execution.md",
+    ["the separate durable handler charge record preserves any admission/execution-start charge markers already reached"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-observability-contract.md",
+    [
+        "`eventType`",
+        "`eventSchemaVersion` (admitted event and payload contract version, including tenant-readiness `onLoad`; see [normative Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields))",
+        "`scriptPatchVersion`",
+        "absent with `scriptPinEpoch` for pre-instance requests such as tenant-readiness `onLoad`, while `scriptPatchVersion` remains required",
     ],
 )
 require_contains(
@@ -1817,7 +1911,7 @@ require_section_contains(
         "`lastResetValidationEvidence`",
         "bounded `validationEvidence`",
         "`resetReason` is absent from lifecycle and trip rows",
-        "persisted non-identity `playableStateNamespaceId` evidence",
+        "`playableStateNamespaceId` is the immutable playable-state identity/allocation dimension",
         "`currentRuntimePlayableStateNamespaceId`",
         "The normalized exact scope is `(tenantId, gameInstanceId, regionId)`, where an omitted or blank `regionId` selects the exact empty/unscoped row and never a wildcard",
         "For both this mutation and `GetAutomationDrainStatus`, `tenantId` and `gameInstanceId` are required nonblank after normalization",
@@ -1837,6 +1931,23 @@ require_contains(
     ],
 )
 require_contains(
+    "design/architecture/system-architecture-scripting-control-plane-operations.md",
+    [
+        "no surviving durable batch, effect ledger, or source/effect claim",
+        "atomic owner-defined no-batch/version-fenced check wins",
+        "A matching binding and `RETRY_QUEUED` status alone do not prove `NOT_APPLIED`",
+        "inconclusive work remains nonterminal and reconciliation-required",
+    ],
+)
+require_contains(
+    "design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md",
+    [
+        "does not require authoritative evidence that the effect was unapplied",
+        "`RETRY_QUEUED` is enough for the current code to write `ABANDONED`/`NOT_APPLIED`",
+        "no runtime fix is claimed here",
+    ],
+)
+require_contains(
     "design/architecture/system-architecture-scripting-rollout-and-rollback.md",
     [
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
@@ -1847,6 +1958,14 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-tick-incident-runbook.md",
     [
+        "**Maintenance admission applies to both branches:**",
+        "Before a maintenance verifier CAS may mutate a ledger row, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged with the reconciliation evidence.",
+        "An owner may omit that maintenance handoff only for a specifically classified non-conflicting routine replay with durably recorded classification/evidence and applicable fence, epoch, and scope proof",
+        "never infer this exemption from owner, epoch, executor, manifest, or participant proof alone.",
+        "If neither the exact handoff nor the owner-recorded routine-replay evidence is complete, make no mutation and use the existing fail-closed [Current Operator Fallback]",
+        "this incident remediation is maintenance, not ordinary crash replay.",
+        "Before its first mutation, validate the exact ADR 0085 external maintenance handoff, durably persist it, and pass it unchanged",
+        "Missing or unproved handoff means no mutation: use the fail-closed [Current Operator Fallback]",
         "may be applied as an initial emergency fence",
         "For any reset or recovery mutation, Automation must be contained before relying on Game Session tick/region containment",
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
@@ -1902,64 +2021,126 @@ require_absent(
 require_contains(
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
     [
-        "resume-window record per `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun>`",
-        "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
-        "retains the authoritative `playableStateNamespaceId` as immutable non-identity scope evidence",
+        "Durable `script_schedule_instances` rows in PostgreSQL are authoritative schedule state; Redis keys are rebuildable coordination projections, as defined by [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md).",
+        "resume-window record per `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun>`",
+        "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "The server-derived `playableStateScope` is persisted separately as immutable policy/routing/authorization/migration-fence evidence and is exact-validated; it is not part of the window identity.",
         "missing or mismatched evidence fails closed without changing any canonical identity tuple",
     ],
 )
 require_contains(
-    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
     [
-        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
-        "one-tenant, one-mode ID",
+        "The authoritative `playableStateNamespaceId` is part of the due and resume-window identity",
+        "server-derived `playableStateScope` remains immutable policy/routing/authorization/migration-fence evidence",
+        "is exact-validated alongside that identity, and is not a uniqueness discriminator",
+        "`resumeWindowId` identity",
     ],
 )
-require_absent(
+for resume_identity_path in (
+    "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
+    "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    "design/architecture/system-architecture-scripting-dsl-for-designers.md",
+):
+    resume_identity_text = (root / resume_identity_path).read_text(encoding="utf-8")
+    if obsolete_scope_resume_window_identity.search(resume_identity_text):
+        raise SystemExit(
+            f"{resume_identity_path}: contains a scope-based resume-window identity tuple"
+        )
+require_contains(
     "design/architecture/system-architecture-scripting-dsl-for-designers.md",
     [
-        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, resumeGeneration>`",
+        "`resumeWindowId` identified by `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "one-tenant, one-mode ID",
+        "the server-derived `playableStateScope` is retained as immutable policy/routing/authorization/fence evidence and is exact-validated alongside that identity",
     ],
 )
 require_contains(
     "design/architecture/decisions/adr-0072-class-specific-timer-durability-and-recovery.md",
     [
-        "resume-window record per runtime scope, epoch, and `isDryRun` mode",
-        "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "resume-window record per playable-state namespace/runtime scope, epoch, and `isDryRun` mode",
+        "`resumeWindowId` is the exact tuple `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "the server-derived `playableStateScope` is retained and exact-validated as immutable policy/routing/authorization/fence evidence, not as a uniqueness input",
         "each prior epoch's `OPEN` resume window, independently for each `isDryRun` mode",
+        "the target window must exclude them and cannot rediscover or remint their pending work under new candidate, firing-claim, or event identities",
+        "This does not prevent the target window from selecting independently reconciled candidates under the new exact pin",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-ticks.md",
+    [
+        "stable continuity identity is mode-qualified as `(isDryRun, {stableOwnerKind, stableOwnerId, scheduleDefinitionId, playableStateNamespaceId, targetScopeType, targetScopeId})`",
+        "[Scripting Scheduler and Timers](./system-architecture-scripting-scheduler-and-timers.md#target-state-design) under [ADR 0110]",
     ],
 )
 require_contains(
     "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
-        "resume window identified by `<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>`",
-        "Durable compare-and-set creates or reuses one `OPEN` window per runtime scope, epoch, and `isDryRun` mode",
+        "resume window identified by `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
+        "Durable compare-and-set creates or reuses one `OPEN` window per namespace/runtime identity, epoch, and `isDryRun` mode",
+        "the server-derived `playableStateScope` is retained as immutable exact-validated policy/routing/authorization/migration-fence evidence for that window and is excluded from its identity, with missing or mismatched evidence fencing admission",
     ],
 )
+for non_resume_scope_fixture in (
+    "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun>",
+    "<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, isDryRun>",
+):
+    if obsolete_scope_resume_window_identity.fullmatch(non_resume_scope_fixture):
+        raise SystemExit(
+            "non-resume-window scope validation tuple was incorrectly rejected: "
+            f"{non_resume_scope_fixture}"
+        )
+for obsolete_resume_identity_fixture in (
+    "<tenantId, gameInstanceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
+    "<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>",
+    (
+        "<tenantId, gameInstanceId, playableStateNamespaceId,\n"
+        "playableStateScope, regionId, regionEpoch, isDryRun, resumeGeneration>"
+    ),
+):
+    if obsolete_scope_resume_window_identity.fullmatch(obsolete_resume_identity_fixture) is None:
+        raise SystemExit(
+            "scope-based resume-window identity fixture was not rejected: "
+            f"{obsolete_resume_identity_fixture}"
+        )
+canonical_resume_identity_fixture = (
+    "<tenantId, gameInstanceId, playableStateNamespaceId, regionId, "
+    "regionEpoch, isDryRun, resumeGeneration>"
+)
+if obsolete_scope_resume_window_identity.fullmatch(canonical_resume_identity_fixture):
+    raise SystemExit("canonical namespace-owned resume-window identity was rejected")
 require_contains(
-    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
     [
         "The canonical scheduler preimage fields are serialized in this fixed order:",
         "`resumeWindowId` is absent for non-catch-up triggers",
         "Fields marked `when ...` are omitted, not replaced by empty or sentinel values",
     ],
 )
-adr0001 = (
+require_contains(
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    [
+        "[Table 1's Scheduler Candidate Identity Preimage](../system-architecture-scripting-normative-contract-tables.md#scheduler-candidate-identity-preimage-normative)"
+    ],
+)
+normative_contract_tables = (
     root
-    / "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md"
+    / "design/architecture/system-architecture-scripting-normative-contract-tables.md"
 ).read_text(encoding="utf-8")
 preimage_matches = re.findall(
     r"The canonical scheduler preimage fields are serialized in this fixed order: `([^`]+)`",
-    adr0001,
+    normative_contract_tables,
 )
 if len(preimage_matches) != 1:
     raise SystemExit(
-        "adr-0001-scripting-event-ingress-idempotency-identity.md: expected exactly one canonical scheduler preimage"
+        "system-architecture-scripting-normative-contract-tables.md: expected exactly one canonical scheduler preimage"
     )
 expected_scheduler_preimage = [
     "tenantId",
     "gameInstanceId",
-    "playableStateScope",
+    "playableStateNamespaceId",
     "stableOwnerKind",
     "stableOwnerId",
     "regionId",
@@ -1988,7 +2169,7 @@ actual_scheduler_preimage = [
 ]
 if actual_scheduler_preimage != expected_scheduler_preimage:
     raise SystemExit(
-        "adr-0001-scripting-event-ingress-idempotency-identity.md: canonical scheduler preimage fields/order drifted"
+        "system-architecture-scripting-normative-contract-tables.md: canonical scheduler preimage fields/order drifted"
     )
 specialized_inventory = (
     root / "design/project-management/design-alignment/decision-inventory-specialized-runtime.md"
@@ -2050,6 +2231,7 @@ require_contains(
         "bounded batches per complete recovery scope `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>`",
         "fairness cursors and deficit/cost accounting are keyed by the complete recovery scope",
         "service startup for each complete recovery scope",
+        "`entity_enqueue_seq` is allocated monotonically within the complete allocation scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, entityId)`",
     ],
 )
 require_absent(
@@ -2058,6 +2240,79 @@ require_absent(
         "bounded batches per `<tenantId, gameInstanceId, regionId>`",
         "scheduling across regions rather than draining one region completely",
         "service startup for each region to converge",
+        "complete allocation scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch)`",
+    ],
+)
+for tick_commit_path in (
+    "design/architecture/system-architecture-tick-execution-flows.md",
+    "design/architecture/system-architecture-ticks.md",
+):
+    require_contains(
+        tick_commit_path,
+        [
+            "current-epoch commit predicate: terminal (`APPLIED` or `ABANDONED`) evidence",
+            "every eligible ledger row in that tick's complete expected current-epoch participant set",
+            "Inconclusive old-epoch rows remain non-terminal reconciliation work outside this current-epoch commit predicate",
+            "may still block unsafe next-tick progression, reset-scope convergence, or reopening",
+        ],
+    )
+    require_absent(
+        tick_commit_path,
+        [
+            "every required participant in that tick's complete expected current-epoch participant set",
+            "An inconclusive old-epoch row remains non-terminal and blocks this advancement",
+            "inconclusive old-epoch work remains non-terminal and prevents this boundary",
+        ],
+    )
+
+require_contains(
+    "design/architecture/system-architecture-ticks.md",
+    [
+        "every eligible ledger row in that tick's complete expected current-epoch participant set",
+        "Required-versus-optional classification affects command-result aggregation, not tick commit",
+        "`entity_enqueue_seq` is allocated within the complete entity scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, entityId)`",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-examples-and-patterns.md",
+    [
+        "The current authenticated receiving RPCs fail closed with `FAILED_PRECONDITION` (`automation_admission_receiver_fence_unavailable`) before mutation",
+        "prove neither local tick-queue acceptance nor remote follow-up scheduling",
+        "the target Trigger Identity additionally requires `playableStateNamespaceId`, which current `TriggerScriptEventRequest` does not carry",
+        "The current request carries `playableStateScope` separately as exact-validated policy/routing/authorization/migration-fence evidence, not as an identity field",
+        "**Target-state audit contract:** An audit record is written to `script_event_audit` for each resolved handler Trigger Identity",
+        "Current `TriggerScriptEventRequest` has no `playableStateNamespaceId`; its `playableStateScope` remains separate evidence and cannot substitute for the target namespace identity",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-examples-and-patterns.md",
+    [
+        "For same-scope targets, `ENQUEUED` means Game Session accepted the command into the local tick queue",
+        "for distinct target scopes, `REMOTE_SCHEDULED` means only that the remote follow-up was scheduled",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "if none is available, preserve any active broader containment, block further mutations, mark exact containment unverified, and escalate",
+        "current-live [executor fencing/drain gate](#act-stalled-tick-region)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-gateway.md",
+    [
+        "Before normal release, old Gateway replay writers must be drained or authoritatively blocked",
+        "the complete tagged replay state and readiness/fence state must be authoritative",
+        "If any old-version writer or admission remains allowed, release additionally requires a separately proven cross-version guard",
+        "none is currently implemented or proven, so that mixed-version release path remains forbidden",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "Quarantine release and Cache-reset admission remain fail-closed until the [Gateway replay-quarantine release gate](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake) is proven",
+        "the current untagged replay state and generic writer do not satisfy it",
+        "If old-version writers/admission cannot be excluded, release additionally requires a separately proven cross-version guard, which is not currently implemented or proven",
     ],
 )
 
@@ -2069,6 +2324,9 @@ automation_runtime = (
 ).read_text(encoding="utf-8")
 game_design_version_control = (
     root / "design/architecture/microservices/game-design-service/version-control.md"
+).read_text(encoding="utf-8")
+game_design_operations = (
+    root / "design/architecture/microservices/game-design-service/operations.md"
 ).read_text(encoding="utf-8")
 deployment_environments = (
     root / "design/architecture/infrastructure/deployment-environments.md"
@@ -2200,6 +2458,574 @@ for path, text in (
     ):
         if term not in text:
             raise SystemExit(f"{path}: missing Game Design V26 rollout-compatibility term {term!r}")
+
+for term in (
+    "This implemented success path is behind the required participant digest gate",
+    "ordinary full-version requests currently cannot reach it because Game Logic rejects the required full-version participant request",
+    "script-patch publication does not require the Game Logic participant",
+    "[Version Control](./version-control.md#owner-to-owner-digest-authorization-and-tenant-identity)",
+):
+    if term not in game_design_operations:
+        raise SystemExit(
+            "design/architecture/microservices/game-design-service/operations.md: "
+            f"missing full-version publication availability qualification {term!r}"
+        )
+
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "record execution results in PR/CI evidence, and update the owning implementation tracker when capability or proof status changes",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    ["record execution results in PR/CI evidence or the owning implementation tracker"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-runtime-execution.md",
+    [
+        "one `script_work_items` row carries the applicable identity from the pre-DSL trigger through evaluation and handoff processing",
+        "separate evaluated-work-item records and descriptor replay remain target-state only",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    [
+        "A stale or mismatched presented scope fails closed for reuse until authoritative evidence is reconciled and exact validation succeeds",
+        "Only reconciled matching scope with unchanged authority may reuse the existing namespace-keyed identity",
+        "an authority-proven scope transition starts a new playable-state lifecycle and namespace",
+        "[Timer Resume Rule](../system-architecture-scripting-scheduler-and-timers.md#timer-resume-rule-normative)",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    ["stale presented scope with unchanged authority may reuse the existing identity"],
+)
+
+require_contains(
+    "design/architecture/decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md",
+    [
+        "Under this proposal, a command root's enclosing root would be its own persisted `EffectId`",
+        "its parent would be explicitly absent (`null`)",
+        "retry and replay would reuse the same scalar and binding",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/automation-scripting-service/sandbox-runtime-design.md",
+    [
+        "source tenant/game-instance ownership (`tenantId`, `gameInstanceId`) and `playableStateNamespaceId`/region identity",
+        "optional distinct target game-instance ownership and namespace/region identity",
+        "[normative Command-Handoff Identity](../../system-architecture-scripting-normative-contract-tables.md#command-handoff-identity-target-state)",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/world-management-service/world-creation-workflow.md",
+    [
+        "canonical Temporal workflow ID is `world-lifecycle:<tenantId>:game-instance:<gameInstanceId>`, stable per `(tenantId, gameInstanceId)`",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-temporal-workflows.md",
+    [
+        "for World lifecycle it is `game-instance`",
+        "For World lifecycle it is `gameInstanceId`, a domain identity scoped by `tenantId` and `scopeKey`, not necessarily a globally unique token",
+        "`world-lifecycle` uses `gameInstanceId` as its business key within the `tenantId` and `game-instance` scope",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "Before a maintenance verifier CAS may mutate a ledger row, validate the exact ADR 0085 external maintenance handoff",
+        "An owner may omit that maintenance handoff only for a specifically classified non-conflicting routine replay with durably recorded classification/evidence and applicable fence, epoch, and scope proof",
+        "never infer this exemption from owner, epoch, executor, manifest, or participant proof alone",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "authoritative evidence proves no committed batch, effect materialization, or application",
+        "ingress status or a missing batch ID alone is insufficient",
+        "Otherwise the command remains unresolved for evidence-qualified reconciliation",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "For spatial or ambient maintenance or reset mutations invoked through either API",
+        "including in recovery paths that perform maintenance or reset mutations",
+        "Ordinary owner-local routine replay or reconciliation outside maintenance and reset may preserve the original `EffectId` only when the owner has explicitly classified it as non-conflicting and the recorded exemption matches.",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "For spatial or ambient maintenance, recovery, or reset mutations invoked through either API",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "stream publication uses `XADD` with bounded `MAXLEN` as a best-effort coordination hint, not durable stream or work authority",
+        "[Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream)",
+        "its workload-facing principal is read-only (`GET`) for offset keys",
+        "absent that registration Automation uses the owner API/heartbeat contract and receives no direct stream or offset grant",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "every eligible ledger row in that tick's complete expected current-epoch participant set",
+        "required-versus-optional classification affects command-result aggregation, not tick commit",
+        "serialized scheduler payloads use `regionEpoch`, while the tick-event offset record uses `region_epoch`",
+        "Each serialized value must include `{tenantId, gameInstanceId, regionId, consumerId, region_epoch, latestTickId, streamOffset}`",
+        "The producer and reader remain unimplemented",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-gateway.md",
+    [
+        "logical typed Gateway-owned probe",
+        "one pinned Coordination Redis connection",
+        "While shared readiness remains `QUARANTINED`",
+        "disposable marker at `gateway:connect-token:{gateway-connect-token-replay-v1}:probe:<operationId>:<nonce>`",
+        "then immediately issues configured `WAITAOF` on that same connection with no intervening write",
+        "Cleanup is a separate exact-operation/fence-guarded write and readback after acknowledgement and evidence readback",
+        "does not accept or consume a player JWT, real `jti` replay marker, or browser-deny marker",
+        "Normal player consume remains `OPEN`-only and is never invoked during quarantine",
+        "only the coordinator may authorize reopening after the deadline, exact fenced probe evidence, and all other owner release gates succeed",
+        "callers cannot supply key material or redirect a probe to player replay/deny prefixes",
+        "Its marker uses a finite bounded expiry",
+        "Gateway's owner-local helper performs the readiness compare-and-set",
+        "The operation and its producer/consumer proof are currently unimplemented",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "require Gateway's typed recovery probe over the existing authenticated owning-service transport boundary only; that boundary provides authenticated transport, but no recovery endpoint is implemented while shared readiness remains `QUARANTINED`",
+        "Existing ACL-denial probes may also run through the documented isolated disposable/protected harness",
+        "key-scoped denials use a protected probe namespace that cannot contain shared deployment data",
+        "`FLUSHALL`, `FLUSHDB`, and `SCRIPT FLUSH` denials run only against an isolated disposable target with required cleanup/readback and never real tick state",
+        "Normal player consume remains `OPEN`-only and is not invoked for this recovery proof",
+        "timeout, malformed, below-threshold, or uncertain results fail closed",
+        "This probe remains target-only and unimplemented, so the checklist is not yet executable for this gate",
+        "[ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md)",
+        "[Gateway replay readiness](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake)",
+        "[reset policy matrix](./system-architecture-redis-reset-and-recovery.md#reset-policy-matrix-prefix-summary)",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    ["a fresh canonical replay-consume invocation on the same pinned Redis connection"],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "Gateway owns only the shared replay-domain exception: `gateway:connect-token:{gateway-connect-token-replay-v1}:jti:*`, `gateway:connect-token:{gateway-connect-token-replay-v1}:deny:jti:*`, `gateway:connect-token:{gateway-connect-token-replay-v1}:readiness`, and the separately registered recovery-only `gateway:connect-token:{gateway-connect-token-replay-v1}:probe:*`",
+        "Participant-guard uniqueness also includes the owner-declared runtime-family partition: S1/S2 use `(tenantId, playableStateNamespaceId)`, while only explicitly declared S3 uses `(tenantId, gameInstanceId)`; unknown or unclassified families fail closed.",
+        "The immutable `requestDigest` binds that identity but is not a uniqueness field or partition substitute; other scope and tick values remain exact evidence.",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0011-gameplay-session-front-end-and-region-execution.md",
+    [
+        "## Supersession\n\n- Replacement ADR: [ADR 0170](./adr-0170-fenced-command-forwarding-and-authoritative-region-transition.md)",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0001-scripting-event-ingress-idempotency-identity.md",
+    [
+        "## Supersession\n\n- Replacement ADR: [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md)",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0009-coordination-redis-ownership-boundary.md",
+    [
+        "Gateway Service owns the exact connect-token replay, browser-deny, readiness/fence, and recovery-probe key families in the pinned `gateway-connect-token-replay-v1` domain: `gateway:connect-token:{gateway-connect-token-replay-v1}:jti:<jti>`, `gateway:connect-token:{gateway-connect-token-replay-v1}:deny:jti:<jti>`, `gateway:connect-token:{gateway-connect-token-replay-v1}:readiness`, and `gateway:connect-token:{gateway-connect-token-replay-v1}:probe:<operationId>:<nonce>`, as defined by [ADR 0029](./adr-0029-single-use-gameplay-connect-token-carriage.md).",
+        "These are bounded Gateway-owned replay and recovery records, not wildcard access or a broader non-owner participation grant.",
+    ],
+)
+require_contains(
+    "design/architecture/microservices/game-design-service/operations.md",
+    [
+        "`VersionPublishCommandServiceImpl` normally records terminal `FAILED` and returns the attempt snapshot for publication failures; `TemporalVersionPublishActivitiesImpl` catches only `PendingReconciliationException` and returns `PENDING`.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-gateway.md",
+    [
+        "When the latest expiry of an affected token is known, the quarantine deadline also covers that token's `exp + firemud.gateway.connectTokenClockSkewMs`; the deadline is the later of these bounds, and admission must never reopen before it.",
+        "This deadline rule is defined by [ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md).",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-identifier-glossary.md",
+    [
+        "The owner must allocate and durably persist each generated child's ordinal and owner-scope/root/parent/ordinal-to-child-`EffectId` mapping under the accepted owner contract; deterministic child-ID derivation is only proposed by pending [ADR 0183](./decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) and is not current target.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "Any handoff or recovery path that performs maintenance or reset mutation on this barrier must carry the unchanged [ADR 0085](./decisions/adr-0085-evidence-gated-coordination-replay-and-fenced-reset.md) external maintenance handoff: exact `operationId`, external maintenance fence/lock binding, classifier, immutable evidence digest, and complete affected scope.",
+        "`OwnerRoutineReplayExemption` is available only for explicitly classified, non-conflicting ordinary owner-local routine replay or reconciliation outside maintenance and reset; it cannot authorize these mutations.",
+        "A missing or mismatched handoff leaves the barrier `RECONCILIATION_REQUIRED` and fails closed.",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "Gateway's typed readiness-probe operation",
+        "[Gateway replay readiness](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake)",
+        "currently unimplemented, so the checklist is not yet executable for this gate",
+        "The probe runs while shared readiness remains `QUARANTINED`",
+        "Only the recovery coordinator may authorize reopening after the deadline, exact fenced probe evidence, and every other release gate",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0029-single-use-gameplay-connect-token-carriage.md",
+    [
+        "trusted recovery coordinator invokes Gateway's separate typed recovery probe through Gateway's existing authenticated owner-maintenance boundary while shared readiness remains `QUARANTINED`",
+        "Gateway-generated disposable marker under `gateway:connect-token:{gateway-connect-token-replay-v1}:probe:<operationId>:<nonce>`",
+        "This probe neither accepts nor consumes a player JWT, real `jti` replay marker, or browser-deny marker, and it never writes shared readiness",
+        "Gateway's owner-local helper alone performs the fenced compare-and-set to `state=OPEN`",
+        "The coordinator does not receive raw Redis authority",
+        "callers cannot supply a key, nonce, player `jti`, or marker value",
+        "The probe marker has a finite bounded expiry",
+        "Gateway immediately issues the configured `WAITAOF` acknowledgement on that same pinned connection with no intervening write",
+        "Only after that acknowledgement and evidence readback may cleanup run as a separate exact-fence-guarded write with readback",
+        "The probe operation and its producer/consumer proof are target-only and currently unimplemented",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-reset-and-recovery.md",
+    [
+        "`gateway:connect-token:{gateway-connect-token-replay-v1}:probe:<operationId>:<nonce>`",
+        "While readiness remains `QUARANTINED`, the trusted recovery coordinator invokes Gateway's separate typed probe",
+        "Only the recovery coordinator may authorize reopening after the deadline, exact fenced probe evidence, and every other owner release gate",
+        "Gateway owns the probe key, nonce, and marker value; callers cannot redirect it to a player `jti` or deny prefix",
+        "The probe marker has a finite bounded expiry",
+        "no current deny-marker, readiness, replay-fence, or recovery-probe writer",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "`gateway:connect-token:{gateway-connect-token-replay-v1}:probe:*` only",
+        "it neither consumes player credentials nor writes shared readiness",
+        "immediately issues configured `WAITAOF` on that connection with no intervening write",
+        "guarded cleanup/readback follows the acknowledgement",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-cheatsheet.md",
+    [
+        "`gateway:connect-token:{gateway-connect-token-replay-v1}:probe:<operationId>:<nonce>`",
+        "The typed probe runs only while shared readiness is `QUARANTINED`",
+        "Gateway alone supplies its exact key/nonce/value; callers cannot redirect it to player keys",
+        "The marker has a finite bounded expiry",
+        "Gateway's owner-local helper performs the readiness CAS through its authenticated maintenance API",
+        "The probe is currently unimplemented",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "a separate Gateway-generated disposable recovery-probe marker",
+        "The probe marker is not a player `jti` or deny marker",
+        "Normal consume is never called during quarantine",
+        "the recovery coordinator alone may reopen after exact fenced proof and all owner gates",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md",
+    [
+        "owner-defined child ordinal allocated and persisted by the owning contract for replay-stable reuse",
+        "Persisted lineage, owner-defined ordinals, digests, and accounting make admission and suppression replay-stable",
+        "owner-scope/root/parent/ordinal mapping to each child `EffectId` is one atomic durable admission record",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0065-deterministic-fair-entity-tick-scheduling.md",
+    [
+        "recorded owner-allocated child ordinals",
+        "owner-defined ordinal and durable owner-scope/root/parent/ordinal-to-child-`EffectId` mapping are mandatory and replay-stable under accepted [ADR 0075]",
+        "Only scalar choices and additional allocator mechanics remain pending in [ADR 0183]",
+        "owner-allocated persisted child ordinals and replay-stable mappings",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-dsl-reference-and-lifecycle.md",
+    [
+        "Only after all applicable handler-scoped gates pass does each admitted resolved handler create a durable parent work item",
+        "A trigger with no admitted handlers creates no parent work items",
+        "The exact per-handler gates remain owned by [Normative Table 2]",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-execution-flows.md",
+    [
+        "The coordinator and origin-addressed result also retain the complete original source scope",
+        "originPlayableStateNamespaceId",
+        "originPlayableStateScope",
+        "The current live coordinator and result projection schemas do not yet carry the complete source and target tuples",
+        "this remains target-state contract, not a claim of schema implementation",
+    ],
+)
+require_contains(
+    "services/spring-cloud-gateway/src/main/resources/openapi.yaml",
+    [
+        "Current REST route mutations require a Bearer JWT accepted by the gateway's",
+        "privileged-role predicate, which currently accepts global or tenant-scoped",
+        "acceptance of tenant-scoped roles is implementation drift",
+        "The target management contract requires exact operator authentication and",
+        "global privileged authorization on an internal dev/test-only surface",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-usage-and-profiles.md",
+    [
+        "This projection responsibility does not assign the current physical `gameplaypresence:session:<sessionId>` or `accountrecentpresence:<tenantId>:<accountId>` prefixes to the Coordination Redis role",
+        "their storage-role classification and target key contract remain unproven",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md",
+    [
+        "Derived reactions retain their owner-defined child ordinal",
+        "complete owner-scope/root/parent/ordinal-to-child-`EffectId` mapping before enqueue/apply",
+        "This accepted child-identity contract is owned by [ADR 0075]",
+        "Pending [ADR 0183]",
+        "it does not gate or redefine the accepted child mapping",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/README.md",
+    [
+        "Depth, cost, and count bounds with replay-stable owner-defined child identity and lineage",
+        "Pending command-plan ordering, `planOrdinal`, command-root allocation, UUIDv7 scalar, canonical serialization, and additional child/fan-out allocation mechanics",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md",
+    ["Derived reactions use deterministic child effect identities"],
+)
+require_absent(
+    "design/architecture/decisions/README.md",
+    ["generated-child/fan-out allocation design"],
+)
+require_contains(
+    "design/architecture/microservices/entity-management-service/runtime-and-data.md",
+    [
+        "a conflict-safe marker insert or a same-transaction savepoint around marker handling",
+        "preserving marker/mutation atomicity and never isolating marker insertion in a separate transaction",
+        "[Entity Management Operations implementation status](./operations.md#implementation-status)",
+        "Real PostgreSQL concurrent first-apply/replay proof remains unavailable",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/entity-management-service/runtime-and-data.md",
+    ["a conflict-safe marker insert or isolated marker transaction"],
+)
+require_contains(
+    "design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md",
+    [
+        "The live result-inbox path has partial late-result handling",
+        "serialized result-versus-timeout arbitration, immutable terminal/retry proof, and documented compensation ownership remain unimplemented or unproved",
+        "See the canonical owner contracts immediately above for target sequencing, terminal outcomes, and compensation",
+    ],
+)
+require_absent(
+    "design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md",
+    ["the owner must reconcile durable results before timeout, require matching scope/epoch evidence"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
+    [
+        "The end-to-end lifecycle and reload behavior in this target-state section",
+        "**Target state only:** Redis timer indexes, scheduler progress hints, queue pointers",
+        "This reload sequence is target-state behavior",
+        "current PostgreSQL schedule-definition and schedule-instance substrate",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-lua-patterns.md",
+    [
+        "While an untagged legacy `jti` marker may still represent a token accepted in its original window, replay admission remains blocked.",
+        "absence of a tagged target key alone never proves the legacy token unused",
+        "Resolving that continuity condition does not release quarantine: all ADR 0029 deadline, exact fenced probe, old-writer, and owner release gates still apply.",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md",
+    [
+        "the original positive `reservationClaimFence` stored in that tuple",
+        "its fresh reservation/recovery claim and fence are separate, independently validated execution authority",
+        "they do not replace or rewrite the original tuple fence",
+        "Exact tuple comparison and current owner/fence validation remain required before evaluation, dispatch, or reference delivery",
+        "This CAS and enrichment preserve the original reservation claim fence as immutable tuple evidence",
+        "the separately current fresh reservation/recovery claim and fence before redeeming the exact reference",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md",
+    ["`reservationOwnerId`, current positive `reservationClaimFence`"],
+)
+require_contains(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    [
+        "Failures before the durable `STAGED` update leave the command `ACCEPTED`",
+        "failures after that update and before durable `tick_batch`/`tick_effect` creation can leave `STAGED` without a batch/effect",
+        "there is no recovery path for a `STAGED` command without a corresponding `tick_batch`/`tick_effect`",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    ["A crash or Redis loss in either window can strand a `STAGED` command"],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "ledger backlog does not authorize replay-controller remediation on the current-live branch",
+        "Target-state deployments may trigger replay-controller remediation only after the capability/proof gate",
+        "[Ledger Replay Controller](./system-architecture-tick-failures-and-operations.md#ledger-replay-controller)",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    ["If ledger backlog also accumulates, trigger ledger replay-controller remediation"],
+)
+require_contains(
+    "design/architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md",
+    [
+        "atomic owner-defined CAS/version-fenced transition on the authoritative command record",
+        "if concurrent staging wins, the loss transition affects zero rows",
+        "positive authoritative evidence that no batch committed, no effect was materialized, and no domain application occurred",
+        "ingress status or a missing batch/effect identifier alone is insufficient",
+        "[Transactions](../system-architecture-transactions.md)",
+        "[Tick Failures and Operations](../system-architecture-tick-failures-and-operations.md)",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md",
+    ["with no surviving durable `tickBatchId`, effect ledger, or source/effect claim"],
+)
+require_contains(
+    "design/architecture/microservices/game-design-service/modding-framework.md",
+    [
+        "complete owner-defined participant binding",
+        "Any participant-binding, operation, target, or digest conflict fails closed",
+        "[Transactions guard contract](../../system-architecture-transactions.md)",
+        "[ADR 0069](../../decisions/adr-0069-at-least-once-effect-execution-with-one-logical-terminal-outcome.md)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-cheatsheet.md",
+    [
+        "the later of the detection-time deadline (the 30-second maximum token lifetime plus two configured clock-skew intervals) and any later known affected-token `exp` plus one clock-skew interval",
+        "Admission remains closed until that deadline passes and the required fresh disposable-marker, durability-acknowledgement, and shared readiness proof succeeds",
+        "[ADR 0029](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "shared readiness quarantined under an advanced `replayAdmissionFence`",
+        "during that quarantine, an absent `jti` marker alone never proves first use",
+        "[ADR 0029 readiness proof](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "the target `session:connect-token:v1:*` exact-input issuance-result projections",
+        "The current legacy result map remains a separate unversioned `session:connect-token:*` family",
+        "both families remain Account-owned",
+        "Gateway owns only the shared replay-domain exception",
+        "it never owns the Account auth or connect-token issuance prefixes",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-redis.md",
+    ["the target `session:connect-token:*` exact-input issuance-result projections"],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-incident-runbook.md",
+    [
+        "**Target state only, once the canonical gated coordination-maintenance operation is implemented and proven:** Execute the [Canonical Coordination Reset Sequence]",
+        "**Current deployments:** Do not execute the reset or mutate raw coordination keys. Preserve evidence, keep the affected scope fenced or stopped, use only the shipped `PauseTicksForScope` / `GetRuntimeOwnershipStatus` boundary and `coord_ops_ro` read-only inspection, then follow the [Current Operator Fallback]",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "require Gateway's typed recovery probe over the existing authenticated owning-service transport boundary only; that boundary provides authenticated transport, but no recovery endpoint is implemented",
+        "This probe remains target-only and unimplemented",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    [
+        "parent `outboxWorkItemId` is retained only as correlation and is not part of that identity",
+        "applicable distinct target runtime fields (`targetGameInstanceId`, `targetPlayableStateNamespaceId`, `targetRegionId`, `targetRegionEpoch`)",
+        "[Table 2 identity owner](./system-architecture-scripting-normative-contract-tables.md#table-2-command-handoff-identity)",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-contracts.md",
+    ["complete Command-Handoff Identity, including `outboxWorkItemId` as parent correlation"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    [
+        "Core-owned schedules include their schedule-owned `scriptId`; plugin-owned schedules use their schedule-owned `pluginId`, `pluginVersionId`, and `bindingId` without adding a synthetic `scriptId`",
+        "`scheduleDefinitionId` participates in the stable logical continuity key and the complete durable row/trigger-claim identity, but is never sufficient as a standalone row or claim identity",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-normative-contract-tables.md",
+    ["The logical identity therefore includes schedule-owned `scriptId` and any schedule-owned `pluginId`"],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-concepts-and-invariants.md",
+    [
+        "accept explicit caller-supplied `currentTickId`",
+        "the AOF records the script's write effects and restart replays those recorded commands",
+        "it does not rerun the Lua script with the original `ARGV` values",
+        "[Redis scripting and effects-replication documentation](https://redis.io/docs/latest/develop/interact/programmability/eval-intro/)",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-tick-concepts-and-invariants.md",
+    ["AOF replay reuses the same arguments"],
+)
+require_contains(
+    "design/architecture/system-architecture-gateway.md",
+    [
+        "While shared readiness remains `QUARANTINED`",
+        "Normal player consume remains `OPEN`-only and is never invoked during quarantine",
+        "only the coordinator may authorize reopening after the deadline, exact fenced probe evidence, and all other owner release gates succeed",
+        "issuance and player admission remain closed",
+        "not a new public RPC or an implemented operation",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-usage-and-profiles.md",
+    [
+        "The checked Coordination configurations",
+        "do not set an internal Redis `maxmemory` bound",
+        "Every non-ephemeral Coordination Redis profile must configure an explicit finite positive Redis `maxmemory` bound",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0183-deterministic-effect-id-allocation-and-replay-binding.md",
+    [
+        "Proposed - Pending Human Review",
+        "Every clause in this Decision section is a proposal, conditional on human acceptance",
+        "do not extend the independently accepted owner-defined child ordinal and durable owner-scope/root/parent/ordinal-to-child-`EffectId` mapping",
+        "This exact scalar format is not an accepted cross-service requirement today",
+    ],
+)
 
 print("architecture doc contracts passed")
 PY

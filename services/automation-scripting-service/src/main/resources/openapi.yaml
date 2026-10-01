@@ -1,7 +1,10 @@
 openapi: 3.0.3
 info:
   title: Automation Scripting Service API
-  description: API for NPC automation and script management
+  description: >-
+    This OpenAPI document currently describes only the GET /ping health-check
+    endpoint; it defines no tenant- or subject-scoped operations or
+    authentication.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0
