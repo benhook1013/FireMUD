@@ -437,7 +437,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
             "checkpoint": self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->"),
             "actor": "reviewer", "common": self.common, "scope": "broad",
         }
-        with patch("pr_review.sqlite_hosted_capture._first_line", return_value="<details>"):
+        with patch("pr_review.sqlite_hosted_capture._hosted_title_choice", return_value=("<details>", False)):
             first = pr_review.sqlite_provider_imports.import_hosted_checkpoint(self.records, **arguments)
         self.records.archive_imported_artifacts(first["run_id"], first["archive_artifacts"])
         before = self.records.history(PR)

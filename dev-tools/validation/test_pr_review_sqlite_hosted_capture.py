@@ -120,6 +120,29 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_provider_security_structure_proves_classification_not_remediation(self) -> None:
+        header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
+        for classification, reachability, headline in (
+            ("Authorization Bypass", "", "Require durability proof for the existing-marker outcome."),
+            ("Sensitive Data Exposure", "**Reachability:** Internal\n", "Do not document privileged JWTs with plaintext transport."),
+            ("Different provider classification", "", "Preserve the actual remedy."),
+        ):
+            with self.subTest(classification=classification):
+                body = (header + f"\n**{classification}**\n" + reachability +
+                        "**Exploitability:** Difficult\n**CWE:** [CWE-693](https://cwe.mitre.org/data/definitions/693.html)\n"
+                        f"**{headline}** Keep the substantive explanation.")
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+                self.assertEqual(finding["title"], headline)
+                self.assertEqual(finding["classification_titles"], [classification])
+                self.assertEqual(finding["display_detail"], "Keep the substantive explanation.")
+                self.assertFalse(finding["display_title_is_excerpt"])
+        unproven = header + "\n**Authorization Bypass**\n**Exploitability:** Difficult\n**Another authored issue.**"
+        self.assertEqual(sqlite_hosted_capture._hosted_comment_finding_segments(202, unproven)[0]["classification_titles"], [])
+        ordinary = "**Authorization Bypass**\nKeep this authored issue title and explanation."
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, ordinary)[0]
+        self.assertEqual(finding["title"], "Authorization Bypass")
+        self.assertEqual(finding["classification_titles"], [])
+
     def test_unheaded_hosted_issue_body_and_low_value_badge_are_preserved(self) -> None:
         issue = "The incoming workflow request must match the existing request identity. " * 5
         body = "_📐 Maintainability & Code Quality_ | _🔵 Trivial_ | _💤 Low value_\n" + issue

@@ -3105,8 +3105,10 @@ class SqliteReviewRecords:
             presentation = cache[cache_key].get(record["source_finding_key"])
             if presentation:
                 record["display_severity"] = presentation["display_severity"]
-                if (_unusable_hosted_title(title) or title == "Broken Authentication") and presentation.get("display_title"):
+                if (_unusable_hosted_title(title) or title in presentation.get("classification_titles", ())) and presentation.get("display_title"):
                     record["display_title"] = presentation["display_title"]
+                if presentation.get("display_title_is_excerpt") and title == presentation.get("display_title"):
+                    record["display_title_is_excerpt"] = True
                 if presentation.get("display_detail"):
                     record["display_detail"] = presentation["display_detail"]
 
@@ -3273,6 +3275,8 @@ class SqliteReviewRecords:
                         "display_title": title,
                         "display_detail": finding["display_detail"],
                         "display_severity": finding["display_severity"],
+                        "display_title_is_excerpt": finding["display_title_is_excerpt"],
+                        "classification_titles": finding["classification_titles"],
                     }
             return titles
         except (json.JSONDecodeError, TypeError, AttributeError, HostedCaptureError, ReviewRecordsError):

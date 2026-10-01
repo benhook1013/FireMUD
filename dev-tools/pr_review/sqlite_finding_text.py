@@ -106,7 +106,9 @@ def _strip_badge_prefix(line: str) -> str:
     return line
 
 
-def _hosted_issue_markdown(value: str, *, keep_badges: bool = False) -> str:
+def _hosted_issue_markdown(
+    value: str, *, keep_badges: bool = False, classification_titles: set[str] | None = None
+) -> str:
     """Remove provider presentation noise while preserving issue Markdown."""
 
     from .sqlite_hosted_capture import _markdown_fenced_ranges
@@ -135,7 +137,6 @@ def _hosted_issue_markdown(value: str, *, keep_badges: bool = False) -> str:
             protected[token] = value[start:end].rstrip("\r\n")
             replacement = token + "\n"
         value = value[:start] + replacement + value[end:]
-    security_metadata = all(label in value for label in ("**Reachability:**", "**Exploitability:**", "**CWE:**"))
     value = re.sub(r"<!--.*?(?:-->|\Z)", "", value, flags=re.DOTALL)
     value = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", value, flags=re.DOTALL | re.IGNORECASE)
     value = re.sub(
@@ -146,17 +147,28 @@ def _hosted_issue_markdown(value: str, *, keep_badges: bool = False) -> str:
         value,
         flags=re.DOTALL | re.IGNORECASE,
     )
+    # Security taxonomy is metadata only when the provider header and an
+    # adjacent exploitability/CWE block prove that a later authored remediation exists.
+    if re.search(r"^_[^\n]*Security & Privacy[^\n]*_\s*\|", value, re.MULTILINE):
+        pattern = re.compile(
+            r"^\*\*([^\n*]+)\*\*[ \t]*\n[ \t\n]*"
+            r"((?:\*\*(?:Reachability|Exploitability|CWE):\*\*[^\n]*\n[ \t\n]*)+)"
+            r"(?=\*\*[^\n*]+\*\*(?:[ \t]|$))", re.MULTILINE
+        )
+        def strip_classification(match: re.Match[str]) -> str:
+            metadata = match.group(2)
+            if "**Exploitability:**" not in metadata or not re.search(r"\*\*CWE:\*\*.*CWE-[0-9]+", metadata):
+                return match.group()
+            if classification_titles is not None:
+                classification_titles.add(match.group(1))
+            return ""
+        value = pattern.sub(strip_classification, value)
     lines = []
     for raw in value.splitlines():
         line = _headline_text(html.unescape(raw.rstrip()))
         if not keep_badges:
             line = _strip_badge_prefix(line)
         if line and ((_is_badge_line(line) and not keep_badges) or _is_evidence_label(line)):
-            continue
-        if security_metadata and (
-            line.strip() == "**Broken Authentication**"
-            or re.match(r"^\*\*(?:Reachability|Exploitability|CWE):\*\*", line.strip())
-        ):
             continue
         if line.strip() in {"---", "***", "___"}:
             continue
@@ -169,10 +181,14 @@ def _hosted_issue_markdown(value: str, *, keep_badges: bool = False) -> str:
 
 
 def _first_line(value: Any) -> str | None:
-    """Choose a Hosted issue headline outside provider wrappers and executed scripts."""
+    return _hosted_title_choice(value)[0]
+
+
+def _hosted_title_choice(value: Any) -> tuple[str | None, bool]:
+    """Select canonical title text and whether it is unheaded body prose."""
 
     if not isinstance(value, str):
-        return None
+        return None, False
     from .sqlite_hosted_capture import _markdown_fenced_ranges
 
     value = _hosted_issue_markdown(value)
@@ -186,14 +202,14 @@ def _first_line(value: Any) -> str | None:
     for line in lines:
         content = _bold_line_content(line)
         if content is not None and not _unusable_hosted_title(content):
-            return content
+            return content, False
     for line in lines:
         match = re.match(r"^(?:\*\*(.+?)\*\*|__(.+?)__)(?:\s|$)", line)
         if match:
             content = match.group(1) or match.group(2)
             if not _unusable_hosted_title(content):
-                return content
-    return lines[0] if lines else None
+                return content, False
+    return (lines[0], not bool(re.match(r"^#{1,6}\s", lines[0]))) if lines else (None, False)
 
 
 def _hosted_display_detail(value: str, title: str) -> str:

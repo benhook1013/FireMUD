@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import sqlite_backup, sqlite_provider_imports, sqlite_review_records
+from pr_review import sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
 from pr_review.evidence import Checkpoint
 from pr_review.sqlite_finding_text import _safe_finding_detail
 from pr_review.sqlite_review_records import (
@@ -124,6 +124,44 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                      "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 +
                      "```\n</details>\n" + issue),
         }]})
+
+    def test_native_unheaded_title_excerpt_signal_preserves_full_body(self) -> None:
+        paragraph = "An existing workflow must validate the incoming request identity before accepting repeated admission. " * 5
+        captured = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, paragraph)[0]
+        self.hosted_display_run(title=captured["title"])
+        self.records.start_attempt(attempt_id="native-unheaded", source_pr=2839, channel="hosted")
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = paragraph
+        self.records.finish_attempt("native-unheaded", state="completed", artifacts={"hosted_comments": json.dumps(archive)})
+        self.records.link_attempt_run("native-unheaded", "display-run")
+        history = self.records.history(2839)
+        finding = history["findings"][0]
+        self.assertEqual(finding["title"], paragraph[:300])
+        self.assertTrue(finding["display_title_is_excerpt"])
+        self.assertEqual(finding["display_detail"], paragraph.strip())
+        self.assertTrue(self.records.history(2879)["routes"][0]["display_title_is_excerpt"])
+
+    def test_authored_heading_does_not_acquire_excerpt_signal(self) -> None:
+        self.hosted_display_run(title="Preserve the actual authored headline.")
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = "**Preserve the actual authored headline.**\nDistinct issue prose."
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        finding = self.records.history(2839)["findings"][0]
+        self.assertNotIn("display_title_is_excerpt", finding)
+        self.assertEqual(finding["display_detail"], "Distinct issue prose.")
+
+    def test_structural_security_classification_override_requires_same_archive(self) -> None:
+        self.hosted_display_run(title="Authorization Bypass")
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = (
+            "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_\n"
+            "**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
+            "**Require durability proof for the existing-marker outcome.**\nKeep the proof.")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["title"], "Authorization Bypass")
+        self.assertEqual(finding["display_title"], "Require durability proof for the existing-marker outcome.")
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_title"], finding["display_title"])
 
     def test_existing_legacy_aggregate_exposes_both_sections_without_new_findings(self) -> None:
         self.hosted_display_run(title="First actual issue.")

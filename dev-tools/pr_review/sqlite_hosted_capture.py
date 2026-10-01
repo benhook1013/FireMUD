@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from . import evidence, github, hosted
-from .sqlite_finding_text import _first_line, _hosted_display_detail, _hosted_display_severity, _safe_finding_detail
+from .sqlite_finding_text import (
+    _hosted_display_detail,
+    _hosted_display_severity,
+    _hosted_issue_markdown,
+    _hosted_title_choice,
+    _safe_finding_detail,
+)
 from .sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 
 
@@ -318,7 +324,9 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
     multiple = len(marker_matches) > 1
     for ordinal, (fingerprint, section) in enumerate(sections, start=1):
         cleaned = _strip_hosted_auxiliary_comments(section)
-        title = _first_line(cleaned)
+        title, unheaded = _hosted_title_choice(cleaned)
+        classification_titles: set[str] = set()
+        _hosted_issue_markdown(cleaned, classification_titles=classification_titles)
         if title is None:
             title = (
                 f"CodeRabbit review comment {comment_id} finding {ordinal}"
@@ -339,6 +347,8 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
                 "detail": _safe_finding_detail(cleaned),
                 "display_detail": _hosted_display_detail(cleaned, title),
                 "display_severity": _hosted_display_severity(cleaned),
+                "display_title_is_excerpt": unheaded,
+                "classification_titles": sorted(classification_titles),
             }
         )
     return findings
