@@ -2603,6 +2603,31 @@ require_absent(
     "design/architecture/decisions/README.md",
     ["generated-child/fan-out allocation design"],
 )
+require_contains(
+    "design/architecture/microservices/entity-management-service/runtime-and-data.md",
+    [
+        "a conflict-safe marker insert or a same-transaction savepoint around marker handling",
+        "preserving marker/mutation atomicity and never isolating marker insertion in a separate transaction",
+        "[Entity Management Operations implementation status](./operations.md#implementation-status)",
+        "Real PostgreSQL concurrent first-apply/replay proof remains unavailable",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/entity-management-service/runtime-and-data.md",
+    ["a conflict-safe marker insert or isolated marker transaction"],
+)
+require_contains(
+    "design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md",
+    [
+        "The live result-inbox path has partial late-result handling",
+        "serialized result-versus-timeout arbitration, immutable terminal/retry proof, and documented compensation ownership remain unimplemented or unproved",
+        "See the canonical owner contracts immediately above for target sequencing, terminal outcomes, and compensation",
+    ],
+)
+require_absent(
+    "design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md",
+    ["the owner must reconcile durable results before timeout, require matching scope/epoch evidence"],
+)
 
 print("architecture doc contracts passed")
 PY
