@@ -182,7 +182,14 @@ public class VersionPublishCommandServiceImpl {
       if (operationFailure instanceof PendingReconciliationException) {
         throw operationFailure;
       }
-      PublicationReadback readback = readPublication(request, attempt);
+      PublicationReadback readback;
+      try {
+        readback = readPublication(request, attempt);
+      } catch (RuntimeException readFailure) {
+        readFailure.addSuppressed(operationFailure);
+        throw pendingReconciliation(
+            "full-version finalization readback failed; reconciliation is required", readFailure);
+      }
       if (readback.isComplete()) {
         return reconcileCommittedAttempt(request, attempt);
       }
@@ -193,7 +200,14 @@ public class VersionPublishCommandServiceImpl {
       }
       return failDefinitively(request, attempt, version, exportedManifest, operationFailure);
     } catch (RuntimeException ambiguousCommit) {
-      PublicationReadback readback = readPublication(request, attempt);
+      PublicationReadback readback;
+      try {
+        readback = readPublication(request, attempt);
+      } catch (RuntimeException readFailure) {
+        readFailure.addSuppressed(ambiguousCommit);
+        throw pendingReconciliation(
+            "full-version finalization readback failed; reconciliation is required", readFailure);
+      }
       if (readback.isComplete()) {
         return reconcileCommittedAttempt(request, attempt);
       }

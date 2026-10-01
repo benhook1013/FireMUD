@@ -144,6 +144,7 @@ public final class LoginCommandHandler {
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
     }
+    invalidateStaleFirstPartyConnectContext(numericSessionId, authenticatedAccountId);
     persistSessionContext(
         numericSessionId,
         instance.getTenantId(),
@@ -158,6 +159,13 @@ public final class LoginCommandHandler {
                 "Logged in as " + canonicalLoginName,
                 "message.login.success",
                 Map.of("loginName", canonicalLoginName))));
+  }
+
+  private void invalidateStaleFirstPartyConnectContext(long sessionId, long accountId) {
+    firstPartyConnectContextRegistry
+        .find(sessionId)
+        .filter(connectContext -> connectContext.accountId() != accountId)
+        .ifPresent(ignored -> firstPartyConnectContextRegistry.unregister(sessionId));
   }
 
   private LoginCommandHandlingResult handleEmailLoginChallenge(
@@ -221,6 +229,12 @@ public final class LoginCommandHandler {
     }
 
     var verifiedContext = maybeContext.get();
+    if (existingSession != null
+        && existingSession.accountId() > 0
+        && existingSession.accountId() != verifiedContext.accountId()) {
+      firstPartyConnectContextRegistry.unregister(numericSessionId);
+      return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
+    }
     Optional<GameInstance> maybeInstance =
         gameInstanceRepository.findById(verifiedContext.gameInstanceId());
     if (maybeInstance.isEmpty()) {

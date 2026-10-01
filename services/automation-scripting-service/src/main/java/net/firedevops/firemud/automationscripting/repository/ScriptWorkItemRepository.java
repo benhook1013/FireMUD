@@ -41,17 +41,20 @@ import org.springframework.transaction.annotation.Transactional;
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class ScriptWorkItemRepository {
   private static final int MAX_TRIGGER_IDENTITY_INSERT_ATTEMPTS = 2;
-  private static final int MAX_CANCELLATION_ROWS = 100;
+
+  /** Shared bound for each patch- or plugin-version cancellation page. */
+  public static final int CANCELLATION_PAGE_SIZE = 100;
+
   private static final String PIN_OWNER_EVIDENCE_CONFLICT_MESSAGE =
       "script_pin_control_plane_request_id conflicts with existing identity";
   private static final Field<Boolean> INSERTED_ROW =
       field("xmax = 0", Boolean.class).as("inserted");
-  private static final Field<LocalDateTime> CURRENT_TIMESTAMP =
-      field("CURRENT_TIMESTAMP", LocalDateTime.class);
+  private static final Field<LocalDateTime> CURRENT_UTC_TIMESTAMP =
+      field("pg_catalog.timezone('UTC', CURRENT_TIMESTAMP)", LocalDateTime.class);
   private static final Field<OffsetDateTime> CURRENT_OFFSET_TIMESTAMP =
       field("CURRENT_TIMESTAMP", OffsetDateTime.class);
   private static final Field<OffsetDateTime> HANDOFF_RETENTION_HOLD_UNTIL =
-      field("retention_hold_until", OffsetDateTime.class);
+      SCRIPT_HANDOFF_EVENTS.RETENTION_HOLD_UNTIL;
 
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP",
@@ -215,7 +218,7 @@ public class ScriptWorkItemRepository {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(condition)
         .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
-        .limit(MAX_CANCELLATION_ROWS)
+        .limit(CANCELLATION_PAGE_SIZE)
         .forUpdate()
         .fetch(this::toEntity);
   }
@@ -259,7 +262,7 @@ public class ScriptWorkItemRepository {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(condition)
         .orderBy(SCRIPT_WORK_ITEMS.CREATED_AT.asc(), SCRIPT_WORK_ITEMS.ID.asc())
-        .limit(MAX_CANCELLATION_ROWS)
+        .limit(CANCELLATION_PAGE_SIZE)
         .forUpdate()
         .fetch(this::toEntity);
   }
@@ -340,11 +343,15 @@ public class ScriptWorkItemRepository {
 
   public List<ScriptWorkItem> findByStatusOrderByCreatedAtAscIdAsc(
       String status, Instant eligibleAt, Pageable pageable) {
+    Condition eligibility =
+        "PENDING_EVALUATION".equals(status)
+            ? retryEligibilityCondition(eligibleAt)
+            : SCRIPT_WORK_ITEMS
+                .NEXT_ELIGIBLE_AT
+                .isNull()
+                .or(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt)));
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS
-            .STATUS
-            .eq(status)
-            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
+        SCRIPT_WORK_ITEMS.STATUS.eq(status).and(eligibility),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -380,12 +387,15 @@ public class ScriptWorkItemRepository {
     if (ids == null || ids.isEmpty()) {
       return List.of();
     }
+    Condition eligibility =
+        "PENDING_EVALUATION".equals(status)
+            ? retryEligibilityCondition(eligibleAt)
+            : SCRIPT_WORK_ITEMS
+                .NEXT_ELIGIBLE_AT
+                .isNull()
+                .or(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt)));
     return fetchManyPaged(
-        SCRIPT_WORK_ITEMS
-            .ID
-            .in(ids)
-            .and(SCRIPT_WORK_ITEMS.STATUS.eq(status))
-            .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(toLocalDateTime(eligibleAt))),
+        SCRIPT_WORK_ITEMS.ID.in(ids).and(SCRIPT_WORK_ITEMS.STATUS.eq(status)).and(eligibility),
         pageable,
         SCRIPT_WORK_ITEMS.CREATED_AT.asc(),
         SCRIPT_WORK_ITEMS.ID.asc());
@@ -480,16 +490,40 @@ public class ScriptWorkItemRepository {
     // schema has no recovery-aware parent hold/generation proof, so every aged row is blocked.
     return "DEAD_LETTERED".equals(status)
         ? dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows)
-        : dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows.and(noBlockingRetentionEvidence().not()));
+        : dsl.fetchCount(
+            SCRIPT_WORK_ITEMS, agedRows.and(noBlockingRetentionEvidence(safeWatermark).not()));
+  }
+
+  /** Counts aged terminal parents retained by a replay result; this is an observability signal. */
+  public long countTerminalRowsBlockedByReplayReceipts(String status, Instant safeWatermark) {
+    Condition agedRows =
+        SCRIPT_WORK_ITEMS
+            .STATUS
+            .eq(status)
+            .and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(safeWatermark)));
+    Condition hasReplayResult =
+        notExists(
+                selectOne()
+                    .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
+                    .where(
+                        SCRIPT_DEAD_LETTER_REPLAY_RESULTS
+                            .TENANT_ID
+                            .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
+                            .and(
+                                SCRIPT_DEAD_LETTER_REPLAY_RESULTS.WORK_ITEM_ID.eq(
+                                    SCRIPT_WORK_ITEMS.ID))))
+            .not();
+    return dsl.fetchCount(SCRIPT_WORK_ITEMS, agedRows.and(hasReplayResult));
   }
 
   /**
-   * Parent-cleanup proof for the current schema. Replay results always remain attached until a
-   * receipt-retention horizon exists; handoff rows may be removed only when their owner hold is
-   * absent or no longer active. Audit rows are detached separately and therefore do not block the
-   * parent here.
+   * Parent-cleanup proof for the current schema. Any retained replay result always blocks its
+   * parent, regardless of age, until a receipt-retention horizon exists; handoff rows may be
+   * removed only when their owner hold is absent or no longer active and, for age cleanup, their
+   * observed time is before the supplied cutoff. Audit rows are detached separately and therefore
+   * do not block the parent here.
    */
-  private static Condition noBlockingRetentionEvidence() {
+  private static Condition noBlockingRetentionEvidence(Instant handoffObservedBefore) {
     return notExists(
             selectOne()
                 .from(SCRIPT_DEAD_LETTER_REPLAY_RESULTS)
@@ -509,10 +543,10 @@ public class ScriptWorkItemRepository {
                             .TENANT_ID
                             .eq(SCRIPT_WORK_ITEMS.TENANT_ID)
                             .and(SCRIPT_HANDOFF_EVENTS.WORK_ITEM_ID.eq(SCRIPT_WORK_ITEMS.ID))
-                            .and(handoffBlocksParent()))));
+                            .and(handoffBlocksParent(handoffObservedBefore)))));
   }
 
-  private static Condition handoffBlocksParent() {
+  private static Condition handoffBlocksParent(Instant handoffObservedBefore) {
     Condition incompleteOutcome =
         SCRIPT_HANDOFF_EVENTS
             .HANDOFF_OUTCOME
@@ -522,10 +556,19 @@ public class ScriptWorkItemRepository {
                         "regexp_replace({0}, '[[:space:]]', '', 'g')",
                         String.class, SCRIPT_HANDOFF_EVENTS.HANDOFF_OUTCOME)
                     .eq(""));
-    return HANDOFF_RETENTION_HOLD_UNTIL
-        .isNotNull()
-        .and(HANDOFF_RETENTION_HOLD_UNTIL.gt(CURRENT_OFFSET_TIMESTAMP))
-        .or(incompleteOutcome);
+    Condition blockedByHoldOrIncomplete =
+        HANDOFF_RETENTION_HOLD_UNTIL
+            .isNotNull()
+            .and(HANDOFF_RETENTION_HOLD_UNTIL.gt(CURRENT_OFFSET_TIMESTAMP))
+            .or(incompleteOutcome);
+    if (handoffObservedBefore == null) {
+      return blockedByHoldOrIncomplete;
+    }
+    return blockedByHoldOrIncomplete.or(
+        SCRIPT_HANDOFF_EVENTS
+            .OBSERVED_AT
+            .isNull()
+            .or(SCRIPT_HANDOFF_EVENTS.OBSERVED_AT.ge(toLocalDateTime(handoffObservedBefore))));
   }
 
   /**
@@ -582,6 +625,46 @@ public class ScriptWorkItemRepository {
     return dsl.selectFrom(SCRIPT_WORK_ITEMS)
         .where(SCRIPT_WORK_ITEMS.ID.in(ids))
         .fetch(this::toEntity);
+  }
+
+  /**
+   * Selects explicitly requested work-item snapshots for one tenant without acquiring row locks.
+   * Callers that use the snapshot for a mutation must re-read the row under a lock before applying
+   * any decision derived from it.
+   */
+  public List<ScriptWorkItem> findByTenantIdAndIdInOrderByIdAsc(
+      String tenantId, Collection<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.ID.in(ids)))
+        .orderBy(SCRIPT_WORK_ITEMS.ID.asc())
+        .fetch(this::toEntity);
+  }
+
+  /** Selects explicitly requested work items for one tenant while holding their row locks. */
+  public List<ScriptWorkItem> findByTenantIdAndIdInForUpdateOrderByIdAsc(
+      String tenantId, Collection<Long> ids) {
+    if (ids == null || ids.isEmpty()) {
+      return List.of();
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.ID.in(ids)))
+        .orderBy(SCRIPT_WORK_ITEMS.ID.asc())
+        .forUpdate()
+        .fetch(this::toEntity);
+  }
+
+  /** Selects one explicitly requested work item for a tenant while holding its row lock. */
+  public Optional<ScriptWorkItem> findByTenantIdAndIdForUpdate(String tenantId, Long id) {
+    if (tenantId == null || id == null) {
+      return Optional.empty();
+    }
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.TENANT_ID.eq(tenantId).and(SCRIPT_WORK_ITEMS.ID.eq(id)))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
   }
 
   public ScriptWorkItem save(ScriptWorkItem entity) {
@@ -643,7 +726,6 @@ public class ScriptWorkItemRepository {
             .set(
                 SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT,
                 entity.getAuthorityUnavailableRetryCount())
-            .set(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT, toLocalDateTime(entity.getNextEligibleAt()))
             .set(SCRIPT_WORK_ITEMS.CREATED_AT, toLocalDateTime(entity.getCreatedAt()))
             .set(SCRIPT_WORK_ITEMS.UPDATED_AT, toLocalDateTime(entity.getUpdatedAt()))
             .set(SCRIPT_WORK_ITEMS.ROW_VERSION, nextRowVersion)
@@ -887,6 +969,14 @@ public class ScriptWorkItemRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /** Holds the selected parent through the caller's transaction and its replay receipt write. */
+  public Optional<ScriptWorkItem> findByIdForUpdate(Long id) {
+    return dsl.selectFrom(SCRIPT_WORK_ITEMS)
+        .where(SCRIPT_WORK_ITEMS.ID.eq(id))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
+  }
+
   /**
    * Claims one dead-letter row for replay using the observed row version and failure generation. A
    * competing request therefore gets an empty result instead of overwriting a newer recovery
@@ -900,6 +990,7 @@ public class ScriptWorkItemRepository {
       Instant now) {
     return dsl.update(SCRIPT_WORK_ITEMS)
         .set(SCRIPT_WORK_ITEMS.STATUS, "PENDING_EVALUATION")
+        .set(SCRIPT_WORK_ITEMS.CANCEL_REASON, (String) null)
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_SINCE, (LocalDateTime) null)
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_COUNT, 0)
         .set(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT, 0)
@@ -974,7 +1065,7 @@ public class ScriptWorkItemRepository {
     if (updatedAt != null) {
       condition = condition.and(SCRIPT_WORK_ITEMS.UPDATED_AT.lt(toLocalDateTime(updatedAt)));
     }
-    return condition.and(noBlockingRetentionEvidence());
+    return condition.and(noBlockingRetentionEvidence(updatedAt));
   }
 
   private List<ScriptWorkItem> fetchMany(Condition condition, org.jooq.SortField<?>... orderBy) {
@@ -1002,7 +1093,7 @@ public class ScriptWorkItemRepository {
         .or(
             SCRIPT_WORK_ITEMS
                 .NEXT_ELIGIBLE_AT
-                .le(CURRENT_TIMESTAMP)
+                .le(CURRENT_UTC_TIMESTAMP)
                 .and(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT.le(eligibleAtLocal)));
   }
 
@@ -1054,7 +1145,6 @@ public class ScriptWorkItemRepository {
     record.setStatus(entity.getStatus());
     record.setCancelReason(entity.getCancelReason());
     record.setAuthorityUnavailableRetryCount(entity.getAuthorityUnavailableRetryCount());
-    record.setNextEligibleAt(toLocalDateTime(entity.getNextEligibleAt()));
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
     record.setRowVersion(entity.getRowVersion());
@@ -1177,7 +1267,6 @@ public class ScriptWorkItemRepository {
         record.get(SCRIPT_WORK_ITEMS.AUTHORITY_UNAVAILABLE_RETRY_COUNT);
     entity.setAuthorityUnavailableRetryCount(
         authorityUnavailableRetryCount == null ? 0 : authorityUnavailableRetryCount);
-    entity.setNextEligibleAt(toInstant(record.get(SCRIPT_WORK_ITEMS.NEXT_ELIGIBLE_AT)));
     entity.setCreatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.CREATED_AT)));
     entity.setUpdatedAt(toInstant(record.get(SCRIPT_WORK_ITEMS.UPDATED_AT)));
     Integer rowVersion = record.get(SCRIPT_WORK_ITEMS.ROW_VERSION);

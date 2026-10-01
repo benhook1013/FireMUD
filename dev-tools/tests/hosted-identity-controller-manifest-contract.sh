@@ -377,7 +377,7 @@ require_literal "$CRD" "self.desiredState == oldSelf.desiredState || (oldSelf.de
 forbid_literal "$CRD" "self.metadata.namespace == 'firemud-system'"
 forbid_literal "$CRD" "x-kubernetes-preserve-unknown-fields"
 require_literal "$CRD" "self.metadata.name.matches('^(dev-demo|pr-[1-9][0-9]{0,50})$')"
-for field in observedGeneration phase conditions profile runtimeNamespaceUid requestedHeadSha deployedHeadSha ingress telnet gatewayInternalWs tcpProxyBridge grpc grpcAccountService grpcGameSessionService grpcPublication; do
+for field in observedGeneration phase conditions profile runtimeNamespaceUid requestedHeadSha deployedHeadSha ingress telnet gatewayInternalWs tcpProxyBridge grpc grpcAccountService grpcGameSessionService grpcSocialGroupsService grpcPublication; do
   require_literal "$CRD" "$field"
 done
 require_literal "$APPLICATION_CONFIG" "dev-demo-requested-head-annotation: firemud.dev/requested-dev-demo-head-sha"
@@ -396,7 +396,7 @@ import yaml
 
 source = Path(os.environ["CRD"]).read_text(encoding="utf-8")
 assert source.count("&consumer_status_schema") == 1
-assert source.count("*consumer_status_schema") == 7
+assert source.count("*consumer_status_schema") == 8
 crd = yaml.safe_load(source)
 schema = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
 assert crd["spec"].get("preserveUnknownFields", False) is False
@@ -460,6 +460,7 @@ consumer_schemas = [
 assert all(value == consumer_schemas[0] for value in consumer_schemas[1:])
 assert consumer_properties["grpcAccountService"] == consumer_schemas[0]
 assert consumer_properties["grpcGameSessionService"] == consumer_schemas[0]
+assert consumer_properties["grpcSocialGroupsService"] == consumer_schemas[0]
 publication_roles = consumer_properties["grpcPublication"]
 assert publication_roles["type"] == "object"
 assert publication_roles["maxProperties"] == 5
@@ -645,7 +646,7 @@ assert set(binding_policy_names) == policy_names
 identity_namespace_fragment = "pr-[1-9][0-9]{0,50}-identity"
 grpc_workload_service_regex_group = (
     "(game-design-service|world-management-service|entity-management-service|"
-    "game-logic-service|automation-scripting-service|account-service|game-session-service)"
+    "game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service)"
 )
 admission_variable_contracts = {
     "firemud-hosted-identity-secret-boundary": {
@@ -1373,10 +1374,10 @@ assert "request.operation != 'DELETE'" in secret_match
 assert "request.name == 'firemud-grpc-tls'" in secret_match
 assert "object.metadata.name == 'firemud-grpc-tls'" in secret_match
 for publication_secret_pattern in (
-    "request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)$')",
-    "object.metadata.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)$')",
-    "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')",
-    "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service))$')",
+    "request.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service)$')",
+    "object.metadata.name.matches('^firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service)$')",
+    "request.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
+    "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
 ):
     assert publication_secret_pattern in normalized_secret_match
 
@@ -1402,6 +1403,7 @@ assert "request.name.matches('^firemud-grpc-' + variables.grpcWorkloadServiceReg
 assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in controller_secret_expression
 assert "'grpc-account-service'" in controller_secret_expression
 assert "'grpc-game-session-service'" in controller_secret_expression
+assert "'grpc-social-groups-service'" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-tls'" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-account-service'" in controller_secret_expression
 assert "object.metadata.name == 'firemud-grpc-game-session-service'" in controller_secret_expression
@@ -1432,6 +1434,7 @@ def canonical_primary_name(namespace, name):
         "grpc-automation-scripting-service",
         "grpc-account-service",
         "grpc-game-session-service",
+        "grpc-social-groups-service",
     }
 
 
@@ -1443,7 +1446,7 @@ def namespace_controller_secret_delete_is_allowed(namespace, name):
     if name in {"firemud-grpc-tls", "firemud-grpc-tls-previous"}:
         return True
     fixed_workload_secret = re.fullmatch(
-        r"firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)(-previous)?",
+        r"firemud-grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service)(-previous)?",
         name,
     )
     return bool(fixed_workload_secret) or canonical_primary_name(namespace, name.removesuffix("-previous"))
@@ -1550,8 +1553,10 @@ assert "object.metadata.name == 'dev-tcp-proxy-bridge'" in cert_manager_expressi
 assert "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')" in cert_manager_expression
 assert "object.metadata.labels['firemud.dev/role'] == 'grpc-account-service'" in cert_manager_expression
 assert "object.metadata.labels['firemud.dev/role'] == 'grpc-game-session-service'" in cert_manager_expression
+assert "object.metadata.labels['firemud.dev/role'] == 'grpc-social-groups-service'" in cert_manager_expression
 assert "object.metadata.name == 'dev-grpc-account-service'" in cert_manager_expression
 assert "object.metadata.name == 'dev-grpc-game-session-service'" in cert_manager_expression
+assert "object.metadata.name == 'dev-grpc-social-groups-service'" in cert_manager_expression
 assert cert_manager_expression.count(
     "request.name == 'firemud-grpc-game-design-baseline-migrator'"
 ) == 1, "migrator Secret admission match must be a single exact branch"
@@ -1626,10 +1631,11 @@ assert "firemud-grpc-tls" not in controller_delete_expression
 assert "request.name.startsWith(" in controller_delete_expression
 assert "(request.operation != 'DELETE' && has(object.metadata.labels)" in certificate_match
 assert "object.metadata.labels['firemud.dev/identity-name'] == ((request.namespace == 'dev-identity') ? 'dev-demo' : request.namespace.substring(0, request.namespace.size() - 9))" in certificate_match
-assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc-account-service', 'grpc-game-session-service']" in certificate_match
+assert "object.metadata.labels['firemud.dev/role'] in ['ingress', 'telnet', 'gateway-internal-ws', 'tcp-proxy-bridge', 'grpc-account-service', 'grpc-game-session-service', 'grpc-social-groups-service']" in certificate_match
 assert "grpc-publication-" in certificate_match
 assert "grpc-account-service" in certificate_match
 assert "grpc-game-session-service" in certificate_match
+assert "grpc-social-groups-service" in certificate_match
 assert "system:serviceaccount:firemud-system:firemud-standalone-certificate-writer" in certificate_match
 assert "object.spec.secretName == 'firemud-grpc-game-design-baseline-migrator'" in certificate_match
 assert "object.metadata.name == 'firemud-grpc-tls'" not in certificate_match
@@ -1694,7 +1700,7 @@ assert "object.spec.issuerRef.group == 'cert-manager.io'" in profile_expression
 internal_issuer_profile = (
     "((object.metadata.labels['firemud.dev/role'] in "
     "['gateway-internal-ws', 'tcp-proxy-bridge', 'grpc-account-service', "
-    "'grpc-game-session-service'] || "
+    "'grpc-game-session-service', 'grpc-social-groups-service'] || "
     "object.metadata.labels['firemud.dev/role'].startsWith('grpc-publication-')) && "
     "object.spec.issuerRef.name == 'firemud-ca-issuer')"
 )
@@ -1714,12 +1720,17 @@ publication_secret_name_guards = (
     "object.metadata.name == 'dev-grpc-account-service'",
     "object.metadata.labels['firemud.dev/role'] == 'grpc-game-session-service' && "
     "object.metadata.name == 'dev-grpc-game-session-service'",
+    "object.metadata.labels['firemud.dev/role'] == 'grpc-social-groups-service' && "
+    "object.metadata.name == 'dev-grpc-social-groups-service'",
     "object.metadata.labels['firemud.dev/role'] == 'grpc-account-service' && "
     "object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + "
     "'-grpc-account-service'",
     "object.metadata.labels['firemud.dev/role'] == 'grpc-game-session-service' && "
     "object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + "
     "'-grpc-game-session-service'",
+    "object.metadata.labels['firemud.dev/role'] == 'grpc-social-groups-service' && "
+    "object.metadata.name == request.namespace.substring(0, request.namespace.size() - 9) + "
+    "'-grpc-social-groups-service'",
 )
 for publication_secret_name_guard in publication_secret_name_guards:
     assert publication_secret_name_guard in normalized_controller_secret_expression
@@ -1727,6 +1738,7 @@ namespace_service = "((request.namespace == 'dev-identity') ? 'dev' : request.na
 for role, service in (
     ("grpc-account-service", "account-service"),
     ("grpc-game-session-service", "game-session-service"),
+    ("grpc-social-groups-service", "social-groups-service"),
 ):
     service_profile = (
         f"(object.metadata.labels['firemud.dev/role'] != '{role}' || "
@@ -2091,22 +2103,32 @@ tcp_proxy_rules = [
 ]
 assert len(tcp_proxy_rules) == 1
 assert tcp_proxy_rules[0]["ports"] == [{"protocol": "TCP", "port": 2323}]
-grpc_targets = [
-    target
+grpc_rules = [
+    rule
     for rule in policy["spec"]["egress"]
     if any(port.get("port") == 6565 for port in rule.get("ports", []))
-    for target in rule.get("to", [])
 ]
-assert grpc_targets, "controller gRPC egress rule is missing"
-for target in grpc_targets:
-    assert target.get("namespaceSelector", {}).get("matchLabels", {}).get(
-        "firemud.dev/preview"
-    ) == "true" or target.get("namespaceSelector", {}).get("matchLabels", {}).get(
-        "firemud.dev/dev-demo"
-    ) == "true", target
-    assert target.get("podSelector", {}).get("matchLabels") == {
-        "app": "account-service"
-    }, target
+assert len(grpc_rules) == 1, grpc_rules
+assert grpc_rules[0]["ports"] == [{"protocol": "TCP", "port": 6565}]
+grpc_targets = grpc_rules[0]["to"]
+assert {
+    (
+        tuple(sorted(target["namespaceSelector"]["matchLabels"].items())),
+        tuple(sorted(target["podSelector"]["matchLabels"].items())),
+    )
+    for target in grpc_targets
+} == {
+    (namespace, (("app", workload),))
+    for namespace in (
+        (("firemud.dev/preview", "true"),),
+        (("firemud.dev/dev-demo", "true"),),
+    )
+    for workload in (
+        "account-service",
+        "game-session-service",
+        "social-groups-service",
+    )
+}, grpc_targets
 PY
 for text_value in \
   FIREMUD_HOSTED_IDENTITY_TRUSTED_OPERATOR \
@@ -2203,8 +2225,10 @@ done
 require_literal "$ADMISSION" "'firemud-grpc-tls-previous', "
 require_literal "$ADMISSION" "'firemud-grpc-account-service'"
 require_literal "$ADMISSION" "'firemud-grpc-game-session-service'"
+require_literal "$ADMISSION" "'firemud-grpc-social-groups-service'"
 require_literal "$ADMISSION" "'-grpc-account-service-previous'), "
-require_literal "$ADMISSION" "'-grpc-game-session-service-previous')] &&"
+require_literal "$ADMISSION" "'-grpc-game-session-service-previous'), "
+require_literal "$ADMISSION" "'-grpc-social-groups-service-previous')] &&"
 require_literal "$ADMISSION" "request.userInfo.username == 'system:serviceaccount:firemud-system:firemud-hosted-identity-controller' ||"
 require_literal "$BOOTSTRAP" "crd_deadline=\$((SECONDS + WAIT_SECONDS))"
 # shellcheck disable=SC2016 # Match the literal bootstrap default.
@@ -3980,6 +4004,16 @@ def service_consumer_documents():
                 },
                 {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
             ]
+            if service == "logging-admin-service":
+                container["env"].insert(
+                    0,
+                    {
+                        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+                        "valueFrom": {
+                            "fieldRef": {"fieldPath": "metadata.namespace"}
+                        },
+                    },
+                )
         if service == "spring-cloud-gateway":
             container["env"] = validator._expected_gateway_container_env("pr-42")
             container["envFrom"] = copy.deepcopy(validator.EXPECTED_GATEWAY_ENV_FROM)
@@ -4547,7 +4581,9 @@ if ! helm template hosted-identity-contract "$ROOT_DIR/k8s/helm/firemud" \
   >"$helm_rendered"; then
   fail "Helm chart render failed for resolved hosted values fixture"
 fi
-python3 - "$helm_rendered" "$base_rendered" <<'PY'
+python3 - "$helm_rendered" "$base_rendered" "$ARTIFACT_VALIDATOR" <<'PY'
+import copy
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -4569,6 +4605,54 @@ documents = [
     for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
     if isinstance(document, dict)
 ]
+validator_spec = importlib.util.spec_from_file_location(
+    "preview_artifact_validator", sys.argv[3]
+)
+validator = importlib.util.module_from_spec(validator_spec)
+validator_spec.loader.exec_module(validator)
+network_policies = [
+    document for document in documents if document.get("kind") == "NetworkPolicy"
+]
+validator.validate_network_policies(network_policies)
+social_policy_name = "social-groups-service-controller-ingress"
+assert any(
+    document.get("metadata", {}).get("name") == social_policy_name
+    for document in network_policies
+)
+without_social_controller_ingress = [
+    document
+    for document in network_policies
+    if document.get("metadata", {}).get("name") != social_policy_name
+]
+try:
+    validator.validate_network_policies(without_social_controller_ingress)
+except ValueError as error:
+    assert social_policy_name in str(error), str(error)
+else:
+    raise AssertionError(
+        "preview validator accepted a missing Social Groups controller probe rule"
+    )
+
+unsafe_social_controller_ingress = copy.deepcopy(network_policies)
+social_policy = next(
+    document
+    for document in unsafe_social_controller_ingress
+    if document.get("metadata", {}).get("name") == social_policy_name
+)
+social_policy["spec"]["ingress"][0]["from"][0]["namespaceSelector"]["matchLabels"][
+    "kubernetes.io/metadata.name"
+] = "kube-system"
+try:
+    validator.validate_network_policies(unsafe_social_controller_ingress)
+except ValueError as error:
+    assert str(error) == (
+        f"NetworkPolicy/{social_policy_name} has an unsafe exception"
+    ), str(error)
+else:
+    raise AssertionError(
+        "preview validator accepted a widened Social Groups controller ingress"
+    )
+
 deployments = {}
 for document in documents:
     if document.get("kind") != "Deployment":
@@ -4584,10 +4668,13 @@ publication_services = (
     "game-logic-service",
     "automation-scripting-service",
 )
-distinct_workload_services = publication_services + ("account-service", "game-session-service")
+distinct_workload_services = publication_services + (
+    "account-service",
+    "game-session-service",
+    "social-groups-service",
+)
 shared_services = (
     "logging-admin-service",
-    "social-groups-service",
     "spring-cloud-gateway",
     "tcp-proxy-service",
 )
@@ -4631,11 +4718,39 @@ def env_map(container, service):
     entries = container.get("env")
     if not isinstance(entries, list):
         fail(f"Deployment/{service} container has no env list")
-    return {
-        entry.get("name"): entry
-        for entry in entries
-        if isinstance(entry, dict) and entry.get("name")
-    }
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = entry["name"]
+        if name in result:
+            fail(f"Deployment/{service} has duplicate env name {name}")
+        result[name] = entry
+    return result
+
+
+synthetic_duplicate_env_rejections = 0
+duplicate_namespace_env = {
+    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+}
+try:
+    env_map(
+        {"env": [duplicate_namespace_env, duplicate_namespace_env]},
+        "synthetic duplicate fixture",
+    )
+except SystemExit as error:
+    if "duplicate env name FIREMUD_GRPC_WORKLOAD_NAMESPACE" not in str(error):
+        raise
+    synthetic_duplicate_env_rejections += 1
+else:
+    fail("synthetic duplicate env fixture was not rejected")
+if synthetic_duplicate_env_rejections != 1:
+    fail(
+        "synthetic duplicate env proof expected one rejection, found "
+        f"{synthetic_duplicate_env_rejections}"
+    )
+print(f"synthetic duplicate env fixtures rejected: {synthetic_duplicate_env_rejections}")
 
 
 def assert_paths_and_mount(container, service, cert_path, key_path, ca_path):
@@ -4816,31 +4931,72 @@ for service in (
     ).get("spec", {}).get("strategy", {})
     if base_strategy.get("type") != "Recreate":
         fail(f"Kustomize base Deployment/{service} must use non-rolling Recreate strategy")
-for service in publication_services:
+for service in distinct_workload_services:
     assert_distinct_workload_service(service, base_deployments, "Kustomize base")
+
+base_logging_admin = deployment_for("logging-admin-service", base_deployments)
+base_logging_admin_container, base_logging_admin_pod = workload_container(
+    base_logging_admin, "logging-admin-service"
+)
+assert_paths_and_mount(
+    base_logging_admin_container,
+    "logging-admin-service",
+    "/tls/client.crt",
+    "/tls/client.key",
+    "/tls/ca.crt",
+)
+base_logging_admin_namespace = env_map(
+    base_logging_admin_container, "logging-admin-service"
+).get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+if base_logging_admin_namespace != {
+    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+}:
+    fail(
+        "Kustomize base Deployment/logging-admin-service must derive "
+        "FIREMUD_GRPC_WORKLOAD_NAMESPACE from metadata.namespace, "
+        f"found {base_logging_admin_namespace!r}"
+    )
+base_logging_admin_grpc_volume = named_entry(
+    base_logging_admin_pod.get("volumes"),
+    "grpc-tls",
+    "Kustomize base Deployment/logging-admin-service volumes",
+)
+if base_logging_admin_grpc_volume.get("secret", {}).get("secretName") != "firemud-grpc-tls":
+    fail(
+        "Kustomize base Deployment/logging-admin-service shared grpc-tls must use "
+        "firemud-grpc-tls"
+    )
 PY
 
-python3 - "$resolved_values" "$namespace_gate_values" <<'PY'
+for certificate_identity_mode in standalone hosted-controller; do
+  for logging_spring_profile in true false; do
+    python3 - "$resolved_values" "$namespace_gate_values" "$certificate_identity_mode" "$logging_spring_profile" <<'PY'
 import sys
 from pathlib import Path
 
 import yaml
 
 values = yaml.safe_load(Path(sys.argv[1]).read_text(encoding="utf-8"))
+certificate_identity_mode = sys.argv[3]
+logging_spring_profile = sys.argv[4] == "true"
+values["previewStack"]["certificateIdentity"]["mode"] = certificate_identity_mode
 services = values["previewStack"]["services"]
 by_name = {service["name"]: service for service in services}
+by_name["logging-admin-service"]["springProfile"] = logging_spring_profile
+by_name["logging-admin-service"]["mountGrpcTls"] = True
 by_name["game-design-service"]["springProfile"] = False
 by_name["game-design-service"]["mountGrpcTls"] = True
 by_name["world-management-service"]["mountGrpcTls"] = False
 Path(sys.argv[2]).write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
 PY
 
-if ! helm template hosted-identity-namespace-gates "$ROOT_DIR/k8s/helm/firemud" \
-  -f "$namespace_gate_values" \
-  >"$namespace_gate_rendered"; then
-  fail "Helm chart render failed for gRPC namespace gate fixture"
-fi
-python3 - "$namespace_gate_rendered" <<'PY'
+    if ! helm template "ns-gate-${certificate_identity_mode}-${logging_spring_profile}" "$ROOT_DIR/k8s/helm/firemud" \
+      -f "$namespace_gate_values" \
+      >"$namespace_gate_rendered"; then
+      fail "Helm chart render failed for gRPC namespace gate fixture (${certificate_identity_mode}, springProfile=${logging_spring_profile})"
+    fi
+    python3 - "$namespace_gate_rendered" "$certificate_identity_mode" "$logging_spring_profile" <<'PY'
 import sys
 from pathlib import Path
 
@@ -4856,6 +5012,8 @@ deployments = {
     for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
     if isinstance(document, dict) and document.get("kind") == "Deployment"
 }
+certificate_identity_mode = sys.argv[2]
+logging_spring_profile = sys.argv[3] == "true"
 
 
 def env_map(service):
@@ -4866,8 +5024,80 @@ def env_map(service):
     container = next((item for item in containers if item.get("name") == service), None)
     if container is None:
         fail(f"container/{service} is missing")
-    return {entry.get("name"): entry for entry in container.get("env", []) if entry.get("name")}
+    entries = container.get("env")
+    if not isinstance(entries, list):
+        fail(f"container/{service} has no env list")
+    result = {}
+    for entry in entries:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = entry["name"]
+        if name in result:
+            fail(f"Deployment/{service} has duplicate env name {name}")
+        result[name] = entry
+    return result
 
+
+logging_env = env_map("logging-admin-service")
+logging_deployment = deployments["logging-admin-service"]
+logging_container = next(
+    item
+    for item in logging_deployment["spec"]["template"]["spec"]["containers"]
+    if item.get("name") == "logging-admin-service"
+)
+namespace_entries = [
+    entry
+    for entry in logging_container["env"]
+    if isinstance(entry, dict)
+    and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+]
+if len(namespace_entries) != 1:
+    fail(
+        "logging-admin-service must render exactly one "
+        "FIREMUD_GRPC_WORKLOAD_NAMESPACE, found "
+        f"{len(namespace_entries)}"
+    )
+namespace = logging_env.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+if namespace != {
+    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
+    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+}:
+    fail(f"logging-admin-service must derive namespace from metadata.namespace, found {namespace!r}")
+if logging_spring_profile:
+    if logging_env.get("SPRING_PROFILES_ACTIVE") != {
+        "name": "SPRING_PROFILES_ACTIVE",
+        "value": "prod",
+    }:
+        fail("springProfile=true logging-admin-service must enable the prod profile")
+elif "SPRING_PROFILES_ACTIVE" in logging_env:
+    fail("springProfile=false logging-admin-service unexpectedly enables the Spring profile")
+
+expected_paths = {
+    "FIREMUD_GRPC_CERT_CHAIN_PATH": "/tls/client.crt",
+    "FIREMUD_GRPC_PRIVATE_KEY_PATH": "/tls/client.key",
+    "FIREMUD_GRPC_CA_CERT_PATH": "/tls/ca.crt",
+}
+for name, value in expected_paths.items():
+    if logging_env.get(name, {}).get("value") != value:
+        fail(
+            f"{certificate_identity_mode} logging-admin-service must retain shared "
+            f"{name}={value!r}, found {logging_env.get(name)!r}"
+        )
+pod_spec = logging_deployment["spec"]["template"]["spec"]
+grpc_mounts = [
+    mount
+    for mount in logging_container.get("volumeMounts", [])
+    if isinstance(mount, dict) and mount.get("name") == "grpc-tls"
+]
+if len(grpc_mounts) != 1 or grpc_mounts[0].get("mountPath") != "/tls" or grpc_mounts[0].get("readOnly") is not True:
+    fail(f"{certificate_identity_mode} logging-admin-service must retain its read-only shared /tls mount")
+grpc_volumes = [
+    volume
+    for volume in pod_spec.get("volumes", [])
+    if isinstance(volume, dict) and volume.get("name") == "grpc-tls"
+]
+if len(grpc_volumes) != 1 or grpc_volumes[0].get("secret", {}).get("secretName") != "firemud-grpc-tls":
+    fail(f"{certificate_identity_mode} logging-admin-service must retain the shared firemud-grpc-tls Secret")
 
 mounted_without_spring = env_map("game-design-service")
 namespace = mounted_without_spring.get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
@@ -4883,5 +5113,7 @@ without_mount = env_map("world-management-service")
 if "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in without_mount:
     fail("publication workload without a gRPC TLS mount unexpectedly declares namespace")
 PY
+  done
+done
 
 echo "hosted identity controller manifest contract passed"

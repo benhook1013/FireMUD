@@ -648,6 +648,13 @@ public class RemoteFollowupRuntimeServiceImpl implements RemoteFollowupRuntimeSe
       throw new IllegalArgumentException(
           "script_patch_version is required with its admitted base version");
     }
+    if (commandPatch != null
+        && (!requestPatch.equals(commandPatch)
+            || !Objects.equals(
+                request.scriptPatchBaseVersionId(), command.getScriptPatchBaseVersionId()))) {
+      throw new IllegalArgumentException(
+          "source script patch tuple does not match admitted command");
+    }
   }
 
   private static void validateScriptPatchBase(String scriptPatchVersion, Long baseVersionId) {

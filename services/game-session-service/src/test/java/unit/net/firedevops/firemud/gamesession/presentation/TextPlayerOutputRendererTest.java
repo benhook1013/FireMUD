@@ -863,6 +863,33 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void publicJoinOutcomesRenderCurrentGuidanceAndPolicyDenial() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    assertThat(
+            renderer.render(
+                PlayerOutput.error(
+                    "JOIN_REQUIRED", "fallback", "error.play.join-required", java.util.Map.of())))
+        .isEqualTo("ERROR JOIN_REQUIRED Membership is required before PLAY. Use JOIN <world>.");
+    assertThat(
+            renderer.render(
+                PlayerOutput.error(
+                    "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+                    "fallback",
+                    "error.play.public-production-admission-denied",
+                    java.util.Map.of())))
+        .isEqualTo(
+            "ERROR PUBLIC_PRODUCTION_ADMISSION_DENIED Public joining is not available for this"
+                + " world.");
+  }
+
+  @Test
   void localizedUnknownHelpTopicUsesConfiguredLocaleTemplate() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

@@ -112,6 +112,9 @@ public class ScriptScheduleInstanceRepository {
             .set(SCRIPT_SCHEDULE_INSTANCES.TENANT_ID, entity.getTenantId())
             .set(SCRIPT_SCHEDULE_INSTANCES.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+            .set(
+                SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID,
+                entity.getScriptPatchBaseVersionId())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
             .set(SCRIPT_SCHEDULE_INSTANCES.SCRIPT_ID, entity.getScriptId())
             .set(SCRIPT_SCHEDULE_INSTANCES.PLAYABLE_STATE_SCOPE, entity.getPlayableStateScope())
@@ -169,10 +172,7 @@ public class ScriptScheduleInstanceRepository {
                 SCRIPT_SCHEDULE_INSTANCES
                     .ID
                     .eq(entity.getId())
-                    .and(SCRIPT_SCHEDULE_INSTANCES.ROW_VERSION.eq(entity.getRowVersion()))
-                    .and(
-                        SCRIPT_SCHEDULE_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID.isNotDistinctFrom(
-                            entity.getScriptPatchBaseVersionId())))
+                    .and(SCRIPT_SCHEDULE_INSTANCES.ROW_VERSION.eq(entity.getRowVersion())))
             .execute();
     if (updated != 1) {
       throw AutomationScriptingJooqRepositorySupport.staleWrite(

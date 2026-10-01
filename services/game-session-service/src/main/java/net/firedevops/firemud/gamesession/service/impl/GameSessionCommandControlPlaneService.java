@@ -414,7 +414,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         coordinator.getTenantId(),
-        null,
+        coordinator.getScriptPatchBaseVersionId(),
         coordinator.getScriptPatchVersion(),
         coordinator.getPluginId(),
         coordinator.getPluginVersionId());
@@ -499,7 +499,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         followup.getTenantId(),
-        null,
+        followup.getScriptPatchBaseVersionId(),
         followup.getScriptPatchVersion(),
         followup.getPluginId(),
         followup.getPluginVersionId());
@@ -581,7 +581,7 @@ public final class GameSessionCommandControlPlaneService {
     applyDirectCommandProvenance(
         builder,
         result.getTenantId(),
-        null,
+        result.getScriptPatchBaseVersionId(),
         result.getScriptPatchVersion(),
         result.getPluginId(),
         result.getPluginVersionId());

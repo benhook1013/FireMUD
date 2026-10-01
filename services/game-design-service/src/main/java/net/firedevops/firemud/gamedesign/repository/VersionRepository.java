@@ -110,8 +110,10 @@ public class VersionRepository {
   }
 
   /**
-   * Returns every published script-patch candidate for an exact tenant/base/patch scope. Callers
-   * reject anything other than one row so duplicate retained scope is fail-closed.
+   * Returns every retained publication metadata candidate for an exact tenant/base/patch scope.
+   * Callers reject anything other than one row so missing or duplicate retained scope is
+   * fail-closed. Historical ACTIVE and RETIRED rows remain valid metadata for this lookup; new
+   * runtime activation admission applies its own PUBLISHED-only gate.
    */
   public List<Version> findByTenantIdAndBaseVersionIdAndScriptPatchVersionAndPublishedScriptOnly(
       String tenantId, Long baseVersionId, String scriptPatchVersion) {
@@ -121,7 +123,11 @@ public class VersionRepository {
                 .eq(tenantId)
                 .and(BASE_VERSION_ID.eq(baseVersionId))
                 .and(SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
-                .and(VERSION_STATE.eq(VersionLifecycleState.PUBLISHED.name()))
+                .and(
+                    VERSION_STATE.in(
+                        VersionLifecycleState.PUBLISHED.name(),
+                        VersionLifecycleState.ACTIVE.name(),
+                        VersionLifecycleState.RETIRED.name()))
                 .and(IS_SCRIPT_ONLY.isTrue()))
         .orderBy(VERSION_NUMBER.desc(), ID.desc())
         .fetch(this::toEntity);

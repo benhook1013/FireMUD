@@ -37,6 +37,14 @@ class ExactScriptPatchBaseMigrationIntegrationTest {
           .migrate();
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       dsl.execute(
+          "INSERT INTO gameplay_command ("
+              + "id, command_id, tenant_id, game_instance_id, session_id, command_name, "
+              + "sanitized_command_text, requires_solo_tick, execution_outcome, gameplay_result, "
+              + "accepted_at, completed_at, script_patch_version, enqueue_seq) "
+              + "VALUES (1, 'legacy-command-1', 1, 7, 11, 'LOOK', 'look', false, "
+              + "'COMPLETED', 'APPLIED', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, "
+              + "'legacy-patch', 1)");
+      dsl.execute(
           "INSERT INTO game_instances (id, tenant_id, runtime_version, version_id, "
               + "script_patch_version, script_pin_epoch, "
               + "script_patch_pinned_control_plane_request_id, owner_account_id, status) "
@@ -73,6 +81,16 @@ class ExactScriptPatchBaseMigrationIntegrationTest {
 
       Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
 
+      var legacyGameplayCommand =
+          dsl.fetchOne(
+              "SELECT script_patch_version, script_patch_base_version_id, execution_outcome "
+                  + "FROM gameplay_command WHERE command_id = 'legacy-command-1'");
+      assertThat(legacyGameplayCommand).isNotNull();
+      assertThat(legacyGameplayCommand.get("script_patch_version", String.class))
+          .isEqualTo("legacy-patch");
+      assertThat(legacyGameplayCommand.get("script_patch_base_version_id", Long.class)).isNull();
+      assertThat(legacyGameplayCommand.get("execution_outcome", String.class))
+          .isEqualTo("COMPLETED");
       assertThat(
               dsl.fetchValue(
                   "SELECT script_patch_base_version_id FROM game_instances WHERE id = 7",

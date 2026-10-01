@@ -6012,6 +6012,9 @@ if [[ "$1" == -n && "$2" == pr-42 && "$3" == get && "$4" == secret ]]; then
     firemud-grpc-game-session-service)
       printf '%s' '{"metadata":{"name":"firemud-grpc-game-session-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-game-session-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
       ;;
+    firemud-grpc-social-groups-service)
+      printf '%s' '{"metadata":{"name":"firemud-grpc-social-groups-service","labels":{"firemud.dev/managed-by":"hosted-identity-controller","firemud.dev/identity-name":"pr-42","firemud.dev/role":"grpc-social-groups-service","firemud.dev/retention":"retained"}},"data":{"tls.crt":"cert","tls.key":"key","ca.crt":"ca"}}'
+      ;;
     *)
       printf 'unexpected projection Secret: %s\n' "$secret_name" >&2
       exit 2
@@ -6127,19 +6130,20 @@ run_projection_waiter_fixture() {
   fi
 }
 
-run_projection_waiter_fixture projection-absence 0 14 2
+# Successful two-retry fixtures read 13 canonical projections plus two retries.
+run_projection_waiter_fixture projection-absence 0 15 2
 run_projection_waiter_fixture projection-command-failure 42 1 0 'Error from server (Forbidden)'
 run_projection_waiter_fixture projection-command-not-found 46 1 0 'Error from server (NotFound)'
 run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from server (Unauthorized)'
 run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
-run_projection_waiter_fixture projection-transport-recovery 0 14 2
+run_projection_waiter_fixture projection-transport-recovery 0 15 2
 run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
-run_projection_waiter_fixture projection-etcd-timeout-recovery 0 14 2
-run_projection_waiter_fixture projection-etcd-leader-recovery 0 14 2
-run_projection_waiter_fixture projection-overload-recovery 0 14 2
-run_projection_waiter_fixture projection-unavailable-recovery 0 14 2
-run_projection_waiter_fixture projection-currently-unavailable-recovery 0 14 2
-run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 14 2
+run_projection_waiter_fixture projection-etcd-timeout-recovery 0 15 2
+run_projection_waiter_fixture projection-etcd-leader-recovery 0 15 2
+run_projection_waiter_fixture projection-overload-recovery 0 15 2
+run_projection_waiter_fixture projection-unavailable-recovery 0 15 2
+run_projection_waiter_fixture projection-currently-unavailable-recovery 0 15 2
+run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 15 2
 
 run_active_waiter_fixture() {
   local scenario="$1"

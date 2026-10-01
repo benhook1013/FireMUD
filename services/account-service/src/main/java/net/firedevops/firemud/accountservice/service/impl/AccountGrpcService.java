@@ -46,6 +46,7 @@ import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -227,11 +228,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         requirePositiveRequestId(context.getAccountId(), "accountId"),
         requirePositiveRequestId(context.getTenantId(), "tenantId"),
         requireCanonicalRealmId(context.getRealmId()),
-        requireText(context.getPlayableStateNamespaceId(), "playableStateNamespaceId"),
+        requireCanonicalPlayableStateNamespaceId(context.getPlayableStateNamespaceId()),
         requireText(context.getPlayableStateScope(), "playableStateScope"),
         requirePositiveRequestId(context.getGameInstanceId(), "gameInstanceId"),
         requireText(context.getSessionId(), "sessionId"),
-        context.getRequestId());
+        requireText(context.getRequestId(), "requestId"));
   }
 
   private UUID requireCanonicalRealmId(String value) {
@@ -246,6 +247,21 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       return realmId;
     } catch (IllegalArgumentException ex) {
       throw new IllegalArgumentException("realmId must be a canonical UUID", ex);
+    }
+  }
+
+  private String requireCanonicalPlayableStateNamespaceId(String value) {
+    if (value == null || value.isBlank()) {
+      throw new IllegalArgumentException("playableStateNamespaceId is required");
+    }
+    try {
+      UUID namespaceId = UUID.fromString(value);
+      if (!namespaceId.toString().equals(value)) {
+        throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID");
+      }
+      return value;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("playableStateNamespaceId must be a canonical UUID", ex);
     }
   }
 
@@ -353,7 +369,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
     try {
       requireGameSessionPeer();
-      accountService.requestEmailLoginOtp(request.getEmail());
+      accountService.requestEmailLoginOtp(requireEmail(request.getEmail()));
       responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -806,24 +822,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void verifyEmail(
       net.firedevops.firemud.account.v1.VerifyEmailRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.VerifyEmailResponse> responseObserver) {
-    try {
-      accountService.verifyEmail(
-          new net.firedevops.firemud.accountservice.dto.VerifyEmailRequest(request.getToken()));
-      var response =
-          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
-              .setSuccess(true)
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      var response =
-          net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("VerifyEmail", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        net.firedevops.firemud.account.v1.VerifyEmailResponse.newBuilder()
+            .setSuccess(false)
+            .setError(
+                appError(
+                    "VerifyEmail",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   private net.firedevops.firemud.shared.v1.ErrorDetail appError(
@@ -839,6 +847,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private long requirePositiveRequestId(String value, String fieldName) {
     try {
       return RequestIdValidation.requirePositiveLong(value, fieldName);
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException(ex.getMessage(), ex);
+    }
+  }
+
+  private String requireEmail(String value) {
+    try {
+      return EmailCanonicalization.normalize(value);
     } catch (IllegalArgumentException ex) {
       throw new InvalidRequestException(ex.getMessage(), ex);
     }

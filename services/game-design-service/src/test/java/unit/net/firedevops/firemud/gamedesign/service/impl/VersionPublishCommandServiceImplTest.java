@@ -1048,6 +1048,50 @@ class VersionPublishCommandServiceImplTest {
     verify(assetExportService).deleteExportedAssets("tenant-1", 1, List.of("manifest.json"));
   }
 
+  @Test
+  void finalizationFailureWithFailedReadbackLeavesAttemptPending() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    ExportedAssetManifest manifest =
+        new ExportedAssetManifest("manifest-hash", List.of("manifest.json"));
+    IllegalStateException operationFailure =
+        new IllegalStateException("version finalization failed");
+    IllegalStateException readFailure = new IllegalStateException("publication read failed");
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests());
+    when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty())
+        .thenThrow(readFailure);
+    org.mockito.Mockito.doThrow(
+            new PublishAttemptService.FullVersionTransactionException(operationFailure))
+        .when(publishAttemptService)
+        .executeFullVersionTransaction(any());
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileFullVersionPublish(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("readback failed"));
+    assertEquals(readFailure, thrown.getCause());
+    assertEquals(1, readFailure.getSuppressed().length);
+    assertEquals(operationFailure, readFailure.getSuppressed()[0]);
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, never()).delete(any(Version.class));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+  }
+
   @ParameterizedTest
   @EnumSource(
       value = Status.Code.class,
@@ -1105,6 +1149,48 @@ class VersionPublishCommandServiceImplTest {
             service.reconcileFullVersionPublish(
                 new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
 
+    assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
+    verify(publishAttemptService, never())
+        .markFullVersionFailed(any(String.class), any(String.class), any(String.class));
+    verify(versionRepository, never()).delete(any(Version.class));
+    verify(assetExportService, never())
+        .deleteExportedAssets(any(String.class), any(Integer.class), any(List.class));
+  }
+
+  @Test
+  void ambiguousFinalizationWithFailedReadbackLeavesAttemptPending() {
+    String workflowId = "publish:tenant-1:publish-request:workflow-1";
+    PublishAttempt attempt = fullAttempt(PublishAttemptStatus.PENDING, 10L, 1, workflowId);
+    Version version = fullVersion(10L, 1, VersionLifecycleState.DRAFT);
+    ExportedAssetManifest manifest =
+        new ExportedAssetManifest("manifest-hash", List.of("manifest.json"));
+    IllegalStateException ambiguousCommit = new IllegalStateException("commit outcome unknown");
+    IllegalStateException readFailure = new IllegalStateException("publication read failed");
+    when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
+        .thenReturn(Optional.of(attempt));
+    when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));
+    when(publishGateService.collectFullVersionParticipantDigests(
+            any(VersionDto.class), any(String.class), any(String.class)))
+        .thenReturn(participantDigests());
+    when(assetExportService.exportAssets("tenant-1", 1)).thenReturn(manifest);
+    when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
+        .thenReturn(Optional.empty())
+        .thenThrow(readFailure);
+    org.mockito.Mockito.doThrow(ambiguousCommit)
+        .when(publishAttemptService)
+        .executeFullVersionTransaction(any());
+
+    VersionPublishCommandServiceImpl.PendingReconciliationException thrown =
+        assertThrows(
+            VersionPublishCommandServiceImpl.PendingReconciliationException.class,
+            () ->
+                service.reconcileFullVersionPublish(
+                    new PublishWorkflowRequest("tenant-1", "notes", "workflow-1", workflowId)));
+
+    assertTrue(thrown.getMessage().contains("readback failed"));
+    assertEquals(readFailure, thrown.getCause());
+    assertEquals(1, readFailure.getSuppressed().length);
+    assertEquals(ambiguousCommit, readFailure.getSuppressed()[0]);
     assertEquals(PublishAttemptStatus.PENDING, attempt.getStatus());
     verify(publishAttemptService, never())
         .markFullVersionFailed(any(String.class), any(String.class), any(String.class));

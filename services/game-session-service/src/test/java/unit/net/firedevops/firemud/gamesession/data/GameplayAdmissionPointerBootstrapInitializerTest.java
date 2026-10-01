@@ -1,28 +1,39 @@
 package net.firedevops.firemud.gamesession.data;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import net.firedevops.firemud.gamesession.config.GameplayAdmissionPointerBootstrapProperties;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.env.YamlPropertySourceLoader;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.mock.env.MockEnvironment;
+import org.springframework.stereotype.Component;
 
 @ExtendWith(MockitoExtension.class)
 class GameplayAdmissionPointerBootstrapInitializerTest {
   @Mock private GameplayAdmissionPointerRepository pointerRepository;
-  @Mock private GameplayAdmissionPointerAuthorityService authorityService;
 
   private GameplayAdmissionPointerBootstrapProperties properties;
   private GameplayAdmissionPointerBootstrapInitializer initializer;
@@ -30,52 +41,121 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   @BeforeEach
   void setUp() {
     properties = new GameplayAdmissionPointerBootstrapProperties();
-    initializer =
-        new GameplayAdmissionPointerBootstrapInitializer(
-            pointerRepository, authorityService, properties);
+    initializer = new GameplayAdmissionPointerBootstrapInitializer(pointerRepository, properties);
   }
 
   @Test
-  void runSeedsBootstrapPointersWhenAuthorityStoreIsEmpty() throws Exception {
+  void runKeepsAdmissionClosedForValidDefaultSeedsWhenAuthorityStoreIsEmpty() throws Exception {
     when(pointerRepository.count()).thenReturn(0L);
-    properties.setPointers(
-        List.of(
-            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false),
-            pointerSeed("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, true)));
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
-    ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
-        ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
-    verify(authorityService, org.mockito.Mockito.times(2)).upsertPointer(mutationCaptor.capture());
-    List<GameplayAdmissionPointerMutation> mutations = mutationCaptor.getAllValues();
-    assertEquals(2, mutations.size());
-    assertEquals("demo", mutations.get(0).worldSlug());
-    assertEquals("Demo World", mutations.get(0).worldDisplayName());
-    assertEquals("production", mutations.get(0).realmSlug());
-    assertEquals("Live Realm", mutations.get(0).realmDisplayName());
-    assertEquals(1L, mutations.get(0).tenantId());
-    assertEquals(1L, mutations.get(0).gameInstanceId());
-    assertEquals("SHARED", mutations.get(0).stateScope());
-    assertEquals("ALLOW_NEW", mutations.get(0).characterCreationPolicy());
-    assertEquals("system/bootstrap", mutations.get(0).actorPrincipal());
-    assertEquals("Initial gameplay pointer bootstrap", mutations.get(0).reason());
-    assertEquals("bootstrap:1:1:demo:production", mutations.get(0).controlPlaneRequestId());
-    assertEquals("sandbox", mutations.get(1).worldSlug());
-    assertTrue(mutations.get(1).requiresCharacterSelection());
+    InOrder bootstrapOrder = inOrder(pointerRepository);
+    bootstrapOrder.verify(pointerRepository).lockForBootstrap();
+    bootstrapOrder.verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
   }
 
   @Test
-  void runDoesNothingWhenAuthorityStoreAlreadyHasPointers() throws Exception {
+  void defaultEffectiveBootstrapSeedsHaveOneVisiblePublicProductionRealmPerTenant() {
+    List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers =
+        properties.getPointers();
+
+    assertEquals(2, pointers.size());
+    assertEquals("demo", pointers.get(0).getWorldSlug());
+    assertTrue(pointers.get(0).isVisible());
+    assertTrue(pointers.get(0).isPublicProductionRealm());
+    assertEquals("sandbox", pointers.get(1).getWorldSlug());
+    assertTrue(pointers.get(1).isVisible());
+    assertFalse(pointers.get(1).isPublicProductionRealm());
+  }
+
+  @Test
+  void shippedYamlBindsPublicDemoAndPrivateSandboxToTheSameTenantWithoutPersistingSeeds()
+      throws Exception {
+    ShippedBootstrapConfiguration shipped = loadShippedConfiguration(Map.of());
+    List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers =
+        shipped.gameSession().getPointers();
+
+    assertEquals(1L, pointers.get(0).getTenantId());
+    assertEquals(1L, pointers.get(0).getGameInstanceId());
+    assertTrue(pointers.get(0).isPublicProductionRealm());
+    assertEquals(1L, pointers.get(1).getTenantId());
+    assertEquals(2L, pointers.get(1).getGameInstanceId());
+    assertFalse(pointers.get(1).isPublicProductionRealm());
+    assertTrue(pointers.get(1).isRequiresCharacterSelection());
+    assertSmokeRuntimeTargets(shipped.worldManagementTargets(), 1L, 1L, 1L, 2L);
+
+    when(pointerRepository.count()).thenReturn(0L);
+    initializer =
+        new GameplayAdmissionPointerBootstrapInitializer(pointerRepository, shipped.gameSession());
+    initializer.run(new DefaultApplicationArguments(new String[] {}));
+
+    InOrder bootstrapOrder = inOrder(pointerRepository);
+    bootstrapOrder.verify(pointerRepository).lockForBootstrap();
+    bootstrapOrder.verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
+  }
+
+  @Test
+  void shippedYamlTenantOverridesKeepGameSessionAndWorldTargetsAligned() throws Exception {
+    ShippedBootstrapConfiguration shipped =
+        loadShippedConfiguration(
+            Map.of(
+                "FIREMUD_BOOTSTRAP_DEMO_TENANT_ID", "7",
+                "FIREMUD_BOOTSTRAP_SANDBOX_TENANT_ID", "7",
+                "FIREMUD_BOOTSTRAP_DEMO_GAME_INSTANCE_ID", "101",
+                "FIREMUD_BOOTSTRAP_SANDBOX_GAME_INSTANCE_ID", "202"));
+
+    assertEquals(7L, shipped.gameSession().getPointers().get(0).getTenantId());
+    assertEquals(101L, shipped.gameSession().getPointers().get(0).getGameInstanceId());
+    assertEquals(7L, shipped.gameSession().getPointers().get(1).getTenantId());
+    assertEquals(202L, shipped.gameSession().getPointers().get(1).getGameInstanceId());
+    assertFalse(shipped.gameSession().getPointers().get(1).isPublicProductionRealm());
+    assertSmokeRuntimeTargets(shipped.worldManagementTargets(), 7L, 101L, 7L, 202L);
+
+    when(pointerRepository.count()).thenReturn(0L);
+    initializer =
+        new GameplayAdmissionPointerBootstrapInitializer(pointerRepository, shipped.gameSession());
+    initializer.run(new DefaultApplicationArguments(new String[] {}));
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
+  }
+
+  @Test
+  void shippedYamlPrivateSandboxOverrideToAnotherTenantFailsBeforeMutation() throws Exception {
+    ShippedBootstrapConfiguration shipped =
+        loadShippedConfiguration(Map.of("FIREMUD_BOOTSTRAP_SANDBOX_TENANT_ID", "2"));
+    when(pointerRepository.count()).thenReturn(0L);
+    initializer =
+        new GameplayAdmissionPointerBootstrapInitializer(pointerRepository, shipped.gameSession());
+
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+    assertTrue(
+        failure.getMessage().contains("exactly one visible public production realm for tenant 2"));
+
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
+  }
+
+  @Test
+  void runPreservesExistingPointerAuthorityOnRestart() throws Exception {
     when(pointerRepository.count()).thenReturn(3L);
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
-    verify(authorityService, never()).upsertPointer(org.mockito.ArgumentMatchers.any());
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
   }
 
   @Test
-  void runSkipsBlankBootstrapPointerSeeds() throws Exception {
+  void runRejectsMalformedBootstrapPointerSeedsBeforeAnyMutation() throws Exception {
     when(pointerRepository.count()).thenReturn(0L);
     properties.setPointers(
         new java.util.ArrayList<>(
@@ -85,30 +165,81 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
                 pointerSeed("sandbox", "Builder Sandbox", "", "Live Realm", 1L, 3L, true),
                 null)));
 
-    initializer.run(new DefaultApplicationArguments(new String[] {}));
-
-    ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
-        ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
-    verify(authorityService).upsertPointer(mutationCaptor.capture());
-    assertEquals("demo", mutationCaptor.getValue().worldSlug());
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
   }
 
   @Test
-  void runDefaultsNullEnumFieldsDuringBootstrapMutation() throws Exception {
+  void runRejectsMultipleVisiblePublicProductionSeedsForTenantBeforeAnyMutation() throws Exception {
     when(pointerRepository.count()).thenReturn(0L);
-    GameplayAdmissionPointerBootstrapProperties.PointerSeed pointer =
+    GameplayAdmissionPointerBootstrapProperties.PointerSeed sandbox =
+        pointerSeed("sandbox", "Builder Sandbox", "production", "Live Realm", 1L, 2L, true);
+    properties.setPointers(
+        List.of(
+            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false), sandbox));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
+  }
+
+  @Test
+  void runRejectsNoVisiblePublicProductionSeedForTenantBeforeAnyMutation() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    GameplayAdmissionPointerBootstrapProperties.PointerSeed demo =
         pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false);
-    pointer.setStateScope(null);
-    pointer.setCharacterCreationPolicy(null);
-    properties.setPointers(List.of(pointer));
+    demo.setPublicProductionRealm(false);
+    properties.setPointers(List.of(demo));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
+  }
+
+  @Test
+  void runRejectsDuplicateWorldRealmSeedsBeforeAnyMutation() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    properties.setPointers(
+        List.of(
+            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false),
+            pointerSeed(" DEMO ", "Duplicate World", "PRODUCTION", "Live Realm", 1L, 2L, true)));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
+  }
+
+  @Test
+  void runKeepsAdmissionClosedForValidSeedsAcrossTenants() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    properties.setPointers(
+        List.of(
+            pointerSeed("demo", "Demo World", "production", "Live Realm", 1L, 1L, false),
+            pointerSeed("demo", "Other Demo", "production", "Live Realm", 2L, 1L, false)));
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
+    verify(pointerRepository).lockForBootstrap();
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
+  }
 
-    ArgumentCaptor<GameplayAdmissionPointerMutation> mutationCaptor =
-        ArgumentCaptor.forClass(GameplayAdmissionPointerMutation.class);
-    verify(authorityService).upsertPointer(mutationCaptor.capture());
-    assertEquals("SHARED", mutationCaptor.getValue().stateScope());
-    assertEquals("ALLOW_NEW", mutationCaptor.getValue().characterCreationPolicy());
+  @Test
+  void initializerIsRegisteredAfterAuditIdentityBecomesComplete() {
+    assertTrue(
+        GameplayAdmissionPointerBootstrapInitializer.class.isAnnotationPresent(Component.class));
   }
 
   private static GameplayAdmissionPointerBootstrapProperties.PointerSeed pointerSeed(
@@ -134,5 +265,99 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
     pointerSeed.setCharacterCreationPolicy(
         GameplayAdmissionPointerBootstrapProperties.CharacterCreationPolicy.ALLOW_NEW);
     return pointerSeed;
+  }
+
+  private static ShippedBootstrapConfiguration loadShippedConfiguration(
+      Map<String, Object> environmentOverrides) throws IOException {
+    MockEnvironment environment = new MockEnvironment();
+    environment
+        .getPropertySources()
+        .addFirst(new MapPropertySource("bootstrap-test-overrides", environmentOverrides));
+    YamlPropertySourceLoader loader = new YamlPropertySourceLoader();
+    // Read source YAML directly to avoid test-resource shadowing; this is not packaged or live-boot
+    // proof.
+    environment
+        .getPropertySources()
+        .addLast(
+            loader
+                .load(
+                    "game-session-application",
+                    new FileSystemResource(
+                        repositoryFile(
+                            "services/game-session-service/src/main/resources/application.yml")))
+                .get(0));
+    environment
+        .getPropertySources()
+        .addLast(
+            loader
+                .load(
+                    "world-management-application",
+                    new FileSystemResource(
+                        repositoryFile(
+                            "services/world-management-service/src/main/resources/application.yml")))
+                .get(0));
+
+    Binder binder = Binder.get(environment);
+    GameplayAdmissionPointerBootstrapProperties gameSession =
+        binder
+            .bind(
+                "firemud.gameplay.pointer-bootstrap",
+                Bindable.of(GameplayAdmissionPointerBootstrapProperties.class))
+            .orElseThrow(() -> new IllegalStateException("Missing Game Session bootstrap YAML"));
+    List<SmokeRuntimeTarget> worldManagementTargets =
+        binder
+            .bind(
+                "firemud.smoke.seed-demo-runtime.targets",
+                Bindable.listOf(SmokeRuntimeTarget.class))
+            .orElseThrow(() -> new IllegalStateException("Missing World runtime-target YAML"));
+    return new ShippedBootstrapConfiguration(gameSession, worldManagementTargets);
+  }
+
+  private static Path repositoryFile(String relativePath) {
+    Path directory = Path.of("").toAbsolutePath();
+    while (directory != null) {
+      Path candidate = directory.resolve(relativePath);
+      if (Files.isRegularFile(candidate)) {
+        return candidate;
+      }
+      directory = directory.getParent();
+    }
+    throw new IllegalStateException("Cannot locate repository file " + relativePath);
+  }
+
+  private static void assertSmokeRuntimeTargets(
+      List<SmokeRuntimeTarget> actualTargets, long... expectedTenantAndInstanceIds) {
+    assertEquals(expectedTenantAndInstanceIds.length / 2, actualTargets.size());
+    for (int index = 0; index < actualTargets.size(); index++) {
+      assertEquals(expectedTenantAndInstanceIds[index * 2], actualTargets.get(index).getTenantId());
+      assertEquals(
+          expectedTenantAndInstanceIds[index * 2 + 1],
+          actualTargets.get(index).getGameInstanceId());
+    }
+  }
+
+  private record ShippedBootstrapConfiguration(
+      GameplayAdmissionPointerBootstrapProperties gameSession,
+      List<SmokeRuntimeTarget> worldManagementTargets) {}
+
+  public static class SmokeRuntimeTarget {
+    private long tenantId;
+    private long gameInstanceId;
+
+    public long getTenantId() {
+      return tenantId;
+    }
+
+    public void setTenantId(long tenantId) {
+      this.tenantId = tenantId;
+    }
+
+    public long getGameInstanceId() {
+      return gameInstanceId;
+    }
+
+    public void setGameInstanceId(long gameInstanceId) {
+      this.gameInstanceId = gameInstanceId;
+    }
   }
 }

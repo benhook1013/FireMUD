@@ -153,7 +153,13 @@ class LoggingAdminGrpcServiceAuthTest {
                 digest,
                 AccountAuditReceiptStatus.COMMITTED,
                 AccountAuditReceiptOutcome.ACCEPTED));
-    LoggingAdminGrpcService service = newService(logEventService);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            logEventService,
+            moderationService,
+            new SimpleMeterRegistry(),
+            "firemud");
 
     AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
@@ -210,14 +216,15 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void accountAuditMethodsRejectAccountPeerFromWrongNamespace() {
+  void accountAuditRejectsAccountServicePeerFromOtherNamespace() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     LoggingAdminGrpcService service = newService(logEventService);
     AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
 
-    invokeWithPeerUri(
-        "spiffe://firemud/ns/other/sa/account-service",
+    invokeWithPeer(
+        "other",
+        "account-service",
         () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
 
     assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
@@ -845,14 +852,15 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   private static void invokeWithPeer(String serviceName, Runnable invocation) {
-    String uri = "spiffe://firemud/ns/firemud/sa/" + serviceName;
-    invokeWithPeerUri(uri, invocation);
+    invokeWithPeer("firemud", serviceName, invocation);
   }
 
-  private static void invokeWithPeerUri(String uri, Runnable invocation) {
+  private static void invokeWithPeer(String namespace, String serviceName, Runnable invocation) {
+    String uri = "spiffe://firemud/ns/" + namespace + "/sa/" + serviceName;
     Context context =
         Context.current()
-            .withValue(GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(uri).orElseThrow());
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY, new GrpcPeerIdentity(uri, namespace, serviceName));
     Context previous = context.attach();
     try {
       invocation.run();

@@ -220,6 +220,17 @@ public class CertificateMaterialService {
         batch);
   }
 
+  private RoleMaterial grpcSocialGroups(
+      KubernetesClient client, EnvironmentIdentityPlan plan, MaterializationBatch batch) {
+    return grpcWorkloadIdentity(
+        client,
+        plan,
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD,
+        plan.grpcSocialGroupsCertificateName(),
+        batch);
+  }
+
   private RoleMaterial grpcWorkloadIdentity(
       KubernetesClient client,
       EnvironmentIdentityPlan plan,
@@ -392,6 +403,9 @@ public class CertificateMaterialService {
     observations.put(
         HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
         rotationObservation(client, plan, HostedIdentityContract.GRPC_GAME_SESSION_ROLE));
+    observations.put(
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+        rotationObservation(client, plan, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE));
     String selectedRole =
         selectSerializedRole(
             observations.values().stream().map(RotationObservation::state).toList());
@@ -1273,6 +1287,10 @@ public class CertificateMaterialService {
 
     public RoleMaterial grpcGameSession() {
       return CertificateMaterialService.this.grpcGameSession(client, plan, this);
+    }
+
+    public RoleMaterial grpcSocialGroups() {
+      return CertificateMaterialService.this.grpcSocialGroups(client, plan, this);
     }
 
     private List<GenericKubernetesResource> certificateRequests() {

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -106,6 +107,32 @@ def fixture_payload_for_allocation() -> dict[str, object]:
         }
     }
     return payload
+
+
+def canonical_state_snapshot(path: Path) -> tuple[object, ...] | None:
+    """Capture canonical JSON state or the post-cutover directory without writes."""
+
+    if not path.exists() and not path.is_symlink():
+        return None
+
+    def entry_snapshot(entry: Path) -> tuple[object, ...]:
+        mode = stat.S_IMODE(entry.lstat().st_mode)
+        if entry.is_symlink():
+            return ("symlink", mode, os.readlink(entry))
+        if entry.is_dir():
+            return ("directory", mode)
+        if entry.is_file():
+            return ("file", mode, entry.read_bytes())
+        return ("other", mode)
+
+    root_snapshot = entry_snapshot(path)
+    if path.is_dir() and not path.is_symlink():
+        contents = tuple(
+            (entry.relative_to(path).as_posix(), entry_snapshot(entry))
+            for entry in sorted(path.rglob("*"), key=lambda item: item.relative_to(path).as_posix())
+        )
+        return ("directory", root_snapshot[1], contents)
+    return root_snapshot
 
 
 class AcceptanceCliTest(unittest.TestCase):
@@ -216,7 +243,9 @@ class AcceptanceCliTest(unittest.TestCase):
         controller.status_for_pr = lambda _pr: controller.status()
         args = cli._parser().parse_args(["status", "--pr", "1", "--json"])
         with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
-            "pr_review.cli.status_module.status", return_value=report
+            "pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))
+        ), patch(
+            "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
         ):
             result, code = cli._dispatch(args)
 
@@ -224,25 +253,50 @@ class AcceptanceCliTest(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertIn("hosted review allocation is EXHAUSTED_PENDING", result["reasons"][0])
 
-        controller.status = lambda: {
-            "prs": [{
-                "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
-                "reconciliation": "COHERENT", "channels": {"hosted": "HUMAN_STOPPED", "cli": "COMPLETE"},
-                "allocations": {"hosted": {"status": "STOPPED", "reason": "human decision"}},
-            }]
-        }
-        with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
-            "pr_review.cli.status_module.status", return_value={**report, "reasons": [], "ready": True}
-        ):
-            result, code = cli._dispatch(args)
+        def stopped_status(obligations=()):
+            controller.status = lambda: {
+                "prs": [{
+                    "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
+                    "reconciliation": "COHERENT", "channels": {"hosted": "HUMAN_STOPPED", "cli": "COMPLETE"},
+                    "allocations": {"hosted": {"status": "STOPPED", "reason": "human decision"}},
+                    "review_obligations": {"hosted": list(obligations)},
+                }]
+            }
+            controller.status_for_pr = lambda _pr: controller.status()
+            with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
+                "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
+            ):
+                return cli._dispatch(args)
 
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            result, code = stopped_status()
+        self.assertEqual(code, 0)
+        self.assertTrue(result["ready"], result)
+        self.assertEqual(result["reasons"], [])
+
+        obligations = ["accepted finding requires disposition", "unresolved review thread"]
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))):
+            result, code = stopped_status(obligations)
         self.assertEqual(code, 0)
         self.assertFalse(result["ready"])
-        self.assertTrue(any("not taper or merge-readiness proof" in reason for reason in result["reasons"]))
+        self.assertEqual(result["reasons"], [f"hosted: {reason}" for reason in obligations])
+
+        ci_report = {
+            **report,
+            "reasons": ["required CI check is pending"],
+            "ready": False,
+            "verdict": "NOT READY",
+            "mergeability": {"clean": False, "diagnosis": "NOT READY"},
+        }
+        with patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(ci_report))):
+            result, code = stopped_status()
+        self.assertEqual(code, 0)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["reasons"], ["required CI check is pending"])
 
     def test_public_commands_use_isolated_state_and_simulated_review_adapters(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "fixture.json"
@@ -299,7 +353,7 @@ class AcceptanceCliTest(unittest.TestCase):
             persisted = json.loads(isolated.read_text(encoding="utf-8"))
             self.assertEqual(persisted["ordered_prs"], [1, 2])
             self.assertEqual(persisted["judgments"][0]["pr"], 1)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_controller_seeds_initial_stack_only_for_new_state(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -336,7 +390,7 @@ class AcceptanceCliTest(unittest.TestCase):
 
     def test_second_identical_provisional_cli_run_uses_isolated_evidence_to_fail(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "unreconciled.json"
@@ -371,11 +425,11 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(json.loads(isolated.read_text(encoding="utf-8"))["ordered_prs"], [1])
             sidecar = root / "state.json.fixture-evidence.json"
             self.assertEqual(len(json.loads(sidecar.read_text(encoding="utf-8"))["evidence"]), 1)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_legacy_transition_and_fresh_reviews_are_isolated_and_no_quota(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "legacy.json"
@@ -441,11 +495,11 @@ class AcceptanceCliTest(unittest.TestCase):
             evidence = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
             self.assertEqual(evidence["policy"]["cli"][0]["checkpoint"], "legacy-cli")
             self.assertEqual(json.loads(isolated.read_text(encoding="utf-8"))["legacy_transitions"][0]["pr"], 1)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_legacy_reauthorization_after_fix_head_is_explicit_and_no_quota(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "legacy-reauthorization.json"
@@ -599,11 +653,11 @@ class AcceptanceCliTest(unittest.TestCase):
             evidence = json.loads(self.run_cli(fixture, isolated, "evidence", "1", "--json").stdout)
             self.assertEqual(evidence["policy"]["hosted"][1]["checkpoint"], "modern-hosted")
             self.assertEqual(len(json.loads(isolated.read_text(encoding="utf-8"))["legacy_transitions"]), 2)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_missing_hosted_fingerprint_retirement_is_audited_and_no_quota(self):
         canonical = state.state_path()
-        before = canonical.read_bytes() if canonical.exists() else None
+        before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "missing-hosted-retirement.json"
@@ -708,7 +762,7 @@ class AcceptanceCliTest(unittest.TestCase):
                 run = self.run_cli(fixture, isolated, "run", channel, "--expect-pr", "1")
                 self.assertEqual(run.returncode, 0, run.stderr)
                 self.assertIn("quota_consumed=False", run.stdout)
-            self.assertEqual(canonical.read_bytes() if canonical.exists() else None, before)
+            self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_missing_hosted_fingerprint_fixture_audit_classifies_present_blockers(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1030,32 +1084,30 @@ class AcceptanceCliTest(unittest.TestCase):
                 {"pr": 1, "head": HEAD_1, "checkpoint": "unresolved-thread", "held": True}
             ]
             fixture.write_text(json.dumps(held), encoding="utf-8")
-            blocked = self.run_cli(
-                fixture, isolated, "decide", "stop", "--pr", "1", "--channel", "hosted",
-                "--head", HEAD_1, "--checkpoint", "allocated-dry",
-                "--reason", "attempted before thread resolution",
-            )
-            self.assertNotEqual(blocked.returncode, 0)
-            self.assertIn("unresolved actionable finding or thread", blocked.stderr)
-            blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
-            self.assertNotEqual(blocked_next.returncode, 0)
-            self.assertIn("expected PR #2, but selected PR #1", blocked_next.stderr)
-
-            fixture.write_text(json.dumps(payload), encoding="utf-8")
             stopped = self.run_cli(
                 fixture, isolated, "decide", "stop", "--pr", "1", "--channel", "hosted",
                 "--head", HEAD_1, "--checkpoint", "allocated-dry",
-                "--reason", "thread resolved and review discovery stopped",
+                "--reason", "stop future review discovery while retaining this thread",
             )
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
             shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
             self.assertEqual(shown.returncode, 0, shown.stderr)
-            self.assertEqual(json.loads(shown.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
+            stopped_status = json.loads(shown.stdout)["prs"][0]
+            self.assertEqual(stopped_status["channels"]["hosted"], "HUMAN_STOPPED")
+            self.assertEqual(stopped_status["review_obligations"]["hosted"], ["unresolved-thread"])
+
+            sidecar_path = root / "state.json.fixture-evidence.json"
+            sidecar_before_advance = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            self.assertEqual(sidecar_before_advance["result_positions"]["1:hosted"], 1)
+            self.assertEqual(len(sidecar_before_advance["evidence"]), 1)
             next_pr = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
             self.assertEqual(next_pr.returncode, 0, next_pr.stderr)
             self.assertIn("pr=2", next_pr.stdout)
+            sidecar_after_advance = json.loads(sidecar_path.read_text(encoding="utf-8"))
+            self.assertEqual(sidecar_after_advance["result_positions"]["1:hosted"], 1)
+            self.assertEqual(len(sidecar_after_advance["evidence"]), 1)
 
-            moved = json.loads(json.dumps(payload))
+            moved = json.loads(json.dumps(held))
             moved["pull_requests"][1]["base_tip"] = "d" * 40
             fixture.write_text(json.dumps(moved), encoding="utf-8")
             blocked_next = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "2")
