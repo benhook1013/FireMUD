@@ -3373,6 +3373,7 @@ class ReviewController:
         )
 
         def result(status: str, reason: str, *, control: str, details: str | None = None) -> dict[str, Any]:
+            cap_stopped = status in {"CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING"}
             return {
                 "status": status,
                 "reason": reason,
@@ -3381,7 +3382,7 @@ class ReviewController:
                 "checkpoint": latest["checkpoint"] if latest else None,
                 "accepted": latest["accepted"] if latest else None,
                 "handoff_head": allocation.handoff_head,
-                "stop_basis": "human_cap" if status == "CAP_AUDITED_STOP" else allocation.stop_basis,
+                "stop_basis": "human_cap" if cap_stopped else allocation.stop_basis,
                 "baseline_checkpoint": allocation.baseline_checkpoint,
                 "min_additional_completed": minimum,
                 "max_additional_completed": cap,
@@ -3397,7 +3398,7 @@ class ReviewController:
                 "cap": cap,
                 "remaining": max(0, cap - used - in_flight) if cap is not None else None,
                 "in_flight": in_flight,
-                "selection_control": control,
+                "selection_control": "maximum" if cap_stopped else control,
                 "controlling_reason": reason,
             }
 
@@ -3417,10 +3418,13 @@ class ReviewController:
 
         if any(completed["accepted"] > 0 for completed in snapshot["results"]):
             if current is None or reconciliation_result is None:
+                cap_reached = cap is not None and used >= cap
                 return result(
-                    "CAP_EXHAUSTED_PENDING" if cap is not None and used >= cap else "CAP_FINDINGS_PENDING",
-                    "accepted findings remain pending; current fix evidence is unavailable",
+                    "CAP_EXHAUSTED_PENDING" if cap_reached else "CAP_FINDINGS_PENDING",
+                    "cap exhausted; findings pending" if cap_reached
+                    else "accepted findings remain pending; current fix evidence is unavailable",
                     control="unresolved_work",
+                    details="current fix evidence is unavailable" if cap_reached else None,
                 )
             checkpoint_pin = latest["checkpoint"] if latest else _field(baseline, "checkpoint", "checkpoint_id")
             try:
@@ -3877,9 +3881,12 @@ class ReviewController:
             handed_off_prs=(
                 pr
                 for pr, view in channel_allocations.items()
-                if view["status"] in {"HANDED_OFF", "CAP_AUDITED_STOP"} or view["status"] == "CAP_TAPERED"
+                if view["status"] in {"HANDED_OFF", "CAP_TAPERED"}
             ),
-            human_stopped_prs=(pr for pr, view in channel_allocations.items() if view["status"] == "STOPPED"),
+            human_stopped_prs=(
+                pr for pr, view in channel_allocations.items()
+                if view["status"] in {"STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING"}
+            ),
             exhausted_prs=(pr for pr, view in channel_allocations.items() if view["status"] == "EXHAUSTED_PENDING"),
             allocation_blocks={
                 pr: view["reason"] for pr, view in channel_allocations.items() if view["status"] == "INVALID"
@@ -3890,7 +3897,6 @@ class ReviewController:
                 if view["status"]
                 in {
                     "CAP_FINDINGS_PENDING",
-                    "CAP_EXHAUSTED_PENDING",
                     "CAP_TAPERED_PENDING",
                 }
                 or (view["status"] == "CAP_ACTIVE" and view.get("selection_control") == "unresolved_work")
