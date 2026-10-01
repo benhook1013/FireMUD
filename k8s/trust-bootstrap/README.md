@@ -64,6 +64,72 @@ if [[ -n "$controller_resource" ]]; then
     echo "hosted identity controller is active or missing its pause marker; keep it paused before CA installation" >&2
     exit 1
   }
+  if ! kubectl -n firemud-system rollout status deployment/firemud-hosted-identity-controller --timeout=480s; then
+    echo "hosted identity controller rollout did not complete; keep it paused before CA installation" >&2
+    exit 1
+  fi
+
+  controller_generation="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.metadata.generation}')"
+  controller_observed_generation="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.status.observedGeneration}')"
+  controller_desired_replicas="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.spec.replicas}')"
+  controller_replicas="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.status.replicas}')"
+  controller_updated_replicas="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.status.updatedReplicas}')"
+  controller_ready_replicas="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.status.readyReplicas}')"
+  controller_available_replicas="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.status.availableReplicas}')"
+  for controller_count in \
+    "$controller_generation" \
+    "$controller_observed_generation" \
+    "$controller_desired_replicas" \
+    "$controller_replicas" \
+    "$controller_updated_replicas" \
+    "$controller_ready_replicas" \
+    "$controller_available_replicas"; do
+    [[ "$controller_count" =~ ^[0-9]+$ ]] || {
+      echo "hosted identity controller rollout evidence is missing or invalid; keep it paused before CA installation" >&2
+      exit 1
+    }
+  done
+  [[ "$controller_generation" -gt 0 \
+    && "$controller_observed_generation" == "$controller_generation" \
+    && "$controller_desired_replicas" -gt 0 \
+    && "$controller_replicas" == "$controller_desired_replicas" \
+    && "$controller_updated_replicas" == "$controller_desired_replicas" \
+    && "$controller_ready_replicas" == "$controller_desired_replicas" \
+    && "$controller_available_replicas" == "$controller_desired_replicas" ]] || {
+    echo "hosted identity controller rollout is not observed and converged; keep it paused before CA installation" >&2
+    exit 1
+  }
+
+  controller_mode_after_rollout="$(kubectl -n firemud-system get deployment firemud-hosted-identity-controller \
+    -o jsonpath='{.spec.template.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE")].value}')"
+  [[ "$controller_mode_after_rollout" == paused ]] || {
+    echo "hosted identity controller pause marker changed during rollout; keep it paused before CA installation" >&2
+    exit 1
+  }
+
+  controller_pods="$(kubectl -n firemud-system get pods \
+    -l app.kubernetes.io/name=hosted-environment-identity-controller,app.kubernetes.io/component=controller \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE")].value}{"\n"}{end}')"
+  controller_pod_count=0
+  while IFS=$'\t' read -r controller_pod_name controller_pod_mode; do
+    [[ -n "$controller_pod_name" ]] || continue
+    controller_pod_count=$((controller_pod_count + 1))
+    [[ "$controller_pod_mode" == paused ]] || {
+      echo "hosted identity controller Pod ${controller_pod_name} is not exactly paused; keep it paused before CA installation" >&2
+      exit 1
+    }
+  done <<< "$controller_pods"
+  [[ "$controller_pod_count" == "$controller_desired_replicas" ]] || {
+    echo "hosted identity controller Pods do not match converged replicas; keep it paused before CA installation" >&2
+    exit 1
+  }
 else
   controller_mode=absent
 fi
@@ -90,6 +156,8 @@ printf 'pre-ca-handoff=pass\n'
 ```
 
 The resource loop intentionally reads only object names (`-o name`); it is not a CA or credential readback. This gate does not prove CA validity, cert-manager issuance, served identity, or consumer convergence. Those remain the private recovery, issuer, and later hosted-controller proof obligations below.
+
+The controller checks are a read-only point-in-time snapshot: they prove rollout and paused-mode readback at this gate, but do not prevent a later independent operator change to the Deployment.
 
 ## Recovery copy and rotation
 

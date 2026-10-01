@@ -18,8 +18,11 @@ bash -n "$proof" || fail 'proof helper has invalid shell syntax'
 python3 - "$readme" <<'PY'
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -42,6 +45,12 @@ ordered_markers = [
     'controller_resource="',
     'controller_mode="',
     'FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE',
+    'rollout status deployment/firemud-hosted-identity-controller --timeout=480s',
+    "'{.metadata.generation}'",
+    "'{.status.observedGeneration}'",
+    'controller_mode_after_rollout=',
+    'controller_pods=',
+    'app.kubernetes.io/name=hosted-environment-identity-controller,app.kubernetes.io/component=controller',
     'controllerActivation=',
     'clusterissuer firemud-ca-issuer',
     'secret firemud-grpc-ca',
@@ -86,6 +95,119 @@ if "all eight" not in readme.split("## Required order", 1)[1].split(
     "## Pre-CA handoff evidence", 1
 )[0]:
     raise SystemExit("required order must retain the all-eight admission-boundary obligation")
+
+block_match = re.search(r"```bash\n(.*?)\n```", handoff, re.DOTALL)
+if not block_match:
+    raise SystemExit("pre-CA handoff evidence is missing its executable Bash block")
+handoff_script = block_match.group(1)
+mock_kubectl = r'''#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+case = os.environ["MOCK_CASE"]
+state = Path(os.environ["MOCK_STATE"])
+joined = " ".join(args)
+
+def output(value=""):
+    print(value, end="")
+
+if args[:2] == ["config", "current-context"]:
+    output("trusted-context")
+elif args[:2] == ["auth", "whoami"]:
+    output("operator" if ".username}" in joined else "system:masters\n")
+elif "rollout" in args and "status" in args:
+    if case == "rollout-failure":
+        raise SystemExit(1)
+elif "get" in args and any(arg.startswith("validatingadmissionpolicy") for arg in args):
+    resource = args[args.index("get") + 1]
+    name = args[args.index(resource) + 1]
+    if ".spec.failurePolicy}" in joined:
+        output("Fail")
+    elif ".spec.policyName}" in joined:
+        output(name)
+    elif ".spec.validationActions[*]}" in joined:
+        output("Deny")
+elif "get" in args and "deployment" in args:
+    if "--ignore-not-found" in args:
+        output("" if case == "absent" else "deployment.apps/firemud-hosted-identity-controller")
+    elif "ACTIVATION_MODE" in joined:
+        count = int(state.read_text()) if state.exists() else 0
+        state.write_text(str(count + 1))
+        output("active" if case == "marker-change" and count > 0 else "paused")
+    elif ".metadata.generation}" in joined:
+        output("5")
+    elif ".status.observedGeneration}" in joined:
+        output("" if case == "missing-observed" else "4" if case == "stale-observed" else "5")
+    elif ".spec.replicas}" in joined:
+        output("0" if case == "zero-desired-replicas" else "1")
+    elif ".status.replicas}" in joined:
+        output("0" if case == "zero-status-replicas" else "0" if case == "zero-desired-replicas" else "1")
+    elif ".status.updatedReplicas}" in joined:
+        output("0" if case in ("unconverged-replicas", "zero-status-replicas", "zero-desired-replicas") else "1")
+    elif ".status.readyReplicas}" in joined:
+        output("0" if case in ("zero-status-replicas", "zero-desired-replicas") else "1")
+    elif ".status.availableReplicas}" in joined:
+        output("0" if case in ("zero-status-replicas", "zero-desired-replicas") else "1")
+elif "get" in args and "pods" in args:
+    if case in ("paused-stale-active", "old-active-pods"):
+        output("controller-old\tactive\n")
+    elif case == "missing-pod-mode":
+        output("controller-missing-mode\t\n")
+    elif case == "absent-matching-pods":
+        output("")
+    else:
+        output("controller-current\tpaused\n")
+elif "get" in args:
+    # The remaining named resource checks are absence-only readbacks.
+    output("")
+else:
+    raise SystemExit("unexpected mocked kubectl invocation: " + joined)
+'''
+
+cases = {
+    "paused-stale-active": False,
+    "rollout-failure": False,
+    "stale-observed": False,
+    "missing-observed": False,
+    "unconverged-replicas": False,
+    "zero-desired-replicas": False,
+    "zero-status-replicas": False,
+    "old-active-pods": False,
+    "missing-pod-mode": False,
+    "absent-matching-pods": False,
+    "absent": True,
+    "converged": True,
+    "marker-change": False,
+}
+with tempfile.TemporaryDirectory(prefix="trust-bootstrap-pause-proof-") as temporary:
+    mock_path = Path(temporary) / "kubectl"
+    mock_path.write_text(mock_kubectl, encoding="utf-8")
+    mock_path.chmod(0o755)
+    for case, expected_success in cases.items():
+        environment = os.environ.copy()
+        environment.update(
+            PATH=f"{temporary}:{environment['PATH']}",
+            MOCK_CASE=case,
+            MOCK_STATE=str(Path(temporary) / f"{case}.state"),
+            FIREMUD_HOSTED_IDENTITY_TRUSTED_CONTEXT="trusted-context",
+        )
+        result = subprocess.run(
+            ["bash", "-euo", "pipefail", "-c", handoff_script],
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if (result.returncode == 0) != expected_success:
+            raise SystemExit(
+                f"mocked pre-CA controller case {case!r} returned "
+                f"{result.returncode}, expected success={expected_success}: "
+                f"{result.stderr}{result.stdout}"
+            )
+        if expected_success and "pre-ca-handoff=pass" not in result.stdout:
+            raise SystemExit(f"mocked pre-CA controller case {case!r} did not pass the gate")
 PY
 
 require() {
