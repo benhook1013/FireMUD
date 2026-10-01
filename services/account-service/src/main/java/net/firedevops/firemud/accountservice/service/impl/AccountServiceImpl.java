@@ -289,7 +289,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       String username, String password) {
@@ -309,7 +309,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.authenticate_gameplay")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
       String email, String password) {
@@ -371,7 +371,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.verify_email_login_otp")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
       String email, String code) {
@@ -409,12 +409,13 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.player_bootstrap")
   public PlayerBootstrapResult issuePlayerBootstrap(String accountIdentifier, String secret) {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(accountIdentifier, secret, true);
     Account account = authentication.account();
+    requireAuthenticationPersistedIdentity(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();

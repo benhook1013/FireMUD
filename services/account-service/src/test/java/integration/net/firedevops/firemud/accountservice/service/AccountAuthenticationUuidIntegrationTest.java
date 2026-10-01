@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.AccountServiceApplication;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
@@ -24,6 +26,7 @@ import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.SessionContext;
@@ -33,9 +36,11 @@ import org.jooq.DSLContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -62,6 +67,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class AccountAuthenticationUuidIntegrationTest {
   private static final String PASSWORD = "account-auth-test-password";
   private static final long PROFILE_TENANT_ID = 98123L;
+  private static final Pattern OTP_CODE_PATTERN = Pattern.compile("\\b(\\d{6})\\b");
+
+  private enum OtpAuthenticationEntryPoint {
+    CONTROL_UI,
+    GAMEPLAY,
+    VERIFY_EMAIL_OTP,
+    PLAYER_BOOTSTRAP
+  }
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -79,7 +92,7 @@ class AccountAuthenticationUuidIntegrationTest {
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
   @Autowired private AccountRepository accountRepository;
-  @Autowired private SessionService sessionService;
+  @MockitoSpyBean private SessionService sessionService;
   @Autowired private JwtUtil jwtUtil;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
@@ -164,6 +177,126 @@ class AccountAuthenticationUuidIntegrationTest {
   }
 
   @Test
+  void emailOtpAuthenticationIssuesPersistedUuidAndConsumesTheChallengeExactlyOnce() {
+    Account persisted = createVerifiedAccount("otp");
+    String email = persisted.getEmail();
+    UUID expectedAccountUuid = persisted.getAccountUuid();
+    assertThat(persisted.getAccountUuidProvenance())
+        .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    assertThat(persisted.getAccountUuidSourceNumericId()).isEqualTo(persisted.getId());
+
+    String deliveredCode = requestEmailLoginOtpAndCaptureCode(email);
+
+    String wrongCode = wrongOtpCode(deliveredCode);
+    assertThatThrownBy(() -> accountService.verifyEmailLoginOtp(email, wrongCode))
+        .isInstanceOf(AuthenticationException.class)
+        .hasMessage("Invalid credentials");
+    var challengeAfterWrongCode =
+        challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
+    assertThat(challengeAfterWrongCode.getInvalidAttemptCount()).isEqualTo(1);
+    assertThat(challengeAfterWrongCode.getCodeHash()).isNotEqualTo(deliveredCode);
+    assertThat(accountUuidFor(persisted.getId())).isEqualTo(expectedAccountUuid);
+
+    var result = accountService.verifyEmailLoginOtp(email, deliveredCode);
+    assertThat(jwtUtil.parseToken(result.authToken()).getPayload().getAudience())
+        .containsOnly("account-service");
+    assertAuthenticationAndPrivateLookup(persisted.getId(), expectedAccountUuid, result);
+    assertThat(challengeRepositorySpy.findByAccountId(persisted.getId())).isEmpty();
+    assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
+
+    assertThatThrownBy(() -> accountService.verifyEmailLoginOtp(email, deliveredCode))
+        .isInstanceOf(AuthenticationException.class)
+        .hasMessage("Invalid credentials");
+    assertThat(accountUuidFor(persisted.getId())).isEqualTo(expectedAccountUuid);
+    assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
+  }
+
+  @Test
+  void rejectedEmailOtpPersistsChallengeAttemptForControlUiAuthentication() {
+    assertRejectedEmailOtpPersistsChallengeAttempt(OtpAuthenticationEntryPoint.CONTROL_UI);
+  }
+
+  @Test
+  void rejectedEmailOtpPersistsChallengeAttemptForGameplayAuthentication() {
+    assertRejectedEmailOtpPersistsChallengeAttempt(OtpAuthenticationEntryPoint.GAMEPLAY);
+  }
+
+  @Test
+  void rejectedEmailOtpPersistsChallengeAttemptForOtpCompletion() {
+    assertRejectedEmailOtpPersistsChallengeAttempt(OtpAuthenticationEntryPoint.VERIFY_EMAIL_OTP);
+  }
+
+  @Test
+  void rejectedEmailOtpPersistsChallengeAttemptForPlayerBootstrap() {
+    assertRejectedEmailOtpPersistsChallengeAttempt(OtpAuthenticationEntryPoint.PLAYER_BOOTSTRAP);
+  }
+
+  private void assertRejectedEmailOtpPersistsChallengeAttempt(
+      OtpAuthenticationEntryPoint entryPoint) {
+    Account persisted = createVerifiedAccount("otp-rejected");
+    String deliveredCode = requestEmailLoginOtpAndCaptureCode(persisted.getEmail());
+    String wrongCode = wrongOtpCode(deliveredCode);
+    var challengeBeforeWrongCode =
+        challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
+
+    assertThatThrownBy(
+            () -> attemptEmailOtpAuthentication(entryPoint, persisted.getEmail(), wrongCode))
+        .isInstanceOf(AuthenticationException.class)
+        .hasMessage("Invalid credentials");
+
+    var challengeAfterWrongCode =
+        challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
+    assertThat(challengeAfterWrongCode.getInvalidAttemptCount()).isEqualTo(1);
+    assertThat(challengeAfterWrongCode.getCodeHash())
+        .isEqualTo(challengeBeforeWrongCode.getCodeHash())
+        .isNotEqualTo(deliveredCode);
+    assertThat(emailLoginChallengeCount(persisted.getId())).isEqualTo(1L);
+    assertThat(accountUuidFor(persisted.getId())).isEqualTo(persisted.getAccountUuid());
+    assertThat(accountService.resolveAccountStorageId(persisted.getAccountUuid()))
+        .isEqualTo(persisted.getId());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeAccountSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  @Test
+  void nonAuthenticationSessionFailureRollsBackOtpConsumption() {
+    Account persisted = createVerifiedAccount("otp-store");
+    String deliveredCode = requestEmailLoginOtpAndCaptureCode(persisted.getEmail());
+    var challengeBeforeFailure =
+        challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
+    doAnswer(
+            invocation -> {
+              throw new IllegalStateException("simulated session storage failure");
+            })
+        .when(sessionService)
+        .storeAccountSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+
+    assertThatThrownBy(
+            () -> accountService.verifyEmailLoginOtp(persisted.getEmail(), deliveredCode))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("simulated session storage failure");
+
+    ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
+    org.mockito.Mockito.verify(sessionService)
+        .storeAccountSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            tokenCaptor.capture(),
+            org.mockito.ArgumentMatchers.anyLong());
+    assertThat(sessionService.isAccountSessionActive(persisted.getId(), tokenCaptor.getValue()))
+        .isFalse();
+    assertThat(challengeRepositorySpy.findByAccountId(persisted.getId()))
+        .contains(challengeBeforeFailure);
+    assertThat(emailLoginChallengeCount(persisted.getId())).isEqualTo(1L);
+    assertThat(accountUuidFor(persisted.getId())).isEqualTo(persisted.getAccountUuid());
+  }
+
+  @Test
   void unmappedUuidDeniesProfileMutationEvenWhenBodyNamesAnExistingPrivateRow() {
     String suffix = UUID.randomUUID().toString();
     String username = "profile-" + suffix;
@@ -210,6 +343,11 @@ class AccountAuthenticationUuidIntegrationTest {
   private void assertAuthenticationAndPrivateLookup(
       String username, long accountId, UUID expectedAccountUuid) {
     AuthenticationResult result = accountService.authenticate(username, PASSWORD);
+    assertAuthenticationAndPrivateLookup(accountId, expectedAccountUuid, result);
+  }
+
+  private void assertAuthenticationAndPrivateLookup(
+      long accountId, UUID expectedAccountUuid, AuthenticationResult result) {
     var claims = jwtUtil.parseToken(result.authToken()).getPayload();
 
     assertThat(result.accountId()).isEqualTo(expectedAccountUuid.toString());
@@ -232,6 +370,53 @@ class AccountAuthenticationUuidIntegrationTest {
             dsl.fetchOne("SELECT account_uuid FROM accounts WHERE id = ?", accountId),
             "Expected persisted account_uuid row for account id " + accountId)
         .get(0, UUID.class);
+  }
+
+  private long emailLoginChallengeCount(long accountId) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_email_login_challenge WHERE account_id = ?",
+                accountId)
+            .fetchOne(0, Long.class),
+        "Expected challenge count row for account id " + accountId);
+  }
+
+  private Account createVerifiedAccount(String prefix) {
+    String username = prefix + "-" + UUID.randomUUID();
+    String email = username + "@example.com";
+    var created = accountService.createAccount(new CreateAccountRequest(username, email, PASSWORD));
+    assertThat(dsl.execute("UPDATE accounts SET email_verified = TRUE WHERE id = ?", created.id()))
+        .isEqualTo(1);
+    return accountRepository.findById(created.id()).orElseThrow();
+  }
+
+  private String requestEmailLoginOtpAndCaptureCode(String email) {
+    accountService.requestEmailLoginOtp(email);
+
+    ArgumentCaptor<SimpleMailMessage> mailCaptor = ArgumentCaptor.forClass(SimpleMailMessage.class);
+    org.mockito.Mockito.verify(mailSender).send(mailCaptor.capture());
+    SimpleMailMessage deliveredMessage = mailCaptor.getValue();
+    assertThat(deliveredMessage.getTo()).containsExactly(email);
+    assertThat(deliveredMessage.getSubject()).isEqualTo("Your FireMUD login code");
+    String deliveredBody =
+        Objects.requireNonNull(deliveredMessage.getText(), "Expected delivered email OTP body");
+    Matcher codeMatcher = OTP_CODE_PATTERN.matcher(deliveredBody);
+    assertThat(codeMatcher.find()).isTrue();
+    return codeMatcher.group(1);
+  }
+
+  private String wrongOtpCode(String deliveredCode) {
+    return deliveredCode.equals("000000") ? "000001" : "000000";
+  }
+
+  private void attemptEmailOtpAuthentication(
+      OtpAuthenticationEntryPoint entryPoint, String email, String wrongCode) {
+    switch (entryPoint) {
+      case CONTROL_UI -> accountService.authenticate(email, wrongCode);
+      case GAMEPLAY -> accountService.authenticateForGameplay(email, wrongCode);
+      case VERIFY_EMAIL_OTP -> accountService.verifyEmailLoginOtp(email, wrongCode);
+      case PLAYER_BOOTSTRAP -> accountService.issuePlayerBootstrap(email, wrongCode);
+    }
   }
 
   private String profileRowJson(long accountId) {

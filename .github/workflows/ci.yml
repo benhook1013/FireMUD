@@ -993,13 +993,24 @@ jobs:
         run: |
           ./gradlew :account-service:integrationTest \
             --tests net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest \
+            --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope \
+            --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest \
+            --require-suite net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#repositoryInsertAuthenticationUsesExactPersistedUuidAndPrivateStorageKey()' \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#databaseInsertAuthenticationUsesTriggerProvedUuidAndCannotRemapItsSource()' \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#unmappedUuidDeniesProfileMutationEvenWhenBodyNamesAnExistingPrivateRow()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#emailOtpAuthenticationIssuesPersistedUuidAndConsumesTheChallengeExactlyOnce()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForControlUiAuthentication()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForGameplayAuthentication()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForOtpCompletion()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForPlayerBootstrap()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#nonAuthenticationSessionFailureRollsBackOtpConsumption()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope()' \
             account-service
 
       - name: Run Game Session command Account UUID storage PostgreSQL component proof

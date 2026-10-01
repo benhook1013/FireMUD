@@ -408,6 +408,7 @@ class AccountServiceImplTest {
   void joinPublicProductionCreatesMembershipAndAuditOnceAndReplaysExactReceipt() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -596,6 +597,7 @@ class AccountServiceImplTest {
   void closedPublicJoinRetainsFailureAndCannotCreateMembershipOrAudit() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -650,6 +652,7 @@ class AccountServiceImplTest {
   void missingOrAmbiguousEntitlementRetainsUnavailableJoinReceipt(boolean ambiguous) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -731,6 +734,7 @@ class AccountServiceImplTest {
   void joinPublicProductionRevalidatesPolicyAtTheMembershipCommitGate() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -787,6 +791,7 @@ class AccountServiceImplTest {
   void changedPolicyOnRetryTerminalizesPreviouslyBoundPendingJoin() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -855,6 +860,7 @@ class AccountServiceImplTest {
   void pairAuthorityPreparationFailureRetainsRetryablePolicyIndependentJoinIntent() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -976,6 +982,7 @@ class AccountServiceImplTest {
   void joinIntentCommitsSeparatelyWhenPolicyTransactionRollsBack() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1022,6 +1029,7 @@ class AccountServiceImplTest {
   void expiredPersistedPendingJoinRemainsPendingWithoutAuthorityOrMembershipReads() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1137,6 +1145,7 @@ class AccountServiceImplTest {
   void joinPublicProductionReturnsConflictWhenGlobalRequestIdClaimIsLost() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1208,6 +1217,7 @@ class AccountServiceImplTest {
   void quarantinedLegacyMembershipIsNeverRestoredByPublicJoin() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1254,6 +1264,7 @@ class AccountServiceImplTest {
       String requestId) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2033,6 +2044,7 @@ class AccountServiceImplTest {
   void issuePlayerBootstrapReturnsShortLivedToken() {
     Account account = new Account();
     account.setId(7L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     account.setLoginAuthModes("PASSWORD");
@@ -2061,6 +2073,7 @@ class AccountServiceImplTest {
   void issuePlayerBootstrapPrefersEmailLookupOverCollidingUsername() {
     Account emailAccount = new Account();
     emailAccount.setId(7L);
+    setPersistedAuthenticationIdentity(emailAccount);
     emailAccount.setUsername("email-owner");
     emailAccount.setEmail("player@example.com");
     emailAccount.setPasswordHash(hash("password"));
@@ -2079,6 +2092,7 @@ class AccountServiceImplTest {
   void issuePlayerBootstrapAcceptsAndConsumesEmailLoginOtp() {
     Account account = new Account();
     account.setId(7L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     account.setLoginAuthModes("EMAIL_OTP");
@@ -2218,6 +2232,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsWorldWithMalformedRuntimeRealmRow() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2254,6 +2269,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsNoncanonicalRealmIds(String realmId) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2290,6 +2306,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsMalformedConnectScopeId() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2319,6 +2336,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsBlankConnectScopeId() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2348,6 +2366,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsNonPositiveConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2401,6 +2420,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsMalformedConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2455,6 +2475,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsNoncanonicalRealmIdClaims(String realmId) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2507,6 +2528,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsConnectScopeAccountSubjectMismatch() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2560,6 +2582,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsBlankWorldSlugConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2613,6 +2636,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsZeroPointerVersionInConnectScopeClaims() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -2827,6 +2851,7 @@ class AccountServiceImplTest {
   void issueConnectTokenFailsClosedWithoutCompleteSelectedTargetAuthorityEvidence() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3005,6 +3030,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRetriesAfterEntitlementAuthorityRecoversWithoutCachingFailure() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3060,6 +3086,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsStaleAdmissionPointerAfterBootstrapDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3114,6 +3141,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsWorldMismatchAfterBootstrapDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3165,6 +3193,7 @@ class AccountServiceImplTest {
   void issueConnectTokenResolvesAdmissionRoutingBeforeEntitlementEvaluation() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3227,6 +3256,7 @@ class AccountServiceImplTest {
   void issueConnectTokenDoesNotReplayCachedLegacySuccess() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3318,6 +3348,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRequiresExplicitPublicProductionMembership() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3371,6 +3402,7 @@ class AccountServiceImplTest {
   void issueConnectTokenRejectsMissingMembershipWhenPublicJoiningIsDisabled() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3403,6 +3435,7 @@ class AccountServiceImplTest {
   void issueConnectTokenClassifiesKnownBillingDenialAndReplaysItDeterministically() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3470,6 +3503,7 @@ class AccountServiceImplTest {
       boolean publicProductionRealm, String realmSlug) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     if (!publicProductionRealm) {
@@ -3583,6 +3617,7 @@ class AccountServiceImplTest {
   void issueConnectTokenReplaysSameFailureForSameRequestId() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3673,6 +3708,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesEntityManagementForResolvedRealm() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3716,6 +3752,7 @@ class AccountServiceImplTest {
       boolean membershipExists) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3763,6 +3800,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersChecksPublicJoinPolicyBeforeReturningJoinRequired() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3797,6 +3835,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersReturnsEntitlementUnavailableBeforeClassifyingMembership() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3876,6 +3915,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsAmbiguousRealmBeforeAdmissionFiltering() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3929,6 +3969,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersSkipsMalformedUnrelatedRealm() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3978,6 +4019,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsIncludesRealmStatePolicy() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4006,6 +4048,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsRealmWithMalformedTenantId() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4060,6 +4103,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesIsolatedRealmRoster() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4135,6 +4179,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsAdmissionPointerWithMalformedGameInstanceId() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4183,6 +4228,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsAdmissionPointerWithUnknownStateScope() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4231,6 +4277,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesWorldQualifiedPointerLookupWhenRealmSlugDuplicatesAcrossWorlds() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4329,6 +4376,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersUsesSignedScopeToDisambiguateTenantIdentity() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4404,6 +4452,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsPathThatDoesNotMatchSignedScope() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4431,6 +4480,7 @@ class AccountServiceImplTest {
   void listBootstrapCharactersRejectsChangedCanonicalRealmId() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4469,6 +4519,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsExcludesNonPublicRealmWithoutGrant() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4517,6 +4568,7 @@ class AccountServiceImplTest {
       boolean visible, boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4581,6 +4633,7 @@ class AccountServiceImplTest {
       boolean visible, boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4642,6 +4695,7 @@ class AccountServiceImplTest {
       boolean publicProductionRealm) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5436,6 +5490,7 @@ class AccountServiceImplTest {
 
   private PrivateConnectTokenContext preparePrivateConnectTokenContext(
       Account account, boolean grantAtIssuance, String membershipLifecycleState) {
+    setPersistedAuthenticationIdentity(account);
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     AccountTenantMembership tenantMembership = membership(account, 7L);
@@ -5503,6 +5558,7 @@ class AccountServiceImplTest {
 
   private PrivateConnectTokenContext preparePublicInactiveConnectTokenContext(
       Account account, boolean publicJoiningAllowed) {
+    setPersistedAuthenticationIdentity(account);
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     AccountTenantMembership tenantMembership = membership(account, 7L);
