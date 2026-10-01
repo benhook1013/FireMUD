@@ -1,8 +1,10 @@
 package net.firedevops.firemud.gamesession.support;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 
@@ -55,6 +57,13 @@ public final class TestGameplayWorldCatalogs {
         input.isPublicProductionRealm(),
         input.isRequiresCharacterSelection(),
         stateScope,
-        characterCreationPolicy);
+        characterCreationPolicy,
+        1L,
+        UUID.nameUUIDFromBytes(
+            ("test-realm:" + input.getTenantId() + ":" + input.getSlug())
+                .getBytes(StandardCharsets.UTF_8)),
+        UUID.nameUUIDFromBytes(
+            ("test-namespace:" + input.getTenantId() + ":" + input.getGameInstanceId())
+                .getBytes(StandardCharsets.UTF_8)));
   }
 }

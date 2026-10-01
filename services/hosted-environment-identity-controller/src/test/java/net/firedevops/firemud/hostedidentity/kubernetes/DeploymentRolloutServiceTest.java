@@ -70,6 +70,7 @@ class DeploymentRolloutServiceTest {
             "tcp-proxy-service",
             "account-service",
             "game-session-service",
+            "social-groups-service",
             "game-design-service",
             "world-management-service",
             "entity-management-service",
@@ -83,6 +84,7 @@ class DeploymentRolloutServiceTest {
                 3L));
     ArgumentCaptor<Deployment> accountReplacement = ArgumentCaptor.forClass(Deployment.class);
     ArgumentCaptor<Deployment> gameSessionReplacement = ArgumentCaptor.forClass(Deployment.class);
+    ArgumentCaptor<Deployment> socialGroupsReplacement = ArgumentCaptor.forClass(Deployment.class);
     when(graph.resources().get("account-service").get())
         .thenReturn(
             readyDeployment(
@@ -102,12 +104,25 @@ class DeploymentRolloutServiceTest {
                         "grpc-current", "game-session-old", "game-session-leaf")),
                 3L))
         .thenAnswer(invocation -> gameSessionReplacement.getValue());
+    when(graph.resources().get("social-groups-service").get())
+        .thenReturn(
+            readyDeployment(
+                "social-groups-service",
+                Map.of(
+                    HostedIdentityContract.GRPC_REVISION_ANNOTATION,
+                    expectedWorkloadRevision(
+                        "grpc-current", "social-groups-old", "social-groups-leaf")),
+                3L))
+        .thenAnswer(invocation -> socialGroupsReplacement.getValue());
     ReplaceDeletable<Deployment> lockedAccount = mock(ReplaceDeletable.class);
     when(graph.resources().get("account-service").lockResourceVersion("rv-3"))
         .thenReturn(lockedAccount);
     ReplaceDeletable<Deployment> lockedGameSession = mock(ReplaceDeletable.class);
     when(graph.resources().get("game-session-service").lockResourceVersion("rv-3"))
         .thenReturn(lockedGameSession);
+    ReplaceDeletable<Deployment> lockedSocialGroups = mock(ReplaceDeletable.class);
+    when(graph.resources().get("social-groups-service").lockResourceVersion("rv-3"))
+        .thenReturn(lockedSocialGroups);
     for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
       String role = HostedIdentityContract.grpcPublicationRole(workload);
       String publicationRevision =
@@ -143,6 +158,8 @@ class DeploymentRolloutServiceTest {
     workloadIdentityRevisions.put(HostedIdentityContract.GRPC_ACCOUNT_ROLE, "account-current");
     workloadIdentityRevisions.put(
         HostedIdentityContract.GRPC_GAME_SESSION_ROLE, "game-session-current");
+    workloadIdentityRevisions.put(
+        HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE, "social-groups-current");
     DeploymentRolloutService.RolloutResult result =
         new DeploymentRolloutService()
             .sync(
@@ -187,6 +204,16 @@ class DeploymentRolloutServiceTest {
             .getMetadata()
             .getAnnotations()
             .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
+    verify(lockedSocialGroups).replace(socialGroupsReplacement.capture());
+    assertEquals(
+        expectedWorkloadRevision("grpc-current", "social-groups-current", "social-groups-leaf"),
+        socialGroupsReplacement
+            .getValue()
+            .getSpec()
+            .getTemplate()
+            .getMetadata()
+            .getAnnotations()
+            .get(HostedIdentityContract.GRPC_REVISION_ANNOTATION));
 
     Deployment converged = replacement.getValue();
     converged.getMetadata().setGeneration(4L);
@@ -197,6 +224,9 @@ class DeploymentRolloutServiceTest {
     Deployment convergedGameSession = gameSessionReplacement.getValue();
     convergedGameSession.getMetadata().setGeneration(4L);
     convergedGameSession.getStatus().setObservedGeneration(4L);
+    Deployment convergedSocialGroups = socialGroupsReplacement.getValue();
+    convergedSocialGroups.getMetadata().setGeneration(4L);
+    convergedSocialGroups.getStatus().setObservedGeneration(4L);
     DeploymentRolloutService.RolloutResult secondResult =
         new DeploymentRolloutService()
             .sync(
@@ -225,15 +255,19 @@ class DeploymentRolloutServiceTest {
     verify(lockedAccount, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
     verify(graph.resources().get("game-session-service")).lockResourceVersion("rv-3");
     verify(lockedGameSession, times(1)).replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+    verify(graph.resources().get("social-groups-service")).lockResourceVersion("rv-3");
+    verify(lockedSocialGroups, times(1))
+        .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
   }
 
   @Test
-  void sharedGrpcRevisionRollsAllSevenDistinctConsumersAndLeavesUnrelatedWorkloadUntouched() {
+  void sharedGrpcRevisionRollsAllEightDistinctConsumersAndLeavesUnrelatedWorkloadUntouched() {
     EnvironmentIdentityPlan plan = planWithConsumers();
     List<String> grpcWorkloads =
         new java.util.ArrayList<>(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
     grpcWorkloads.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
+    grpcWorkloads.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
     String[] deploymentNames =
         java.util.stream.Stream.concat(
                 java.util.stream.Stream.of("tcp-proxy-service", "logging-admin-service"),
@@ -304,18 +338,20 @@ class DeploymentRolloutServiceTest {
   }
 
   @Test
-  void accountAndGameSessionLeafRolloutsGateReadinessOutsideThePlanConsumerList() {
+  void dedicatedLeafRolloutsGateReadinessOutsideThePlanConsumerList() {
     List<String> grpcWorkloads =
         new java.util.ArrayList<>(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
     grpcWorkloads.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
+    grpcWorkloads.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
     Map<String, ArgumentCaptor<Deployment>> pendingReplacements = new LinkedHashMap<>();
     Map<String, ReplaceDeletable<Deployment>> pendingLocks = new LinkedHashMap<>();
 
     for (String pendingWorkload :
         List.of(
             HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD,
-            HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD)) {
+            HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD,
+            HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD)) {
       EnvironmentIdentityPlan plan = planWithConsumers();
       String[] deploymentNames =
           java.util.stream.Stream.concat(
@@ -1140,6 +1176,9 @@ class DeploymentRolloutServiceTest {
     if (HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD.equals(workload)) {
       return HostedIdentityContract.GRPC_GAME_SESSION_ROLE;
     }
+    if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD.equals(workload)) {
+      return HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE;
+    }
     return HostedIdentityContract.grpcPublicationRole(workload);
   }
 
@@ -1149,6 +1188,9 @@ class DeploymentRolloutServiceTest {
     }
     if (HostedIdentityContract.GRPC_GAME_SESSION_ROLE.equals(role)) {
       return "game-session-leaf";
+    }
+    if (HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE.equals(role)) {
+      return "social-groups-leaf";
     }
     return "publication-leaf";
   }

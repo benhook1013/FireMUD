@@ -12,7 +12,10 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .sqlite_review_records import SqliteReviewRecords
 
 CHECKPOINT_HEADING = re.compile(
     r"^(?P<bold>\*\*)?(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
@@ -36,6 +39,7 @@ SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$"
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+MAX_CAPTURE_FINDINGS = 200
 SUMMARY_MARKERS = {
     "outside_diff": ("Outside diff range comments", "Outside the diff"),
     "duplicate": ("Duplicate comments",),
@@ -163,6 +167,27 @@ class CaptureUnavailable(EvidenceError):
 
 class CaptureInvalid(EvidenceError):
     """A linked private capture is present but cannot be trusted."""
+
+
+_UNRESOLVED_RECORDS = object()
+
+
+def resolve_cli_capture_context(
+    common: Path | None = None,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> tuple[Path, SqliteReviewRecords | None]:
+    """Resolve shared repository and SQLite record context once for CLI reads."""
+
+    from .sqlite_review_records import SqliteReviewRecords as RecordsStore
+    from .state import sqlite_state_path, state_path
+
+    selected_common = common if common is not None else git_common_dir()
+    if records is _UNRESOLVED_RECORDS:
+        selected_state = state_path(selected_common)
+        selected_records = RecordsStore(sqlite_state_path(selected_state)) if selected_state.is_dir() else None
+    else:
+        selected_records = records
+    return selected_common, selected_records
 
 
 def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
@@ -514,28 +539,45 @@ def _read_metadata(path: Path) -> dict[str, str]:
 
 
 def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    stdout = _read_capture_text(path, "stdout")
+    try:
+        return parse_capture_events(stdout)
+    except EvidenceError as exc:
+        raise CaptureInvalid(str(exc)) from exc
+
+
+def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Parse and validate the newline-delimited events from a successful CLI capture."""
+
     findings: list[dict[str, Any]] = []
     completes: list[dict[str, Any]] = []
-    lines = _read_capture_text(path, "stdout").splitlines()
-    for number, line in enumerate(lines, 1):
+    for number, line in enumerate(_capture_lines(value), 1):
         if not line.strip():
             continue
         try:
             event = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise CaptureInvalid(f"linked capture stdout has invalid JSON at line {number}") from exc
+            raise EvidenceError(f"linked capture stdout has invalid JSON at line {number}") from exc
         if not isinstance(event, dict):
-            raise CaptureInvalid(f"linked capture stdout has a non-object event at line {number}")
+            raise EvidenceError(f"linked capture stdout has a non-object event at line {number}")
         if event.get("type") == "finding":
             findings.append(event)
         elif event.get("type") == "complete":
             completes.append(event)
     if len(completes) != 1 or completes[0].get("status") != "review_completed":
-        raise CaptureInvalid("linked capture has no unique successful completion")
+        raise EvidenceError("linked capture has no unique successful completion")
     complete = completes[0]
     if complete.get("findings") != len(findings) or not isinstance(complete.get("reviewedFiles"), list):
-        raise CaptureInvalid("linked capture completion does not match findings/files")
+        raise EvidenceError("linked capture completion does not match findings/files")
+    if len(findings) > MAX_CAPTURE_FINDINGS:
+        raise EvidenceError("linked capture contains too many findings")
     return findings, complete
+
+
+def _capture_lines(value: str) -> list[str]:
+    """Split capture records on literal newlines while accepting trailing CR."""
+
+    return [line.removesuffix("\r") for line in value.split("\n")]
 
 
 def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureData) -> None:
@@ -566,11 +608,13 @@ def _load_cli_capture(
     common: Path | None,
     *,
     validate_checkpoint_decisions: bool,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
 ) -> CaptureData:
     if checkpoint.type != "CLI" or not checkpoint.run_id or not RUN_ID.fullmatch(checkpoint.run_id):
         raise CaptureUnavailable("checkpoint has no valid CLI capture marker")
     if checkpoint.duration_invalid:
         raise CaptureInvalid("checkpoint has invalid visible/hidden duration evidence")
+    common, selected_records = resolve_cli_capture_context(common, records)
     roots = private_review_roots(common)
     # Legacy CLI captures are directly below <git-common>/coderabbit-review-logs.
     # New callers may place captures below the firemud review namespace.
@@ -619,6 +663,28 @@ def _load_cli_capture(
         artifact_duration = _read_capture_text(duration_path, "review duration").strip()
         if int(recorded_duration) != checkpoint.duration_seconds or artifact_duration != recorded_duration:
             raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
+    # New runs are adjudicated in SQLite. Historical captures retain their
+    # existing TSV evidence until the one-time backfill proves each record.
+    from .sqlite_review_records import RecordsNotBootstrapped, RecordsSchemaIncompatible, ReviewRecordsError
+
+    if selected_records is not None:
+        try:
+            sql_decisions = selected_records.cli_source_decisions(checkpoint.run_id)
+        except RecordsNotBootstrapped:
+            # Historical checkpoints predate the records schema and retain
+            # their source decisions in the capture's decisions.tsv.
+            sql_decisions = None
+        except RecordsSchemaIncompatible as exc:
+            raise CaptureInvalid(
+                "linked SQLite CLI decisions use an incompatible schema; run records migrate before importing"
+            ) from exc
+        except ReviewRecordsError as exc:
+            raise CaptureInvalid("linked SQLite CLI decisions are unavailable") from exc
+        if sql_decisions is not None:
+            capture = CaptureData(metadata, findings, sql_decisions, [], True, str(run_dir.resolve()))
+            if validate_checkpoint_decisions:
+                _validate_cli_checkpoint_decisions(checkpoint, capture)
+            return capture
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
     if decision_path is None:
         rejection_path = _contained_file(run_dir, "rejections.tsv", required=False)
@@ -672,7 +738,10 @@ def _load_cli_capture(
     return capture
 
 
-def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None) -> CaptureData:
+def load_cli_capture(
+    checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None,
+    *, records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> CaptureData:
     """Load a public checkpoint's capture and require its decisions to match."""
 
     return _load_cli_capture(
@@ -681,12 +750,20 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
         pr_number,
         common,
         validate_checkpoint_decisions=True,
+        records=records,
     )
 
 
-def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None) -> list[CaptureData]:
+def discover_cli_captures(
+    repo: str,
+    pr_number: int,
+    common: Path | None = None,
+    *,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> list[CaptureData]:
     """Find complete private CLI captures that may not yet have a public checkpoint."""
 
+    common, records = resolve_cli_capture_context(common, records)
     roots = private_review_roots(common)
     candidate_roots = (
         roots[-1],
@@ -694,6 +771,8 @@ def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None)
         roots[0] / "runs",
         roots[0] / "coderabbit-review-logs",
     )
+    from .sqlite_review_records import RecordsSchemaIncompatible
+
     captures: list[CaptureData] = []
     visited: set[Path] = set()
     for root in candidate_roots:
@@ -743,8 +822,16 @@ def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None)
                         pr_number,
                         common,
                         validate_checkpoint_decisions=False,
+                        records=records,
                     )
                 )
+            except CaptureInvalid as exc:
+                # A schema cutover error is actionable evidence. Do not let
+                # discovery silently drop a current-head capture (or hide a
+                # required migration behind an empty history result).
+                if isinstance(exc.__cause__, RecordsSchemaIncompatible):
+                    raise
+                continue
             except (EvidenceError, OSError, ValueError):
                 continue
     return captures

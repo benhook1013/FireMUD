@@ -60,6 +60,14 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       justification = "MeterRegistry is thread-safe and only stored")
   private final MeterRegistry meterRegistry;
 
+  public LoggingAdminGrpcService(
+      LogQueryService logQueryService,
+      LogEventService logEventService,
+      ModerationService moderationService,
+      MeterRegistry meterRegistry) {
+    this(logQueryService, logEventService, moderationService, meterRegistry, null);
+  }
+
   @Autowired
   public LoggingAdminGrpcService(
       LogQueryService logQueryService,
@@ -72,14 +80,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     this.moderationService = moderationService;
     this.meterRegistry = meterRegistry;
     this.workloadNamespace = workloadNamespace;
-  }
-
-  LoggingAdminGrpcService(
-      LogQueryService logQueryService,
-      LogEventService logEventService,
-      ModerationService moderationService,
-      MeterRegistry meterRegistry) {
-    this(logQueryService, logEventService, moderationService, meterRegistry, "");
   }
 
   @Override
@@ -568,12 +568,11 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
     GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
     if (allowedServices == null
         || peerIdentity == null
+        || !allowedServices.contains(peerIdentity.service())
         || workloadNamespace == null
         || workloadNamespace.isBlank()
-        || !allowedServices.contains(peerIdentity.service())
-        || !peerIdentity
-            .uri()
-            .equals("spiffe://firemud/ns/" + workloadNamespace + "/sa/account-service")) {
+        || !("spiffe://firemud/ns/" + workloadNamespace + "/sa/" + ACCOUNT_SERVICE)
+            .equals(peerIdentity.uri())) {
       throw new AdminAuthorizationException(
           methodName + " requires an allowlisted account-service mTLS peer");
     }

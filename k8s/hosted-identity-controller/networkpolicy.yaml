@@ -148,9 +148,10 @@ spec:
       ports:
         - protocol: TCP
           port: 2323
-    # Ready additionally requires an mTLS handshake to the fixed Account gRPC
-    # Service using the current projected leaf. Runtime Namespace labels are
-    # externally owned and validated before the controller reaches this probe.
+    # Ready additionally requires mTLS handshakes to the fixed Account, Game
+    # Session, and Social Groups gRPC Services using their current projected
+    # leaves. Runtime Namespace labels are externally owned and validated
+    # before this probe.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -164,6 +165,30 @@ spec:
           podSelector:
             matchLabels:
               app: account-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: game-session-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: game-session-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/preview: "true"
+          podSelector:
+            matchLabels:
+              app: social-groups-service
+        - namespaceSelector:
+            matchLabels:
+              firemud.dev/dev-demo: "true"
+          podSelector:
+            matchLabels:
+              app: social-groups-service
       ports:
         - protocol: TCP
           port: 6565

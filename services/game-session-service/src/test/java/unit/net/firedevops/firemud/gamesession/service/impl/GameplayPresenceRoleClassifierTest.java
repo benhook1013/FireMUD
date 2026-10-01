@@ -1,37 +1,40 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
-import org.slf4j.Logger;
 
 class GameplayPresenceRoleClassifierTest {
   private static final JwtUtil JWT_UTIL = new JwtUtil("mysecretkey123456789012345678901", 30_000L);
 
   @Test
-  void classifyRoleReturnsPlayerWhenJwtParserThrowsIllegalArgumentException() {
-    JwtUtil jwtUtil = mock(JwtUtil.class);
-    Logger logger = mock(Logger.class);
-    when(jwtUtil.parseToken("boom-token")).thenThrow(new IllegalArgumentException("bad jwt"));
-
+  void classifyRoleReturnsPlayerWhenThereIsNoAccountGrantEvidence() {
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(
-                1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", "boom-token"),
-            jwtUtil,
-            logger);
+            new SessionContext(1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", null),
+            JWT_UTIL,
+            null);
 
     assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
-  void classifyRoleReturnsModeratorForScopedModeratorRole() {
-    Logger logger = mock(Logger.class);
+  void classifyRoleReturnsPlayerWithoutParsingAStoredJwt() {
+    GameplayPresenceRole role =
+        GameplayPresenceRoleClassifier.classifyRole(
+            new SessionContext(
+                1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", "boom-token"),
+            null,
+            null);
+
+    assertEquals(GameplayPresenceRole.PLAYER, role);
+  }
+
+  @Test
+  void classifyRoleDoesNotTreatScopedModeratorClaimAsGameplayGrant() {
     String jwt =
         JWT_UTIL.generateToken(
             "202",
@@ -45,14 +48,13 @@ class GameplayPresenceRoleClassifierTest {
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
-            logger);
+            null);
 
-    assertEquals(GameplayPresenceRole.MODERATOR, role);
+    assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
-  void classifyRoleReturnsGodForTenantScopedGodRole() {
-    Logger logger = mock(Logger.class);
+  void classifyRoleDoesNotTreatScopedGodClaimAsGameplayGrant() {
     String jwt =
         JWT_UTIL.generateToken(
             "202",
@@ -66,14 +68,13 @@ class GameplayPresenceRoleClassifierTest {
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
-            logger);
+            null);
 
-    assertEquals(GameplayPresenceRole.GOD, role);
+    assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
   void classifyRoleKeepsGlobalControlPlaneRolesAsPlayerAfterJoin() {
-    Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
             "202",
@@ -89,14 +90,13 @@ class GameplayPresenceRoleClassifierTest {
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
-            logger);
+            null);
 
     assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
-  void classifyRoleReturnsAdminForTenantAdminRole() {
-    Logger logger = mock(Logger.class);
+  void classifyRoleDoesNotTreatTenantAdminClaimAsGameplayGrant() {
     String jwt =
         JWT_UTIL.generateToken(
             "202",
@@ -110,14 +110,13 @@ class GameplayPresenceRoleClassifierTest {
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
-            logger);
+            null);
 
-    assertEquals(GameplayPresenceRole.ADMIN, role);
+    assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
-  void classifyRoleUsesTheHighestAvailableTenantScopedGameplayRole() {
-    Logger logger = mock(Logger.class);
+  void classifyRoleDoesNotElevateFromTenantRoleClaimsAlone() {
     String jwt =
         JWT_UTIL.generateToken(
             "202",
@@ -131,22 +130,41 @@ class GameplayPresenceRoleClassifierTest {
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
-            logger);
+            null);
 
-    assertEquals(GameplayPresenceRole.GOD, role);
+    assertEquals(GameplayPresenceRole.PLAYER, role);
   }
 
   @Test
-  void classifyRoleReturnsPlayerWhenScopedRolesClaimIsMalformed() {
-    Logger logger = mock(Logger.class);
+  void classifyRoleDoesNotUseAClaimScopedToAnotherTenant() {
+    String jwt =
+        JWT_UTIL.generateToken(
+            "202",
+            java.util.Map.of(
+                "accountId",
+                "202",
+                "scopedRoles",
+                java.util.Map.of("23", java.util.List.of("tenantAdmin", "moderator"))));
+
+    GameplayPresenceRole role =
+        GameplayPresenceRoleClassifier.classifyRole(
+            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            JWT_UTIL,
+            null);
+
+    assertEquals(GameplayPresenceRole.PLAYER, role);
+  }
+
+  @Test
+  void classifyRoleDoesNotUseMalformedRoleClaimsAsAuthority() {
     String jwt =
         JWT_UTIL.generateToken("202", java.util.Map.of("accountId", "202", "scopedRoles", "bad"));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
-            JWT_UTIL,
-            logger);
+            null,
+            null);
 
     assertEquals(GameplayPresenceRole.PLAYER, role);
   }

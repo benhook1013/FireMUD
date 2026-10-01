@@ -3,7 +3,10 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
@@ -12,6 +15,7 @@ import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
+import net.firedevops.firemud.accountservice.service.ExpiredConnectScopeCleanupJob;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
@@ -89,6 +93,7 @@ class AccountRepositoryIntegrationTest {
     AccountTenantMembershipRepository memberships =
         new AccountTenantMembershipRepository(transactionAwareDsl);
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
+    AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(transactionAwareDsl);
     long accountId =
         Objects.requireNonNull(
             jdbc.queryForObject(
@@ -98,6 +103,7 @@ class AccountRepositoryIntegrationTest {
                 "two-phase-join@example.com",
                 "hash"));
     VerifiedJoinScope scope = joinScope(accountId);
+    scopes.insert(scope);
     String callerBinding = "bootstrap-jti-two-phase";
     String requestId = "join-two-phase-1";
     String intentDigest = AccountJoinDigest.intent(requestId, scope, callerBinding);
@@ -300,6 +306,98 @@ class AccountRepositoryIntegrationTest {
         .hasMessage("JOIN scope digest mismatch");
   }
 
+  @Test
+  void expiredConnectScopeCleanupPreservesEveryReferencedStatusAndMalformedEvidence() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
+    AccountJoinOperationRepository joinOperations = new AccountJoinOperationRepository(dsl);
+    AccountTenantMembershipRepository memberships = new AccountTenantMembershipRepository(dsl);
+    long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "scope-cleanup",
+                "scope-cleanup@example.com",
+                "hash"));
+    Instant capturedNow = Instant.now();
+    String expiredAt = capturedNow.minusSeconds(60).toString();
+    VerifiedJoinScope unreferenced = joinScope(accountId, "scope-cleanup-free", expiredAt);
+    VerifiedJoinScope pending = joinScope(accountId, "scope-cleanup-pending", expiredAt);
+    VerifiedJoinScope committed = joinScope(accountId, "scope-cleanup-committed", expiredAt);
+    VerifiedJoinScope failed = joinScope(accountId, "scope-cleanup-failed", expiredAt);
+    VerifiedJoinScope future =
+        joinScope(accountId, "scope-cleanup-future", capturedNow.plusSeconds(86_400).toString());
+    VerifiedJoinScope malformed = joinScope(accountId, "scope-cleanup-malformed", expiredAt);
+    VerifiedJoinScope invalidCalendarDate =
+        joinScope(accountId, "scope-cleanup-invalid-date", expiredAt);
+    for (VerifiedJoinScope scope :
+        List.of(unreferenced, pending, committed, failed, future, malformed, invalidCalendarDate)) {
+      scopes.insert(scope);
+    }
+    jdbc.update(
+        "UPDATE account_connect_scope_records SET connect_scope_expires_at = ? WHERE scope_token_hash = ?",
+        "not-an-instant",
+        AccountJoinDigest.tokenHash(malformed.connectScopeId()));
+    jdbc.update(
+        "UPDATE account_connect_scope_records SET connect_scope_expires_at = ? WHERE scope_token_hash = ?",
+        "2026-02-30T10:02:00Z",
+        AccountJoinDigest.tokenHash(invalidCalendarDate.connectScopeId()));
+
+    insertJoinIntent(joinOperations, pending, "join-scope-pending");
+    insertJoinIntent(joinOperations, committed, "join-scope-committed");
+    insertJoinIntent(joinOperations, failed, "join-scope-failed");
+    joinOperations.finish("join-scope-failed", "FAILED", "CONNECT_SCOPE_INVALID", null, null, null);
+    joinOperations.bindPolicyEvidence(
+        "join-scope-committed",
+        AccountJoinDigest.request(committed, "scope-cleanup-committed-caller", true, 1L),
+        1L,
+        true);
+    Account account = new Account();
+    account.setId(accountId);
+    AccountTenantMembership membership = new AccountTenantMembership();
+    membership.setAccount(account);
+    membership.setTenantId(committed.tenantId());
+    membership.setLifecycleState("ACTIVE");
+    membership.setGameplayAdmissionAllowed(true);
+    membership.setMembershipVersion(1L);
+    membership.setMembershipAuthorityGeneration(1L);
+    membership.setAuthorityProvenance("EXPLICIT_JOIN");
+    memberships.save(membership);
+    joinOperations.finish(
+        "join-scope-committed",
+        "COMMITTED",
+        "JOINED",
+        membership.getId(),
+        membership.getMembershipVersion(),
+        membership.getMembershipAuthorityGeneration());
+
+    SimpleMeterRegistry meters = new SimpleMeterRegistry();
+    ExpiredConnectScopeCleanupJob cleanupJob =
+        new ExpiredConnectScopeCleanupJob(scopes, meters, 100, 60_000);
+    cleanupJob.cleanupExpiredConnectScopes();
+
+    assertThat(meters.get("account.connect_scopes.cleanup.deleted").counter().count()).isEqualTo(1);
+    assertThat(meters.get("account.connect_scopes.cleanup.failure").counter().count()).isZero();
+    assertThat(scopeCount(jdbc, unreferenced)).isZero();
+    assertThat(scopeCount(jdbc, pending)).isEqualTo(1);
+    assertThat(scopeCount(jdbc, committed)).isEqualTo(1);
+    assertThat(scopeCount(jdbc, failed)).isEqualTo(1);
+    assertThat(scopeCount(jdbc, future)).isEqualTo(1);
+    assertThat(scopeCount(jdbc, malformed)).isEqualTo(1);
+    assertThat(scopeCount(jdbc, invalidCalendarDate)).isEqualTo(1);
+    assertThatThrownBy(
+            () ->
+                jdbc.update(
+                    "DELETE FROM account_connect_scope_records WHERE scope_token_hash = ?",
+                    AccountJoinDigest.tokenHash(pending.connectScopeId())))
+        .isInstanceOf(DataAccessException.class);
+    assertThatThrownBy(
+            () -> insertJoinIntent(joinOperations, unreferenced, "join-scope-after-cleanup"))
+        .isInstanceOf(DataAccessException.class);
+    assertThat(joinOperations.find("join-scope-after-cleanup")).isEmpty();
+  }
+
   private void commitJoinOutcome(
       AccountJoinOperationRepository joinOperations,
       AccountTenantMembershipRepository memberships,
@@ -338,15 +436,37 @@ class AccountRepositoryIntegrationTest {
     }
   }
 
+  private void insertJoinIntent(
+      AccountJoinOperationRepository joinOperations, VerifiedJoinScope scope, String requestId) {
+    joinOperations.insertIntent(
+        requestId,
+        scope,
+        "scope-cleanup-committed-caller",
+        AccountJoinDigest.intent(requestId, scope, "scope-cleanup-committed-caller"));
+  }
+
+  private static long scopeCount(JdbcTemplate jdbc, VerifiedJoinScope scope) {
+    return Objects.requireNonNull(
+        jdbc.queryForObject(
+            "SELECT COUNT(*) FROM account_connect_scope_records WHERE scope_token_hash = ?",
+            Long.class,
+            AccountJoinDigest.tokenHash(scope.connectScopeId())));
+  }
+
   private AccountJoinOperationRepository.JoinOperation joinOperation(
       AccountJoinOperationRepository joinOperations, String requestId) {
     return joinOperations.find(requestId).orElseThrow();
   }
 
   private static VerifiedJoinScope joinScope(long accountId) {
+    return joinScope(accountId, "two-phase-connect-scope", "2026-09-24T10:02:00Z");
+  }
+
+  private static VerifiedJoinScope joinScope(
+      long accountId, String connectScopeId, String expiresAt) {
     VerifiedJoinScope base =
         new VerifiedJoinScope(
-            "two-phase-connect-scope",
+            connectScopeId,
             accountId,
             7L,
             REALM_ID,
@@ -358,7 +478,7 @@ class AccountRepositoryIntegrationTest {
             23L,
             17L,
             "2026-09-24T10:00:00Z",
-            "2026-09-24T10:02:00Z",
+            expiresAt,
             "unused");
     String digest = AccountJoinDigest.scope(base);
     return new VerifiedJoinScope(

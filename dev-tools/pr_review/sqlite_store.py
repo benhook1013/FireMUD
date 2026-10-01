@@ -22,10 +22,10 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-from .state import ReviewState, StateError, _locked
+from .state import ReviewState, StateError, _locked, sqlite_state_path
 
 SQLITE_SCHEMA_VERSION = 1
-WRITER_BUILD = 2
+WRITER_BUILD = 5
 STATUS_VERSION = 1
 CUTOVER_VERSION = 1
 _METADATA_TABLE = "controller_metadata"
@@ -157,6 +157,22 @@ class SqliteStateStore:
             updated = mutate(current)
             if not isinstance(updated, ReviewState):
                 raise TypeError("mutate must return ReviewState")
+            if any(
+                allocation.stop_basis == "direct_human"
+                and (
+                    allocation.stop_checkpoint is None
+                    or allocation.merge_base is None
+                    or allocation.patch_id is None
+                    or allocation.stop_merge_base is None
+                    or allocation.stop_patch_id is None
+                )
+                for allocation in updated.allocations.values()
+            ):
+                if self.writer_build < 5:
+                    raise StateError("SQLite review state requires writer build 5")
+                connection.execute(
+                    f"UPDATE {_METADATA_TABLE} SET min_writer_build = MAX(min_writer_build, 5) WHERE singleton = 1"
+                )
             payload = json.dumps(
                 updated.to_dict(),
                 ensure_ascii=True,
@@ -204,12 +220,7 @@ class SqliteStateStore:
             with closing(self._connect_read_only()) as connection:
                 base["format"] = "sqlite"
                 base["schema_version"] = int(connection.execute("PRAGMA user_version").fetchone()[0])
-                tables = {
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT name FROM sqlite_master WHERE type = 'table'"
-                    )
-                }
+                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
                 if _METADATA_TABLE not in tables:
                     base["reason"] = "controller metadata table is missing"
                     return base
@@ -227,9 +238,7 @@ class SqliteStateStore:
                 elif data_model_version != ReviewState().schema_version:
                     base["reason"] = f"unsupported review-state data model version {data_model_version}"
                 elif (
-                    isinstance(min_writer_build, bool)
-                    or not isinstance(min_writer_build, int)
-                    or min_writer_build <= 0
+                    isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0
                 ):
                     base["reason"] = "minimum writer build metadata is invalid"
                 elif self.writer_build < min_writer_build:
@@ -319,6 +328,9 @@ class SqliteStateStore:
         target_input = Path(database_path).expanduser().absolute()
         source = source_input.parent.resolve() / source_input.name
         target = target_input.parent.resolve() / target_input.name
+        canonical_target = sqlite_state_path(source)
+        if target != canonical_target:
+            raise StateError(f"SQLite migration target must be the canonical sibling path: {canonical_target}")
         retained_source = source.with_name(f"{source.name}.migrated")
         if (
             target == source
@@ -392,9 +404,9 @@ class SqliteStateStore:
 
                 current_stat = source.stat(follow_symlinks=False)
                 if (
-                    (current_stat.st_dev, current_stat.st_ino) != original_identity
-                    or source.read_bytes() != original_bytes
-                ):
+                    current_stat.st_dev,
+                    current_stat.st_ino,
+                ) != original_identity or source.read_bytes() != original_bytes:
                     raise StateError("legacy review-state JSON changed during migration preflight")
 
                 retained_source.mkdir(mode=0o700)
@@ -409,9 +421,7 @@ class SqliteStateStore:
                     "state_schema_version": imported.schema_version,
                     "min_writer_build": minimum_build,
                 }
-                marker_bytes = (
-                    json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n"
-                ).encode("utf-8")
+                marker_bytes = (json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
                 with marker_path.open("xb") as handle:
                     os.fchmod(handle.fileno(), 0o600)
                     handle.write(marker_bytes)
@@ -421,9 +431,9 @@ class SqliteStateStore:
                 _fsync_directory(source.parent)
                 current_stat = source.stat(follow_symlinks=False)
                 if (
-                    (current_stat.st_dev, current_stat.st_ino) != original_identity
-                    or source.read_bytes() != original_bytes
-                ):
+                    current_stat.st_dev,
+                    current_stat.st_ino,
+                ) != original_identity or source.read_bytes() != original_bytes:
                     raise StateError("legacy review-state JSON changed before cutover")
                 _atomic_exchange(source, retained_source)
                 exchanged = True
@@ -508,11 +518,7 @@ class SqliteStateStore:
         data_model_version, min_writer_build = row
         if data_model_version != ReviewState().schema_version:
             raise StateError(f"unsupported review-state data model version: {data_model_version}")
-        if (
-            isinstance(min_writer_build, bool)
-            or not isinstance(min_writer_build, int)
-            or min_writer_build <= 0
-        ):
+        if isinstance(min_writer_build, bool) or not isinstance(min_writer_build, int) or min_writer_build <= 0:
             raise StateError("SQLite review-state minimum writer build is invalid")
         if self.writer_build < min_writer_build:
             raise StateError(f"SQLite review state requires writer build {min_writer_build}")

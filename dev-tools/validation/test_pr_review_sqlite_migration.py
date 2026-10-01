@@ -72,6 +72,9 @@ class SqliteMigrationEntrypointTest(unittest.TestCase):
             migration_future = executor.submit(migrate)
             self.assertTrue(migration_attempted.wait(timeout=5), "migration did not start")
             try:
+                with self.assertRaises(concurrent.futures.TimeoutError):
+                    migration_future.result(timeout=0.1)
+                self.assertFalse(migration_future.done(), "migration finished while the legacy writer held its lock")
                 release_writer.set()
                 self.assertEqual(writer_future.result(timeout=5), updated)
                 migrated = migration_future.result(timeout=5)
@@ -118,6 +121,22 @@ class SqliteMigrationEntrypointTest(unittest.TestCase):
         marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
         with self.assertRaisesRegex(StateError, "cutover marker version"):
             live_store.load()
+
+    def test_records_writer_upgrade_retains_original_cutover_marker(self) -> None:
+        StateStore(self.legacy_path).save(ReviewState(ordered_prs=(2828,)))
+        SqliteStateStore.migrate_legacy_json(self.legacy_path, self.database_path)
+        marker_path = self.legacy_path / "sqlite-cutover.json"
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["min_writer_build"] = WRITER_BUILD - 1
+        marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+
+        live_store = ControllerStateStore(self.legacy_path)
+        self.assertTrue(controller_state_status(self.legacy_path)["compatible"])
+        self.assertEqual(live_store.load().ordered_prs, (2828,))
+
+        marker["min_writer_build"] = WRITER_BUILD + 1
+        marker_path.write_text(json.dumps(marker, sort_keys=True) + "\n", encoding="utf-8")
+        self.assertFalse(controller_state_status(self.legacy_path)["compatible"])
 
 
 if __name__ == "__main__":

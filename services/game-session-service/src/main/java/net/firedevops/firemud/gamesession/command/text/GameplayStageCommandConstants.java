@@ -23,7 +23,7 @@ public final class GameplayStageCommandConstants {
       "You are not allowed to enter that world.";
   public static final String JOIN_REQUIRED_CODE = "JOIN_REQUIRED";
   public static final String JOIN_REQUIRED_MESSAGE =
-      "Membership is required before PLAY; joining this world is not available yet.";
+      "Membership is required before PLAY. Use JOIN <world>.";
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";
   public static final String TENANT_BILLING_BLOCKED_MESSAGE =
       "That world is temporarily unavailable for gameplay.";

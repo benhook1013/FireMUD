@@ -39,6 +39,15 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
       DSLContext dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
       insertPointer(dsl, "demo", "production", 17L, 71L, true, true);
       insertPointer(dsl, "sandbox", "production", 17L, 72L, true, true);
+      dsl.execute(
+          "INSERT INTO gameplay_admission_pointer_event ("
+              + "id, world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+              + "game_instance_id, pointer_version, visible, requires_character_selection, "
+              + "state_scope, character_creation_policy, actor_principal, reason, "
+              + "control_plane_request_id) "
+              + "VALUES (9001, 'legacy-world', 'legacy-realm', 'Legacy World', 'Legacy Realm', "
+              + "19, 91, 4, true, false, 'SHARED', 'ALLOW_NEW', 'unknown', "
+              + "'retained legacy event', 'legacy-request')");
 
       assertThatThrownBy(() -> migrateToLatest(dataSource))
           .isInstanceOf(RuntimeException.class)
@@ -58,6 +67,15 @@ class GameplayAdmissionPointerCardinalityIntegrationTest {
                       + "AND indexname = 'uq_gameplay_admission_pointer_visible_public_tenant'",
                   Long.class))
           .isEqualTo(0L);
+      assertThat(
+              dsl.fetchValue(
+                  "SELECT count(*) FROM gameplay_admission_pointer_event "
+                      + "WHERE id = 9001 AND world_slug = 'legacy-world' AND tenant_id = 19 "
+                      + "AND game_instance_id = 91 AND pointer_version = 4 "
+                      + "AND catalog_revision IS NULL AND realm_id IS NULL "
+                      + "AND playable_state_namespace_id IS NULL",
+                  Long.class))
+          .isEqualTo(1L);
     }
   }
 

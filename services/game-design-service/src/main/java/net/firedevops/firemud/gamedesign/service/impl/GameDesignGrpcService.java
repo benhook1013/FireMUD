@@ -28,6 +28,7 @@ import net.firedevops.firemud.gamedesign.service.PingService;
 import net.firedevops.firemud.gamedesign.service.PublishAttemptPendingReconciliationException;
 import net.firedevops.firemud.gamedesign.service.PublishGateFailureException;
 import net.firedevops.firemud.gamedesign.service.RevisionService;
+import net.firedevops.firemud.gamedesign.service.ScriptPatchPublishFailureException;
 import net.firedevops.firemud.gamedesign.service.SettingsAuthorityService;
 import net.firedevops.firemud.gamedesign.service.TemplateRemapSetService;
 import net.firedevops.firemud.gamedesign.service.VersionAssetArtifactService;
@@ -297,6 +298,18 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               "PublishScriptPatchVersion",
               ex.failureCode().name(),
               ex.getMessage()));
+    } catch (ScriptPatchPublishFailureException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry,
+              logger,
+              "PublishScriptPatchVersion",
+              ex.failureCode(),
+              ex.getMessage()));
+    } catch (PublishAttemptPendingReconciliationException ex) {
+      builder.setError(
+          GrpcAppErrors.error(
+              meterRegistry, logger, "PublishScriptPatchVersion", ex.errorCode(), ex.getMessage()));
     } catch (IllegalStateException ex) {
       String errorCode = publishAttemptErrorCode(ex);
       builder.setError(
@@ -659,7 +672,10 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               meterRegistry,
               logger,
               "GetDesignControlPlaneDigest",
-              "INVALID_ARGUMENT",
+              request.getScopeCase()
+                      == GetDesignControlPlaneDigestRequest.ScopeCase.SCRIPT_PATCH_VERSION
+                  ? scriptPatchPublicationErrorCode(ex.getMessage())
+                  : "INVALID_ARGUMENT",
               ex.getMessage()));
     } catch (Exception ex) {
       builder.setError(

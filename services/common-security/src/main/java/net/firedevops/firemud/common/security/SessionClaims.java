@@ -65,17 +65,6 @@ public record SessionClaims(
     return false;
   }
 
-  public boolean hasGameplayElevatedRole(String tenantId) {
-    return StringUtils.hasText(tenantId)
-        && containsAnyRoleIgnoreCase(scopedRoles.get(tenantId), "tenantAdmin", "moderator", "god");
-  }
-
-  /** Returns whether a requested tenant-scoped role matches a gameplay role. */
-  public boolean hasGameplayRole(String tenantId, String... expectedRoles) {
-    return StringUtils.hasText(tenantId)
-        && containsAnyRoleIgnoreCase(scopedRoles.get(tenantId), expectedRoles);
-  }
-
   private static List<String> extractGlobalRoles(Object rawGlobalRoles) {
     if (rawGlobalRoles == null) {
       return List.of();
@@ -116,23 +105,5 @@ public record SessionClaims(
       }
     }
     return normalizedRoles;
-  }
-
-  private static boolean containsAnyRoleIgnoreCase(
-      Iterable<String> roles, String... expectedRoles) {
-    if (roles == null) {
-      return false;
-    }
-    for (String role : roles) {
-      if (!StringUtils.hasText(role)) {
-        continue;
-      }
-      for (String expectedRole : expectedRoles) {
-        if (role.equalsIgnoreCase(expectedRole)) {
-          return true;
-        }
-      }
-    }
-    return false;
   }
 }
