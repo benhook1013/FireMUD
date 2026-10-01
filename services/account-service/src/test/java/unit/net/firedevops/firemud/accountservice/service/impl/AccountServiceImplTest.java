@@ -2085,7 +2085,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapCharactersReturnsEntitlementUnavailableBeforeClassifyingMembership() {
+  void listBootstrapCharactersKeepsSelectedTargetFailClosedWhenEntitlementsAreUnavailable() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2396,17 +2396,17 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapWorldsKeepsEntitlementMemoIsolatedByTenant() {
+  void listBootstrapWorldsContinuesAfterOneTenantEntitlementIsUnavailable() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
-    Subscription active = new Subscription();
-    active.setId(2L);
-    active.setTenantId(7L);
-    active.setStatus("active");
-    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+    Subscription activeDemo = new Subscription();
+    activeDemo.setId(1L);
+    activeDemo.setTenantId(7L);
+    activeDemo.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(activeDemo));
     when(gameSessionClient.listGameplayWorlds())
         .thenReturn(
             java.util.List.of(
@@ -2433,27 +2433,33 @@ class AccountServiceImplTest {
                     .setStateScope("SHARED")
                     .setCharacterCreationPolicy("ALLOW_NEW")
                     .build()));
-    Subscription canceled = new Subscription();
-    canceled.setId(3L);
-    canceled.setTenantId(8L);
-    canceled.setStatus("canceled");
-    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of(canceled));
+    Subscription canceledSandbox = new Subscription();
+    canceledSandbox.setId(2L);
+    canceledSandbox.setTenantId(8L);
+    canceledSandbox.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of(canceledSandbox));
 
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
-    var worlds = service.listBootstrapWorlds(bootstrap.bootstrapToken());
+    var knownAvailabilityWorlds = service.listBootstrapWorlds(bootstrap.bootstrapToken());
 
     assertEquals(
-        java.util.List.of("demo"), worlds.stream().map(world -> world.worldSlug()).toList());
+        java.util.List.of("demo"),
+        knownAvailabilityWorlds.stream().map(world -> world.worldSlug()).toList());
 
-    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of());
-    AuthenticationException exception =
-        assertThrows(
-            AuthenticationException.class,
-            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+    Subscription activeSandbox = new Subscription();
+    activeSandbox.setId(3L);
+    activeSandbox.setTenantId(8L);
+    activeSandbox.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of(activeSandbox));
 
-    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    var worldsAfterUnavailableTenant = service.listBootstrapWorlds(bootstrap.bootstrapToken());
+
+    assertEquals(
+        java.util.List.of("sandbox"),
+        worldsAfterUnavailableTenant.stream().map(world -> world.worldSlug()).toList());
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
         .findByTenantId(7L);
     org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
@@ -2461,7 +2467,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapRealmsPropagatesUnavailableEntitlements() {
+  void listBootstrapRealmsOmitsRealmWhenEntitlementsAreUnavailable() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2472,12 +2478,45 @@ class AccountServiceImplTest {
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
+    assertTrue(service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").isEmpty());
+  }
+
+  @Test
+  void listBootstrapRealmsRethrowsOtherAuthenticationErrors() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Private Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("45")
+                    .setPointerVersion(18L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    AuthenticationException authorityError =
+        new AuthenticationException("AUTH_UNAVAILABLE", "Membership authority is unavailable");
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenThrow(authorityError);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
     AuthenticationException exception =
         assertThrows(
             AuthenticationException.class,
             () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
 
-    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    assertEquals("AUTH_UNAVAILABLE", exception.getCode());
   }
 
   @Test

@@ -831,9 +831,16 @@ public class AccountServiceImpl implements AccountService {
       }
       return Optional.empty();
     }
-    return isDiscoveryRealmAdmissible(bootstrapContext, target, discoveryEntitlementMemo)
-        ? Optional.of(target)
-        : Optional.empty();
+    try {
+      return isDiscoveryRealmAdmissible(bootstrapContext, target, discoveryEntitlementMemo)
+          ? Optional.of(target)
+          : Optional.empty();
+    } catch (AuthenticationException ex) {
+      if (!"ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
+        throw ex;
+      }
+      return Optional.empty();
+    }
   }
 
   private boolean isMalformedRealmReachable(

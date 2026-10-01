@@ -163,14 +163,14 @@ Additional Game Session-specific login failures cover parsing and session-state 
 
 - `PROMPT_LOGIN_UNSUPPORTED` – multi-line interactive `LOGIN`/`LOGON` exchanges are planned but not implemented yet on non-bootstrap transports, so those clients must send `LOGIN <email>` to request a code or `LOGIN <email> <secret>` to authenticate.
 - `INVALID_ACCOUNT` – Account Service returned an account identifier that could not be parsed into the expected format.
-- `ACCOUNT_MISMATCH` – bootstrap-backed `LOGIN` resolved to an account different from the validated connect-context subject.
+- `ACCOUNT_MISMATCH` – **target-only** canonical result when bootstrap-backed `LOGIN` resolves to an account different from the validated connect-context subject; see the [Authentication and Authorization contract](../../system-architecture-authentication.md#first-party-websocket-admission-sequence-normative). The current implementation's persisted-credential identity versus scoped registry-context conflict is separate: it unregisters the stale registry context and returns `CONNECT_CONTEXT_INVALID`.
 - `JOIN_REQUIRED` – the selected public-production target either has missing membership (`membershipExists=false`) or an existing but non-admitting membership (`gameplayAdmissionAllowed=false`) for the account, so the target client must complete explicit `JOIN`/`Join & Play`; a grant or cached discovery result is not a substitute. In the current runtime this is a fail-closed, non-actionable result because explicit `JOIN` is unavailable, and the existing non-admitting case cannot be classified as `INACTIVE` because Account does not expose lifecycle state.
 - `WORLD_ACCESS_DENIED` – current runtime behavior for a private, playtest, or other non-public target whose Account-exposed membership/admission predicate or existing grant check denies access; no public join action is offered.
 - `NON_PUBLIC_ENROLLMENT_REQUIRED` – target-only replacement for that non-public missing/non-`ACTIVE` membership outcome; it never offers public `JOIN` and requires existing `membershipLifecycleState=ACTIVE` membership plus the applicable grant.
 - `SESSION_NOT_FOUND` – the supplied game instance identifier has no corresponding `GameInstance`.
 - `INVALID_ARGUMENT` – session ID parsing or other validation failed before the handler reached gameplay state.
 - `PLAY_REQUIRED` – a gameplay command that requires admitted gameplay scope was sent before `PLAY` completed successfully.
-- `CONNECT_CONTEXT_INVALID` – required gateway-signed connect context is missing or failed validation.
+- `CONNECT_CONTEXT_INVALID` – required gateway-signed connect context is missing or failed validation. Current bootstrap-backed `LOGIN` also uses this error when a persisted credential identity conflicts with the scoped first-party registry context, unregistering that stale context before returning the failure.
 - `CONNECT_SCOPE_MISMATCH` – validated connect context does not match the requested world scope.
 
 Planned prompt-flow transcript:
@@ -238,11 +238,18 @@ PLAY demo
 OK PLAY Entered world: Demo World
 ```
 
-First-party `/ws/game/**` account-mismatch example:
+Target-only first-party `/ws/game/**` bootstrap-subject mismatch, using the canonical `ACCOUNT_MISMATCH` contract:
 
 ```text
 LOGIN
 ERROR ACCOUNT_MISMATCH Bootstrap identity does not match the validated session context
+```
+
+Current first-party `LOGIN` behavior when persisted credential identity conflicts with its scoped registry context:
+
+```text
+LOGIN
+ERROR CONNECT_CONTEXT_INVALID Connect context invalid
 ```
 
 Failure examples:
