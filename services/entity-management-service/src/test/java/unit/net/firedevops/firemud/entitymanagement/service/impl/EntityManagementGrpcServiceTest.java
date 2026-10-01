@@ -2026,17 +2026,7 @@ class EntityManagementGrpcServiceTest {
 
   @Test
   void listCharactersInvalidAccountIdReturnsErrorDetail() {
-    PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
-    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
-    InventoryService inventoryService = Mockito.mock(InventoryService.class);
-    io.micrometer.core.instrument.MeterRegistry meterRegistry =
-        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
-    io.micrometer.core.instrument.Counter counter =
-        Mockito.mock(io.micrometer.core.instrument.Counter.class);
-    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
-        .thenReturn(counter);
-    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
     SessionContext.clear();
 
@@ -2049,11 +2039,7 @@ class EntityManagementGrpcServiceTest {
 
   @Test
   void listCharactersRejectsZeroTenantIdBeforeLookup() {
-    PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
-    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
-    InventoryService inventoryService = Mockito.mock(InventoryService.class);
-    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
     SessionContext.clear();
 
@@ -2172,13 +2158,7 @@ class EntityManagementGrpcServiceTest {
 
   @Test
   void listCharactersRejectsMalformedCurrentAccountClaimWithoutTenantAccess() {
-    PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
-    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
-    InventoryService inventoryService = Mockito.mock(InventoryService.class);
-    ContainerService containerService = Mockito.mock(ContainerService.class);
-    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
     EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
     SessionContext.setContext("not-a-long", List.of(), Map.of());
 
@@ -2193,10 +2173,7 @@ class EntityManagementGrpcServiceTest {
 
   @Test
   void listCharactersUnexpectedErrorReturnsInternal() {
-    PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
-    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
-    InventoryService inventoryService = Mockito.mock(InventoryService.class);
     Mockito.when(
             characterService.listForGameplayScope(
                 1L,
@@ -2206,13 +2183,6 @@ class EntityManagementGrpcServiceTest {
                     .PLAYABLE_STATE_SCOPE_SHARED,
                 Pageable.unpaged()))
         .thenThrow(new RuntimeException("boom"));
-    io.micrometer.core.instrument.MeterRegistry meterRegistry =
-        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
-    io.micrometer.core.instrument.Counter counter =
-        Mockito.mock(io.micrometer.core.instrument.Counter.class);
-    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
-        .thenReturn(counter);
-    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
     SessionContext.clear();
 
@@ -2226,17 +2196,7 @@ class EntityManagementGrpcServiceTest {
 
   @Test
   void listCharactersMissingTenantIdReturnsErrorDetail() {
-    PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
-    EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
-    InventoryService inventoryService = Mockito.mock(InventoryService.class);
-    io.micrometer.core.instrument.MeterRegistry meterRegistry =
-        Mockito.mock(io.micrometer.core.instrument.MeterRegistry.class);
-    io.micrometer.core.instrument.Counter counter =
-        Mockito.mock(io.micrometer.core.instrument.Counter.class);
-    Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
-        .thenReturn(counter);
-    RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
     SessionContext.clear();
 
