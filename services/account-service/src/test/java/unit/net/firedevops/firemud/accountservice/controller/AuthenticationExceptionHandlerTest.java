@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.HttpStatus;
 
 class AuthenticationExceptionHandlerTest {
@@ -38,5 +40,23 @@ class AuthenticationExceptionHandlerTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     assertThat(response.getBody().error().code()).isEqualTo("INVALID_CREDENTIALS");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "CONNECT_TOKEN_REJECTED",
+        "NON_PUBLIC_ENROLLMENT_REQUIRED",
+        "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+        "JOIN_REQUIRED",
+        "TENANT_BILLING_BLOCKED"
+      })
+  void mapsAuthenticatedAdmissionDenialsToForbidden(String code) {
+    var response =
+        handler.handleAuthenticationException(new AuthenticationException(code, "denied"));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    assertThat(response.getBody().error().code()).isEqualTo(code);
+    assertThat(response.getBody().error().message()).isEqualTo("denied");
   }
 }

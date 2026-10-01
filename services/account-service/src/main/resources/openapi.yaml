@@ -439,6 +439,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '403':
+          description: Gameplay admission denied for this authenticated account or selected realm
         '503':
           $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/connect-token:
@@ -469,6 +471,8 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '403':
+          description: Gameplay admission denied for this authenticated account or selected realm
         '503':
           $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/request-password-reset:

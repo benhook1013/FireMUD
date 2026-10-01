@@ -202,6 +202,8 @@ Current recovery/verification response and delivery behavior: password-reset, us
 
 The target `POST /auth/connect-token` REST response body is metadata-only: it contains no raw connect token or internal `jti`, and no custom response header may provide one. **Current implementation drift:** `ConnectTokenResponse` currently includes `jti` in the body, despite this target metadata-only contract. The token is delivered only in the protected HttpOnly `Firemud-Connect-Token` `Set-Cookie` with the documented cookie security attributes. An exact retry with the same `(accountId, connectScopeId, requestId)` and digest replays the stored result; after the response envelope recovery horizon, a matching compact receipt returns `RESPONSE_RECOVERY_EXPIRED` and the caller must use a fresh `requestId`, while a changed digest returns `IDEMPOTENCY_CONFLICT`. No gRPC `IssueConnectToken` transport exists.
 
+For the bootstrap-character and connect-token REST routes, authenticated gameplay-admission denials (`CONNECT_TOKEN_REJECTED`, `NON_PUBLIC_ENROLLMENT_REQUIRED`, `PUBLIC_PRODUCTION_ADMISSION_DENIED`, `JOIN_REQUIRED`, and `TENANT_BILLING_BLOCKED`) map to HTTP 403; invalid bootstrap credentials remain 401 and unavailable authority remains 503.
+
 The current executable REST and internal response examples use numeric account and tenant IDs. UUID wire identities are an ADR 0020 target-state migration and are not current executable examples.
 
 Canonical current `/auth/login` success shape:

@@ -2403,6 +2403,11 @@ class AccountServiceImplTest {
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    Subscription active = new Subscription();
+    active.setId(2L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
     when(gameSessionClient.listGameplayWorlds())
         .thenReturn(
             java.util.List.of(
@@ -2442,8 +2447,18 @@ class AccountServiceImplTest {
 
     assertEquals(
         java.util.List.of("demo"), worlds.stream().map(world -> world.worldSlug()).toList());
-    org.mockito.Mockito.verify(subscriptionRepository).findByTenantId(7L);
-    org.mockito.Mockito.verify(subscriptionRepository).findByTenantId(8L);
+
+    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of());
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+        .findByTenantId(7L);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+        .findByTenantId(8L);
   }
 
   @Test
