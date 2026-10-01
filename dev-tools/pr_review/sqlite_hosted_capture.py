@@ -17,7 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from . import evidence, github, hosted
-from .sqlite_finding_text import _first_line, _safe_finding_detail
+from .sqlite_finding_text import (
+    _hosted_display_detail,
+    _hosted_display_severity,
+    _hosted_issue_markdown,
+    _hosted_title_choice,
+    _safe_finding_detail,
+)
 from .sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 
 
@@ -260,7 +266,7 @@ _HOSTED_COMMENT_FOOTER = re.compile(
 )
 
 
-def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[str, str]]:
+def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[str, Any]]:
     """Project one inline comment into stable findings without losing its thread.
 
     CodeRabbit's ``cr-comment:v1`` comments close each independently
@@ -314,11 +320,13 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
                 "Hosted finding comment contains unmarked content after its final cr-comment:v1 marker"
             )
 
-    findings: list[dict[str, str]] = []
+    findings: list[dict[str, Any]] = []
     multiple = len(marker_matches) > 1
     for ordinal, (fingerprint, section) in enumerate(sections, start=1):
         cleaned = _strip_hosted_auxiliary_comments(section)
-        title = _first_line(cleaned)
+        title, unheaded = _hosted_title_choice(cleaned)
+        classification_titles: set[str] = set()
+        _hosted_issue_markdown(cleaned, classification_titles=classification_titles)
         if title is None:
             title = (
                 f"CodeRabbit review comment {comment_id} finding {ordinal}"
@@ -337,6 +345,10 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
                 "fingerprint": fingerprint or "",
                 "title": title[:300],
                 "detail": _safe_finding_detail(cleaned),
+                "display_detail": _hosted_display_detail(cleaned, title),
+                "display_severity": _hosted_display_severity(cleaned),
+                "display_title_is_excerpt": unheaded,
+                "classification_titles": sorted(classification_titles),
             }
         )
     return findings
