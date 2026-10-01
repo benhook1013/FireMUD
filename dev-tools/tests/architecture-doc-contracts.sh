@@ -2570,6 +2570,39 @@ require_contains(
         "currently unimplemented, so the checklist is not yet executable for this gate",
     ],
 )
+require_contains(
+    "design/architecture/decisions/adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md",
+    [
+        "owner-defined child ordinal allocated and persisted by the owning contract for replay-stable reuse",
+        "Persisted lineage, owner-defined ordinals, digests, and accounting make admission and suppression replay-stable",
+        "owner-scope/root/parent/ordinal mapping to each child `EffectId` is one atomic durable admission record",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md",
+    [
+        "Derived reactions retain their owner-defined child ordinal",
+        "complete owner-scope/root/parent/ordinal-to-child-`EffectId` mapping before enqueue/apply",
+        "This accepted child-identity contract is owned by [ADR 0075]",
+        "Pending [ADR 0183]",
+        "it does not gate or redefine the accepted child mapping",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/README.md",
+    [
+        "Depth, cost, and count bounds with replay-stable owner-defined child identity and lineage",
+        "Pending command-plan ordering, `planOrdinal`, command-root allocation, UUIDv7 scalar, canonical serialization, and additional child/fan-out allocation mechanics",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0054-split-spatial-authority-with-causal-read-composition.md",
+    ["Derived reactions use deterministic child effect identities"],
+)
+require_absent(
+    "design/architecture/decisions/README.md",
+    ["generated-child/fan-out allocation design"],
+)
 
 print("architecture doc contracts passed")
 PY

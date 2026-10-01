@@ -73,7 +73,7 @@ Alerting follows the impact class:
 ## Consequences
 
 - Runaway depth, broad fan-out, excessive aggregate cost, and repeated concentration on one target are all bounded.
-- Deterministic lineage, ordinals, digests, and accounting make admission and suppression replay-stable.
+- Persisted lineage, owner-defined ordinals, digests, and accounting make admission and suppression replay-stable.
 - Already committed gameplay remains authoritative when a later child is suppressed.
 - Required and optional classifications make player outcomes and alerts reflect actual gameplay impact.
 - Durable per-suppression evidence supports precise investigation while bounded metrics avoid cardinality growth.
