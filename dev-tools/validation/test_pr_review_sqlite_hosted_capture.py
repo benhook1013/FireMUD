@@ -162,6 +162,26 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 self.assertIn(pair, finding["display_detail"])
                 self.assertIsNone(finding["display_severity"])
 
+    def test_recognized_two_field_examples_after_headline_are_authored_content(self) -> None:
+        for category in ("Bug", "🔒 Security & Privacy", "🩺 Stability & Availability"):
+            with self.subTest(category=category):
+                pair = f"_{category}_ | _Major_"
+                body = "**Document the format.**\n" + pair + "\nThis is an authored example."
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+                self.assertEqual(finding["title"], "Document the format.")
+                self.assertEqual(finding["display_detail"], pair + "\nThis is an authored example.")
+                self.assertIsNone(finding["display_severity"])
+        sample_then_example = "```md\nAn ordinary example.\n```\n_Bug_ | _Major_\n**Document the format.**"
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, sample_then_example)[0]
+        self.assertIn("_Bug_ | _Major_", finding["display_detail"])
+        self.assertIsNone(finding["display_severity"])
+
+    def test_leading_two_field_severity_does_not_read_authored_later_examples(self) -> None:
+        body = "_Bug_ | _Trivial_\n**Document the format.**\n_Bug_ | _Major_\nThis is an authored example."
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+        self.assertEqual(finding["display_severity"], "Trivial")
+        self.assertIn("_Bug_ | _Major_", finding["display_detail"])
+
     def test_security_header_binds_only_its_adjacent_classification_block(self) -> None:
         header = "_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_"
         classification = "**Authored classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**\nKeep the prose."

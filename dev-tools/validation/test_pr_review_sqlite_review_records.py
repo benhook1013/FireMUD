@@ -147,6 +147,26 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(list(connection.iterdump()), before)
 
+    def test_archived_authored_two_field_example_keeps_text_without_severity(self) -> None:
+        self.hosted_display_run(title="Document the format.")
+        body = ("**Document the format.**\n_Bug_ | _Major_\n"
+                "This is an authored example, not provider metadata.\n"
+                "_Security & Privacy_ | _Major_\n**Authored classification**\n"
+                "**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**")
+        self.records.archive_imported_artifacts("display-run", {
+            "hosted_comments": self.hosted_display_archive(issue=body),
+        })
+        finding = self.records.history(2839)["findings"][0]
+        self.assertEqual(finding["title"], "Document the format.")
+        self.assertIn("_Bug_ | _Major_", finding["display_detail"])
+        self.assertIn("_Security & Privacy_ | _Major_", finding["display_detail"])
+        self.assertIn("**Authored classification**", finding["display_detail"])
+        self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+        self.assertIsNone(finding["display_severity"])
+        route = self.records.history(2879)["routes"][0]
+        self.assertEqual(route["display_detail"], finding["display_detail"])
+        self.assertIsNone(route["display_severity"])
+
     def test_invalid_and_ambiguous_comment_ids_leave_independent_archive_siblings(self) -> None:
         self.hosted_display_run()
         archive = json.loads(self.hosted_display_archive())
