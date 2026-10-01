@@ -120,6 +120,284 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_security_header_binds_only_its_adjacent_classification_block(self) -> None:
+        header = "_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_"
+        classification = "**Authored classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**\nKeep the prose."
+        detached = header + "\nAn ordinary prose interruption breaks provenance.\n" + classification
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, detached)[0]
+        self.assertEqual(finding["classification_titles"], [])
+        self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+        bound_then_authored = (header + "\n<details><summary>Analysis chain</summary>Diagnostic noise</details>\n"
+                               "**Provider classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
+                               "**Actual remedy.**\nOrdinary unrelated issue prose.\n" + classification)
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, bound_then_authored)[0]
+        self.assertEqual(finding["classification_titles"], ["Provider classification"])
+        self.assertIn("**Authored classification**", finding["display_detail"])
+        self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+
+    def test_security_metadata_requires_complete_strict_provider_badge(self) -> None:
+        metadata = "\n**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Require durable proof.**\nKeep the prose."
+        valid = ("_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_",
+                 "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_")
+        invalid = ("_Security & Privacy_ | arbitrary authored prose",
+                   "_Security & Privacy narrative_ | _Major_ | _Heavy lift_",
+                   "_Security & Privacy_ | _Major impact_ | _Heavy lift_",
+                   "_Security & Privacy_ | _Unknown_ | _Heavy lift_",
+                   "_Security & Privacy_ | _Major_ | _Something else_",
+                   "_Security & Privacy_ | _Invented tier_ | _Major_ | _Heavy lift_",
+                   "```md\n" + valid[0] + "\n```")
+        for header in valid:
+            with self.subTest(header=header):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, header + metadata)[0]
+                self.assertEqual(finding["classification_titles"], ["Authorization Bypass"])
+                self.assertEqual(finding["title"], "Require durable proof.")
+        for header in invalid:
+            with self.subTest(header=header):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, header + metadata)[0]
+                self.assertEqual(finding["classification_titles"], [])
+                self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+                self.assertIn("**CWE:** CWE-693", finding["display_detail"])
+                self.assertIn(header, finding["display_detail"])
+
+    def test_provider_security_structure_proves_classification_not_remediation(self) -> None:
+        header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
+        for classification, reachability, headline in (
+            ("Authorization Bypass", "", "Require durability proof for the existing-marker outcome."),
+            ("Sensitive Data Exposure", "**Reachability:** Internal\n", "Do not document privileged JWTs with plaintext transport."),
+            ("Different provider classification", "", "Preserve the actual remedy."),
+        ):
+            with self.subTest(classification=classification):
+                body = (header + f"\n**{classification}**\n" + reachability +
+                        "**Exploitability:** Difficult\n**CWE:** [CWE-693](https://cwe.mitre.org/data/definitions/693.html)\n"
+                        f"**{headline}** Keep the substantive explanation.")
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+                self.assertEqual(finding["title"], headline)
+                self.assertEqual(finding["classification_titles"], [classification])
+                self.assertEqual(finding["display_detail"], "Keep the substantive explanation.")
+                self.assertFalse(finding["display_title_is_excerpt"])
+        unproven = header + "\n**Authorization Bypass**\n**Exploitability:** Difficult\n**Another authored issue.**"
+        self.assertEqual(sqlite_hosted_capture._hosted_comment_finding_segments(202, unproven)[0]["classification_titles"], [])
+        ordinary = "**Authorization Bypass**\nKeep this authored issue title and explanation."
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, ordinary)[0]
+        self.assertEqual(finding["title"], "Authorization Bypass")
+        self.assertEqual(finding["classification_titles"], [])
+
+    def test_atx_headline_levels_and_quotes_share_title_detail_normalization(self) -> None:
+        for level in range(1, 7):
+            for quote in ("", "> ", "> > "):
+                with self.subTest(level=level, quote=quote):
+                    body = quote + "#" * level + " Preserve retry identity.\n\nKeep the substantive explanation."
+                    finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+                    self.assertEqual(finding["title"], "Preserve retry identity.")
+                    self.assertEqual(finding["display_detail"], "Keep the substantive explanation.")
+                    self.assertFalse(finding["display_title_is_excerpt"])
+
+    def test_unheaded_hosted_issue_body_and_low_value_badge_are_preserved(self) -> None:
+        issue = "The incoming workflow request must match the existing request identity. " * 5
+        body = "_📐 Maintainability & Code Quality_ | _🔵 Trivial_ | _💤 Low value_\n" + issue
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, body)[0]
+        self.assertEqual(finding["display_severity"], "Trivial")
+        self.assertEqual(finding["display_detail"], issue.strip())
+        self.assertNotIn("Low value", finding["title"])
+
+    def test_explicit_nested_provider_tools_block_is_removed(self) -> None:
+        sample = "```xml\n<Tools>ordinary example</Tools>\n```"
+        body = ("**Align the security summary.**\nPreserve the actual explanation.\n" + sample +
+                "\n<details>\n<summary>🧰 Tools</summary>\n<details>\n"
+                "<summary>🪛 Checkov (3.3.17)</summary>\nCKV_OPENAPI_4/5 diagnostic output\n"
+                "</details>\n</details>\n<details><summary>Ordinary evidence</summary>Keep this prose.</details>")
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(4151800013, body)[0]
+        self.assertNotIn("Checkov", finding["display_detail"])
+        self.assertNotIn("CKV_OPENAPI", finding["display_detail"])
+        self.assertIn(sample, finding["display_detail"])
+        self.assertIn("Keep this prose.", finding["display_detail"])
+
+    def test_actual_security_and_orphan_prompt_display_shapes(self) -> None:
+        header = "_🔒 Security & Privacy_ | _🛡️ Detected with Advanced Tier_ | _🟠 Major_ | _🏗️ Heavy lift_"
+        body = (header + "\n<details>\n<summary>🧩 Analysis chain</summary>\n"
+                "Script executed:\n```bash\necho diagnostic\n```\n</details>\n"
+                "**Broken Authentication**\n\n**Reachability:** External  \n"
+                "**Exploitability:** Difficult  \n**CWE:** [CWE-294](https://cwe.mitre.org/data/definitions/294.html)\n"
+                "**Quarantine replay admission after marker loss.** Production Redis absence fails closed.\n"
+                "```java\nFoo<T> sample;\n```\n<summary>🤖 Prompt for AI Agents</summary>\n"
+                "```text\nDo not display this truncated prompt")
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944363, body)[0]
+        self.assertEqual(finding["title"], "Quarantine replay admission after marker loss.")
+        self.assertEqual(finding["display_severity"], "Major")
+        self.assertEqual(finding["display_detail"], "Production Redis absence fails closed.\n```java\nFoo<T> sample;\n```")
+        self.assertNotIn("Broken Authentication", finding["display_detail"])
+        sample = "```html\n<summary>🤖 Prompt for AI Agents</summary>\nFoo<T>\n```"
+        ordinary = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202, "**Preserve the sample.**\n" + sample)[0]
+        self.assertEqual(ordinary["display_detail"], sample)
+
+    def test_actual_analysis_before_headline_and_inline_duplicate(self) -> None:
+        for title in ("Require explicit non-application evidence.", "Keep tenantId consistent."):
+            with self.subTest(title=title):
+                body = ("_🗄️ Data Integrity & Integration_ | _🟠 Major_ | _⚡ Quick win_\n"
+                        "<details><summary>🔎 Supported by static analysis</summary>"
+                        "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 + "```\n</details>\n"
+                        f"**{title}** Lines 20–25 must preserve `tenantId`.\n"
+                        "<details>\n<summary>Suggested fix</summary>\n```diff\n+noise\n```\n</details>\n"
+                        "<summary>🤖 Prompt for AI Agents</summary>Rewrite everything")
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(4152944302, body)[0]
+                self.assertEqual(finding["title"], title)
+                self.assertEqual(finding["display_detail"], "Lines 20–25 must preserve `tenantId`.")
+                self.assertEqual(finding["display_severity"], "Major")
+
+    def test_hosted_severity_reads_explicit_badges_only(self) -> None:
+        cases = [("_Potential issue_ | _🔴 Critical_ | _Quick win_", "Critical"),
+                 ("_Correctness_ | _Trivial_ | _Heavy lift_", "Trivial"),
+                 ("**[P1] Bug**", "P1"), ("> **Severity: High**", "High"),
+                 ("**Major**", "Major"), ("**Major impact**", None),
+                 ("_Bug_ | _Major impact_ | _Quick win_", None),
+                 ("The Critical issue has Major impact.", None),
+                 ("```md\n**Minor**\n```", None),
+                 ("<details><summary>Prompt for AI Agents</summary>**Major**</details>", None),
+                 ("<details><summary>Supported by static analysis</summary>**Low**</details>", None),
+                 ("**Major**\n**Minor**", None), ("No provider badge.", None)]
+        for badge, expected in cases:
+            with self.subTest(badge=badge):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+                    202, badge + "\n**Validate the target.**\nIssue explanation.")[0]
+                self.assertEqual(finding["display_severity"], expected)
+
+    def test_hosted_severity_is_independent_per_fingerprint(self) -> None:
+        body = ("_Bug_ | _Major_ | _Quick win_\n**First issue.**\n"
+                "<!-- cr-comment:v1:aaaaaaaaaaaaaaaaaaaaaaaa -->\n"
+                "_Bug_ | _Minor_ | _Quick win_\n**Second issue.**\n"
+                "<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->")
+        findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
+        self.assertEqual([item["display_severity"] for item in findings], ["Major", "Minor"])
+        self.assertEqual(len({item["key"] for item in findings}), 2)
+
+    def test_headline_ignores_analysis_wrappers_and_scripts(self) -> None:
+        issue = ("The `AlreadyStarted` path does not compare the incoming "
+                 "`PreparedWorldInstanceRequest` with the existing workflow's request identity.")
+        body = (
+            "_Data Integrity & Integration_ | _Major_ | _Quick win_\n"
+            "<details>\n<summary>Supported by static analysis</summary>\n"
+            "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 +
+            "```\nRepository: owner/repo\nLength of output: 37011\n---\n</details>\n" + issue
+        )
+        self.assertEqual(sqlite_provider_imports._first_line(body), issue)
+        findings = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, body)
+        self.assertEqual(findings[0]["title"], issue)
+        self.assertEqual(findings[0]["key"], "hosted-comment:4142913648")
+        self.assertNotIn(issue, findings[0]["detail"])
+        self.assertEqual(findings[0]["display_detail"], issue)
+        self.assertEqual(sqlite_provider_imports._first_line(body + "\n**Check the request identity.**"),
+                         "Check the request identity.")
+
+    def test_headline_preserves_issue_code_and_omits_wrapper_only_content(self) -> None:
+        for body, title in (
+            ("<p><strong>Check `x < y` before returning `<T>`.</strong></p>",
+             "Check `x < y` before returning `<T>`."),
+            ("> **[P1] Bug**\n> **Validate the current target.**", "Validate the current target."),
+            (("<details>\n<summary>Supported by static analysis</summary>\n"
+              "Script executed:\n```bash\necho diagnostic\n```\n</details>"), None),
+            ("**[P1] Bug**\n---\n<script>alert('bad')</script>", None),
+            ("```python\n**Misleading headline**\n```", None),
+            ("<details>\n<summary>**Actual issue headline.**</summary>\n"
+             + "The issue explanation.\n</details>", "Actual issue headline."),
+            ("**\n__\n##\n>\n---", None),
+            ("_Functional Correctness_ | _Minor_ | _Quick win_ Keep the issue sentence.",
+             "Keep the issue sentence."),
+            ("**[P1] Bug** Keep the issue sentence.", "Keep the issue sentence."),
+            ("<details>\n<summary>Committable suggestion</summary>\n"
+             + "**Apply this patch**\n```diff\n+ fix\n```\n</details>", None),
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(sqlite_provider_imports._first_line(body), title)
+        fallback = sqlite_hosted_capture._hosted_comment_finding_segments(202, "<details>\n</details>")
+        self.assertEqual(fallback[0]["title"], "CodeRabbit review comment 202")
+
+    def test_hosted_display_detail_keeps_issue_markdown_and_removes_provider_noise(self) -> None:
+        body = (
+            "_Data Integrity & Integration_ | _Major_ | _Quick win_\n\n"
+            "**Compare the workflow request identity.**\n\n"
+            "<details>\n<summary>Supported by static analysis</summary>\n"
+            "Script executed:\n```bash\n" + "echo diagnostics\n" * 100 + "```\n</details>\n"
+            "The incoming `requestId` must match [the contract](https://example.test/contract).\n\n"
+            "<p>Return an error when `x < y`.</p>\n\n"
+            "<details><summary>Prompt for AI Agents</summary>Rewrite the whole file.</details>"
+        )
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+        self.assertEqual(finding["display_detail"],
+                         "The incoming `requestId` must match [the contract](https://example.test/contract).\n\n"
+                         "Return an error when `x < y`.")
+        self.assertIn("Supported by static analysis", finding["detail"])
+        self.assertEqual(sqlite_provider_imports._first_line("The script executed with the wrong identity."),
+                         "The script executed with the wrong identity.")
+
+    def test_hosted_detail_preserves_literal_ordinary_fenced_samples(self) -> None:
+        sample = "```xml\n  <Foo<T>>\n    <script>literal example</script>\n    <!-- literal sample -->\n\n\n  </Foo<T>>\n```"
+        body = "**Validate the sample.**\n\n" + sample + "\n\nScript executed:\n```bash\necho diagnostics\n```"
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+        self.assertEqual(finding["display_detail"], sample)
+        self.assertEqual(finding["title"], "Validate the sample.")
+
+    def test_hosted_detail_removes_prose_headline_without_changing_matching_sample(self) -> None:
+        sample = "```markdown\n**Validate target.**\n```"
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202, sample + "\n\n**Validate target.**\n\nKeep this issue explanation."
+        )[0]
+        self.assertEqual(finding["title"], "Validate target.")
+        self.assertTrue(finding["display_detail"].startswith(sample))
+        self.assertEqual(finding["display_detail"].count("**Validate target.**"), 1)
+        self.assertTrue(finding["display_detail"].endswith("Keep this issue explanation."))
+
+    def test_hosted_detail_deduplicates_quoted_headline_only(self) -> None:
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202, "> **Validate target.**\n\n> Keep this distinct quoted explanation."
+        )[0]
+        self.assertEqual(finding["title"], "Validate target.")
+        self.assertEqual(finding["display_detail"], "> Keep this distinct quoted explanation.")
+
+    def test_hosted_metadata_prefixes_do_not_hide_substantive_issue_prose(self) -> None:
+        for issue in (
+            "Repository: lookup uses the wrong tenant",
+            "Analysis results: the route check accepts the wrong target.",
+            "Script output: the missing identity is silently ignored.",
+            "Committable suggestion does not validate the changed request.",
+            "Script executed: the wrong tenant context reaches the worker.",
+            "Supported by static analysis but the reported identifier is incorrect.",
+            "Length of output: the counter is updated before validation.",
+        ):
+            with self.subTest(issue=issue):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+                    202, "**Validate the target.**\n\n" + issue
+                )[0]
+                self.assertEqual(finding["display_detail"], issue)
+                self.assertEqual(sqlite_provider_imports._first_line(issue), issue)
+
+    def test_hosted_exact_provider_labels_and_metadata_still_stay_out_of_issue(self) -> None:
+        for label in (
+            "Supported by static analysis", "Script executed:", "Analysis results:",
+            "Script output:", "Committable suggestion", "Prompt for AI Agents",
+            "Repository: owner/repo", "Length of output: 37011", "**Script output:**",
+        ):
+            with self.subTest(label=label):
+                body = label + "\n\nThe route check accepts the wrong tenant."
+                self.assertEqual(sqlite_provider_imports._first_line(body),
+                                 "The route check accepts the wrong tenant.")
+                self.assertIsNone(sqlite_provider_imports._first_line(label))
+
+    def test_wrapper_fix_keeps_multiple_fingerprinted_finding_keys(self) -> None:
+        body = (
+            "<details>\n</details>\nFirst actionable issue.\n"
+            "<!-- cr-comment:v1:aaaaaaaaaaaaaaaaaaaaaaaa -->\n---\n"
+            "**[P1] Bug**\n**Second actionable issue.**\n"
+            "<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->"
+        )
+        findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
+        self.assertEqual([item["title"] for item in findings],
+                         ["First actionable issue.", "Second actionable issue."])
+        self.assertEqual([item["key"] for item in findings], [
+            "hosted-comment:202:fingerprint:aaaaaaaaaaaaaaaaaaaaaaaa",
+            "hosted-comment:202:fingerprint:bbbbbbbbbbbbbbbbbbbbbbbb",
+        ])
+
     def test_checkpoint_id_matches_hosted_type_case_insensitively_and_exact_review_id(self) -> None:
         checkpoints = [
             SimpleNamespace(type="hOsTeD", hosted_review_id=102, comment_id=801),
