@@ -1819,6 +1819,7 @@ require_contains(
         "`eventType`",
         "`eventSchemaVersion` (admitted event and payload contract version, including tenant-readiness `onLoad`; see [normative Table 1](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields))",
         "`scriptPatchVersion`",
+        "absent with `scriptPinEpoch` for pre-instance requests such as tenant-readiness `onLoad`, while `scriptPatchVersion` remains required",
     ],
 )
 require_contains(
@@ -2020,6 +2021,7 @@ require_absent(
 require_contains(
     "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
     [
+        "Durable `script_schedule_instances` rows in PostgreSQL are authoritative schedule state; Redis keys are rebuildable coordination projections, as defined by [ADR 0072](./decisions/adr-0072-class-specific-timer-durability-and-recovery.md).",
         "resume-window record per `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun>`",
         "its `resumeWindowId` is `<tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, isDryRun, resumeGeneration>`",
         "The server-derived `playableStateScope` is persisted separately as immutable policy/routing/authorization/migration-fence evidence and is exact-validated; it is not part of the window identity.",
@@ -2229,6 +2231,7 @@ require_contains(
         "bounded batches per complete recovery scope `<tenantId, gameInstanceId, playableStateNamespaceId, playableStateScope, regionId, regionEpoch>`",
         "fairness cursors and deficit/cost accounting are keyed by the complete recovery scope",
         "service startup for each complete recovery scope",
+        "`entity_enqueue_seq` is allocated monotonically within the complete allocation scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, entityId)`",
     ],
 )
 require_absent(
@@ -2237,6 +2240,7 @@ require_absent(
         "bounded batches per `<tenantId, gameInstanceId, regionId>`",
         "scheduling across regions rather than draining one region completely",
         "service startup for each region to converge",
+        "complete allocation scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch)`",
     ],
 )
 for tick_commit_path in (
@@ -2545,6 +2549,29 @@ require_contains(
     ],
 )
 require_contains(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "For spatial or ambient maintenance or reset mutations invoked through either API",
+        "including in recovery paths that perform maintenance or reset mutations",
+        "Ordinary owner-local routine replay or reconciliation outside maintenance and reset may preserve the original `EffectId` only when the owner has explicitly classified it as non-conflicting and the recorded exemption matches.",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-transactions.md",
+    [
+        "For spatial or ambient maintenance, recovery, or reset mutations invoked through either API",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "stream publication uses `XADD` with bounded `MAXLEN` as a best-effort coordination hint, not durable stream or work authority",
+        "[Tick Events & Heartbeat Stream](./system-architecture-ticks.md#tick-events--heartbeat-stream)",
+        "its workload-facing principal is read-only (`GET`) for offset keys",
+        "absent that registration Automation uses the owner API/heartbeat contract and receives no direct stream or offset grant",
+    ],
+)
+require_contains(
     "design/architecture/system-architecture-redis.md",
     [
         "every eligible ledger row in that tick's complete expected current-epoch participant set",
@@ -2816,6 +2843,14 @@ require_contains(
         "**Target state only:** Redis timer indexes, scheduler progress hints, queue pointers",
         "This reload sequence is target-state behavior",
         "current PostgreSQL schedule-definition and schedule-instance substrate",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-lua-patterns.md",
+    [
+        "While an untagged legacy `jti` marker may still represent a token accepted in its original window, replay admission remains blocked.",
+        "absence of a tagged target key alone never proves the legacy token unused",
+        "Resolving that continuity condition does not release quarantine: all ADR 0029 deadline, exact fenced probe, old-writer, and owner release gates still apply.",
     ],
 )
 require_contains(
