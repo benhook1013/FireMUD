@@ -5,15 +5,20 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.CompositeSnapshot;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeKind;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -208,6 +213,90 @@ class AccountAuthorityGenerationIntegrationTest {
     assertThatThrownBy(() -> inTransaction(transaction, () -> repository.read(corruptScope)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("malformed");
+  }
+
+  @Test
+  void compositeSnapshotBlocksIssuerAndTenantAdvanceAndKeepsScopeSetsIndependent()
+      throws Exception {
+    DatabaseFixture fixture = databaseFixture();
+    DSLContext setupDsl = fixture.setupDsl();
+    AccountAuthorityGenerationRepository repository = fixture.repository();
+    TransactionTemplate transaction = fixture.transaction();
+
+    UUID accountId = insertAccount(setupDsl, "auth-comp-" + UUID.randomUUID());
+    AuthorityScope issuerScope = AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER);
+    AuthorityScope accountScope = AuthorityScope.account(accountId);
+    AuthorityScope tenantScopeA = AuthorityScope.tenant(TENANT_A);
+    AuthorityScope tenantScopeB = AuthorityScope.tenant(TENANT_B);
+    AuthorityScope membershipScopeA = AuthorityScope.membership(accountId, TENANT_A);
+
+    inTransaction(transaction, () -> repository.initializeIssuerIfAbsent(issuerScope.issuerId()));
+    inTransaction(transaction, () -> repository.initialize(accountScope));
+    inTransaction(transaction, () -> repository.initialize(tenantScopeA));
+    inTransaction(transaction, () -> repository.initialize(tenantScopeB));
+    inTransaction(transaction, () -> repository.initialize(membershipScopeA));
+
+    CompositeSnapshot billingSafeSnapshot =
+        readCompositeSnapshot(
+            fixture, issuerScope.issuerId(), accountId, List.of(), List.of(TENANT_A));
+    assertThat(billingSafeSnapshot.tenants()).isEmpty();
+    assertThat(billingSafeSnapshot.memberships())
+        .extracting(ScopeState::scope)
+        .containsExactly(membershipScopeA);
+    assertThat(billingSafeSnapshot.memberships().getFirst().generation()).isEqualTo(1L);
+    assertThat(billingSafeSnapshot.memberships().getFirst().sourceVersion()).isEqualTo(1L);
+
+    AuthorityScope missingMembershipScope = AuthorityScope.membership(accountId, TENANT_B);
+    assertThat(membershipGenerationCount(setupDsl, missingMembershipScope)).isZero();
+    assertThatThrownBy(
+            () ->
+                readCompositeSnapshot(
+                    fixture, issuerScope.issuerId(), accountId, List.of(), List.of(TENANT_B)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("missing");
+    assertThat(membershipGenerationCount(setupDsl, missingMembershipScope)).isZero();
+    assertIssuanceFenceUnchanged(setupDsl, accountId, billingSafeSnapshot.issuanceFence());
+
+    CompositeSnapshot exactBaseline =
+        readCompositeSnapshot(
+            fixture,
+            issuerScope.issuerId(),
+            accountId,
+            List.of(TENANT_B, TENANT_A),
+            List.of(TENANT_A));
+    CompositeSnapshot afterIssuerAdvance =
+        proveCompositeSnapshotBlocksAdvance(fixture, exactBaseline, exactBaseline.issuer());
+    ScopeState tenantA =
+        afterIssuerAdvance.tenants().stream()
+            .filter(state -> state.scope().equals(tenantScopeA))
+            .findFirst()
+            .orElseThrow();
+    CompositeSnapshot afterTenantAdvance =
+        proveCompositeSnapshotBlocksAdvance(fixture, afterIssuerAdvance, tenantA);
+
+    assertThat(afterTenantAdvance.issuer().generation())
+        .isEqualTo(exactBaseline.issuer().generation() + 1L);
+    assertThat(afterTenantAdvance.issuer().sourceVersion())
+        .isEqualTo(exactBaseline.issuer().sourceVersion() + 1L);
+    assertThat(afterTenantAdvance.tenants())
+        .filteredOn(state -> state.scope().equals(tenantScopeA))
+        .singleElement()
+        .satisfies(
+            state -> {
+              assertThat(state.generation()).isEqualTo(tenantA.generation() + 1L);
+              assertThat(state.sourceVersion()).isEqualTo(tenantA.sourceVersion() + 1L);
+            });
+    assertThat(afterTenantAdvance.tenants())
+        .filteredOn(state -> state.scope().equals(tenantScopeB))
+        .containsExactly(
+            exactBaseline.tenants().stream()
+                .filter(state -> state.scope().equals(tenantScopeB))
+                .findFirst()
+                .orElseThrow());
+    assertThat(afterTenantAdvance.account()).isEqualTo(exactBaseline.account());
+    assertThat(afterTenantAdvance.memberships()).isEqualTo(exactBaseline.memberships());
+    assertThat(afterTenantAdvance.issuanceFence()).isEqualTo(exactBaseline.issuanceFence());
+    assertIssuanceFenceUnchanged(setupDsl, accountId, exactBaseline.issuanceFence());
   }
 
   @Test
@@ -472,6 +561,252 @@ class AccountAuthorityGenerationIntegrationTest {
     return SCHEMA_PREFIX + "_" + UUID.randomUUID().toString().replace("-", "");
   }
 
+  private DatabaseFixture databaseFixture() {
+    String schema = uniqueSchema();
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    String separator = postgres.getJdbcUrl().contains("?") ? "&" : "?";
+    dataSource.setUrl(postgres.getJdbcUrl() + separator + "currentSchema=" + schema);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    Flyway.configure()
+        .dataSource(dataSource)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .placeholders(Map.of("serviceSchema", schema))
+        .locations("classpath:db/migration")
+        .load()
+        .migrate();
+
+    DSLContext setupDsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    DSLContext transactionDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    return new DatabaseFixture(
+        setupDsl,
+        transactionDsl,
+        new AccountAuthorityGenerationRepository(transactionDsl),
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource)));
+  }
+
+  private CompositeSnapshot readCompositeSnapshot(
+      DatabaseFixture fixture,
+      String issuerId,
+      UUID accountId,
+      List<UUID> tenantIds,
+      List<UUID> membershipTenantIds) {
+    return inTransaction(
+        fixture.transaction(),
+        () ->
+            fixture
+                .repository()
+                .readCompositeSnapshot(issuerId, accountId, tenantIds, membershipTenantIds));
+  }
+
+  private CompositeSnapshot proveCompositeSnapshotBlocksAdvance(
+      DatabaseFixture fixture, CompositeSnapshot expectedSnapshot, ScopeState expectedAdvance)
+      throws Exception {
+    CountDownLatch snapshotHeld = new CountDownLatch(1);
+    CountDownLatch releaseSnapshot = new CountDownLatch(1);
+    CountDownLatch advanceStarted = new CountDownLatch(1);
+    AtomicInteger snapshotBackendPid = new AtomicInteger(-1);
+    AtomicInteger advanceBackendPid = new AtomicInteger(-1);
+    AtomicReference<CompositeSnapshot> heldSnapshot = new AtomicReference<>();
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      var snapshotTransaction =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      fixture.transaction(),
+                      () -> {
+                        CompositeSnapshot snapshot =
+                            fixture
+                                .repository()
+                                .readCompositeSnapshot(
+                                    expectedSnapshot.issuer().scope().issuerId(),
+                                    expectedSnapshot.account().scope().accountId(),
+                                    expectedSnapshot.tenants().stream()
+                                        .map(state -> state.scope().tenantId())
+                                        .toList(),
+                                    expectedSnapshot.memberships().stream()
+                                        .map(state -> state.scope().tenantId())
+                                        .toList());
+                        heldSnapshot.set(snapshot);
+                        Integer backendPid =
+                            fixture
+                                .transactionDsl()
+                                .resultQuery("SELECT pg_backend_pid()")
+                                .fetchOne(0, Integer.class);
+                        snapshotBackendPid.set(
+                            Objects.requireNonNull(
+                                backendPid, "Expected PostgreSQL backend for held snapshot"));
+                        snapshotHeld.countDown();
+                        awaitBounded(releaseSnapshot);
+                        return snapshot;
+                      }));
+
+      assertThat(snapshotHeld.await(20, TimeUnit.SECONDS)).isTrue();
+      assertThat(heldSnapshot.get()).isEqualTo(expectedSnapshot);
+
+      var advanceTransaction =
+          executor.submit(
+              () ->
+                  inTransaction(
+                      fixture.transaction(),
+                      () -> {
+                        Integer backendPid =
+                            fixture
+                                .transactionDsl()
+                                .resultQuery("SELECT pg_backend_pid()")
+                                .fetchOne(0, Integer.class);
+                        advanceBackendPid.set(
+                            Objects.requireNonNull(
+                                backendPid, "Expected PostgreSQL backend for authority advance"));
+                        advanceStarted.countDown();
+                        return fixture
+                            .repository()
+                            .advance(expectedAdvance, expectedAdvance.issuanceFence());
+                      }));
+
+      assertThat(advanceStarted.await(20, TimeUnit.SECONDS)).isTrue();
+      int snapshotPid = snapshotBackendPid.get();
+      int backendPid = advanceBackendPid.get();
+      awaitBlockedByBackend(fixture.setupDsl(), snapshotPid, backendPid);
+      assertThat(advanceTransaction.isDone()).isFalse();
+      assertPersistedGeneration(fixture.setupDsl(), expectedAdvance);
+      assertIssuanceFenceUnchanged(
+          fixture.setupDsl(),
+          expectedSnapshot.account().scope().accountId(),
+          expectedSnapshot.issuanceFence());
+
+      releaseSnapshot.countDown();
+      CompositeSnapshot completedHeldSnapshot = snapshotTransaction.get(20, TimeUnit.SECONDS);
+      ScopeState advanced = advanceTransaction.get(20, TimeUnit.SECONDS);
+      assertThat(completedHeldSnapshot).isEqualTo(expectedSnapshot);
+      assertThat(advanced.generation()).isEqualTo(expectedAdvance.generation() + 1L);
+      assertThat(advanced.sourceVersion()).isEqualTo(expectedAdvance.sourceVersion() + 1L);
+      assertThat(advanced.issuanceFence()).isNull();
+      assertPersistedGeneration(fixture.setupDsl(), advanced);
+
+      CompositeSnapshot afterRelease =
+          readCompositeSnapshot(
+              fixture,
+              expectedSnapshot.issuer().scope().issuerId(),
+              expectedSnapshot.account().scope().accountId(),
+              expectedSnapshot.tenants().stream().map(state -> state.scope().tenantId()).toList(),
+              expectedSnapshot.memberships().stream()
+                  .map(state -> state.scope().tenantId())
+                  .toList());
+      ScopeState expectedIssuer =
+          expectedAdvance.scope().kind() == ScopeKind.ISSUER ? advanced : expectedSnapshot.issuer();
+      List<ScopeState> expectedTenants =
+          expectedSnapshot.tenants().stream()
+              .map(state -> state.scope().equals(expectedAdvance.scope()) ? advanced : state)
+              .toList();
+      assertThat(afterRelease.issuer()).isEqualTo(expectedIssuer);
+      assertThat(afterRelease.account()).isEqualTo(expectedSnapshot.account());
+      assertThat(afterRelease.tenants()).containsExactlyElementsOf(expectedTenants);
+      assertThat(afterRelease.memberships()).isEqualTo(expectedSnapshot.memberships());
+      assertThat(afterRelease.issuanceFence()).isEqualTo(expectedSnapshot.issuanceFence());
+      assertIssuanceFenceUnchanged(
+          fixture.setupDsl(),
+          expectedSnapshot.account().scope().accountId(),
+          expectedSnapshot.issuanceFence());
+      return afterRelease;
+    } finally {
+      releaseSnapshot.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  private void awaitBlockedByBackend(
+      DSLContext setupDsl, int snapshotBackendPid, int advanceBackendPid)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+    while (System.nanoTime() < deadline) {
+      Boolean blockedBySnapshot =
+          setupDsl
+              .resultQuery(
+                  "SELECT ? = ANY(pg_blocking_pids(?))", snapshotBackendPid, advanceBackendPid)
+              .fetchOne(0, Boolean.class);
+      if (Boolean.TRUE.equals(blockedBySnapshot)) {
+        return;
+      }
+      Thread.sleep(10L);
+    }
+    throw new AssertionError(
+        "Authority advance was not blocked by held composite snapshot backend "
+            + snapshotBackendPid
+            + "; advance backend: "
+            + advanceBackendPid);
+  }
+
+  private void assertPersistedGeneration(DSLContext setupDsl, ScopeState expected) {
+    var row =
+        Objects.requireNonNull(
+            setupDsl
+                .resultQuery(
+                    "SELECT generation, source_version FROM account_authority_generations "
+                        + "WHERE scope_kind = ? AND issuer_id IS NOT DISTINCT FROM ? "
+                        + "AND account_uuid IS NOT DISTINCT FROM ? "
+                        + "AND tenant_uuid IS NOT DISTINCT FROM ?",
+                    expected.scope().kind().name(),
+                    expected.scope().issuerId(),
+                    expected.scope().accountId(),
+                    expected.scope().tenantId())
+                .fetchOne(),
+            "Expected persisted authority-generation row for " + expected.scope());
+    assertThat(row.get("generation", Long.class)).isEqualTo(expected.generation());
+    assertThat(row.get("source_version", Long.class)).isEqualTo(expected.sourceVersion());
+  }
+
+  private void assertIssuanceFenceUnchanged(
+      DSLContext setupDsl, UUID accountId, IssuanceFence expected) {
+    Long persistedFence =
+        Objects.requireNonNull(
+            setupDsl
+                .resultQuery(
+                    "SELECT issuance_fence FROM account_authority_issuance_fences "
+                        + "WHERE account_uuid = ?",
+                    accountId)
+                .fetchOne(0, Long.class),
+            "Expected persisted Account issuance fence");
+    Long persistedSourceVersion =
+        Objects.requireNonNull(
+            setupDsl
+                .resultQuery(
+                    "SELECT source_version FROM account_authority_issuance_fences "
+                        + "WHERE account_uuid = ?",
+                    accountId)
+                .fetchOne(0, Long.class),
+            "Expected persisted Account issuance-fence source version");
+    assertThat(persistedFence).isEqualTo(expected.value());
+    assertThat(persistedSourceVersion).isEqualTo(expected.sourceVersion());
+  }
+
+  private Long membershipGenerationCount(DSLContext setupDsl, AuthorityScope membershipScope) {
+    return Objects.requireNonNull(
+        setupDsl
+            .resultQuery(
+                "SELECT count(*) FROM account_authority_generations "
+                    + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? AND tenant_uuid = ?",
+                membershipScope.accountId(),
+                membershipScope.tenantId())
+            .fetchOne(0, Long.class),
+        "Expected membership-generation row count");
+  }
+
+  private void awaitBounded(CountDownLatch latch) {
+    try {
+      if (!latch.await(30, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Composite authority snapshot release was not signaled");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Composite authority snapshot was interrupted", interrupted);
+    }
+  }
+
   private void proveConcurrentStaleMembershipAdvance(
       AccountAuthorityGenerationRepository repository,
       TransactionTemplate transaction,
@@ -589,4 +924,10 @@ class AccountAuthorityGenerationIntegrationTest {
     ISSUANCE_FENCE,
     ISSUANCE_FENCE_SOURCE_VERSION
   }
+
+  private record DatabaseFixture(
+      DSLContext setupDsl,
+      DSLContext transactionDsl,
+      AccountAuthorityGenerationRepository repository,
+      TransactionTemplate transaction) {}
 }

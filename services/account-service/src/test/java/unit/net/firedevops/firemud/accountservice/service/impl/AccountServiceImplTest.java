@@ -285,7 +285,7 @@ class AccountServiceImplTest {
 
     AccountDto dto = service.createAccount(request);
 
-    assertEquals(1L, dto.id());
+    assertEquals(accountUuid.toString(), dto.id());
     assertEquals("demo", dto.username());
     org.mockito.ArgumentCaptor<Account> accountCaptor =
         org.mockito.ArgumentCaptor.forClass(Account.class);
@@ -299,7 +299,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("platform"),
             org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq("ACCOUNT_REGISTERED"),
-            org.mockito.ArgumentMatchers.eq("{\"accountId\":1}"));
+            org.mockito.ArgumentMatchers.eq("{\"accountId\":\"" + accountUuid + "\"}"));
     assertEquals(null, accountCaptor.getValue().getRole());
     verifyNoInteractions(profileRepository, accountTenantMembershipRepository);
   }
@@ -335,7 +335,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("platform"),
             org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq("ACCOUNT_REGISTERED"),
-            org.mockito.ArgumentMatchers.eq("{\"accountId\":1}"));
+            org.mockito.ArgumentMatchers.eq("{\"accountId\":\"" + accountUuid + "\"}"));
   }
 
   @Test
@@ -5110,8 +5110,10 @@ class AccountServiceImplTest {
   void exportAccountDataIncludesProfilesAcrossTenants() {
     Account account = new Account();
     account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
+    UUID accountUuid = account.getAccountUuid();
     Profile tenantOne = profile(account, 1L, "one");
     Profile tenantTwo = profile(account, 2L, "two");
     when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
@@ -5127,8 +5129,35 @@ class AccountServiceImplTest {
 
     var export = service.exportAccountData(2L);
 
-    assertEquals(2L, export.account().id());
+    assertEquals(accountUuid.toString(), export.account().id());
     assertEquals(2, export.profiles().size());
+  }
+
+  @Test
+  void exportAccountDataRejectsContradictoryIdentityBeforeReadingProfiles() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    account.setAccountUuidSourceNumericId(3L);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.exportAccountData(2L));
+
+    verifyNoInteractions(profileRepository, profileMapper);
+  }
+
+  @Test
+  void exportAccountDataRejectsUnmappedIdentityBeforeReadingProfiles() {
+    Account account = new Account();
+    account.setId(2L);
+    setPersistedAuthenticationIdentity(account);
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(accountRepository.findByAccountUuid(account.getAccountUuid()))
+        .thenReturn(Optional.empty());
+
+    assertThrows(IllegalArgumentException.class, () -> service.exportAccountData(2L));
+
+    verifyNoInteractions(profileRepository, profileMapper);
   }
 
   @Test

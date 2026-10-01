@@ -305,7 +305,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               request.getUsername(), request.getEmail(), request.getPassword());
       var account = accountService.createAccount(dto);
       CreateAccountResponse response =
-          CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
+          CreateAccountResponse.newBuilder().setAccountId(account.id()).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AccountAlreadyExistsException ex) {

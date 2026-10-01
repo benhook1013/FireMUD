@@ -797,7 +797,9 @@ class AccountGrpcServiceTest {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.createAccount(Mockito.any()))
-        .thenReturn(new AccountDto(1L, "demo", "e@example.com", "player", true));
+        .thenReturn(
+            new AccountDto(
+                "550e8400-e29b-41d4-a716-446655440000", "demo", "e@example.com", "player", true));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<CreateAccountResponse> ref = new AtomicReference<>();
@@ -821,7 +823,7 @@ class AccountGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("1", ref.get().getAccountId());
+    assertEquals("550e8400-e29b-41d4-a716-446655440000", ref.get().getAccountId());
     org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.dto.CreateAccountRequest>
         captor =
             org.mockito.ArgumentCaptor.forClass(

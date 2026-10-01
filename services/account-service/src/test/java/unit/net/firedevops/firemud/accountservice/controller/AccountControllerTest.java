@@ -67,7 +67,7 @@ class AccountControllerTest {
   @Test
   void createAccountReturnsDto() throws Exception {
     CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
-    AccountDto response = new AccountDto(1L, "demo", "demo@example.com", "player", true);
+    AccountDto response = new AccountDto(ACCOUNT_UUID, "demo", "demo@example.com", "player", true);
     when(accountService.createAccount(request)).thenReturn(response);
 
     mockMvc
@@ -77,6 +77,7 @@ class AccountControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.id").value(ACCOUNT_UUID))
         .andExpect(jsonPath("$.data.username").value("demo"));
   }
 
@@ -141,7 +142,7 @@ class AccountControllerTest {
 
   @Test
   void exportAccountAllowsCurrentAccountWithoutTenantScope() throws Exception {
-    AccountDto account = new AccountDto(42L, "demo", "demo@example.com", "player", true);
+    AccountDto account = new AccountDto(ACCOUNT_UUID, "demo", "demo@example.com", "player", true);
     when(accountService.exportAccountData(42L))
         .thenReturn(new AccountDataExportDto(account, List.of()));
     when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID))).thenReturn(42L);
@@ -152,7 +153,8 @@ class AccountControllerTest {
             get("/accounts/" + ACCOUNT_UUID + "/export")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status").value("SUCCESS"));
+        .andExpect(jsonPath("$.status").value("SUCCESS"))
+        .andExpect(jsonPath("$.data.account.id").value(ACCOUNT_UUID));
   }
 
   @Test

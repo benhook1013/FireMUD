@@ -46,6 +46,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -106,13 +107,15 @@ class AccountAuthenticationUuidIntegrationTest {
   void cleanDatabaseAndObserveOwnerTransaction() {
     dsl.execute("TRUNCATE TABLE account_audit_outbox");
     dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
+    AccountEmailLoginChallengeRepository challengeRepositoryTarget =
+        AopTestUtils.getUltimateTargetObject(challengeRepositorySpy);
     doAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
               invocation.callRealMethod();
               return null;
             })
-        .when(challengeRepositorySpy)
+        .when(challengeRepositoryTarget)
         .lockAccountChallenge(anyLong());
   }
 
@@ -127,13 +130,34 @@ class AccountAuthenticationUuidIntegrationTest {
     String username = "repo-" + suffix;
     String email = username + "@example.com";
     var created = accountService.createAccount(new CreateAccountRequest(username, email, PASSWORD));
-    Account persisted = accountRepository.findById(created.id()).orElseThrow();
+    UUID returnedAccountUuid = UUID.fromString(created.id());
+    long accountId = accountService.resolveAccountStorageId(returnedAccountUuid);
+    Account persisted = accountRepository.findById(accountId).orElseThrow();
+
+    assertThat(created.id())
+        .isEqualTo(persisted.getAccountUuid().toString())
+        .isNotEqualTo(Long.toString(accountId));
 
     assertThat(persisted.getAccountUuidProvenance())
         .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
-    assertThat(persisted.getAccountUuidSourceNumericId()).isEqualTo(created.id());
+    assertThat(persisted.getAccountUuidSourceNumericId()).isEqualTo(accountId);
+    assertThat(accountService.resolveAccountStorageId(returnedAccountUuid)).isEqualTo(accountId);
+    var registrationAudit =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT payload FROM account_audit_outbox "
+                        + "WHERE scope = 'platform' AND tenant_id IS NULL "
+                        + "AND producer_service = 'account-service' "
+                        + "AND event_type = 'ACCOUNT_REGISTERED'")
+                .fetchOne(),
+            "Expected durable ACCOUNT_REGISTERED platform audit row");
+    String registrationAuditPayload =
+        Objects.requireNonNull(
+            registrationAudit.get(0, String.class), "Expected registration audit payload");
+    assertThat(registrationAuditPayload)
+        .isEqualTo("{\"accountId\":\"" + returnedAccountUuid + "\"}");
 
-    assertAuthenticationAndPrivateLookup(username, created.id(), persisted.getAccountUuid());
+    assertAuthenticationAndPrivateLookup(username, accountId, persisted.getAccountUuid());
   }
 
   @Test
@@ -242,7 +266,7 @@ class AccountAuthenticationUuidIntegrationTest {
     assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
     assertThat(sessionService.isAccountSessionActive(persisted.getId(), result.bootstrapToken()))
         .isTrue();
-    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(1))
+    org.mockito.Mockito.verify(sessionServiceTarget(), org.mockito.Mockito.times(1))
         .storeAccountSession(
             org.mockito.ArgumentMatchers.eq(persisted.getId()),
             org.mockito.ArgumentMatchers.eq(result.bootstrapToken()),
@@ -261,7 +285,7 @@ class AccountAuthenticationUuidIntegrationTest {
         .isInstanceOf(AuthenticationException.class)
         .hasMessage("Invalid bootstrap token");
 
-    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+    org.mockito.Mockito.verify(sessionServiceTarget(), org.mockito.Mockito.never())
         .isAccountSessionActive(anyLong(), org.mockito.ArgumentMatchers.anyString());
   }
 
@@ -356,7 +380,7 @@ class AccountAuthenticationUuidIntegrationTest {
     assertThat(accountUuidFor(persisted.getId())).isEqualTo(persisted.getAccountUuid());
     assertThat(accountService.resolveAccountStorageId(persisted.getAccountUuid()))
         .isEqualTo(persisted.getId());
-    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+    org.mockito.Mockito.verify(sessionServiceTarget(), org.mockito.Mockito.never())
         .storeAccountSession(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
@@ -369,11 +393,12 @@ class AccountAuthenticationUuidIntegrationTest {
     String deliveredCode = requestEmailLoginOtpAndCaptureCode(persisted.getEmail());
     var challengeBeforeFailure =
         challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
+    SessionService sessionServiceTarget = sessionServiceTarget();
     doAnswer(
             invocation -> {
               throw new IllegalStateException("simulated session storage failure");
             })
-        .when(sessionService)
+        .when(sessionServiceTarget)
         .storeAccountSession(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
@@ -385,7 +410,7 @@ class AccountAuthenticationUuidIntegrationTest {
         .hasMessage("simulated session storage failure");
 
     ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
-    org.mockito.Mockito.verify(sessionService)
+    org.mockito.Mockito.verify(sessionServiceTarget)
         .storeAccountSession(
             org.mockito.ArgumentMatchers.anyLong(),
             tokenCaptor.capture(),
@@ -404,20 +429,21 @@ class AccountAuthenticationUuidIntegrationTest {
     String username = "profile-" + suffix;
     String email = username + "@example.com";
     var created = accountService.createAccount(new CreateAccountRequest(username, email, PASSWORD));
+    long accountId = accountService.resolveAccountStorageId(UUID.fromString(created.id()));
     dsl.execute(
         "INSERT INTO account_tenant_membership "
             + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
             + "membership_version, membership_authority_generation, authority_provenance) "
             + "VALUES (?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
-        created.id(),
+        accountId,
         PROFILE_TENANT_ID);
     dsl.execute(
         "INSERT INTO profiles (account_id, tenant_id, display_name, bio) VALUES (?, ?, ?, ?)",
-        created.id(),
+        accountId,
         PROFILE_TENANT_ID,
         "original-display-name",
         "original-bio");
-    String profileBefore = profileRowJson(created.id());
+    String profileBefore = profileRowJson(accountId);
 
     UUID unmappedUuid = UUID.randomUUID();
     String testToken =
@@ -430,7 +456,7 @@ class AccountAuthenticationUuidIntegrationTest {
     UpdateProfileRequest request =
         new UpdateProfileRequest(
             PROFILE_TENANT_ID,
-            created.id(),
+            accountId,
             "must-not-be-written",
             "must-not-be-written",
             ProfilePresenceVisibilityPolicy.PRIVATE);
@@ -439,7 +465,7 @@ class AccountAuthenticationUuidIntegrationTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessage("Account not found");
 
-    assertThat(profileRowJson(created.id())).isEqualTo(profileBefore);
+    assertThat(profileRowJson(accountId)).isEqualTo(profileBefore);
   }
 
   private void assertAuthenticationAndPrivateLookup(
@@ -487,9 +513,10 @@ class AccountAuthenticationUuidIntegrationTest {
     String username = prefix + "-" + UUID.randomUUID();
     String email = username + "@example.com";
     var created = accountService.createAccount(new CreateAccountRequest(username, email, PASSWORD));
-    assertThat(dsl.execute("UPDATE accounts SET email_verified = TRUE WHERE id = ?", created.id()))
+    long accountId = accountService.resolveAccountStorageId(UUID.fromString(created.id()));
+    assertThat(dsl.execute("UPDATE accounts SET email_verified = TRUE WHERE id = ?", accountId))
         .isEqualTo(1);
-    return accountRepository.findById(created.id()).orElseThrow();
+    return accountRepository.findById(accountId).orElseThrow();
   }
 
   private String requestEmailLoginOtpAndCaptureCode(String email) {
@@ -542,5 +569,9 @@ class AccountAuthenticationUuidIntegrationTest {
     } finally {
       argon2.wipeArray(chars);
     }
+  }
+
+  private SessionService sessionServiceTarget() {
+    return AopTestUtils.getUltimateTargetObject(sessionService);
   }
 }
