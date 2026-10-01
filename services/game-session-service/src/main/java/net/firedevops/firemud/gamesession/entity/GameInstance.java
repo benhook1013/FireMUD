@@ -22,7 +22,8 @@ public class GameInstance {
   private String scriptPatchPinnedBy;
   private String scriptPatchPinnedReason;
   private String scriptPatchPinnedControlPlaneRequestId;
-  private Long ownerAccountId;
+  private String ownerAccountId;
+  private Long legacyOwnerAccountId;
   private String status;
   private Long rowVersion;
 }

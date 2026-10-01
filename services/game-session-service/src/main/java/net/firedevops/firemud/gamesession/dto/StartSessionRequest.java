@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
@@ -8,4 +9,4 @@ public record StartSessionRequest(
     @NotNull @Positive Long tenantId,
     @NotNull @Positive Long gameTemplateId,
     @NotNull String controlPlaneRequestId,
-    @NotNull @Positive Long ownerAccountId) {}
+    @NotBlank String ownerAccountId) {}

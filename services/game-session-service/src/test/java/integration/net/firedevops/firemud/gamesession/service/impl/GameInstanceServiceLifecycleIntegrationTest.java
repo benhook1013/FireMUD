@@ -70,6 +70,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
   GameInstanceServiceLifecycleIntegrationTest.Config.class
 })
 class GameInstanceServiceLifecycleIntegrationTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
@@ -365,7 +367,9 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .when(sessionStateService)
         .saveState(any());
 
-    assertThatThrownBy(() -> service.startSession(new StartSessionRequest(42L, 7L, "cp-1", 100L)))
+    assertThatThrownBy(
+            () ->
+                service.startSession(new StartSessionRequest(42L, 7L, "cp-1", OWNER_ACCOUNT_UUID)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("state propagation failed");
 
@@ -381,7 +385,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
     instance.setScriptPatchVersion("patch-1");
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
-    instance.setOwnerAccountId(100L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     instance.setStatus("RUNNING");
     instance = repository.saveAndFlush(instance);
     long instanceId = instance.getId();
@@ -408,7 +412,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
     instance.setScriptPatchBaseVersionId(77L);
     instance.setScriptPinEpoch(1L);
     instance.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
-    instance.setOwnerAccountId(100L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     instance.setStatus("STOPPED");
     instance = repository.saveAndFlush(instance);
     long instanceId = instance.getId();
@@ -438,7 +442,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
     existing.setScriptPatchVersion("patch-1");
     existing.setScriptPinEpoch(1L);
     existing.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
-    existing.setOwnerAccountId(100L);
+    existing.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     existing.setStatus("RUNNING");
     existing = repository.saveAndFlush(existing);
     long existingId = existing.getId();
@@ -448,7 +452,9 @@ class GameInstanceServiceLifecycleIntegrationTest {
         .saveState(any());
 
     assertThatThrownBy(
-            () -> service.startSession(new StartSessionRequest(42L, 7L, "cp-2", 100L), true))
+            () ->
+                service.startSession(
+                    new StartSessionRequest(42L, 7L, "cp-2", OWNER_ACCOUNT_UUID), true))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("state propagation failed");
 
@@ -459,7 +465,7 @@ class GameInstanceServiceLifecycleIntegrationTest {
     assertThat(restored.getScriptPatchVersion()).isEqualTo("patch-1");
     assertThat(restored.getScriptPinEpoch()).isEqualTo(1L);
     assertThat(restored.getScriptPatchPinnedControlPlaneRequestId()).isEqualTo("pin-request-1");
-    assertThat(restored.getOwnerAccountId()).isEqualTo(100L);
+    assertThat(restored.getOwnerAccountId()).isEqualTo(OWNER_ACCOUNT_UUID);
   }
 
   @Test
@@ -470,13 +476,13 @@ class GameInstanceServiceLifecycleIntegrationTest {
     existing.setScriptPatchVersion("patch-1");
     existing.setScriptPinEpoch(1L);
     existing.setScriptPatchPinnedControlPlaneRequestId("pin-request-1");
-    existing.setOwnerAccountId(100L);
+    existing.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     existing.setStatus("RUNNING");
     existing = repository.saveAndFlush(existing);
     long existingId = existing.getId();
 
     GameInstanceDto started =
-        service.startSession(new StartSessionRequest(42L, 7L, "cp-2", 100L), true);
+        service.startSession(new StartSessionRequest(42L, 7L, "cp-2", OWNER_ACCOUNT_UUID), true);
 
     assertThat(started.status()).isEqualTo("RUNNING");
     assertThat(repository.findById(existingId)).isPresent();

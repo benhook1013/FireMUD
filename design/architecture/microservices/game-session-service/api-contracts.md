@@ -48,18 +48,18 @@ This source intake records no numeric tenant alias, instance, realm, pointer, le
 
 ### Retained tenant identity snapshot and local association
 
-Game Session owns the evidence behind `gameSessionEvidenceDigest` in [Game Design's audited association](../game-design-service/api-contracts.md#audited-retained-game-session-tenant-association). It captures an exact, declared identity projection of its retained rows, not a complete runtime backup or proof of historical lifecycle, effects or admission. The closed version-1 snapshot contains `schemaVersion=1`, the exact `targetNamespace`, canonical positive BIGINT decimal-string `legacyGameSessionTenantId`, and all six arrays below. Each array includes every row for that tenant, in ascending numeric primary-key order; the shared namespace uses its tenant primary key. Row objects contain exactly their listed SQL field names. SQL integer values are canonical decimal strings, UUIDs are canonical lowercase strings, booleans are JSON booleans, text is exact valid Unicode, and absent nullable fields are explicit JSON null. No timestamp, display label, actor/reason or participant-result payload is reconstructed or asserted by this projection.
+Game Session owns the evidence behind `gameSessionEvidenceDigest` in [Game Design's audited association](../game-design-service/api-contracts.md#audited-retained-game-session-tenant-association). It captures an exact, declared identity projection of its retained rows, not a complete runtime backup or proof of historical lifecycle, effects or admission. The closed version-2 snapshot contains `schemaVersion=2`, the exact `targetNamespace`, canonical positive BIGINT decimal-string `legacyGameSessionTenantId`, and all six arrays below. Each array includes every row for that tenant, in ascending numeric primary-key order; the shared namespace uses its tenant primary key. Row objects contain exactly their listed SQL field names. SQL integer values are canonical decimal strings, UUIDs are canonical lowercase strings, booleans are JSON booleans, text is exact valid Unicode, and absent nullable fields are explicit JSON null. Each instance binds both its nullable retained numeric `owner_account_id` and nullable canonical `owner_account_uuid`; at least one must be present. Capturing those exact slots does not prove an association between them, authorize a guessed mapping, or make a retained numeric owner a canonical Account identity. No timestamp, display label, actor/reason or participant-result payload is reconstructed or asserted by this projection.
 
 | Snapshot array / source table | Exact projected fields |
 | --- | --- |
-| `instances` / `game_instances` | `id`, `tenant_id`, `runtime_version`, `script_patch_version`, `owner_account_id`, `status`, `row_version`, `game_template_id`, `launch_descriptor_id`, `version_id`, `release_bundle_id`, `version_state_epoch`, `generation_config_revision`, `remap_set_id`, `script_patch_pinned_control_plane_request_id`, `script_pin_epoch` |
+| `instances` / `game_instances` | `id`, `tenant_id`, `runtime_version`, `script_patch_version`, `owner_account_id`, `owner_account_uuid`, `status`, `row_version`, `game_template_id`, `launch_descriptor_id`, `version_id`, `release_bundle_id`, `version_state_epoch`, `generation_config_revision`, `remap_set_id`, `script_patch_pinned_control_plane_request_id`, `script_pin_epoch` |
 | `pointers` / `gameplay_admission_pointer` | `id`, `tenant_id`, `game_instance_id`, `world_slug`, `realm_slug`, `pointer_version`, `catalog_revision`, `visible`, `requires_character_selection`, `state_scope`, `character_creation_policy`, `public_production_realm`, `realm_id`, `playable_state_namespace_id` |
 | `sharedNamespaces` / `gameplay_tenant_shared_playable_state_namespace` | `tenant_id`, `playable_state_namespace_id` |
 | `backfillIssues` / `gameplay_admission_pointer_identity_backfill_issue` | Must be empty; any matching unresolved issue denies capture |
 | `pointerEvents` / `gameplay_admission_pointer_event` | `id`, `tenant_id`, `game_instance_id`, `world_slug`, `realm_slug`, `pointer_version`, `visible`, `requires_character_selection`, `state_scope`, `character_creation_policy`, `control_plane_request_id`, `prepared_version_upgrade_id`, `public_production_realm` |
 | `preparedUpgrades` / `prepared_version_upgrade` | `id`, `tenant_id`, `preparation_id`, `control_plane_request_id`, `source_game_instance_id`, `source_version_id`, `target_version_id`, `target_launch_descriptor_id`, `remap_set_id`, `result`, `executed_target_game_instance_id`, `executed_pointer_version`, `execution_control_plane_request_id` |
 
-The owner encodes this closed object using RFC 8785 canonical JSON. The SHA-256 preimage consists of two UTF-8 segments, the exact domain `game-session/retained-tenant-identity-snapshot/v1` and that canonical JSON, each prefixed by its decimal UTF-8 byte length and a colon. The digest is lowercase `sha256:` plus 64 hexadecimal digits. Unknown fields, noncanonical values, duplicate or out-of-order rows, changed scope or digest, and empty retained evidence deny use. Every current pointer must refer to a captured instance of that same tenant, have complete realm/namespace UUIDs and an exact `SHARED` or `ISOLATED` scope; a SHARED pointer must match the captured tenant-shared namespace. Historical pointer events can survive their former runtime instance; they do not acquire missing realm, namespace, catalog revision or World lifecycle evidence through this capture.
+The owner encodes this closed object using RFC 8785 canonical JSON. The SHA-256 preimage consists of two UTF-8 segments, the exact domain `game-session/retained-tenant-identity-snapshot/v2` and that canonical JSON, each prefixed by its decimal UTF-8 byte length and a colon. The digest is lowercase `sha256:` plus 64 hexadecimal digits. Unknown fields, noncanonical values, duplicate or out-of-order rows, changed scope or digest, unsupported schema versions, and empty retained evidence deny use. There is no fallback to the unmerged version-1 snapshot. The separately versioned association request and receipt bind this exact snapshot digest without changing their own identity or retry contract. Every current pointer must refer to a captured instance of that same tenant, have complete realm/namespace UUIDs and an exact `SHARED` or `ISOLATED` scope; a SHARED pointer must match the captured tenant-shared namespace. Historical pointer events can survive their former runtime instance; they do not acquire missing realm, namespace, catalog revision or World lifecycle evidence through this capture.
 
 Capture requires a non-read-only Game Session owner transaction at PostgreSQL READ COMMITTED. Before any source read it acquires one fixed-order `SHARE MODE NOWAIT` relation-lock statement for all six source tables. Those locks prevent concurrent insertion, mutation, deletion and truncation, including empty-range phantom inserts, and remain held through the local association commit or rollback. Ordinary reads remain possible. An existing writer causes immediate retryable capture failure, not a durable terminal receipt or an assertion of absence. This short, global source-write barrier is limited to the one-time retained-data association; it is not a per-request gameplay lock or an automated runtime quiescence policy. Operational and live use remain gated until the complete capture/receiver proof passes. A prior unlocked preview may prepare approval evidence, but only the receiver's fenced recapture can authorize first commit.
 
@@ -194,19 +194,19 @@ To start a session via REST:
 curl -X POST http://localhost:8086/sessions \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer <control-ui JWT with a current global privileged role and required assurance>' \
-  -d '{"tenantId":42,"gameTemplateId":7,"controlPlaneRequestId":"cp-req-1001","ownerAccountId":1001}'
+  -d '{"tenantId":42,"gameTemplateId":7,"controlPlaneRequestId":"cp-req-1001","ownerAccountId":"f2ed193b-12c1-4c96-bcad-c162229af440"}'
 ```
 
 ### gRPC examples
 
-The plaintext commands below are current-contract, local-development examples only. Their numeric `tenantId`, `gameTemplateId`, and `ownerAccountId` values intentionally match the current DTO/OpenAPI contract; a future UUID-shaped example would be target-state only and must be labeled separately. Shared and player-facing environments must use the configured mTLS trust bundle and workload certificate, replacing `-plaintext` with `-cacert`, `-cert`, and `-key` arguments as shown in the [gRPC architecture](../../system-architecture-grpc.md).
+The plaintext commands below are owner-local development examples, not a complete external operator path. `tenantId` and `gameTemplateId` remain the current numeric selectors; `ownerAccountId` is the exact Account-issued canonical non-nil UUID, not Account's private row key. The example UUID is illustrative and must be replaced with proved owner identity, never inferred from a retained numeric owner. Shared and player-facing environments must use the configured mTLS trust bundle and workload certificate, replacing `-plaintext` with `-cacert`, `-cert`, and `-key` arguments as shown in the [gRPC architecture](../../system-architecture-grpc.md).
 
 ```bash
 grpcurl -plaintext localhost:6565 game_session.v1.GameSessionService/Ping
 ```
 
 ```bash
-grpcurl -plaintext -d '{"tenantId":42,"gameTemplateId":7,"controlPlaneRequestId":"cp-req-1001","ownerAccountId":1001}' \
+grpcurl -plaintext -d '{"tenantId":"42","gameTemplateId":"7","controlPlaneRequestId":"cp-req-1001","ownerAccountId":"f2ed193b-12c1-4c96-bcad-c162229af440"}' \
   localhost:6565 game_session.v1.GameSessionService/StartSession
 ```
 
@@ -216,7 +216,7 @@ grpcurl -plaintext -d '{"tenantId":42,"gameTemplateId":7,"controlPlaneRequestId"
   - `tenantId`
   - `gameTemplateId`
   - `controlPlaneRequestId`
-  - `ownerAccountId`
+  - `ownerAccountId`: canonical non-nil Account UUID; numeric aliases, noncanonical spellings and missing identity deny before owner lookup or mutation
   - optional `clientIp`
 - behavior:
   - Game Session must call Game Design `ResolveLaunchDescriptor(...)` before creating any `gameInstanceId` row

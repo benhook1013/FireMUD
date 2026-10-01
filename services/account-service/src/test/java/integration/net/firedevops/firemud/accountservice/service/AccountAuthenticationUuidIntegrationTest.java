@@ -20,6 +20,7 @@ import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.controller.ProfileController;
 import net.firedevops.firemud.accountservice.dto.AuthenticationResult;
 import net.firedevops.firemud.accountservice.dto.CreateAccountRequest;
+import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
@@ -424,7 +425,7 @@ class AccountAuthenticationUuidIntegrationTest {
   }
 
   @Test
-  void unmappedUuidDeniesProfileMutationEvenWhenBodyNamesAnExistingPrivateRow() {
+  void unmappedUuidDeniesProfileMutationWithoutTouchingAnExistingPrivateRow() {
     String suffix = UUID.randomUUID().toString();
     String username = "profile-" + suffix;
     String email = username + "@example.com";
@@ -456,7 +457,7 @@ class AccountAuthenticationUuidIntegrationTest {
     UpdateProfileRequest request =
         new UpdateProfileRequest(
             PROFILE_TENANT_ID,
-            accountId,
+            unmappedUuid.toString(),
             "must-not-be-written",
             "must-not-be-written",
             ProfilePresenceVisibilityPolicy.PRIVATE);
@@ -466,6 +467,140 @@ class AccountAuthenticationUuidIntegrationTest {
         .hasMessage("Account not found");
 
     assertThat(profileRowJson(accountId)).isEqualTo(profileBefore);
+  }
+
+  @Test
+  void persistedProfileGetUpdateAndExportCarryTheCanonicalAccountUuid() {
+    String suffix = UUID.randomUUID().toString();
+    String username = "profile-carrier-" + suffix;
+    var created =
+        accountService.createAccount(
+            new CreateAccountRequest(username, username + "@example.com", PASSWORD));
+    UUID accountUuid = UUID.fromString(created.id());
+    long accountStorageId = accountService.resolveAccountStorageId(accountUuid);
+    dsl.execute(
+        "INSERT INTO account_tenant_membership "
+            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+            + "membership_version, membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
+        accountStorageId,
+        PROFILE_TENANT_ID);
+    long profileStorageId =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "INSERT INTO profiles (account_id, tenant_id, display_name, bio) "
+                        + "VALUES (?, ?, ?, ?) RETURNING id",
+                    accountStorageId,
+                    PROFILE_TENANT_ID,
+                    "before-update",
+                    "before-bio")
+                .fetchOne(0, Long.class),
+            "Expected inserted profile storage id");
+
+    SessionContext.setContext(accountUuid.toString(), List.of(), Map.of());
+    ProfileController controller = new ProfileController(accountService);
+    ProfileDto initial =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    controller
+                        .getProfile(accountUuid.toString(), Long.toString(PROFILE_TENANT_ID))
+                        .getBody(),
+                    "Expected profile GET response")
+                .data(),
+            "Expected profile GET data");
+
+    assertThat(initial.id()).isEqualTo(profileStorageId);
+    assertThat(initial.tenantId()).isEqualTo(PROFILE_TENANT_ID);
+    assertThat(initial.accountId()).isEqualTo(accountUuid.toString());
+    assertThat(initial.accountId()).isNotEqualTo(Long.toString(accountStorageId));
+
+    ProfileDto updated =
+        Objects.requireNonNull(
+            Objects.requireNonNull(
+                    controller
+                        .updateProfile(
+                            accountUuid.toString(),
+                            new UpdateProfileRequest(
+                                PROFILE_TENANT_ID,
+                                accountUuid.toString(),
+                                "after-update",
+                                "after-bio",
+                                ProfilePresenceVisibilityPolicy.PRIVATE))
+                        .getBody(),
+                    "Expected profile update response")
+                .data(),
+            "Expected updated profile data");
+
+    assertThat(updated.id()).isEqualTo(profileStorageId);
+    assertThat(updated.tenantId()).isEqualTo(PROFILE_TENANT_ID);
+    assertThat(updated.accountId()).isEqualTo(accountUuid.toString());
+    assertThat(profileRowJson(accountStorageId))
+        .contains("after-update")
+        .contains("after-bio")
+        .contains("PRIVATE");
+
+    var exported = accountService.exportAccountData(accountStorageId);
+    assertThat(exported.account().id()).isEqualTo(accountUuid.toString());
+    assertThat(exported.profiles())
+        .singleElement()
+        .satisfies(
+            profile -> {
+              assertThat(profile.id()).isEqualTo(profileStorageId);
+              assertThat(profile.tenantId()).isEqualTo(PROFILE_TENANT_ID);
+              assertThat(profile.accountId()).isEqualTo(accountUuid.toString());
+            });
+    org.mockito.Mockito.verify(notificationService)
+        .sendNotification(PROFILE_TENANT_ID, accountStorageId, "Profile updated");
+  }
+
+  @Test
+  void profileUpdateRejectsSourceUuidMismatchWithoutSavingOrNotifying() {
+    String suffix = UUID.randomUUID().toString();
+    String firstUsername = "profile-source-first-" + suffix;
+    String secondUsername = "profile-source-second-" + suffix;
+    var first =
+        accountService.createAccount(
+            new CreateAccountRequest(firstUsername, firstUsername + "@example.com", PASSWORD));
+    var second =
+        accountService.createAccount(
+            new CreateAccountRequest(secondUsername, secondUsername + "@example.com", PASSWORD));
+    long firstAccountStorageId =
+        accountService.resolveAccountStorageId(UUID.fromString(first.id()));
+    UUID secondAccountUuid = UUID.fromString(second.id());
+    dsl.execute(
+        "INSERT INTO account_tenant_membership "
+            + "(account_id, tenant_id, gameplay_admission_allowed, lifecycle_state, "
+            + "membership_version, membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, TRUE, 'ACTIVE', 1, 1, 'EXPLICIT_JOIN')",
+        firstAccountStorageId,
+        PROFILE_TENANT_ID);
+    dsl.execute(
+        "INSERT INTO profiles (account_id, tenant_id, display_name, bio) VALUES (?, ?, ?, ?)",
+        firstAccountStorageId,
+        PROFILE_TENANT_ID,
+        "original-display-name",
+        "original-bio");
+    String profileBefore = profileRowJson(firstAccountStorageId);
+
+    assertThatThrownBy(
+            () ->
+                accountService.updateProfile(
+                    firstAccountStorageId,
+                    new UpdateProfileRequest(
+                        PROFILE_TENANT_ID,
+                        secondAccountUuid.toString(),
+                        "must-not-be-written",
+                        "must-not-be-written",
+                        ProfilePresenceVisibilityPolicy.PRIVATE)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Profile account identity does not match its source");
+
+    assertThat(profileRowJson(firstAccountStorageId)).isEqualTo(profileBefore);
+    org.mockito.Mockito.verify(notificationService, org.mockito.Mockito.never())
+        .sendNotification(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString());
   }
 
   private void assertAuthenticationAndPrivateLookup(

@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
@@ -141,6 +142,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.start")
   public GameInstanceDto startSession(StartSessionRequest request, boolean replaceExistingFirst) {
+    if (request == null) {
+      throw new IllegalArgumentException("request is required");
+    }
+    if (!AccountIds.isCanonicalNonNilUuid(request.ownerAccountId())) {
+      throw new IllegalArgumentException("ownerAccountId must be a canonical non-nil UUID");
+    }
     logger.info(
         "Starting game session for tenant {} template {} controlPlaneRequestId {}",
         request.tenantId(),
@@ -167,7 +174,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           prepareWorldInstance(stage.startingState(), resolvedLaunchDescriptor, request);
       sessionStateService.saveState(runtimeState);
       newStateSaved = true;
-      GameInstanceDto existingRunningState = stage.existingRunningState();
+      GameInstanceSnapshot existingRunningSnapshot = stage.existingRunningState();
+      GameInstanceDto existingRunningState =
+          existingRunningSnapshot == null ? null : existingRunningSnapshot.dto();
       if (existingRunningState != null) {
         sessionStateService.deleteState(existingRunningState.tenantId(), existingRunningState.id());
         WorldInstanceLifecycleSnapshot existingLifecycle =
@@ -230,7 +239,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.stop")
   public GameInstanceDto stopSession(long sessionId) {
-    GameInstanceDto runningState = inTransaction(() -> stageStopSession(sessionId), "stage stop");
+    GameInstanceSnapshot runningSnapshot =
+        inTransaction(() -> stageStopSession(sessionId), "stage stop");
+    GameInstanceDto runningState = runningSnapshot.dto();
     boolean worldTerminationRequested = false;
     boolean worldTerminationCompleted = false;
     try {
@@ -258,7 +269,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       }
       return inTransaction(() -> finalizeStoppedSession(sessionId), "finalize stop");
     } catch (RuntimeException ex) {
-      compensateStopFailure(runningState, worldTerminationRequested, worldTerminationCompleted);
+      compensateStopFailure(runningSnapshot, worldTerminationRequested, worldTerminationCompleted);
       throw ex;
     }
   }
@@ -266,8 +277,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   @Override
   @Timed(value = "gamesession.restart")
   public GameInstanceDto restartSession(long sessionId) {
-    GameInstanceDto previousState =
+    GameInstanceSnapshot previousSnapshot =
         inTransaction(() -> stageRestartSession(sessionId), "stage restart");
+    GameInstanceDto previousState = previousSnapshot.dto();
     GameInstanceDto runtimeState = withStatus(previousState, STATUS_RUNNING);
     boolean stateSaved = false;
     try {
@@ -275,7 +287,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       stateSaved = true;
       return inTransaction(() -> finalizeRestartedSession(sessionId), "finalize restart");
     } catch (RuntimeException ex) {
-      compensateRestartFailure(previousState, stateSaved);
+      compensateRestartFailure(previousSnapshot, stateSaved);
       throw ex;
     }
   }
@@ -284,7 +296,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       StartSessionRequest request,
       ResolvedLaunchDescriptor resolvedLaunchDescriptor,
       boolean replaceExistingFirst) {
-    GameInstanceDto existingRunningState = null;
+    GameInstanceSnapshot existingRunningState = null;
     if (replaceExistingFirst) {
       existingRunningState =
           repository
@@ -295,7 +307,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       if (existingRunningState != null) {
         GameInstance existingRunning =
             repository
-                .findById(existingRunningState.id())
+                .findById(existingRunningState.dto().id())
                 .orElseThrow(() -> new IllegalArgumentException("Session not found"));
         existingRunning.setStatus(STATUS_STOPPING);
         repository.save(existingRunning);
@@ -316,7 +328,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setRemapSetId(resolvedLaunchDescriptor.remapSetId());
     instance.setOwnerAccountId(request.ownerAccountId());
     instance.setStatus(STATUS_STARTING);
-    return new StartSessionStage(snapshot(repository.save(instance)), existingRunningState);
+    return new StartSessionStage(snapshot(repository.save(instance)).dto(), existingRunningState);
   }
 
   private GameInstanceDto finalizeStartedSession(StartSessionStage stage) {
@@ -337,12 +349,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     repository.save(existingRunning);
   }
 
-  private GameInstanceDto stageStopSession(long sessionId) {
+  private GameInstanceSnapshot stageStopSession(long sessionId) {
     GameInstance instance =
         repository
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-    GameInstanceDto runningState = snapshot(instance);
+    GameInstanceSnapshot runningState = snapshot(instance);
     instance.setStatus(STATUS_STOPPING);
     repository.save(instance);
     return runningState;
@@ -357,12 +369,12 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     return mapper.toDto(repository.save(instance));
   }
 
-  private GameInstanceDto stageRestartSession(long sessionId) {
+  private GameInstanceSnapshot stageRestartSession(long sessionId) {
     GameInstance instance =
         repository
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-    GameInstanceDto previousState = snapshot(instance);
+    GameInstanceSnapshot previousState = snapshot(instance);
     instance.setStatus(STATUS_STARTING);
     repository.save(instance);
     return previousState;
@@ -408,7 +420,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
           "delete failed started session state",
           () -> sessionStateService.deleteState(runtimeState.tenantId(), runtimeState.id()));
     }
-    GameInstanceDto existingRunningState = stage.existingRunningState();
+    GameInstanceSnapshot existingRunningSnapshot = stage.existingRunningState();
+    GameInstanceDto existingRunningState =
+        existingRunningSnapshot == null ? null : existingRunningSnapshot.dto();
     if (existingRunningState != null && !oldWorldTerminationRequested) {
       runRollbackSafely(
           "restore replaced session runtime state",
@@ -422,7 +436,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                         repository
                             .findById(existingRunningState.id())
                             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-                    restoreSessionSnapshot(existingRunning, existingRunningState);
+                    restoreSessionSnapshot(existingRunning, existingRunningSnapshot);
                     return null;
                   },
                   "restore replaced session row"));
@@ -492,9 +506,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   }
 
   private void compensateStopFailure(
-      GameInstanceDto runningState,
+      GameInstanceSnapshot runningSnapshot,
       boolean worldTerminationRequested,
       boolean worldTerminationCompleted) {
+    GameInstanceDto runningState = runningSnapshot.dto();
     if (worldTerminationCompleted) {
       runRollbackSafely(
           "finalize terminated session row",
@@ -518,7 +533,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                         repository
                             .findById(runningState.id())
                             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-                    restoreSessionSnapshot(instance, runningState);
+                    restoreSessionSnapshot(instance, runningSnapshot);
                     return null;
                   },
                   "restore stopping session row"));
@@ -529,7 +544,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     }
   }
 
-  private void compensateRestartFailure(GameInstanceDto previousState, boolean stateSaved) {
+  private void compensateRestartFailure(GameInstanceSnapshot previousSnapshot, boolean stateSaved) {
+    GameInstanceDto previousState = previousSnapshot.dto();
     if (stateSaved) {
       runRollbackSafely(
           "delete restarted session state",
@@ -544,13 +560,17 @@ public class GameInstanceServiceImpl implements GameInstanceService {
                       repository
                           .findById(previousState.id())
                           .orElseThrow(() -> new IllegalArgumentException("Session not found"));
-                  restoreSessionSnapshot(instance, previousState);
+                  restoreSessionSnapshot(instance, previousSnapshot);
                   return null;
                 },
                 "restore restarted session row"));
   }
 
-  private GameInstanceDto snapshot(GameInstance instance) {
+  private GameInstanceSnapshot snapshot(GameInstance instance) {
+    return new GameInstanceSnapshot(snapshotDto(instance), instance.getLegacyOwnerAccountId());
+  }
+
+  private GameInstanceDto snapshotDto(GameInstance instance) {
     return new GameInstanceDto(
         instance.getId(),
         instance.getTenantId(),
@@ -570,7 +590,9 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         instance.getStatus());
   }
 
-  private void restoreSessionSnapshot(GameInstance instance, GameInstanceDto snapshot) {
+  private void restoreSessionSnapshot(
+      GameInstance instance, GameInstanceSnapshot internalSnapshot) {
+    GameInstanceDto snapshot = internalSnapshot.dto();
     instance.setStatus(snapshot.status());
     instance.setRuntimeVersion(snapshot.runtimeVersion());
     instance.setScriptPatchVersion(snapshot.scriptPatchVersion());
@@ -585,6 +607,7 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setGenerationConfigRevision(snapshot.generationConfigRevision());
     instance.setRemapSetId(snapshot.remapSetId());
     instance.setOwnerAccountId(snapshot.ownerAccountId());
+    instance.setLegacyOwnerAccountId(internalSnapshot.legacyOwnerAccountId());
     instance.setTenantId(snapshot.tenantId());
     repository.save(instance);
   }
@@ -980,8 +1003,10 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     return "prb:" + tenantId + ":" + versionId + ":" + releaseBundleId;
   }
 
+  private record GameInstanceSnapshot(GameInstanceDto dto, @Nullable Long legacyOwnerAccountId) {}
+
   private record StartSessionStage(
-      GameInstanceDto startingState, @Nullable GameInstanceDto existingRunningState) {}
+      GameInstanceDto startingState, @Nullable GameInstanceSnapshot existingRunningState) {}
 
   private record PreparedWorldInstance(long tenantId, long gameInstanceId, long lifecycleEpoch) {}
 }

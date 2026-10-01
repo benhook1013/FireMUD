@@ -16,6 +16,7 @@ import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
@@ -137,7 +138,7 @@ public final class GameSessionGrpcService
       String clientIp = request.getClientIp();
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
-      long ownerAccountId = parseOwnerAccountId(request.getOwnerAccountId());
+      String ownerAccountId = parseOwnerAccountUuid(request.getOwnerAccountId());
       long gameTemplateId =
           ControlPlaneRequestParser.parsePositiveLong(
               request.getGameTemplateId(), "gameTemplateId");
@@ -228,8 +229,11 @@ public final class GameSessionGrpcService
     }
   }
 
-  private long parseOwnerAccountId(String ownerAccountIdText) {
-    return ControlPlaneRequestParser.parsePositiveLong(ownerAccountIdText, "ownerAccountId");
+  private String parseOwnerAccountUuid(String ownerAccountId) {
+    if (!AccountIds.isCanonicalNonNilUuid(ownerAccountId)) {
+      throw new IllegalArgumentException("ownerAccountId must be a canonical non-nil UUID");
+    }
+    return ownerAccountId;
   }
 
   private List<Long> parseAccountIds(List<String> accountIds) {
@@ -238,7 +242,7 @@ public final class GameSessionGrpcService
         .toList();
   }
 
-  private void requireTenantAndOwnerAccess(long tenantId, long ownerAccountId) {
+  private void requireTenantAndOwnerAccess(long tenantId, String ownerAccountId) {
     requireTenantAccess(tenantId);
     if (isCurrentAccount(ownerAccountId)) {
       return;
@@ -437,7 +441,9 @@ public final class GameSessionGrpcService
     try {
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
-      long viewerAccountId = parseOwnerAccountId(request.getViewerAccountId());
+      long viewerAccountId =
+          ControlPlaneRequestParser.parsePositiveLong(
+              request.getViewerAccountId(), "viewerAccountId");
       requireTenantOrCurrentAccountAccess(tenantId, viewerAccountId);
       if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
@@ -780,6 +786,13 @@ public final class GameSessionGrpcService
 
   private boolean isCurrentAccount(GameInstance instance) {
     return isCurrentAccount(instance.getOwnerAccountId());
+  }
+
+  private boolean isCurrentAccount(String ownerAccountId) {
+    String currentAccountId = SessionContext.getAccountId();
+    return AccountIds.isCanonicalNonNilUuid(ownerAccountId)
+        && AccountIds.isCanonicalNonNilUuid(currentAccountId)
+        && ownerAccountId.equals(currentAccountId);
   }
 
   private boolean isCurrentAccount(long ownerAccountId) {

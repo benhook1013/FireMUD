@@ -17,6 +17,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -2060,12 +2061,16 @@ public class AccountServiceImpl implements AccountService {
   @Transactional(readOnly = true)
   @Timed(value = "account.get_profile")
   public ProfileDto getProfile(Long tenantId, Long accountId) {
+    Account account = requireAccount(accountId);
+    requireExactAccountStorageId(account, accountId);
+    UUID accountUuid = requirePersistedAccountUuid(account);
     requireProfileMembership(tenantId, accountId);
     Profile profile =
         profileRepository
             .findByAccountIdAndTenantId(accountId, tenantId)
             .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
-    return profileMapper.toDto(profile);
+    requireProfileBelongsTo(profile, accountId, tenantId);
+    return profileMapper.toDto(profile, accountUuid.toString());
   }
 
   @Override
@@ -2092,22 +2097,66 @@ public class AccountServiceImpl implements AccountService {
   @Override
   @Transactional
   @Timed(value = "account.update_profile")
-  public ProfileDto updateProfile(UpdateProfileRequest request) {
+  public ProfileDto updateProfile(Long accountStorageId, UpdateProfileRequest request) {
+    UUID requestedAccountUuid = requireProfileAccountUuid(request.accountId());
+    Account account = requireAccount(accountStorageId);
+    requireExactAccountStorageId(account, accountStorageId);
+    UUID persistedAccountUuid = requirePersistedAccountUuid(account);
+    if (!persistedAccountUuid.equals(requestedAccountUuid)) {
+      throw new IllegalArgumentException("Profile account identity does not match its source");
+    }
     request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
-    requireProfileMembership(request.tenantId(), request.accountId());
+    requireProfileMembership(request.tenantId(), accountStorageId);
     Profile profile =
         profileRepository
-            .findByAccountIdAndTenantId(request.accountId(), request.tenantId())
+            .findByAccountIdAndTenantId(accountStorageId, request.tenantId())
             .orElseThrow(() -> new IllegalArgumentException("Profile not found"));
+    requireProfileBelongsTo(profile, accountStorageId, request.tenantId());
     profile.setDisplayName(request.displayName());
     profile.setBio(request.bio());
     profile.setPresenceVisibilityPolicy(request.presenceVisibilityPolicy());
     profile = profileRepository.save(profile);
+    requireProfileBelongsTo(profile, accountStorageId, request.tenantId());
     runAfterCommit(
         () ->
             notificationService.sendNotification(
-                request.tenantId(), request.accountId(), "Profile updated"));
-    return profileMapper.toDto(profile);
+                request.tenantId(), accountStorageId, "Profile updated"));
+    return profileMapper.toDto(profile, persistedAccountUuid.toString());
+  }
+
+  private UUID requireProfileAccountUuid(String accountId) {
+    if (accountId == null || accountId.isBlank()) {
+      throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+    }
+    try {
+      UUID accountUuid = UUID.fromString(accountId);
+      if (NIL_ACCOUNT_UUID.equals(accountUuid) || !accountUuid.toString().equals(accountId)) {
+        throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+      }
+      return accountUuid;
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("accountId must be a canonical non-nil UUID", exception);
+    }
+  }
+
+  private void requireProfileBelongsTo(Profile profile, Long accountId, Long tenantId) {
+    if (profile == null
+        || accountId == null
+        || accountId <= 0
+        || tenantId == null
+        || tenantId <= 0
+        || profile.getAccount() == null
+        || !Objects.equals(profile.getAccount().getId(), accountId)
+        || !Objects.equals(profile.getTenantId(), tenantId)) {
+      throw new IllegalStateException("Profile source does not match its exact Account and tenant");
+    }
+  }
+
+  private void requireExactAccountStorageId(Account account, Long requestedAccountStorageId) {
+    if (!Objects.equals(account.getId(), requestedAccountStorageId)) {
+      throw new IllegalStateException(
+          "Account readback did not match its exact requested storage row");
+    }
   }
 
   private void requireProfileMembership(Long tenantId, Long accountId) {
@@ -2139,9 +2188,22 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.export")
   public AccountDataExportDto exportAccountData(Long accountId) {
     Account account = requireAccount(accountId);
-    requirePersistedAccountUuid(account);
+    requireExactAccountStorageId(account, accountId);
+    UUID accountUuid = requirePersistedAccountUuid(account);
     List<ProfileDto> profiles =
-        profileRepository.findByAccountId(accountId).stream().map(profileMapper::toDto).toList();
+        profileRepository.findByAccountId(accountId).stream()
+            .map(
+                profile -> {
+                  if (profile == null
+                      || profile.getTenantId() == null
+                      || profile.getTenantId() <= 0) {
+                    throw new IllegalStateException(
+                        "Profile export row is missing its tenant source");
+                  }
+                  requireProfileBelongsTo(profile, accountId, profile.getTenantId());
+                  return profileMapper.toDto(profile, accountUuid.toString());
+                })
+            .toList();
     return new AccountDataExportDto(accountMapper.toDto(account), profiles);
   }
 

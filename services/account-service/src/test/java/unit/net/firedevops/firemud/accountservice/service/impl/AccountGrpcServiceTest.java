@@ -842,7 +842,7 @@ class AccountGrpcServiceTest {
     Mockito.when(accountService.getProfile(1L, 2L))
         .thenReturn(
             new net.firedevops.firemud.accountservice.dto.ProfileDto(
-                1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
+                1L, 1L, ACCOUNT_UUID, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE));
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
 
@@ -879,6 +879,13 @@ class AccountGrpcServiceTest {
             .build()
             .readTree(ref.get().getProfileJson())
             .path("presenceVisibilityPolicy")
+            .asText());
+    assertEquals(
+        ACCOUNT_UUID,
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(ref.get().getProfileJson())
+            .path("accountId")
             .asText());
     Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
   }
@@ -1445,10 +1452,10 @@ class AccountGrpcServiceTest {
         captor =
             org.mockito.ArgumentCaptor.forClass(
                 net.firedevops.firemud.accountservice.dto.UpdateProfileRequest.class);
-    Mockito.verify(accountService).updateProfile(captor.capture());
+    Mockito.verify(accountService).updateProfile(Mockito.eq(2L), captor.capture());
     Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
     assertEquals(1L, captor.getValue().tenantId());
-    assertEquals(2L, captor.getValue().accountId());
+    assertEquals(ACCOUNT_UUID, captor.getValue().accountId());
     assertEquals("demo", captor.getValue().displayName());
   }
 
@@ -1458,7 +1465,7 @@ class AccountGrpcServiceTest {
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.doThrow(new IllegalArgumentException("bad"))
         .when(accountService)
-        .updateProfile(Mockito.any());
+        .updateProfile(Mockito.anyLong(), Mockito.any());
     AccountGrpcService service =
         new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
     RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
@@ -1480,7 +1487,7 @@ class AccountGrpcServiceTest {
 
     assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
     assertTrue(observer.completed());
-    Mockito.verify(accountService).updateProfile(Mockito.any());
+    Mockito.verify(accountService).updateProfile(Mockito.anyLong(), Mockito.any());
   }
 
   @Test

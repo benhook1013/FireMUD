@@ -49,6 +49,7 @@ import org.mockito.Mockito;
 @SuppressWarnings("unchecked")
 class LoginCommandHandlerTest {
   private static final String AUTH_TOKEN = "mock-jwt";
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
 
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
@@ -104,7 +105,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("DEMO@EXAMPLE.COM", "swordfish"),
             "LOGIN DEMO@EXAMPLE.COM swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
@@ -144,7 +145,7 @@ class LoginCommandHandlerTest {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN, List.of("DEMO@EXAMPLE.COM"), "LOGIN DEMO@EXAMPLE.COM");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.requestEmailLoginOtp("demo@example.com"))
         .thenReturn(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
@@ -163,7 +164,7 @@ class LoginCommandHandlerTest {
     TextCommand command =
         new TextCommand(
             TextCommandType.LOGIN, List.of("demo@example.com"), "LOGIN demo@example.com");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.requestEmailLoginOtp("demo@example.com"))
         .thenReturn(
@@ -255,7 +256,7 @@ class LoginCommandHandlerTest {
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("0").build());
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
@@ -280,7 +281,7 @@ class LoginCommandHandlerTest {
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken(AUTH_TOKEN).setAccountId("-1").build());
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
@@ -308,7 +309,7 @@ class LoginCommandHandlerTest {
                 .setAuthToken(AUTH_TOKEN)
                 .setAccountId("not-a-number")
                 .build());
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
@@ -368,7 +369,7 @@ class LoginCommandHandlerTest {
   @Test
   void bareLoginDoesNotPromoteVerifiedFirstPartyContextWithoutAccountExchange() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     SessionContext shell =
         new SessionContext(
             1L,
@@ -426,7 +427,7 @@ class LoginCommandHandlerTest {
     assertEquals("shell-realm", shell.realmSlug());
     assertEquals("shell-scope", shell.connectScopeId());
     assertEquals("shell-request", shell.connectRequestId());
-    assertEquals(77L, instance.getOwnerAccountId());
+    assertEquals(OWNER_ACCOUNT_UUID, instance.getOwnerAccountId());
 
     PlayCommandHandlingResult playResult =
         createPlayCommandHandler()
@@ -455,7 +456,7 @@ class LoginCommandHandlerTest {
             "gateway-account-b");
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(Optional.of(verifiedAccountBContext));
-    GameInstance instance = buildInstance(2L, 33L, 77L);
+    GameInstance instance = buildInstance(2L, 33L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(33L, 2L))
         .thenReturn(List.of(pointer("demo", "production", 33L, 2L, 1L)));
@@ -510,7 +511,7 @@ class LoginCommandHandlerTest {
                     "jti-account-a",
                     "request-account-a",
                     "gateway-account-a")));
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
@@ -547,7 +548,7 @@ class LoginCommandHandlerTest {
             "gateway-tenant-b");
     when(firstPartyConnectContextRegistry.find(1L)).thenReturn(Optional.of(verifiedTenantBContext));
     when(gameInstanceRepository.findById(2L))
-        .thenReturn(Optional.of(buildInstance(2L, 33L, accountA.accountId())));
+        .thenReturn(Optional.of(buildInstance(2L, 33L, OWNER_ACCOUNT_UUID)));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(33L, 2L))
         .thenReturn(List.of(pointer("demo", "production", 33L, 2L, 1L)));
 
@@ -584,7 +585,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("other@example.com", "swordfish"),
             "LOGIN other@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     stubSessionContext(
         new SessionContext(
             1L,
@@ -630,7 +631,7 @@ class LoginCommandHandlerTest {
   @Test
   void bareLoginFailsUnavailableForPersistedFirstPartyContextFallback() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     SessionContext persisted =
         new SessionContext(
             1L,
@@ -701,7 +702,7 @@ class LoginCommandHandlerTest {
   @Test
   void bareLoginDoesNotFallBackToRawPersistedFirstPartyContextWhenTenantScopedSessionIsMissing() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     SessionContext rawOnly =
         new SessionContext(
             1L,
@@ -749,7 +750,8 @@ class LoginCommandHandlerTest {
                     "jti-1",
                     "req-1",
                     "gateway-1")));
-    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 0L, 77L)));
+    when(gameInstanceRepository.findById(1L))
+        .thenReturn(Optional.of(buildInstance(1L, 0L, OWNER_ACCOUNT_UUID)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -776,7 +778,8 @@ class LoginCommandHandlerTest {
                     "gateway-1")));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 1L))
         .thenReturn(List.of(pointer("demo", "production", 22L, 0L, 1L)));
-    when(gameInstanceRepository.findById(0L)).thenReturn(Optional.of(buildInstance(0L, 22L, 77L)));
+    when(gameInstanceRepository.findById(0L))
+        .thenReturn(Optional.of(buildInstance(0L, 22L, OWNER_ACCOUNT_UUID)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -801,7 +804,8 @@ class LoginCommandHandlerTest {
                     "jti-1",
                     "req-1",
                     "gateway-1")));
-    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    when(gameInstanceRepository.findById(1L))
+        .thenReturn(Optional.of(buildInstance(1L, 22L, OWNER_ACCOUNT_UUID)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -817,7 +821,8 @@ class LoginCommandHandlerTest {
             Optional.of(
                 new FirstPartyConnectContext(
                     77L, 22L, "demo", " ", 1L, 1L, "scope-1", "jti-1", "req-1", "gateway-1")));
-    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 77L)));
+    when(gameInstanceRepository.findById(1L))
+        .thenReturn(Optional.of(buildInstance(1L, 22L, OWNER_ACCOUNT_UUID)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -828,7 +833,7 @@ class LoginCommandHandlerTest {
   @Test
   void bareLoginRejectsStalePointerVersion() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     stubSessionContext(staleGameplayContext(1L));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
@@ -863,7 +868,7 @@ class LoginCommandHandlerTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
 
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     handler.handle("1", command, false);
@@ -889,7 +894,7 @@ class LoginCommandHandlerTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
 
-    GameInstance instance = buildInstance(99L, 22L, 77L);
+    GameInstance instance = buildInstance(99L, 22L, OWNER_ACCOUNT_UUID);
     SessionContext bootstrapContext =
         new SessionContext(12345L, 22L, 0L, null, 0L, null, 99L, null, null);
     when(sessionContextService.findBySessionId(12345L)).thenReturn(Optional.of(bootstrapContext));
@@ -912,7 +917,7 @@ class LoginCommandHandlerTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
 
-    GameInstance collidingRuntime = buildInstance(12345L, 22L, 77L);
+    GameInstance collidingRuntime = buildInstance(12345L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(12345L)).thenReturn(Optional.of(collidingRuntime));
 
     LoginCommandHandlingResult result = handler.handle("12345", command, false);
@@ -931,7 +936,7 @@ class LoginCommandHandlerTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
 
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(sessionContextService.findByTenantAndSessionId(22L, 1L))
         .thenReturn(
@@ -999,7 +1004,7 @@ class LoginCommandHandlerTest {
             List.of("other@example.com", "swordfish"),
             "LOGIN other@example.com swordfish");
 
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
@@ -1089,7 +1094,8 @@ class LoginCommandHandlerTest {
                     "jti-1",
                     "new-request",
                     "gateway-1")));
-    when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(buildInstance(1L, 22L, 99L)));
+    when(gameInstanceRepository.findById(1L))
+        .thenReturn(Optional.of(buildInstance(1L, 22L, OWNER_ACCOUNT_UUID)));
 
     LoginCommandHandlingResult result = handler.handle("1", command, false);
 
@@ -1123,7 +1129,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("other@example.com", "swordfish"),
             "LOGIN other@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
@@ -1150,7 +1156,7 @@ class LoginCommandHandlerTest {
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
 
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(sessionContextService.findByTenantAndSessionId(22L, 1L))
         .thenReturn(Optional.of(staleGameplayContext(7L)));
@@ -1194,7 +1200,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     stubSessionContext(staleGameplayContext(3L));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
@@ -1227,7 +1233,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     SessionContext partialRoutingProjection =
         new SessionContext(
@@ -1268,7 +1274,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
@@ -1282,7 +1288,7 @@ class LoginCommandHandlerTest {
     verify(sessionContextService).save(captor.capture());
     assertEquals(99L, captor.getValue().accountId());
     assertEquals("demo@example.com", captor.getValue().loginName());
-    assertEquals(77L, instance.getOwnerAccountId());
+    assertEquals(OWNER_ACCOUNT_UUID, instance.getOwnerAccountId());
   }
 
   @Test
@@ -1300,7 +1306,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1327,7 +1333,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1353,7 +1359,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1385,7 +1391,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1420,7 +1426,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1448,7 +1454,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1475,7 +1481,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1499,7 +1505,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1526,7 +1532,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1553,7 +1559,7 @@ class LoginCommandHandlerTest {
             TextCommandType.LOGIN,
             List.of("demo@example.com", "swordfish"),
             "LOGIN demo@example.com swordfish");
-    GameInstance instance = buildInstance(1L, 22L, 77L);
+    GameInstance instance = buildInstance(1L, 22L, OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     when(accountClient.authenticate(anyString(), anyString())).thenReturn(authError);
 
@@ -1576,7 +1582,7 @@ class LoginCommandHandlerTest {
     GameInstance instance = new GameInstance();
     instance.setId(1L);
     instance.setTenantId(22L);
-    instance.setOwnerAccountId(77L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
 
     handler.handle("1", command, false);
@@ -1598,7 +1604,7 @@ class LoginCommandHandlerTest {
     GameInstance instance = new GameInstance();
     instance.setId(2L);
     instance.setTenantId(22L);
-    instance.setOwnerAccountId(77L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     when(sessionContextService.findBySessionId(2L)).thenReturn(Optional.of(bootstrapShell(2L, 2L)));
     when(gameInstanceRepository.findById(2L)).thenReturn(Optional.of(instance));
     handler.handle("2", command, false);
@@ -1617,7 +1623,7 @@ class LoginCommandHandlerTest {
     GameInstance instance = new GameInstance();
     instance.setId(1L);
     instance.setTenantId(22L);
-    instance.setOwnerAccountId(77L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     when(gameInstanceRepository.findById(1L)).thenReturn(Optional.of(instance));
     handler.handle("1", command, false);
 
@@ -1625,7 +1631,7 @@ class LoginCommandHandlerTest {
     verify(sessionContextService).save(any(SessionContext.class));
   }
 
-  private GameInstance buildInstance(long id, long tenantId, long ownerAccountId) {
+  private GameInstance buildInstance(long id, long tenantId, String ownerAccountId) {
     GameInstance instance = new GameInstance();
     instance.setId(id);
     instance.setTenantId(tenantId);

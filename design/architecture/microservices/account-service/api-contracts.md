@@ -54,6 +54,8 @@ This target contract is not complete in the current service. The existing `secur
 
 ## Implementation Status
 
+`ProfileDto.accountId` and the explicit profile-update Account selector carry the proved canonical Account UUID, never the private Account row key; REST body/path mismatch is rejected. Profile's own `id` and the current numeric tenant selector remain distinct. This correction does not complete tenant-qualified/delegated routes or Social Groups' numeric callers; current proof and activation limits are recorded in [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md).
+
 Explicit playtest grants remain partial: current Account persistence and internal lookup can support a grant-backed admission read, but expiry bounded by fork lifecycle, tenant-admin create/extend/list/revoke, distinct audited platform break-glass, stable request-idempotent outcomes, retained revocation tombstones, and active-binding ejection are not implemented or end-to-end proved. The target owner contract is [Account-Owned Playtest Grant Contract](#account-owned-playtest-grant-contract); the links in authentication, session behavior, journeys, and trackers retain only their local consequences.
 
 The hosted Creator Party, terms catalog, acceptance/currentness evidence, and changed-term lifecycle are target-only. No current Account route, proto/schema, storage, signer/transfer operation, creator UI, or focused proof implements them; Game Design must not maintain a copied catalog or authorize a creator mutation from a tenant-local flag.

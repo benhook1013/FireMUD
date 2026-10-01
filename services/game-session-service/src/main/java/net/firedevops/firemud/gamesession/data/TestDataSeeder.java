@@ -2,11 +2,11 @@ package net.firedevops.firemud.gamesession.data;
 
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.gamesession.entity.FeatureFlag;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameManifest;
 import net.firedevops.firemud.gamesession.repository.FeatureFlagRepository;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameManifestRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -22,9 +22,10 @@ import org.springframework.transaction.annotation.Transactional;
     matchIfMissing = false)
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
+  private static final Logger LOGGER = LoggerFactory.getLogger(TestDataSeeder.class);
+
   private final GameManifestRepository gameManifestRepository;
   private final FeatureFlagRepository featureFlagRepository;
-  private final GameInstanceRepository gameInstanceRepository;
 
   @Override
   @Transactional
@@ -45,14 +46,8 @@ public class TestDataSeeder implements ApplicationRunner {
     flag.setEnabled(true);
     featureFlagRepository.save(flag);
 
-    GameInstance instance =
-        gameInstanceRepository
-            .findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 1L, "RUNNING")
-            .orElseGet(GameInstance::new);
-    instance.setTenantId(1L);
-    instance.setRuntimeVersion("v1.0.0");
-    instance.setOwnerAccountId(1L);
-    instance.setStatus("RUNNING");
-    gameInstanceRepository.save(instance);
+    LOGGER.warn(
+        "Skipping demo game instance seed: TestDataSeeder has no authoritative Account UUID"
+            + " source");
   }
 }

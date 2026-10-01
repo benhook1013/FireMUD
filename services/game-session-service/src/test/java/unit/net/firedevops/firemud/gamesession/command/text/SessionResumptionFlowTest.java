@@ -73,6 +73,7 @@ import org.mockito.Mockito;
 
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
   private static final String PLAY_PAYLOAD = "PLAY demo";
   private static final String LOOK_PAYLOAD = "LOOK";
@@ -155,7 +156,7 @@ class SessionResumptionFlowTest {
               GameInstance perCall = new GameInstance();
               perCall.setId(sessionId);
               perCall.setTenantId(22L);
-              perCall.setOwnerAccountId(77L);
+              perCall.setOwnerAccountId(OWNER_ACCOUNT_UUID);
               return Optional.of(perCall);
             });
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
@@ -565,7 +566,7 @@ class SessionResumptionFlowTest {
               GameInstance perCall = new GameInstance();
               perCall.setId(sessionId);
               perCall.setTenantId(22L);
-              perCall.setOwnerAccountId(77L);
+              perCall.setOwnerAccountId(OWNER_ACCOUNT_UUID);
               return Optional.of(perCall);
             });
 

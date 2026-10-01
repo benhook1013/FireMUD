@@ -12,13 +12,4 @@ public interface GameInstanceMapper {
       source = "scriptPatchPinnedControlPlaneRequestId")
   @Mapping(target = "scriptPatchBaseVersionId", source = "scriptPatchBaseVersionId")
   GameInstanceDto toDto(GameInstance entity);
-
-  @Mapping(target = "scriptPatchBaseVersionId", source = "scriptPatchBaseVersionId")
-  @Mapping(target = "scriptPatchPinnedAt", ignore = true)
-  @Mapping(target = "scriptPinEpoch", ignore = true)
-  @Mapping(target = "scriptPatchPinnedBy", ignore = true)
-  @Mapping(target = "scriptPatchPinnedReason", ignore = true)
-  @Mapping(target = "scriptPatchPinnedControlPlaneRequestId", ignore = true)
-  @Mapping(target = "rowVersion", ignore = true)
-  GameInstance toEntity(GameInstanceDto dto);
 }

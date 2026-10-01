@@ -46,13 +46,25 @@ class GameInstanceControllerTest {
   void startSessionReturnsDto() throws Exception {
     GameInstanceDto dto =
         new GameInstanceDto(
-            1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 1L, "RUNNING");
+            1L,
+            1L,
+            "11",
+            null,
+            7L,
+            "ld-1",
+            11L,
+            77L,
+            77L,
+            "genrev-11",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "RUNNING");
     org.mockito.Mockito.when(
             gameInstanceService.startSession(
                 org.mockito.ArgumentMatchers.any(StartSessionRequest.class),
                 org.mockito.ArgumentMatchers.eq(false)))
         .thenReturn(dto);
-    StartSessionRequest request = new StartSessionRequest(1L, 7L, "cp-1", 1L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 7L, "cp-1", "123e4567-e89b-12d3-a456-426614174000");
     mockMvc
         .perform(
             post("/sessions")
@@ -69,7 +81,18 @@ class GameInstanceControllerTest {
   void stopSessionReturnsDto() throws Exception {
     GameInstanceDto dto =
         new GameInstanceDto(
-            1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 1L, "STOPPED");
+            1L,
+            1L,
+            "11",
+            null,
+            7L,
+            "ld-1",
+            11L,
+            77L,
+            77L,
+            "genrev-11",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "STOPPED");
     org.mockito.Mockito.when(gameInstanceService.stopSession(1L)).thenReturn(dto);
     mockMvc
         .perform(
@@ -85,7 +108,18 @@ class GameInstanceControllerTest {
   void restartSessionReturnsDto() throws Exception {
     GameInstanceDto dto =
         new GameInstanceDto(
-            1L, 1L, "11", null, 7L, "ld-1", 11L, 77L, 77L, "genrev-11", 1L, "RUNNING");
+            1L,
+            1L,
+            "11",
+            null,
+            7L,
+            "ld-1",
+            11L,
+            77L,
+            77L,
+            "genrev-11",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "RUNNING");
     org.mockito.Mockito.when(gameInstanceService.restartSession(1L)).thenReturn(dto);
     mockMvc
         .perform(
@@ -99,7 +133,8 @@ class GameInstanceControllerTest {
 
   @Test
   void startSessionRejectsScopedTenantAdmin() throws Exception {
-    StartSessionRequest request = new StartSessionRequest(1L, 7L, "cp-1", 1L);
+    StartSessionRequest request =
+        new StartSessionRequest(1L, 7L, "cp-1", "123e4567-e89b-12d3-a456-426614174000");
     String token =
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
 
@@ -113,8 +148,8 @@ class GameInstanceControllerTest {
   }
 
   @Test
-  void startSessionRejectsZeroOwnerAccountIdBeforeDispatch() throws Exception {
-    StartSessionRequest request = new StartSessionRequest(1L, 7L, "cp-1", 0L);
+  void startSessionRejectsBlankOwnerAccountIdBeforeDispatch() throws Exception {
+    StartSessionRequest request = new StartSessionRequest(1L, 7L, "cp-1", "");
 
     mockMvc
         .perform(
@@ -126,7 +161,7 @@ class GameInstanceControllerTest {
                     "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("ownerAccountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("ownerAccountId must not be blank"));
 
     verifyNoInteractions(gameInstanceService);
   }

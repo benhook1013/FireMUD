@@ -48,6 +48,10 @@ public class ProfileController {
     UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
     requireProfileOwner(parsedAccountUuid);
+    UUID requestAccountUuid = AccountRequestReaders.requireAccountUuid(request.accountId());
+    if (!parsedAccountUuid.equals(requestAccountUuid)) {
+      throw new IllegalArgumentException("accountId must match the profile path");
+    }
     if (request.presenceVisibilityPolicy() == null) {
       throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
     }
@@ -55,9 +59,10 @@ public class ProfileController {
     Long parsedAccountId = accountService.resolveAccountStorageId(parsedAccountUuid);
     ProfileDto dto =
         accountService.updateProfile(
+            parsedAccountId,
             new UpdateProfileRequest(
                 parsedTenantId,
-                parsedAccountId,
+                requestAccountUuid.toString(),
                 request.displayName(),
                 request.bio(),
                 request.presenceVisibilityPolicy()));
