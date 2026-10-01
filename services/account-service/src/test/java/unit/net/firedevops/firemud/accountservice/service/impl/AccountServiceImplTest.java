@@ -1808,7 +1808,6 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     AccountTenantMembership deniedMembership = membership(account, 7L);
-    deniedMembership.setGameplayAdmissionAllowed(true);
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.of(deniedMembership));
     when(gameSessionClient.listGameplayRealms("demo"))
