@@ -35,6 +35,115 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_hosted_source_resolution_retries_transient_history_failure_and_casefolds_repository(self) -> None:
+        origin = {
+            "source_pr": 42,
+            "checkpoint_id": 55,
+            "channel": "hosted",
+            "provider_id": "901",
+            "repository": "OWNER/REPO",
+            "run_id": "hosted-run-901",
+        }
+        history = {"provider_origins": [origin], "attempts": []}
+        checkpoint = evidence.Checkpoint(
+            comment_id=55,
+            created_at="2026-09-30T12:00:00Z",
+            type="hosted",
+            raw_found=1,
+            accepted=1,
+            reviewed_sha=HEAD,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=901,
+        )
+
+        for transient_error in (
+            sqlite_review_records.ReviewRecordsError("temporary"),
+            OSError("temporary"),
+        ):
+            with self.subTest(error=type(transient_error).__name__):
+                records = SimpleNamespace(
+                    history=unittest.mock.Mock(side_effect=[transient_error, history]),
+                    source_resolution_status=unittest.mock.Mock(return_value="resolved"),
+                )
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "pending")
+                self.assertNotIn(42, observer._records_histories)
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "resolved")
+                self.assertEqual(records.history.call_count, 2)
+                records.source_resolution_status.assert_called_once()
+
+    def test_hosted_source_resolution_rejects_malformed_or_foreign_origin_repository(self) -> None:
+        origin = {
+            "source_pr": 42,
+            "checkpoint_id": 55,
+            "channel": "hosted",
+            "provider_id": "901",
+            "repository": "owner/repo",
+            "run_id": "hosted-run-901",
+        }
+        checkpoint = evidence.Checkpoint(
+            comment_id=55,
+            created_at="2026-09-30T12:00:00Z",
+            type="hosted",
+            raw_found=1,
+            accepted=1,
+            reviewed_sha=HEAD,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=901,
+        )
+        cases = (("missing", None, True), ("null", None, False), ("nonstring", 901, False), ("foreign", "other/repo", False))
+        for label, repository, remove_repository in cases:
+            with self.subTest(repository=label):
+                candidate = dict(origin)
+                if remove_repository:
+                    candidate.pop("repository")
+                else:
+                    candidate["repository"] = repository
+                records = SimpleNamespace(
+                    history=unittest.mock.Mock(return_value={"provider_origins": [candidate], "attempts": []}),
+                    source_resolution_status=unittest.mock.Mock(return_value="resolved"),
+                )
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "pending")
+                records.source_resolution_status.assert_not_called()
+
+    def test_stop_and_legacy_reauthorization_audits_invalidate_records_history_cache(self) -> None:
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        anchor = {
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        for audit, arguments in (
+            (observer.review_stop_audit, (42, anchor)),
+            (
+                observer.legacy_transition_reauthorization_audit,
+                (42, (), {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE}),
+            ),
+        ):
+            observer._payloads[42] = {"stale": True}
+            observer._histories[(42, "hosted")] = [{"stale": True}]
+            observer._histories[(42, "cli")] = [{"stale": True}]
+            observer._records_histories[42] = {"stale": True}
+            with self.subTest(audit=audit.__name__), patch.object(
+                observer, "_payload", side_effect=ControllerError("stop after invalidation")
+            ), self.assertRaisesRegex(ControllerError, "stop after invalidation"):
+                audit(*arguments)
+            self.assertNotIn(42, observer._payloads)
+            self.assertNotIn((42, "hosted"), observer._histories)
+            self.assertNotIn((42, "cli"), observer._histories)
+            self.assertNotIn(42, observer._records_histories)
+
     def test_closed_reservation_uses_only_durable_future_cooldown_when_history_is_unavailable(self) -> None:
         runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
         now = datetime.now(timezone.utc).replace(microsecond=0)

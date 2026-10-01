@@ -529,6 +529,7 @@ class LiveEvidence:
         self._payloads.pop(pr, None)
         self._histories.pop((pr, "hosted"), None)
         self._histories.pop((pr, "cli"), None)
+        self._records_histories.pop(pr, None)
         payload = self._payload(pr)
         try:
             pull = payload["data"]["repository"]["pullRequest"]
@@ -710,6 +711,7 @@ class LiveEvidence:
         self._payloads.pop(pr, None)
         self._histories.pop((pr, "hosted"), None)
         self._histories.pop((pr, "cli"), None)
+        self._records_histories.pop(pr, None)
         payload = self._payload(pr)
         self.history(pr, "hosted", now=now)
         self.history(pr, "cli")
@@ -1742,7 +1744,7 @@ class LiveEvidence:
                 except RecordsNotBootstrapped:
                     return None
                 except (ReviewRecordsError, OSError):
-                    self._records_histories[pr] = None
+                    return "pending"
             history = self._records_histories[pr]
             if not isinstance(history, Mapping):
                 return "pending"
@@ -1764,10 +1766,12 @@ class LiveEvidence:
                 if len(checkpoint_origins) != 1:
                     return "pending"
                 origin = checkpoint_origins[0]
+                origin_repository = origin.get("repository")
                 if (
                     origin.get("channel") != "hosted"
                     or origin.get("provider_id") not in provider_ids
-                    or origin.get("repository") != self.repo.casefold()
+                    or not isinstance(origin_repository, str)
+                    or origin_repository.casefold() != self.repo.casefold()
                 ):
                     return "pending"
                 run_id = origin.get("run_id")

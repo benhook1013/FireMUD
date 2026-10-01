@@ -64,6 +64,10 @@ class CliCaptureTerminalFailure(ReviewRecordsError):
     """A CLI attempt is terminal but did not produce a completed source run."""
 
 
+class CliCaptureInProgress(ReviewRecordsError):
+    """A CLI attempt is still running and has no countable completed capture."""
+
+
 class RecordsSchemaIncompatible(ReviewRecordsError):
     """Raised when the controller or review-records schema is incompatible."""
 
@@ -1056,6 +1060,10 @@ class SqliteReviewRecords:
                     "SELECT 1 FROM review_attempts a WHERE a.attempt_id = r.run_id) "
                     "AND NOT EXISTS (SELECT 1 FROM imported_artifacts i WHERE i.run_id = r.run_id) "
                     "AND NOT EXISTS (SELECT 1 FROM provider_origins o WHERE o.run_id = r.run_id) "
+                    "AND EXISTS (SELECT 1 FROM finding_observations o JOIN findings f USING (finding_id) "
+                    "WHERE o.run_id = r.run_id AND "
+                    "substr(f.source_finding_key, 1, length('cli-run:' || r.run_id || ':finding:')) = "
+                    "'cli-run:' || r.run_id || ':finding:') "
                     "ORDER BY run_id",
                     (source_pr, source_pr),
                 )
@@ -1108,6 +1116,8 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("CLI SQL attempt does not match its exact source run and PR")
         if attempt[3] in {"failed", "rate_limited", "timed_out", "ambiguous"}:
             raise CliCaptureTerminalFailure("CLI SQL attempt ended without a completed source run")
+        if attempt[3] == "started":
+            raise CliCaptureInProgress("CLI SQL attempt is still in progress")
         if attempt[3] != "completed":
             raise ReviewRecordsError("CLI SQL attempt is not terminally completed")
         if attempt[8] != attempt_id or run is None:

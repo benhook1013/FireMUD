@@ -12,7 +12,14 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import hosted, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records, sqlite_store
+from pr_review import (
+    hosted,
+    sqlite_finding_text,
+    sqlite_hosted_capture,
+    sqlite_provider_imports,
+    sqlite_review_records,
+    sqlite_store,
+)
 
 REPO = "owner/repo"
 PR = 42
@@ -199,6 +206,35 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(finding["display_severity"], "Trivial")
         self.assertEqual(finding["display_detail"], issue.strip())
         self.assertNotIn("Low value", finding["title"])
+
+    def test_hosted_aggregate_display_stays_bounded_with_omitted_long_sections(self) -> None:
+        findings = [
+            {"title": f"Finding {index}", "display_detail": f"Body {index}. " + "x" * 2_000}
+            for index in range(1, 81)
+        ]
+
+        detail = sqlite_finding_text._hosted_aggregate_display_detail(findings, "Aggregate")
+
+        self.assertLessEqual(len(detail), 8000)
+        self.assertIn("Omitted ", detail)
+        self.assertIn("[Section excerpt truncated; see original source comment.]", detail)
+        retained = int(detail.split("Omitted ", 1)[1].split(" provider sections", 1)[0])
+        self.assertEqual(detail.count("**Provider section "), len(findings) - retained)
+
+    def test_hosted_aggregate_display_preserves_mixed_empty_and_short_sections(self) -> None:
+        findings = [
+            {"title": "Empty", "display_detail": ""},
+            {"title": "Short", "display_detail": "Short explanation."},
+            {"title": "Long", "display_detail": "Long explanation. " + "x" * 120},
+        ]
+
+        detail = sqlite_finding_text._hosted_aggregate_display_detail(findings, "Aggregate")
+
+        self.assertLessEqual(len(detail), 8000)
+        self.assertNotIn("Omitted ", detail)
+        self.assertEqual(detail.count("**Provider section "), len(findings))
+        self.assertIn("Short explanation.", detail)
+        self.assertIn(findings[2]["display_detail"], detail)
 
     def test_explicit_nested_provider_tools_block_is_removed(self) -> None:
         sample = "```xml\n<Tools>ordinary example</Tools>\n```"

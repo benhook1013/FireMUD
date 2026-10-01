@@ -715,6 +715,25 @@ class GithubAndEvidenceTests(unittest.TestCase):
         return records
 
     @staticmethod
+    def _write_native_cli_raw_capture(common: Path) -> None:
+        run = common / "coderabbit-review-logs" / "run.Native"
+        run.mkdir(parents=True)
+        (run / "metadata").write_text(
+            f"run_id=run.Native\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
+            encoding="utf-8",
+        )
+        (run / "stdout").write_text(
+            json.dumps({"type": "finding", "message": "The retained CLI finding remains readable."})
+            + "\n"
+            + json.dumps({
+                "type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["src/a.py"],
+            })
+            + "\n",
+            encoding="utf-8",
+        )
+        (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+    @staticmethod
     def _native_cli_checkpoint(
         *,
         found: int = 1,
@@ -754,6 +773,35 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 ),
                 "resolved",
             )
+
+    def test_native_cli_sql_observations_reject_malformed_and_duplicate_indices(self):
+        cases = (
+            ("non-mapping observation", lambda observations: observations.__setitem__(0, "malformed")),
+            ("missing index", lambda observations: observations[0].pop("index")),
+            ("string index", lambda observations: observations[0].__setitem__("index", "1")),
+            ("boolean index", lambda observations: observations[0].__setitem__("index", True)),
+            ("duplicate index", lambda observations: observations[1].__setitem__("index", 1)),
+        )
+        for label, corrupt in cases:
+            with self.subTest(observation=label), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(
+                    common,
+                    instructions=("The first SQL finding remains available.", "The second SQL finding remains available."),
+                )
+                checkpoint = self._native_cli_checkpoint(found=2, accepted=2)
+                self.assertEqual(
+                    len(evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records).findings),
+                    2,
+                )
+
+                snapshot = records.cli_capture_snapshot("run.Native", source_pr=PR)
+                self.assertIsNotNone(snapshot)
+                corrupt(snapshot["observations"])
+                records.cli_capture_snapshot = lambda _run_id, *, source_pr, snapshot=snapshot: snapshot
+
+                with self.assertRaises(evidence.CaptureInvalid):
+                    evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
 
     def test_native_cli_sql_refuses_same_count_finding_replacement(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -896,6 +944,59 @@ class GithubAndEvidenceTests(unittest.TestCase):
             self.assertEqual(captures[0].findings[0]["message"], "The persisted SQL finding remains readable.")
             self.assertEqual(captures[0].decisions, {})
             self.assertIsNone(captures[0].source_identity)
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "not finalized"):
+                evidence.load_cli_capture(
+                    self._native_cli_checkpoint(accepted=0), REPO, PR, common, records=records
+                )
+
+    def test_native_cli_discovery_skips_started_and_failed_sql_attempts_with_retained_files(self):
+        for state in ("started", "failed"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(common)
+                self._write_native_cli_raw_capture(common)
+                with sqlite3.connect(records.path) as connection:
+                    if state == "started":
+                        connection.execute(
+                            "UPDATE review_attempts SET state = ?, finished_at = NULL "
+                            "WHERE attempt_id = 'run.Native'",
+                            (state,),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE review_attempts SET state = ? WHERE attempt_id = 'run.Native'", (state,)
+                        )
+
+                self.assertEqual(evidence.discover_cli_captures(REPO, PR, common, records=records), [])
+
+    def test_native_cli_discovery_accepts_capture_completed_after_snapshot_enumeration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            self._write_native_cli_raw_capture(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute(
+                    "UPDATE review_attempts SET state = 'started', finished_at = NULL "
+                    "WHERE attempt_id = 'run.Native'"
+                )
+            enumerate_completed = records.completed_cli_capture_snapshots
+
+            def enumerate_then_complete(source_pr):
+                snapshots = enumerate_completed(source_pr)
+                self.assertEqual(snapshots, [])
+                with sqlite3.connect(records.path) as connection:
+                    connection.execute(
+                        "UPDATE review_attempts SET state = 'completed', finished_at = ? "
+                        "WHERE attempt_id = 'run.Native'",
+                        ("2026-09-30T00:00:09Z",),
+                    )
+                return snapshots
+
+            records.completed_cli_capture_snapshots = enumerate_then_complete
+            captures = evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(captures[0].decisions, {1: ("accepted", "Useful source finding")})
 
     def test_native_cli_discovery_surfaces_completed_sql_run_missing_attempt_without_raw_files(self):
         with tempfile.TemporaryDirectory() as directory:

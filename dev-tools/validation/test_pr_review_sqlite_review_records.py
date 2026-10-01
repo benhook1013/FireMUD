@@ -1541,9 +1541,52 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.records.start_attempt(
             attempt_id=run_id, source_pr=2828, channel="cli", candidate_sha="a" * 40
         )
-        with self.assertRaisesRegex(ReviewRecordsError, "not terminally completed"):
+        with self.assertRaisesRegex(ReviewRecordsError, "still in progress"):
             self.records.cli_capture_snapshot(run_id, source_pr=2828)
         self.assertEqual(self.records.completed_cli_capture_snapshots(2828), [])
+
+    def test_completed_cli_capture_discovery_excludes_curated_import_without_native_keys(self) -> None:
+        self.bootstrap()
+        self.records.import_completed_run(
+            run_id="curated-cli-import",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            reviewer="CodeRabbit CLI",
+            findings=(self.observation("curated-finding"),),
+            source_decisions=({
+                "source_finding_key": "curated-finding",
+                "decision_id": "curated-cli-import-decision",
+                "decision": "rejected",
+                "actor": "reviewer",
+                "reason": "Curated historical observation",
+            },),
+        )
+
+        self.assertEqual(self.records.completed_cli_capture_snapshots(2828), [])
+
+    def test_completed_cli_capture_discovery_keeps_malformed_native_attemptless_run_fail_closed(self) -> None:
+        self.bootstrap()
+        run_id = "run.orphan-native"
+        finding_key = f"cli-run:{run_id}:finding:1"
+        self.records.import_completed_run(
+            run_id=run_id,
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            reviewer="CodeRabbit CLI",
+            findings=(self.observation(finding_key),),
+            source_decisions=({
+                "source_finding_key": finding_key,
+                "decision_id": "orphan-native-decision",
+                "decision": "rejected",
+                "actor": "reviewer",
+                "reason": "Malformed native association fixture",
+            },),
+        )
+
+        with self.assertRaisesRegex(ReviewRecordsError, "missing its attempt"):
+            self.records.completed_cli_capture_snapshots(2828)
 
     def test_partial_cli_association_cannot_fall_back_to_legacy_handling(self) -> None:
         self.bootstrap()

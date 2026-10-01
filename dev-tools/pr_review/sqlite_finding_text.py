@@ -360,4 +360,6 @@ def _hosted_aggregate_display_detail(findings: list[dict[str, Any]], stored_titl
             if len(body) > budget:
                 section += "\n\n" + excerpt
         parts.append(section)
-    return "\n\n".join(parts)
+    result = "\n\n".join(parts)
+    # Keep the aggregate display within the shared character ceiling.
+    return result[:8000].rstrip()

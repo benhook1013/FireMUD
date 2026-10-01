@@ -3797,18 +3797,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(hosted_records.calls[0][0], "hosted-run")
         self.assertEqual(hosted_records.calls[0][1]["accepted_count"], 2)
 
-        mismatched_records = RecordsReader(
-            [
-                {
-                    "source_pr": 42,
-                    "channel": "hosted",
-                    "checkpoint_id": 7001,
-                    "checkpoint_fingerprint": sqlite_provider_imports._checkpoint_fingerprint(hosted_checkpoint),
-                    "provider_id": "9002",
-                    "run_id": "wrong-provider-run",
-                }
-            ]
-        )
+        mismatched_origin = dict(hosted_records.origins[0])
+        mismatched_origin["provider_id"] = "review:9002"
+        mismatched_records = RecordsReader([mismatched_origin])
         mismatched_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=mismatched_records)
         self.assertEqual(
             mismatched_evidence._source_resolution_status(42, "hosted", hosted_checkpoint, HEAD_1),
@@ -6306,12 +6297,14 @@ class ControllerTests(unittest.TestCase):
                     return original_target(channel, expected_pr)
 
                 controller._target = release_cli_preflight_and_reselect
-                result = controller.run_hosted(expected_pr=1)
+                with patch("pr_review.controller.time.sleep") as sleep:
+                    result = controller.run_hosted(expected_pr=1)
 
         self.assertEqual(attempted_heads, [HEAD_1, HEAD_2])
         self.assertEqual(reservations, [(1, HEAD_2)])
         self.assertEqual(posts, [(1, HEAD_2)])
         self.assertEqual(result, {"status": "posted", "pr": 1, "head": HEAD_2})
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.05])
 
     def test_hosted_admission_contention_is_bounded_and_remains_admission_error(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
@@ -6326,10 +6319,14 @@ class ControllerTests(unittest.TestCase):
 
         controller.hosted_adapter = adapter
 
-        with self.assertRaisesRegex(HostedAdmissionBusy, "admission lock is busy.*does not establish"):
+        with (
+            patch("pr_review.controller.time.sleep") as sleep,
+            self.assertRaisesRegex(HostedAdmissionBusy, "admission lock is busy.*does not establish"),
+        ):
             controller.run_hosted(expected_pr=1)
 
         self.assertEqual(len(attempts), 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.05, 0.1])
 
     def test_hosted_admission_retries_only_typed_lock_contention(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
