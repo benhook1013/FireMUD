@@ -161,7 +161,7 @@ class TextCommandInterpreterTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("auth-token")
-                .setAccountId("123")
+                .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
@@ -169,7 +169,7 @@ class TextCommandInterpreterTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          123L, 22L, "1")
+                          "f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -183,7 +183,7 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
-    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -409,7 +409,7 @@ class TextCommandInterpreterTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -815,7 +815,7 @@ class TextCommandInterpreterTest {
   @Test
   void bootstrapContextWithoutAuthenticatedAccountStillRequiresLogin() {
     ((InMemorySessionContextService) sessionContextService)
-        .save(new SessionContext(55L, 22L, 0L, null, 0L, null, 77L, null, null));
+        .save(new SessionContext(55L, 22L, null, null, 0L, null, 77L, null, null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("55", "LOOK", false);
 
@@ -852,7 +852,17 @@ class TextCommandInterpreterTest {
   @Test
   void gameplayWithRoomOnlyPartialShellStillReturnsPlayRequired() {
     ((InMemorySessionContextService) sessionContextService)
-        .save(new SessionContext(56L, 22L, 123L, "demo@example.com", 0L, null, 0L, "R-7", null));
+        .save(
+            new SessionContext(
+                56L,
+                22L,
+                "f2ed193b-12c1-4c96-bcad-c162229af440",
+                "demo@example.com",
+                0L,
+                null,
+                0L,
+                "R-7",
+                null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("56", "LOOK", false);
 
@@ -1078,7 +1088,7 @@ class TextCommandInterpreterTest {
     return new SessionContext(
         sessionId,
         22L,
-        0L,
+        null,
         null,
         0L,
         null,

@@ -243,7 +243,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               return members == null ? java.util.Set.of() : new java.util.LinkedHashSet<>(members);
             });
     when(moderationPolicyClient.evaluateGameplayAdmission(
-            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))
+            org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -260,14 +260,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("stub-token")
-                .setAccountId("123")
+                .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
                 .build());
     org.mockito.Mockito.doAnswer(
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
                         net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .active(123L, 22L, "1"),
+                            .active("f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "1"),
                         invocation.getArgument(0)))
         .when(accountClient)
         .getTenantMembershipForRuntime(
@@ -297,7 +297,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("123")
                         .setTenantId("22")
-                        .setAccountId("123")
+                        .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -655,7 +655,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
+    assertThat(
+            accountRecentPresenceService.findByAccountIds(
+                22L, List.of("f2ed193b-12c1-4c96-bcad-c162229af440")))
+        .containsKey("f2ed193b-12c1-4c96-bcad-c162229af440");
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
@@ -971,7 +974,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.accountId()).isEqualTo("f2ed193b-12c1-4c96-bcad-c162229af440");
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);

@@ -225,7 +225,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   public void seedLiveSession(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,
@@ -248,7 +248,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   public void seedLiveSession(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       long characterId,
       String characterName,

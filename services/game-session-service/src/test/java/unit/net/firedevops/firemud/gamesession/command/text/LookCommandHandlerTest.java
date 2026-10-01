@@ -54,7 +54,7 @@ class LookCommandHandlerTest {
           lookCacheService,
           outputRenderer);
   private final SessionContext sessionContext =
-      new SessionContext(1L, 22L, 123L, 911L, 0L, "R-42", "jwt");
+      new SessionContext(1L, 22L, "f2ed193b-12c1-4c96-bcad-c162229af440", 911L, 0L, "R-42", "jwt");
   private final LookResult lookResult =
       LookResult.newBuilder()
           .setRoomInstance(RoomInstanceRef.newBuilder().setRoomInstanceId("R-1021").build())
@@ -217,7 +217,16 @@ class LookCommandHandlerTest {
   @Test
   void cachesRenderedLookByGameplayInstanceWhenAvailable() {
     SessionContext playedContext =
-        new SessionContext(17L, 22L, 123L, "demo", 911L, "demo", 77L, "R-42", "jwt");
+        new SessionContext(
+            17L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo",
+            911L,
+            "demo",
+            77L,
+            "R-42",
+            "jwt");
     when(sessionAuthenticationService.resolveSessionContext("played"))
         .thenReturn(Optional.of(playedContext));
     when(gameLogicClient.resolveLook(playedContext, "R-42", "")).thenReturn(lookResult);

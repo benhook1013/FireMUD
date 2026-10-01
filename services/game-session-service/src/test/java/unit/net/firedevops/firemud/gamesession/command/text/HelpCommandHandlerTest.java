@@ -241,7 +241,15 @@ class HelpCommandHandlerTest {
             (context, topic) -> Optional.empty(), null, capabilitiesResolver(false));
     SessionContext context =
         new SessionContext(
-            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            42L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         disabledHandler.handle(
@@ -260,7 +268,15 @@ class HelpCommandHandlerTest {
             CommandCapabilitiesTestSupport.resolver(false, false, false, true));
     SessionContext context =
         new SessionContext(
-            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            42L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         disabledHandler.handle(
@@ -280,7 +296,15 @@ class HelpCommandHandlerTest {
             (context, topic) -> Optional.empty(), null, capabilitiesResolver(false));
     SessionContext context =
         new SessionContext(
-            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            42L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         disabledHandler.handle(
@@ -298,7 +322,15 @@ class HelpCommandHandlerTest {
             (context, topic) -> Optional.empty(), null, capabilitiesResolver(true));
     SessionContext context =
         new SessionContext(
-            42L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            42L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         enabledHandler.handle(
@@ -321,7 +353,15 @@ class HelpCommandHandlerTest {
     HelpCommandHandler authoredHelpHandler = new HelpCommandHandler(reader, null, null);
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         authoredHelpHandler.handle(

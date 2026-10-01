@@ -7,6 +7,7 @@ import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import org.junit.jupiter.api.Test;
 
 class GameplayPresenceActivityResolverTest {
+  private static final String ACCOUNT_ID = "fd6f4d69-789b-4e0f-92f1-0c19b3bb1c17";
 
   @Test
   void explicitAfkWinsOverDerivedAutoAfk() {
@@ -23,7 +24,7 @@ class GameplayPresenceActivityResolverTest {
             7L,
             "demo",
             "production",
-            2L,
+            ACCOUNT_ID,
             102L,
             "Ben",
             GameplayPresenceRole.PLAYER,
@@ -51,7 +52,7 @@ class GameplayPresenceActivityResolverTest {
             7L,
             "demo",
             "production",
-            2L,
+            ACCOUNT_ID,
             102L,
             "Ben",
             GameplayPresenceRole.PLAYER,
@@ -68,7 +69,7 @@ class GameplayPresenceActivityResolverTest {
             7L,
             "demo",
             "production",
-            2L,
+            ACCOUNT_ID,
             102L,
             "Ben",
             GameplayPresenceRole.PLAYER,
@@ -85,7 +86,7 @@ class GameplayPresenceActivityResolverTest {
             7L,
             "demo",
             "production",
-            2L,
+            ACCOUNT_ID,
             102L,
             "Ben",
             GameplayPresenceRole.PLAYER,
@@ -111,7 +112,7 @@ class GameplayPresenceActivityResolverTest {
             7L,
             "demo",
             "production",
-            2L,
+            ACCOUNT_ID,
             102L,
             "Ben",
             GameplayPresenceRole.PLAYER,

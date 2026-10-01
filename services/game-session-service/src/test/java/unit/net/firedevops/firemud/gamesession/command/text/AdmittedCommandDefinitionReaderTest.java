@@ -266,7 +266,17 @@ class AdmittedCommandDefinitionReaderTest {
   }
 
   private SessionContext context() {
-    return new SessionContext(1L, 7L, 2L, "player", 3L, "hero", 44L, "room", "jwt", 0L);
+    return new SessionContext(
+        1L,
+        7L,
+        "5f7624ca-8aee-4d34-9cd8-3ba3a1815f30",
+        "player",
+        3L,
+        "hero",
+        44L,
+        "room",
+        "jwt",
+        0L);
   }
 
   private GameInstance admittedInstance() {

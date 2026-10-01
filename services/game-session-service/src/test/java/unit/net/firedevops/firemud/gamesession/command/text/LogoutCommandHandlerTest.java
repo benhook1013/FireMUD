@@ -51,7 +51,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",
@@ -88,7 +88,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",
@@ -115,7 +115,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",
@@ -158,7 +158,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",
@@ -186,7 +186,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",
@@ -215,7 +215,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",
@@ -271,7 +271,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",
@@ -314,7 +314,7 @@ class LogoutCommandHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "demo",

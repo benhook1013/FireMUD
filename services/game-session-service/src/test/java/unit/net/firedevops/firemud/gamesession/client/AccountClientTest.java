@@ -81,7 +81,8 @@ class AccountClientTest {
     ArgumentCaptor<IssueDirectTextConnectScopeRequest> captor =
         ArgumentCaptor.forClass(IssueDirectTextConnectScopeRequest.class);
     verify(stub).issueDirectTextConnectScope(captor.capture());
-    assertThat(captor.getValue().getPlayerContext().getAccountId()).isEqualTo("41");
+    assertThat(captor.getValue().getPlayerContext().getAccountId())
+        .isEqualTo("d0c68a37-5126-42d2-9506-8df13e97699e");
     assertThat(captor.getValue().getPlayerContext().getSessionId()).isEqualTo("7");
     assertThat(captor.getValue().getTenantId()).isEqualTo("22");
     assertThat(captor.getValue().getWorldSlug()).isEqualTo("demo-world");
@@ -133,7 +134,7 @@ class AccountClientTest {
 
   private static PlayerExecutionContext directTextContext(String requestId) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId("41")
+        .setAccountId("d0c68a37-5126-42d2-9506-8df13e97699e")
         .setSessionId("7")
         .setTenantId("22")
         .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")

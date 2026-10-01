@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
@@ -485,7 +486,7 @@ public class PlayCommandHandler {
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(selectedRealm.tenantId()),
-            Long.toString(context.accountId()),
+            context.accountId(),
             Long.toString(selectedRealm.gameInstanceId()),
             scope);
     if (response.hasError()) {
@@ -493,7 +494,7 @@ public class PlayCommandHandler {
     }
     for (Character candidate : response.getCharactersList()) {
       if (!Long.toString(selectedRealm.tenantId()).equals(candidate.getTenantId())
-          || !Long.toString(context.accountId()).equals(candidate.getAccountId())
+          || !context.accountId().equals(candidate.getAccountId())
           || candidate.getPlayableStateScope() != scope
           || !StringUtils.hasText(candidate.getName())) {
         throw new IllegalStateException("Entity account roster contains an invalid actor");
@@ -767,7 +768,7 @@ public class PlayCommandHandler {
     if (!isPublicProductionRealm(selectedRealm)) {
       GetRealmAccessGrantForRuntimeResponse grantResponse =
           accountClient.getRealmAccessGrantForRuntime(
-              Long.toString(context.accountId()),
+              context.accountId(),
               Long.toString(selectedRealm.tenantId()),
               selectedWorld.slug(),
               selectedRealm.slug(),
@@ -828,7 +829,8 @@ public class PlayCommandHandler {
     if (!response.hasMembershipBaseline() || !response.hasAuthorityTuple()) {
       return false;
     }
-    if (!isCanonicalUuid(response.getAccountId()) || !isCanonicalUuid(response.getTenantId())) {
+    if (!AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+        || !isCanonicalUuid(response.getTenantId())) {
       return false;
     }
     if (!response
@@ -1057,7 +1059,7 @@ public class PlayCommandHandler {
       long characterId,
       String requestId) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId(Long.toString(caller.accountId()))
+        .setAccountId(caller.accountId())
         .setTenantId(Long.toString(target.tenantId()))
         .setRealmId(Objects.toString(target.realmId(), ""))
         .setPlayableStateNamespaceId(Objects.toString(target.playableStateNamespaceId(), ""))
@@ -1303,9 +1305,9 @@ public class PlayCommandHandler {
     if (!StringUtils.hasText(response.getAccountId())
         || !StringUtils.hasText(response.getTenantId())
         || !StringUtils.hasText(response.getEvaluatedAt())
-        || !isCanonicalUuid(response.getAccountId())
+        || !AccountIds.isCanonicalNonNilUuid(response.getAccountId())
         || !isCanonicalUuid(response.getTenantId())
-        || !response.getRequestAccountId().equals(Long.toString(context.accountId()))
+        || !response.getRequestAccountId().equals(context.accountId())
         || !response.getRequestTenantId().equals(Long.toString(selectedRealm.tenantId()))
         || !response.getRequestId().equals(requestId)) {
       return false;

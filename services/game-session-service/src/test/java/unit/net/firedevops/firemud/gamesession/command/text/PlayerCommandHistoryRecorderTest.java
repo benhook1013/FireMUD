@@ -239,6 +239,7 @@ class PlayerCommandHistoryRecorderTest {
   }
 
   private SessionContext gameplayContext(long characterId) {
-    return new SessionContext(1L, 7L, 9L, characterId, 11L, "R-1", "token");
+    return new SessionContext(
+        1L, 7L, "11111111-1111-4111-8111-111111111111", characterId, 11L, "R-1", "token");
   }
 }

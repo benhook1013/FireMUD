@@ -701,7 +701,7 @@ class CommunicationWebSocketCrossServiceTest {
     STACK.seedLiveSession(
         90210L,
         TENANT_ID,
-        Long.parseLong(ChatTestFixtures.PLAYER_SORA),
+        ChatTestFixtures.characterByName("Sora").getAccountId(),
         "sora@example.com",
         Long.parseLong(ChatTestFixtures.PLAYER_SORA),
         "Sora",

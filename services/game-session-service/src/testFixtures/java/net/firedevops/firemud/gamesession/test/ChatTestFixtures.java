@@ -57,7 +57,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_EMBERLINE)
           .setTenantId("1")
-          .setAccountId("7")
+          .setAccountId("c91fb96e-5ad8-4e4e-a12d-2838640093b2")
           .setName("Emberline")
           .build();
     }
@@ -65,7 +65,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_SORA)
           .setTenantId("1")
-          .setAccountId("8")
+          .setAccountId("5f7624ca-8aee-4d34-9cd8-3ba3a1815f30")
           .setName("Sora")
           .build();
     }
@@ -73,7 +73,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_NYX)
           .setTenantId("1")
-          .setAccountId("9")
+          .setAccountId("3a16e242-3467-4d98-906f-71d47b888b5e")
           .setName("Nyx")
           .build();
     }

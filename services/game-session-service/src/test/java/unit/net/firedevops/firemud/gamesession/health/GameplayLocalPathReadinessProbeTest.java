@@ -21,7 +21,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 
 class GameplayLocalPathReadinessProbeTest {
   private static final long PROBE_SESSION_ID_BASE = 9_223_372_036_854_770_000L;
-  private static final long PROBE_ACCOUNT_ID = 9_223_372_036_854_770_001L;
+  private static final String PROBE_ACCOUNT_UUID = "f2ed193b-12c1-4c96-bcad-c162229af440";
   private static final long PROBE_CHARACTER_ID = 9_223_372_036_854_770_002L;
 
   @Test
@@ -38,7 +38,7 @@ class GameplayLocalPathReadinessProbeTest {
                   new SessionContext(
                       sessionId,
                       0L,
-                      PROBE_ACCOUNT_ID,
+                      PROBE_ACCOUNT_UUID,
                       PROBE_CHARACTER_ID,
                       0L,
                       "readiness-room-" + probeSequence,
@@ -74,7 +74,7 @@ class GameplayLocalPathReadinessProbeTest {
                   new SessionContext(
                       sessionId,
                       0L,
-                      PROBE_ACCOUNT_ID,
+                      PROBE_ACCOUNT_UUID,
                       PROBE_CHARACTER_ID,
                       0L,
                       "readiness-room-" + (sessionId - PROBE_SESSION_ID_BASE),

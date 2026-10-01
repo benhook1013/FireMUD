@@ -15,13 +15,13 @@ import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
-import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -139,8 +139,8 @@ public final class LoginCommandHandler {
       return failure(errorCode, publicErrorMessage(error, errorCode));
     }
 
-    Long authenticatedAccountId = parseAccountId(authResponse.getAccountId());
-    if (authenticatedAccountId == null || authenticatedAccountId <= 0) {
+    String authenticatedAccountId = parseAccountId(authResponse.getAccountId());
+    if (authenticatedAccountId == null) {
       clearFailedLoginSessionState(
           numericSessionId, instance.getTenantId(), bootstrapGameInstanceId, null, null, 0L);
       return invalidAccountFailure();
@@ -257,8 +257,8 @@ public final class LoginCommandHandler {
     }
 
     if (existingSession != null
-        && existingSession.accountId() > 0L
-        && (existingSession.accountId() != verifiedContext.accountId()
+        && existingSession.hasAccountIdentity()
+        && (!Objects.equals(existingSession.accountId(), verifiedContext.accountId())
             || existingSession.tenantId() != verifiedContext.tenantId())) {
       clearPreviousSessionForVerifiedContext(numericSessionId, existingSession, verifiedContext);
     }
@@ -274,7 +274,7 @@ public final class LoginCommandHandler {
         new SessionContext(
             sessionId,
             verifiedContext.tenantId(),
-            0L,
+            null,
             null,
             0L,
             null,
@@ -294,7 +294,7 @@ public final class LoginCommandHandler {
   private void persistSessionContext(
       long sessionId,
       long tenantId,
-      long accountId,
+      String accountId,
       String loginName,
       String jwt,
       long bootstrapGameInstanceId) {
@@ -309,9 +309,10 @@ public final class LoginCommandHandler {
         projectedExisting != null && projectedExisting.tenantId() == tenantId
             ? projectedExisting
             : null;
-    boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
+    boolean sameAuthenticatedAccount =
+        existing != null && Objects.equals(existing.accountId(), accountId);
     boolean unauthenticatedBootstrap =
-        existing != null && existing.accountId() == 0L && !existing.hasGameplayBinding();
+        existing != null && !existing.hasAccountIdentity() && !existing.hasGameplayBinding();
     long retainedBootstrapGameInstanceId = bootstrapGameInstanceId;
     String retainedWorldSlug = null;
     String retainedRealmSlug = null;
@@ -455,7 +456,7 @@ public final class LoginCommandHandler {
         new SessionContext(
             sessionId,
             tenantId,
-            0L,
+            null,
             null,
             0L,
             null,
@@ -515,13 +516,8 @@ public final class LoginCommandHandler {
     return SessionIdParsing.parse(sessionIdText);
   }
 
-  private Long parseAccountId(String accountIdText) {
-    PositiveLongParsing.ParsedPositiveLong parsed =
-        PositiveLongParsing.parseOptionalText(accountIdText, "accountId");
-    if (!parsed.valid()) {
-      return null;
-    }
-    return parsed.value();
+  private String parseAccountId(String accountIdText) {
+    return AccountIds.isCanonicalNonNilUuid(accountIdText) ? accountIdText : null;
   }
 
   private LoginCommandHandlingResult invalidSessionFailure(String message) {

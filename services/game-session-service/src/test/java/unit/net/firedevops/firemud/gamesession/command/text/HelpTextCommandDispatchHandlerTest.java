@@ -20,7 +20,15 @@ class HelpTextCommandDispatchHandlerTest {
   void publishesCommandEventForGameplayScopedHelp() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L,
+            22L,
+            "d0c68a37-5126-42d2-9506-8df13e97699e",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(

@@ -40,7 +40,15 @@ class WorldsTextCommandDispatchHandlerTest {
   void publishesCommandEventForGameplayScopedWorldsBrowse() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L,
+            22L,
+            "d0c68a37-5126-42d2-9506-8df13e97699e",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -71,7 +79,15 @@ class WorldsTextCommandDispatchHandlerTest {
     gameplayCatalogProperties.setWorlds(List.of(world("sandbox", 1L, 2L, false)));
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L,
+            22L,
+            "d0c68a37-5126-42d2-9506-8df13e97699e",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -91,7 +107,15 @@ class WorldsTextCommandDispatchHandlerTest {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "emberline@example.com",
+            7001L,
+            "Emberline",
+            9L,
+            "R-1",
+            "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -168,7 +192,15 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setOutcomeCode("CREATED")
                 .build());
     SessionContext context =
-        new SessionContext(7L, 22L, 41L, "emberline@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(
+            7L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "emberline@example.com",
+            0L,
+            null,
+            0L,
+            "jwt");
 
     TextCommandInterpretationResult realmsResult =
         scopedHandler.handle(
@@ -216,7 +248,8 @@ class WorldsTextCommandDispatchHandlerTest {
         org.mockito.ArgumentCaptor.forClass(DirectTextConnectScopeTarget.class);
     Mockito.verify(accountClient)
         .issueDirectTextConnectScope(callerCaptor.capture(), targetCaptor.capture());
-    assertThat(callerCaptor.getValue().getAccountId()).isEqualTo("41");
+    assertThat(callerCaptor.getValue().getAccountId())
+        .isEqualTo("d0c68a37-5126-42d2-9506-8df13e97699e");
     assertThat(callerCaptor.getValue().getSessionId()).isEqualTo("7");
     assertThat(targetCaptor.getValue().realmId()).isEqualTo(realmId.toString());
     assertThat(targetCaptor.getValue().catalogRevision()).isEqualTo(7L);
@@ -242,7 +275,8 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(requestIds.getLast()).isEqualTo(requestIds.getFirst());
     assertThat(scopeIds.getLast()).isEqualTo(scopeIds.getFirst());
     assertThat(joinContexts.getFirst().getRequestId()).isEqualTo(requestIds.getFirst());
-    assertThat(joinContexts.getFirst().getAccountId()).isEqualTo("41");
+    assertThat(joinContexts.getFirst().getAccountId())
+        .isEqualTo("d0c68a37-5126-42d2-9506-8df13e97699e");
     assertThat(joinContexts.getFirst().getSessionId()).isEqualTo("7");
     assertThat(joinContexts.getFirst().getRealmId()).isEqualTo(realmId.toString());
     assertThat(joinContexts.getLast()).isEqualTo(joinContexts.getFirst());

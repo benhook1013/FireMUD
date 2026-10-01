@@ -41,7 +41,21 @@ import org.mockito.ArgumentCaptor;
 class GameLogicClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, 0L, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L,
+          22L,
+          "f2ed193b-12c1-4c96-bcad-c162229af440",
+          "",
+          123L,
+          "",
+          1L,
+          "R-1021",
+          "",
+          null,
+          1L,
+          "world",
+          "realm",
+          17L,
+          "SHARED");
 
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {
@@ -317,7 +331,7 @@ class GameLogicClientTest {
         PickupVisibleRoomItemRequest.newBuilder()
             .setTenantId("22")
             .setSessionId("41")
-            .setAccountId("0")
+            .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setRoomInstanceId("R-1021")
@@ -422,7 +436,7 @@ class GameLogicClientTest {
         DropCarriedItemRequest.newBuilder()
             .setTenantId("22")
             .setSessionId("41")
-            .setAccountId("0")
+            .setAccountId("f2ed193b-12c1-4c96-bcad-c162229af440")
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setRoomInstanceId("R-1021")

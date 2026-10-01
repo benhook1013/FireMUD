@@ -103,7 +103,7 @@ public final class SessionAuthenticationService {
   }
 
   private boolean isAuthenticatedContext(SessionContext context) {
-    return context.accountId() > 0;
+    return context.hasAccountIdentity();
   }
 
   private Optional<Long> parseSessionId(String text) {

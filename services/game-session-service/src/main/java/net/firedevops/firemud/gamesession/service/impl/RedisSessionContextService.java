@@ -162,7 +162,15 @@ public final class RedisSessionContextService implements SessionContextService {
   }
 
   private Optional<SessionContext> readSessionContext(String key) {
-    SessionContext context = (SessionContext) redisTemplate.opsForValue().get(key);
+    SessionContext context;
+    try {
+      context = (SessionContext) redisTemplate.opsForValue().get(key);
+    } catch (org.springframework.data.redis.serializer.SerializationException
+        | ClassCastException ex) {
+      // Numeric Account identities from the old record shape are not convertible to UUIDs.
+      // Keep the retained value intact and require a fresh LOGIN before gameplay can resume.
+      return Optional.empty();
+    }
     return Optional.ofNullable(context).map(SessionContext::withoutJwt);
   }
 
@@ -193,7 +201,13 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private SessionContext readContext(
       org.springframework.data.redis.core.RedisOperations<String, Object> operations, String key) {
-    return (SessionContext) operations.opsForValue().get(key);
+    try {
+      return (SessionContext) operations.opsForValue().get(key);
+    } catch (org.springframework.data.redis.serializer.SerializationException
+        | ClassCastException ex) {
+      // The caller cannot authorize from an unreadable legacy identity; do not mutate it here.
+      return null;
+    }
   }
 
   private void addWatchKeys(Set<String> watchKeys, SessionContext context) {

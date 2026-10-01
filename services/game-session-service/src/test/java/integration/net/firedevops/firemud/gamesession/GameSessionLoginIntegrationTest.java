@@ -98,7 +98,10 @@ class GameSessionLoginIntegrationTest {
         .delete(anyString());
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken("stub-token").setAccountId("7").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken("stub-token")
+                .setAccountId("c91fb96e-5ad8-4e4e-a12d-2838640093b2")
+                .build());
     when(sharedSettingsAuthorityReader.readOverrides(anyLong(), org.mockito.ArgumentMatchers.any()))
         .thenReturn(ScopedSettingsSnapshot.empty());
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))

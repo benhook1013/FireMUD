@@ -90,7 +90,17 @@ public class EffectiveReconnectionSettingsResolver implements ReconnectionSettin
   public FiremudReconnectionProperties resolve(long tenantId, long gameInstanceId) {
     return resolvedReconnection(
             new SessionContext(
-                0L, tenantId, 0L, null, 0L, null, gameInstanceId, null, null, null, gameInstanceId))
+                0L,
+                tenantId,
+                null,
+                null,
+                0L,
+                null,
+                gameInstanceId,
+                null,
+                null,
+                null,
+                gameInstanceId))
         .effective();
   }
 

@@ -64,7 +64,7 @@ public class WorldsCommandHandler {
 
   public RealmBrowseResult browseRealms(SessionContext sessionContext, String worldSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
-    if (sessionContext.accountId() <= 0 || sessionContext.sessionId() <= 0) {
+    if (!sessionContext.hasAccountIdentity() || sessionContext.sessionId() <= 0) {
       return RealmBrowseResult.failure("LOGIN_REQUIRED");
     }
     if (connectScopeSessionStore != null) {
@@ -125,7 +125,7 @@ public class WorldsCommandHandler {
   public JoinMembershipResult joinPublicProductionMembership(
       SessionContext sessionContext, String worldSelector) {
     Objects.requireNonNull(sessionContext, "sessionContext must not be null");
-    if (sessionContext.accountId() <= 0 || sessionContext.sessionId() <= 0) {
+    if (!sessionContext.hasAccountIdentity() || sessionContext.sessionId() <= 0) {
       return JoinMembershipResult.failure("LOGIN_REQUIRED");
     }
     if (accountClient == null || connectScopeSessionStore == null) {
@@ -173,7 +173,7 @@ public class WorldsCommandHandler {
   private PlayerExecutionContext playerContext(
       SessionContext caller, GameplayWorldCatalog.RealmView realm) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId(Long.toString(caller.accountId()))
+        .setAccountId(caller.accountId())
         .setSessionId(Long.toString(caller.sessionId()))
         .setTenantId(Long.toString(realm.tenantId()))
         .setRealmId(realm.realmId().toString())

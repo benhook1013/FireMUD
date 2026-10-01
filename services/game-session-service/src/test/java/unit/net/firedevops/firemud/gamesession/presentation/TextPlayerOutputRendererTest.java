@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 class TextPlayerOutputRendererTest {
   private static final String STRIDE_COMMAND_ID = "stride";
+  private static final String SORA_ACCOUNT_ID = "5f7624ca-8aee-4d34-9cd8-3ba3a1815f30";
 
   @Test
   void briefModeSuppressesLongLookDescription() {
@@ -1069,7 +1070,7 @@ class TextPlayerOutputRendererTest {
                     new FriendPresenceViewOutput.Entry(
                         1,
                         77L,
-                        41L,
+                        SORA_ACCOUNT_ID,
                         "ONLINE",
                         null,
                         "Sora",
@@ -1094,7 +1095,9 @@ class TextPlayerOutputRendererTest {
     assertThat(rendered)
         .isEqualTo(
             "OK FRIENDS\n"
-                + "Friend Sora [acct #41]\n"
+                + "Friend Sora [acct #"
+                + SORA_ACCOUNT_ID
+                + "]\n"
                 + "Link: #77\n"
                 + "Status: online\n"
                 + "Presence: online in Demo World / Ember Realm (active)\n"
@@ -1128,7 +1131,7 @@ class TextPlayerOutputRendererTest {
                         new FriendPresenceViewOutput.Entry(
                             1,
                             null,
-                            77L,
+                            SORA_ACCOUNT_ID,
                             "active",
                             null,
                             "Sora",
