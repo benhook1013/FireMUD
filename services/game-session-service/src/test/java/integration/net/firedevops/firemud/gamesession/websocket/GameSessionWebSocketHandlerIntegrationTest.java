@@ -1671,7 +1671,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             22L,
             2L,
             true,
-            true,
+            false,
             true,
             "SHARED",
             "ALLOW_NEW",
@@ -1681,6 +1681,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
             0L,
             0L,
             null));
+    assertThat(gameplayAdmissionPointerAuthorityService.listPointers())
+        .filteredOn(
+            pointer ->
+                pointer.tenantId() == 22L && pointer.visible() && pointer.publicProductionRealm())
+        .extracting(GameplayAdmissionPointerSnapshot::worldSlug)
+        .containsExactly("demo");
   }
 
   private static JsonNode json(String payload) {

@@ -110,7 +110,7 @@ class AdmissionPointerControllerTest {
   }
 
   @Test
-  void openApiDocumentsAdmissionPointerList503Response() throws Exception {
+  void openApiDocumentsAdmissionPointerRead503Responses() throws Exception {
     Map<?, ?> document;
     try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
       assertNotNull(input);
@@ -118,20 +118,26 @@ class AdmissionPointerControllerTest {
     }
 
     Map<?, ?> paths = (Map<?, ?>) document.get("paths");
-    Map<?, ?> admissionPointers = (Map<?, ?>) paths.get("/admission-pointers");
-    Map<?, ?> getOperation = (Map<?, ?>) admissionPointers.get("get");
-    Map<?, ?> responses = (Map<?, ?>) getOperation.get("responses");
-    Map<?, ?> success = (Map<?, ?>) responses.get("200");
-    Map<?, ?> unavailable = (Map<?, ?>) responses.get("503");
-    Map<?, ?> successContent = (Map<?, ?>) success.get("content");
-    Map<?, ?> unavailableContent = (Map<?, ?>) unavailable.get("content");
-    Map<?, ?> successJson = (Map<?, ?>) successContent.get("application/json");
-    Map<?, ?> unavailableJson = (Map<?, ?>) unavailableContent.get("application/json");
-    Map<?, ?> successSchema = (Map<?, ?>) successJson.get("schema");
-    Map<?, ?> unavailableSchema = (Map<?, ?>) unavailableJson.get("schema");
+    for (String path :
+        List.of(
+            "/admission-pointers",
+            "/admission-pointers/runtime-state/{tenantId}/{gameInstanceId}")) {
+      Map<?, ?> admissionPointers = (Map<?, ?>) paths.get(path);
+      Map<?, ?> getOperation = (Map<?, ?>) admissionPointers.get("get");
+      Map<?, ?> responses = (Map<?, ?>) getOperation.get("responses");
+      Map<?, ?> success = (Map<?, ?>) responses.get("200");
+      Map<?, ?> unavailable = (Map<?, ?>) responses.get("503");
+      assertNotNull(unavailable, path + " must document the unavailable response");
+      Map<?, ?> successContent = (Map<?, ?>) success.get("content");
+      Map<?, ?> unavailableContent = (Map<?, ?>) unavailable.get("content");
+      Map<?, ?> successJson = (Map<?, ?>) successContent.get("application/json");
+      Map<?, ?> unavailableJson = (Map<?, ?>) unavailableContent.get("application/json");
+      Map<?, ?> successSchema = (Map<?, ?>) successJson.get("schema");
+      Map<?, ?> unavailableSchema = (Map<?, ?>) unavailableJson.get("schema");
 
-    assertEquals("#/components/schemas/ApiResponseError", unavailableSchema.get("$ref"));
-    assertEquals("object", successSchema.get("type"));
+      assertEquals("#/components/schemas/ApiResponseError", unavailableSchema.get("$ref"));
+      assertEquals("object", successSchema.get("type"));
+    }
   }
 
   @Test
