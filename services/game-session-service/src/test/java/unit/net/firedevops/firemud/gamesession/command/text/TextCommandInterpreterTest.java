@@ -540,7 +540,7 @@ class TextCommandInterpreterTest {
         interpreter.interpret("1", "CHARS demo", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("CHARS demo", interpretation).contains("demo"));
+    assertTrue(renderedResponse("CHARS demo", interpretation).contains("1) demo [lvl 12]"));
     assertTrue(
         renderedResponse("CHARS demo", interpretation)
             .contains("Realm state: shared, creation: allow_new"));

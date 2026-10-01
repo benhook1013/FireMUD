@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 GENERATOR = REPOSITORY / "dev-tools/docs/generate-grpc-docs.sh"
@@ -54,6 +55,7 @@ class GenerateGrpcDocsTest(unittest.TestCase):
             capture_output=True,
             text=True,
             check=False,
+            timeout=30,
         )
 
     def test_normalizes_trailing_whitespace_and_blank_lines(self):
@@ -82,6 +84,18 @@ class GenerateGrpcDocsTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(output_file.read_text(), "previous output\n")
         self.assertEqual(list(output_dir.glob(".grpc-api-*")), [])
+
+    def test_generator_timeout_is_bounded_and_propagated(self):
+        timeout_error = subprocess.TimeoutExpired(["bash", str(GENERATOR)], timeout=30)
+
+        with (
+            patch("subprocess.run", side_effect=timeout_error) as run,
+            self.assertRaises(subprocess.TimeoutExpired) as raised,
+        ):
+            self.run_generator()
+
+        self.assertIs(raised.exception, timeout_error)
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
 
 
 if __name__ == "__main__":

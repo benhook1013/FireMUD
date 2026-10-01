@@ -815,6 +815,11 @@ public class AccountServiceImpl implements AccountService {
           .isPresent();
     } catch (IllegalStateException ex) {
       return false;
+    } catch (AuthenticationException ex) {
+      if ("ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
+        return false;
+      }
+      throw ex;
     }
   }
 
@@ -831,16 +836,9 @@ public class AccountServiceImpl implements AccountService {
       }
       return Optional.empty();
     }
-    try {
-      return isDiscoveryRealmAdmissible(bootstrapContext, target, discoveryEntitlementMemo)
-          ? Optional.of(target)
-          : Optional.empty();
-    } catch (AuthenticationException ex) {
-      if (!"ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
-        throw ex;
-      }
-      return Optional.empty();
-    }
+    return isDiscoveryRealmAdmissible(bootstrapContext, target, discoveryEntitlementMemo)
+        ? Optional.of(target)
+        : Optional.empty();
   }
 
   private boolean isMalformedRealmReachable(

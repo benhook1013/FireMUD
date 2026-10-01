@@ -2467,7 +2467,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapRealmsOmitsRealmWhenEntitlementsAreUnavailable() {
+  void listBootstrapRealmsPropagatesUnavailableEntitlements() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -2478,7 +2478,12 @@ class AccountServiceImplTest {
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
 
-    assertTrue(service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").isEmpty());
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
   }
 
   @Test
