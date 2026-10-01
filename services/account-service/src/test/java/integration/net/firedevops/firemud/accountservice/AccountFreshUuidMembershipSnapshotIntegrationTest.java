@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -171,6 +172,88 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
         .isZero();
     assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
+  }
+
+  @Test
+  void canonicalRuntimeReadUsesFreshUuidAssociationWithoutInventingRetainedAlias() {
+    AccountFixture account = accountFixture();
+    UUID tenantUuid = UUID.randomUUID();
+    FreshTenantCreationEvidence evidence = importFreshTenantAssociation(tenantUuid);
+    long originalIssuanceFence = issuanceFence(account.accountUuid());
+
+    RuntimeMembershipSnapshotDto first =
+        readRuntimeMembershipSnapshot(account.accountUuid(), tenantUuid);
+
+    assertThat(first.requestAccountUuid()).isEqualTo(account.accountUuid().toString());
+    assertThat(first.requestTenantUuid()).isEqualTo(tenantUuid.toString());
+    assertThat(first.accountUuid()).isEqualTo(account.accountUuid().toString());
+    assertThat(first.tenantUuid()).isEqualTo(tenantUuid.toString());
+    assertThat(first.membershipExists()).isFalse();
+    assertThat(first.gameplayAdmissionAllowed()).isFalse();
+    assertThat(first.membershipBaseline().membershipLifecycleState()).isEqualTo("MISSING");
+    assertThat(first.membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(tenantUuid.toString(), "1"));
+    assertThat(first.membershipBaseline().membershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(first.authorityTuple().issuerAuthGeneration()).isEqualTo("1");
+    assertThat(first.authorityTuple().accountAuthorityGeneration()).isEqualTo("1");
+    assertThat(first.authorityTuple().tenantAuthorityGeneration())
+        .isEqualTo(Map.of(tenantUuid.toString(), "1"));
+    assertThat(first.authorityTuple().membershipAuthorityGeneration())
+        .isEqualTo(Map.of(tenantUuid.toString(), "1"));
+    assertThat(first.authorityTuple().privateRealmGrantVersions()).isEmpty();
+    assertThat(first.issuanceFence()).isEqualTo(Long.toString(originalIssuanceFence));
+    assertThat(first.evaluatedAt()).isNotNull();
+    assertThat(first.outboxCheckpoints())
+        .containsExactlyElementsOf(expectedCheckpoints(account.accountUuid(), tenantUuid));
+    assertThat(first.outboxSourceEvidence()).isEmpty();
+    assertThat(first.sourceEvent()).isNull();
+    assertThat(first.roles()).isEmpty();
+    assertThat(membershipPairAuthorityRow(account.accountUuid(), tenantUuid))
+        .containsEntry("legacy_tenant_id", null)
+        .containsEntry("tenant_provenance_kind", "FRESH_GAME_DESIGN")
+        .containsEntry("tenant_source_operation_id", evidence.operationId())
+        .containsEntry("tenant_provenance_digest", evidence.evidenceDigest())
+        .containsEntry("membership_exists", false)
+        .containsEntry("membership_version", 1L)
+        .containsEntry("membership_authority_generation", 1L)
+        .containsEntry("last_event_sequence", 0L);
+    assertThat(countApprovedAssociationForCanonicalTenant(tenantUuid)).isZero();
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
+    assertThat(countAuthorityEvents(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(countAuthorityStreams(membershipStreamKey(account.accountUuid(), tenantUuid)))
+        .isZero();
+    assertThat(issuanceFence(account.accountUuid())).isEqualTo(originalIssuanceFence);
+
+    RuntimeMembershipSnapshotDto retry =
+        readRuntimeMembershipSnapshot(account.accountUuid(), tenantUuid);
+    assertThat(retry.requestAccountUuid()).isEqualTo(first.requestAccountUuid());
+    assertThat(retry.requestTenantUuid()).isEqualTo(first.requestTenantUuid());
+    assertThat(retry.membershipBaseline()).isEqualTo(first.membershipBaseline());
+    assertThat(retry.authorityTuple()).isEqualTo(first.authorityTuple());
+    assertThat(retry.issuanceFence()).isEqualTo(first.issuanceFence());
+    assertThat(retry.outboxCheckpoints()).isEqualTo(first.outboxCheckpoints());
+    assertThat(retry.outboxSourceEvidence()).isEmpty();
+    assertThat(countMembershipPairAuthorities(account.accountUuid(), tenantUuid)).isEqualTo(1L);
+    assertThat(countMembershipAuthorityGenerations(account.accountUuid(), tenantUuid))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void canonicalRuntimeReadRejectsUnmappedTenantUuidWithoutEnrollment() {
+    AccountFixture account = accountFixture();
+    UUID unmappedTenantUuid = UUID.randomUUID();
+
+    assertThatThrownBy(
+            () -> readRuntimeMembershipSnapshot(account.accountUuid(), unmappedTenantUuid))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("approved Account tenant association is absent");
+    assertThat(countMembershipPairAuthorities(account.accountUuid(), unmappedTenantUuid)).isZero();
+    assertThat(countMembershipAuthorityGenerations(account.accountUuid(), unmappedTenantUuid))
+        .isZero();
+    assertThat(countMembershipsForAccount(account.accountId())).isZero();
+    assertThat(countMembershipTransitionReceiptsForAccount(account.accountId())).isZero();
   }
 
   @Test
@@ -489,6 +572,12 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     return new TransactionTemplate(transactionManager)
         .execute(
             status -> producer.readFreshNeverJoinedMembershipSnapshot(accountUuid, tenantUuid));
+  }
+
+  private RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid) {
+    return new TransactionTemplate(transactionManager)
+        .execute(status -> producer.readRuntimeMembershipSnapshot(accountUuid, tenantUuid));
   }
 
   private Map<String, Object> membershipPairAuthorityRow(UUID accountUuid, UUID tenantUuid) {

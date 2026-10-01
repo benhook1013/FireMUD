@@ -12,8 +12,8 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 
 /** Same-fence Account snapshot candidate for the denied runtime membership RPC. */
 public record RuntimeMembershipSnapshotDto(
-    Long requestAccountId,
-    Long requestTenantId,
+    String requestAccountUuid,
+    String requestTenantUuid,
     String accountUuid,
     String tenantUuid,
     boolean membershipExists,
@@ -27,15 +27,14 @@ public record RuntimeMembershipSnapshotDto(
     List<OutboxSourceEvidence> outboxSourceEvidence,
     MembershipEvent sourceEvent) {
   public RuntimeMembershipSnapshotDto {
-    if (requestAccountId == null
-        || requestAccountId <= 0L
-        || requestTenantId == null
-        || requestTenantId <= 0L) {
-      throw new IllegalArgumentException(
-          "Runtime membership account and tenant IDs must be positive");
-    }
+    requestAccountUuid = requireCanonicalUuid(requestAccountUuid, "requested Account UUID");
+    requestTenantUuid = requireCanonicalUuid(requestTenantUuid, "requested tenant UUID");
     accountUuid = requireCanonicalUuid(accountUuid, "Account UUID");
     tenantUuid = requireCanonicalUuid(tenantUuid, "tenant UUID");
+    if (!requestAccountUuid.equals(accountUuid) || !requestTenantUuid.equals(tenantUuid)) {
+      throw new IllegalArgumentException(
+          "Runtime membership request identity differs from its verified Account snapshot");
+    }
     Objects.requireNonNull(membershipBaseline, "unchanged membership baseline is required");
     roles = List.copyOf(roles);
     Objects.requireNonNull(authorityTuple, "complete membership authority tuple is required");
@@ -152,11 +151,13 @@ public record RuntimeMembershipSnapshotDto(
   private static String requireCanonicalUuid(String value, String field) {
     Objects.requireNonNull(value, field + " is required");
     try {
-      if (!java.util.UUID.fromString(value).toString().equals(value)) {
-        throw new IllegalArgumentException(field + " must be a canonical lowercase UUID");
+      java.util.UUID parsed = java.util.UUID.fromString(value);
+      if (parsed.equals(new java.util.UUID(0L, 0L)) || !parsed.toString().equals(value)) {
+        throw new IllegalArgumentException(field + " must be a non-nil canonical lowercase UUID");
       }
     } catch (IllegalArgumentException exception) {
-      throw new IllegalArgumentException(field + " must be a canonical lowercase UUID", exception);
+      throw new IllegalArgumentException(
+          field + " must be a non-nil canonical lowercase UUID", exception);
     }
     return value;
   }

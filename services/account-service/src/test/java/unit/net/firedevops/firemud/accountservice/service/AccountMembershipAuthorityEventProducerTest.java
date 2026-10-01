@@ -46,4 +46,37 @@ class AccountMembershipAuthorityEventProducerTest {
         .hasMessageContaining("active owner transaction");
     verifyNoInteractions(joinOperationRepository, accountRepository, freshAssociationRepository);
   }
+
+  @Test
+  void canonicalRuntimeSnapshotRequiresOwnerTransactionBeforeIdentityReads() {
+    AccountJoinOperationRepository joinOperationRepository =
+        mock(AccountJoinOperationRepository.class);
+    AccountRepository accountRepository = mock(AccountRepository.class);
+    AccountTenantIdentityResolver tenantIdentityResolver =
+        mock(AccountTenantIdentityResolver.class);
+    FreshTenantIdentityAssociationRepository freshAssociationRepository =
+        mock(FreshTenantIdentityAssociationRepository.class);
+    AccountMembershipAuthorityEventProducer producer =
+        new AccountMembershipAuthorityEventProducer(
+            joinOperationRepository,
+            mock(AccountMembershipPairAuthorityRepository.class),
+            accountRepository,
+            tenantIdentityResolver,
+            freshAssociationRepository,
+            mock(AccountAuthorityGenerationRepository.class),
+            mock(AccountAuthorityOutboxRepository.class),
+            mock(AccountMembershipTransitionReceiptRepository.class),
+            mock(AccountTenantMembershipRepository.class),
+            mock(AccountTenantMembershipRoleSnapshotRepository.class));
+
+    assertThatThrownBy(
+            () -> producer.readRuntimeMembershipSnapshot(UUID.randomUUID(), UUID.randomUUID()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
+    verifyNoInteractions(
+        joinOperationRepository,
+        accountRepository,
+        tenantIdentityResolver,
+        freshAssociationRepository);
+  }
 }

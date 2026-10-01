@@ -327,8 +327,8 @@ public class AccountMembershipAuthorityEventProducer {
       PositiveMembershipSnapshot positive =
           readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
       return new RuntimeMembershipSnapshotDto(
-          accountId,
-          legacyTenantId,
+          positive.accountId(),
+          positive.tenantId(),
           positive.accountId(),
           positive.tenantId(),
           positive.membershipExists(),
@@ -349,8 +349,8 @@ public class AccountMembershipAuthorityEventProducer {
     NeverJoinedMembershipSnapshot absent =
         readNeverJoinedMembershipSnapshot(accountId, legacyTenantId);
     return new RuntimeMembershipSnapshotDto(
-        accountId,
-        legacyTenantId,
+        absent.accountId(),
+        absent.tenantId(),
         absent.accountId(),
         absent.tenantId(),
         absent.membershipExists(),
@@ -360,6 +360,91 @@ public class AccountMembershipAuthorityEventProducer {
             absent.membershipVersion(),
             absent.membershipAuthorityGeneration()),
         absent.roles(),
+        absent.authorityTuple(),
+        absent.issuanceFence(),
+        absent.evaluatedAt(),
+        absent.outboxCheckpoints(),
+        absent.outboxSourceEvidence(),
+        null);
+  }
+
+  /**
+   * Resolves canonical Account and tenant UUIDs to one owner-fenced runtime membership snapshot.
+   * Fresh tenants use only their immutable V38 association and never receive a numeric alias;
+   * retained tenants must resolve through the exact approved UUID association and source digest.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(
+      UUID accountUuid, UUID tenantUuid) {
+    requireActiveOwnerTransaction();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+
+    Account initialAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalStateException("Runtime snapshot Account row is absent"));
+    requirePersistedAccountIdentity(initialAccount, accountUuid);
+    long accountId = initialAccount.getId();
+
+    // The persisted Account row is the owner fence for every subsequent identity/history read.
+    joinOperationRepository.lockAccount(accountId);
+    Account fencedAccount =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Runtime snapshot Account row disappeared at its fence"));
+    requirePersistedAccountIdentity(fencedAccount, accountUuid);
+    if (!Objects.equals(initialAccount.getId(), fencedAccount.getId())
+        || initialAccount.getAccountUuidProvenance() != fencedAccount.getAccountUuidProvenance()
+        || !Objects.equals(
+            initialAccount.getAccountUuidSourceNumericId(),
+            fencedAccount.getAccountUuidSourceNumericId())) {
+      throw new IllegalStateException("Runtime snapshot Account identity changed at its row fence");
+    }
+
+    Optional<FreshTenantCreationEvidence> freshAssociation =
+        freshTenantIdentityAssociationRepository.read(tenantUuid);
+    if (freshAssociation.isPresent()) {
+      NeverJoinedMembershipSnapshot absent =
+          readFreshNeverJoinedMembershipSnapshot(accountUuid, tenantUuid);
+      return toRuntimeMembershipSnapshot(absent);
+    }
+
+    ApprovedAssociation retainedAssociation = tenantIdentityResolver.resolve(tenantUuid);
+    if (retainedAssociation.legacyTenantId() <= 0L
+        || !tenantUuid.equals(retainedAssociation.canonicalTenantId())) {
+      throw new IllegalStateException(
+          "Retained tenant UUID has no exact private numeric association");
+    }
+    RuntimeMembershipSnapshotDto retained =
+        readRuntimeMembershipSnapshot(accountId, retainedAssociation.legacyTenantId());
+    if (!accountUuid.toString().equals(retained.accountUuid())
+        || !tenantUuid.toString().equals(retained.tenantUuid())
+        || !accountUuid.toString().equals(retained.requestAccountUuid())
+        || !tenantUuid.toString().equals(retained.requestTenantUuid())) {
+      throw new IllegalStateException(
+          "Retained numeric membership readback differs from its exact canonical UUID request");
+    }
+    return retained;
+  }
+
+  private RuntimeMembershipSnapshotDto toRuntimeMembershipSnapshot(
+      NeverJoinedMembershipSnapshot absent) {
+    return new RuntimeMembershipSnapshotDto(
+        absent.accountId(),
+        absent.tenantId(),
+        absent.accountId(),
+        absent.tenantId(),
+        false,
+        false,
+        new RuntimeMembershipSnapshotDto.MembershipBaseline(
+            absent.membershipLifecycleState(),
+            absent.membershipVersion(),
+            absent.membershipAuthorityGeneration()),
+        List.of(),
         absent.authorityTuple(),
         absent.issuanceFence(),
         absent.evaluatedAt(),

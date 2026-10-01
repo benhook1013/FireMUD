@@ -18,6 +18,10 @@ class AccountTenantIdentityResolverTest {
   private static final long LEGACY_TENANT_ID = 41L;
   private static final String NAMESPACE = "proof";
   private static final String EVIDENCE_DIGEST = "sha256:" + "a".repeat(64);
+  private static final UUID CANONICAL_TENANT_UUID =
+      UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID OTHER_TENANT_UUID =
+      UUID.fromString("33333333-3333-4333-8333-333333333333");
 
   private final ApprovedLegacyTenantAssociationRepository associations =
       mock(ApprovedLegacyTenantAssociationRepository.class);
@@ -32,6 +36,11 @@ class AccountTenantIdentityResolverTest {
             .getMethod("resolve", long.class)
             .getAnnotation(Transactional.class);
     assertThat(boundary.propagation()).isEqualTo(Propagation.MANDATORY);
+    Transactional uuidBoundary =
+        AccountTenantIdentityResolver.class
+            .getMethod("resolve", UUID.class)
+            .getAnnotation(Transactional.class);
+    assertThat(uuidBoundary.propagation()).isEqualTo(Propagation.MANDATORY);
   }
 
   @Test
@@ -53,6 +62,60 @@ class AccountTenantIdentityResolverTest {
     assertThat(resolved.manifestDigest()).isEqualTo("sha256:" + "b".repeat(64));
     assertThat(resolved.targetNamespace()).isEqualTo(NAMESPACE);
     verify(sourceEvidence).digest(LEGACY_TENANT_ID);
+  }
+
+  @Test
+  void resolvesCanonicalUuidThroughExactRetainedReverseLookupAndSourceDigest() {
+    ApprovedAssociation association = association();
+    when(associations.findByCanonicalTenantId(CANONICAL_TENANT_UUID))
+        .thenReturn(Optional.of(association));
+    when(sourceEvidence.digest(LEGACY_TENANT_ID)).thenReturn(EVIDENCE_DIGEST);
+
+    ApprovedAssociation resolved = resolver.resolve(CANONICAL_TENANT_UUID);
+
+    assertThat(resolved).isSameAs(association);
+    assertThat(resolved.legacyTenantId()).isEqualTo(LEGACY_TENANT_ID);
+    assertThat(resolved.canonicalTenantId()).isEqualTo(CANONICAL_TENANT_UUID);
+    assertThat(resolved.sourceGameRowId()).isEqualTo(7L);
+    verify(associations).findByCanonicalTenantId(CANONICAL_TENANT_UUID);
+    verify(sourceEvidence).digest(LEGACY_TENANT_ID);
+  }
+
+  @Test
+  void canonicalUuidReverseLookupRejectsUnmappedAssociation() {
+    when(associations.findByCanonicalTenantId(CANONICAL_TENANT_UUID)).thenReturn(Optional.empty());
+    assertThatThrownBy(() -> resolver.resolve(CANONICAL_TENANT_UUID))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("association is absent");
+    verify(sourceEvidence, never()).digest(LEGACY_TENANT_ID);
+  }
+
+  @Test
+  void canonicalUuidReverseLookupRejectsConflictingAssociationBeforeSourceRead() {
+    when(associations.findByCanonicalTenantId(CANONICAL_TENANT_UUID))
+        .thenReturn(Optional.of(association(OTHER_TENANT_UUID, NAMESPACE)));
+    assertThatThrownBy(() -> resolver.resolve(CANONICAL_TENANT_UUID))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("association is mismatched");
+    verify(sourceEvidence, never()).digest(LEGACY_TENANT_ID);
+  }
+
+  @Test
+  void canonicalUuidReverseLookupRejectsChangedRetainedSourceDigest() {
+    when(associations.findByCanonicalTenantId(CANONICAL_TENANT_UUID))
+        .thenReturn(Optional.of(association()));
+    when(sourceEvidence.digest(LEGACY_TENANT_ID)).thenReturn("sha256:" + "c".repeat(64));
+
+    assertThatThrownBy(() -> resolver.resolve(CANONICAL_TENANT_UUID))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("evidence differs");
+  }
+
+  @Test
+  void nilCanonicalUuidIsRejectedBeforeReverseLookup() {
+    assertThatThrownBy(() -> resolver.resolve(new UUID(0L, 0L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("non-nil canonical tenant UUID");
   }
 
   @Test
@@ -114,9 +177,13 @@ class AccountTenantIdentityResolverTest {
   }
 
   private static ApprovedAssociation association(String targetNamespace) {
+    return association(CANONICAL_TENANT_UUID, targetNamespace);
+  }
+
+  private static ApprovedAssociation association(UUID canonicalTenantUuid, String targetNamespace) {
     return new ApprovedAssociation(
         LEGACY_TENANT_ID,
-        UUID.fromString("22222222-2222-4222-8222-222222222222"),
+        canonicalTenantUuid,
         "legacy-game-7",
         7L,
         EVIDENCE_DIGEST,

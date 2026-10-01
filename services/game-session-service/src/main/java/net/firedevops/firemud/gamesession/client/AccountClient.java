@@ -4,6 +4,7 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -292,13 +293,16 @@ public final class AccountClient
 
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(
       PlayerExecutionContext playerContext) {
+    if (playerContext == null
+        || !isCanonicalNonNilUuid(playerContext.getAccountId())
+        || !isCanonicalNonNilUuid(playerContext.getTenantId())) {
+      return membershipAuthorityUnavailable();
+    }
     if (stub() == null) {
       return membershipAuthorityUnavailable();
     }
     GetTenantMembershipForRuntimeRequest request =
-        GetTenantMembershipForRuntimeRequest.newBuilder()
-            .setPlayerContext(Objects.requireNonNull(playerContext, "playerContext is required"))
-            .build();
+        GetTenantMembershipForRuntimeRequest.newBuilder().setPlayerContext(playerContext).build();
     try {
       return callStub().getTenantMembershipForRuntime(request);
     } catch (StatusRuntimeException ex) {
@@ -319,6 +323,18 @@ public final class AccountClient
       logger.warn("Failed to call Account Service runtime membership endpoint", ex);
     }
     return membershipAuthorityUnavailable();
+  }
+
+  private static boolean isCanonicalNonNilUuid(String value) {
+    if (value == null || value.isEmpty()) {
+      return false;
+    }
+    try {
+      UUID parsed = UUID.fromString(value);
+      return !parsed.equals(new UUID(0L, 0L)) && parsed.toString().equals(value);
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
   }
 
   private GetTenantMembershipForRuntimeResponse membershipAuthorityUnavailable() {

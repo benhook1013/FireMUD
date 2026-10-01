@@ -457,10 +457,8 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.shared.v1.PlayerExecutionContext playerContext,
       RuntimeMembershipSnapshotDto snapshot) {
     requireCompleteRuntimePlayerContext(playerContext);
-    long requestAccountId = parseCanonicalPositiveId(playerContext.getAccountId(), "account ID");
-    long requestTenantId = parseCanonicalPositiveId(playerContext.getTenantId(), "tenant ID");
-    if (requestAccountId != snapshot.requestAccountId()
-        || requestTenantId != snapshot.requestTenantId()) {
+    if (!playerContext.getAccountId().equals(snapshot.requestAccountUuid())
+        || !playerContext.getTenantId().equals(snapshot.requestTenantUuid())) {
       throw new IllegalArgumentException(
           "Runtime membership producer result differs from its caller target");
     }
@@ -525,9 +523,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
         && !"ISOLATED".equals(playerContext.getPlayableStateScope())) {
       throw new IllegalArgumentException("Runtime membership target scope is invalid");
     }
-    parseCanonicalPositiveId(playerContext.getAccountId(), "account ID");
-    parseCanonicalPositiveId(playerContext.getTenantId(), "tenant ID");
-    parseCanonicalPositiveId(playerContext.getGameInstanceId(), "game instance ID");
+    requireCanonicalUuid(playerContext.getAccountId(), "account UUID");
+    requireCanonicalUuid(playerContext.getTenantId(), "tenant UUID");
+    requireCanonicalUuid(
+        playerContext.getPlayableStateNamespaceId(), "playable-state namespace UUID");
+    requireCanonicalUuid(playerContext.getGameInstanceId(), "game instance UUID");
     parseCanonicalPositiveId(playerContext.getSessionId(), "session ID");
   }
 
@@ -708,8 +708,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   }
 
   private static void requireCanonicalUuid(String value, String field) {
-    if (!hasText(value) || !UUID.fromString(value).toString().equals(value)) {
+    if (!hasText(value)) {
       throw new IllegalArgumentException("Runtime membership " + field + " is invalid");
+    }
+    try {
+      UUID uuid = UUID.fromString(value);
+      if (uuid.equals(new UUID(0L, 0L)) || !uuid.toString().equals(value)) {
+        throw new IllegalArgumentException("Runtime membership " + field + " is invalid");
+      }
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("Runtime membership " + field + " is invalid", exception);
     }
   }
 

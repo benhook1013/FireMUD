@@ -1104,8 +1104,8 @@ class AccountJoinPostgresIntegrationTest {
 
     var absent = readRuntimeMembershipSnapshot(fixture);
     Map<String, Object> baselineRow = membershipPairAuthorityRow(fixture);
-    assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
-    assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
+    assertThat(absent.requestAccountUuid()).isEqualTo(fixture.accountUuid().toString());
+    assertThat(absent.requestTenantUuid()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
     assertThat(absent.tenantUuid()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(absent.membershipExists()).isFalse();
@@ -1285,7 +1285,7 @@ class AccountJoinPostgresIntegrationTest {
                           status -> {
                             capturedSnapshot.set(
                                 membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
-                                    fixture.accountId(), fixture.tenantId()));
+                                    fixture.accountUuid(), fixture.tenantUuid()));
                             snapshotBackendPid.set(
                                 dsl.resultQuery("SELECT pg_backend_pid()")
                                     .fetchOne(0, Integer.class));
@@ -1343,8 +1343,8 @@ class AccountJoinPostgresIntegrationTest {
 
       RuntimeMembershipSnapshotDto absent = capturedSnapshot.get();
       assertThat(absent).isNotNull();
-      assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
-      assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
+      assertThat(absent.requestAccountUuid()).isEqualTo(fixture.accountUuid().toString());
+      assertThat(absent.requestTenantUuid()).isEqualTo(fixture.tenantUuid().toString());
       assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
       assertThat(absent.tenantUuid()).isEqualTo(fixture.tenantUuid().toString());
       assertThat(absent.membershipExists()).isFalse();
@@ -1573,7 +1573,7 @@ class AccountJoinPostgresIntegrationTest {
         .execute(
             status ->
                 membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
-                    fixture.accountId(), fixture.tenantId()));
+                    fixture.accountUuid(), fixture.tenantUuid()));
   }
 
   private AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot

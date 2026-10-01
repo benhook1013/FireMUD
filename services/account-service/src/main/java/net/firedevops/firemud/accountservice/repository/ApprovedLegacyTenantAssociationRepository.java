@@ -103,25 +103,45 @@ public class ApprovedLegacyTenantAssociationRepository {
                 + "manifest_schema_version "
                 + "FROM account_approved_legacy_tenant_associations WHERE legacy_tenant_id = ?",
             legacyTenantId);
-    return Optional.ofNullable(row)
-        .map(
-            result ->
-                new ApprovedAssociation(
-                    result.get(0, Long.class),
-                    result.get(1, UUID.class),
-                    result.get(2, String.class),
-                    result.get(3, Long.class),
-                    result.get(4, String.class),
-                    result.get(5, UUID.class),
-                    result.get(6, String.class),
-                    result.get(7, String.class),
-                    result.get(8, String.class),
-                    result.get(9, String.class),
-                    result.get(10, String.class),
-                    result.get(11, String.class),
-                    result.get(12, String.class),
-                    result.get(13, Integer.class),
-                    result.get(14, Integer.class)));
+    return Optional.ofNullable(row).map(this::toAssociation);
+  }
+
+  /** Exact reverse lookup for an approved retained canonical tenant identity. */
+  @Transactional(readOnly = true)
+  public Optional<ApprovedAssociation> findByCanonicalTenantId(UUID canonicalTenantId) {
+    if (canonicalTenantId == null || canonicalTenantId.equals(new UUID(0L, 0L))) {
+      return Optional.empty();
+    }
+    Record row =
+        dsl.fetchOne(
+            "SELECT legacy_tenant_id, canonical_tenant_id, source_legacy_game_tenant_id, "
+                + "source_game_row_id, account_evidence_digest, operation_id, manifest_digest, "
+                + "manifest_signature, target_namespace, signer_key_id, approved_by, "
+                + "approval_reference, signed_at, operation_entry_count, "
+                + "manifest_schema_version "
+                + "FROM account_approved_legacy_tenant_associations "
+                + "WHERE canonical_tenant_id = ? AND identity_kind = 'APPROVED_RETAINED'",
+            canonicalTenantId);
+    return Optional.ofNullable(row).map(this::toAssociation);
+  }
+
+  private ApprovedAssociation toAssociation(Record result) {
+    return new ApprovedAssociation(
+        result.get(0, Long.class),
+        result.get(1, UUID.class),
+        result.get(2, String.class),
+        result.get(3, Long.class),
+        result.get(4, String.class),
+        result.get(5, UUID.class),
+        result.get(6, String.class),
+        result.get(7, String.class),
+        result.get(8, String.class),
+        result.get(9, String.class),
+        result.get(10, String.class),
+        result.get(11, String.class),
+        result.get(12, String.class),
+        result.get(13, Integer.class),
+        result.get(14, Integer.class));
   }
 
   private ApprovedAssociation requireExactResponse(

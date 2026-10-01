@@ -2,15 +2,14 @@ package net.firedevops.firemud.accountservice.repository;
 
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Resolves retained numeric tenant keys through an approved, provenance-backed UUID association.
- */
+/** Resolves retained tenant identity through its approved, provenance-backed UUID association. */
 @Repository
 public class AccountTenantIdentityResolver {
   private final ApprovedLegacyTenantAssociationRepository associations;
@@ -53,6 +52,38 @@ public class AccountTenantIdentityResolver {
     }
 
     String currentEvidenceDigest = sourceEvidence.digest(legacyTenantId);
+    if (!Objects.equals(association.accountEvidenceDigest(), currentEvidenceDigest)) {
+      throw new IllegalStateException(
+          "approved Account source evidence differs from retained rows");
+    }
+    return association;
+  }
+
+  /**
+   * Resolves an exact canonical tenant UUID only through its approved retained association and
+   * current source-evidence digest. Fresh UUIDs are resolved by their separate V38 repository.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ApprovedAssociation resolve(UUID canonicalTenantId) {
+    if (canonicalTenantId == null || canonicalTenantId.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException("non-nil canonical tenant UUID is required");
+    }
+    if (workloadNamespace == null || workloadNamespace.isBlank()) {
+      throw new IllegalStateException("Account workload namespace is not configured");
+    }
+
+    Optional<ApprovedAssociation> stored = associations.findByCanonicalTenantId(canonicalTenantId);
+    if (stored.isEmpty()) {
+      throw new IllegalStateException("approved Account tenant association is absent");
+    }
+    ApprovedAssociation association = stored.orElseThrow();
+    if (association.legacyTenantId() <= 0L
+        || !canonicalTenantId.equals(association.canonicalTenantId())
+        || !workloadNamespace.equals(association.targetNamespace())) {
+      throw new IllegalStateException("approved Account tenant association is mismatched");
+    }
+
+    String currentEvidenceDigest = sourceEvidence.digest(association.legacyTenantId());
     if (!Objects.equals(association.accountEvidenceDigest(), currentEvidenceDigest)) {
       throw new IllegalStateException(
           "approved Account source evidence differs from retained rows");
