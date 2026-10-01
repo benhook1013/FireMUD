@@ -968,6 +968,26 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactIntakeRetriesReturnOneReceiptAndSlugRaceHasOneWinner()' \
             game-session-service
 
+      - name: Run Game Session retained tenant snapshot and association PostgreSQL component proof
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest#capturesExactOrderedTenantProjectionAndStableDigestUnderReadCommittedOwnerTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest#captureUsesNowaitToRejectAnExistingWriterThenSucceedsAfterRollback()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepositoryIntegrationTest#shareFenceBlocksConcurrentInsertUpdateDeleteAcrossEverySourceFamilyAndReleasesAfterCommitOrRollback()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#exactRetryReturnsHistoricalReceiptWithoutRecapturingChangedSource()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#lostAcknowledgementExactRetryReturnsSameOriginalOperationAndBytesWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#rollbackLeavesNoAssociationClaimAndNewAttemptSucceeds()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnSameImmutableReceipt()' \
+            game-session-service
+
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |
