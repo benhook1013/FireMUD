@@ -302,9 +302,8 @@ public final class LoginCommandHandler {
             ? projectedExisting
             : null;
     boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
-    // LOGIN authenticates account identity. If this session already has gameplay scope, preserve it
-    // only when it is still bound to the newly authenticated account. A different account starts
-    // with a fresh authenticated context so gameplay identity and routing cannot cross accounts.
+    // LOGIN authenticates account identity. Preserve gameplay scope only when both account and
+    // tenant remain unchanged; otherwise start with a fresh authenticated context.
     SessionContext context =
         !sameAuthenticatedAccount
             ? new SessionContext(
@@ -342,6 +341,11 @@ public final class LoginCommandHandler {
     if (projectedExisting != null && projectedExisting.accountId() != accountId) {
       gameplayPresenceLifecycleService.clearGameplayBinding(
           projectedExisting, "LOGIN_ACCOUNT_CHANGED");
+    } else if (projectedExisting != null
+        && projectedExisting.tenantId() != tenantId
+        && projectedExisting.hasGameplayBinding()) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(
+          projectedExisting, "LOGIN_TENANT_CHANGED");
     }
     sessionContextService.save(context);
     logger.debug(

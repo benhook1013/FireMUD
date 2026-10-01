@@ -52,6 +52,7 @@ public class AccountController {
   }
 
   @PutMapping("/{accountId}/login-auth-modes")
+  // Keep request validation active while factor changes remain gated by the deliberate 501.
   public ResponseEntity<ApiResponse<AccountLoginAuthModesDto>> updateLoginAuthModes(
       @PathVariable String accountId,
       @Valid @RequestBody UpdateAccountLoginAuthModesRequest request) {

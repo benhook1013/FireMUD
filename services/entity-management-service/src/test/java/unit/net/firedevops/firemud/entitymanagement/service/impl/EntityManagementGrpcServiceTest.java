@@ -48,6 +48,8 @@ import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EntityType;
 import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestRequest;
 import net.firedevops.firemud.entitymanagement.v1.GetDraftDesignDigestResponse;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
@@ -77,6 +79,7 @@ import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemRequest;
 import net.firedevops.firemud.entitymanagement.v1.WearEquipmentItemResponse;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import tools.jackson.databind.ObjectMapper;
 
@@ -171,6 +174,74 @@ class EntityManagementGrpcServiceTest {
 
   private static void runWithPeer(GrpcPeerIdentity peer, Runnable action) {
     Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(action);
+  }
+
+  private EntityManagementGrpcService characterRosterService(
+      CharacterService characterService, String workloadNamespace) {
+    return new EntityManagementGrpcService(
+        Mockito.mock(PingService.class),
+        characterService,
+        Mockito.mock(ActorStateService.class),
+        Mockito.mock(ActorConditionMutationService.class),
+        Mockito.mock(EntityDraftDesignDigestService.class),
+        Mockito.mock(EquipmentService.class),
+        Mockito.mock(InventoryService.class),
+        Mockito.mock(ContainerService.class),
+        Mockito.mock(RoomEntityService.class),
+        Mockito.mock(RuntimeInstanceCleanupService.class),
+        effectReplayService(),
+        Mockito.mock(EntityUpgradeValidationService.class),
+        Mockito.mock(EntityTemplateReferenceService.class),
+        attestationService(),
+        new SimpleMeterRegistry(),
+        Mockito.mock(EffectPayloadParser.class),
+        workloadNamespace);
+  }
+
+  private static ListCharactersByAccountRequest characterRosterRequest(
+      String tenantId, String accountId, String gameInstanceId) {
+    return ListCharactersByAccountRequest.newBuilder()
+        .setTenantId(tenantId)
+        .setAccountId(accountId)
+        .setGameInstanceId(gameInstanceId)
+        .setPlayableStateScope(
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED)
+        .build();
+  }
+
+  private static ListCharactersByAccountResponse invokeCharacterRoster(
+      EntityManagementGrpcService service, ListCharactersByAccountRequest request) {
+    AtomicReference<ListCharactersByAccountResponse> ref = new AtomicReference<>();
+    service.listCharactersByAccount(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListCharactersByAccountResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
+  private static ListCharactersByAccountResponse invokeCharacterRosterWithPeer(
+      EntityManagementGrpcService service,
+      ListCharactersByAccountRequest request,
+      GrpcPeerIdentity peer) {
+    AtomicReference<ListCharactersByAccountResponse> ref = new AtomicReference<>();
+    runWithPeer(peer, () -> ref.set(invokeCharacterRoster(service, request)));
+    return ref.get();
+  }
+
+  private static GrpcPeerIdentity peer(String namespace, String service) {
+    return new GrpcPeerIdentity(
+        "spiffe://firemud/ns/" + namespace + "/sa/" + service, namespace, service);
   }
 
   private static GetDraftDesignDigestResponse invokeDigest(
@@ -1847,6 +1918,107 @@ class EntityManagementGrpcServiceTest {
   }
 
   @Test
+  void listCharactersByAccountAllowsConfiguredAccountAndGameSessionWorkloadPeers() {
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    Mockito.when(
+            characterService.listForGameplayScope(
+                1L,
+                2L,
+                "44",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED,
+                Pageable.unpaged()))
+        .thenReturn(Page.empty());
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    ListCharactersByAccountRequest request = characterRosterRequest("1", "2", "44");
+    SessionContext.clear();
+
+    for (String caller : List.of("account-service", "game-session-service")) {
+      ListCharactersByAccountResponse response =
+          invokeCharacterRosterWithPeer(service, request, peer(caller));
+      assertEquals(false, response.hasError());
+    }
+
+    verify(characterService, org.mockito.Mockito.times(2))
+        .listForGameplayScope(
+            1L,
+            2L,
+            "44",
+            net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                .PLAYABLE_STATE_SCOPE_SHARED,
+            Pageable.unpaged());
+  }
+
+  @Test
+  void listCharactersByAccountRejectsMissingWrongAndOutOfNamespaceWorkloadPeers() {
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    ListCharactersByAccountRequest request = characterRosterRequest("1", "2", "44");
+    SessionContext.clear();
+
+    assertEquals("PERMISSION_DENIED", invokeCharacterRoster(service, request).getError().getCode());
+    assertEquals(
+        "PERMISSION_DENIED",
+        invokeCharacterRosterWithPeer(service, request, peer("game-design-service"))
+            .getError()
+            .getCode());
+    assertEquals(
+        "PERMISSION_DENIED",
+        invokeCharacterRosterWithPeer(
+                service, request, peer("other-namespace", "game-session-service"))
+            .getError()
+            .getCode());
+
+    verifyNoInteractions(characterService);
+  }
+
+  @Test
+  void listCharactersByAccountRequiresCertificateEvenWhenInternalJwtIsPresent() {
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    ListCharactersByAccountRequest request = characterRosterRequest("1", "2", "44");
+    SessionContext.setContext(null, List.of(), Map.of(), true, "game-session-service", "test");
+
+    ListCharactersByAccountResponse response = invokeCharacterRoster(service, request);
+
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    verifyNoInteractions(characterService);
+    SessionContext.clear();
+  }
+
+  @Test
+  void listCharactersByAccountDeniesAuthenticatedCallerContextEvenWithWorkloadCertificate() {
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    ListCharactersByAccountRequest request = characterRosterRequest("1", "2", "44");
+    SessionContext.setContext("99", List.of(), Map.of());
+
+    ListCharactersByAccountResponse response =
+        invokeCharacterRosterWithPeer(service, request, peer("game-session-service"));
+
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    verifyNoInteractions(characterService);
+    SessionContext.clear();
+  }
+
+  @Test
+  void missingOrInvalidWorkloadNamespaceDeniesCharacterRosterRead() {
+    CharacterService characterService = Mockito.mock(CharacterService.class);
+    ListCharactersByAccountRequest request = characterRosterRequest("1", "2", "44");
+    SessionContext.clear();
+
+    for (String workloadNamespace : new String[] {null, "", " ", "not a namespace"}) {
+      EntityManagementGrpcService service =
+          characterRosterService(characterService, workloadNamespace);
+      ListCharactersByAccountResponse response =
+          invokeCharacterRosterWithPeer(service, request, peer("game-session-service"));
+      assertEquals("PERMISSION_DENIED", response.getError().getCode());
+    }
+
+    verifyNoInteractions(characterService);
+  }
+
+  @Test
   void listCharactersInvalidAccountIdReturnsErrorDetail() {
     PingService pingService = Mockito.mock(PingService.class);
     CharacterService characterService = Mockito.mock(CharacterService.class);
@@ -1859,41 +2031,14 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    EntityManagementGrpcService service =
-        newService(
-            pingService,
-            characterService,
-            equipmentService,
-            inventoryService,
-            roomEntityService,
-            meterRegistry);
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    SessionContext.clear();
 
-    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
-        ref = new AtomicReference<>();
-    service.listCharactersByAccount(
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
-            .setTenantId("1")
-            .setAccountId("bad")
-            .setGameInstanceId("44")
-            .setPlayableStateScope(
-                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                    .PLAYABLE_STATE_SCOPE_SHARED)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
-            ref.set(value);
-          }
+    ListCharactersByAccountResponse response =
+        invokeCharacterRosterWithPeer(
+            service, characterRosterRequest("1", "bad", "44"), peer("game-session-service"));
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
   }
 
   @Test
@@ -1903,42 +2048,15 @@ class EntityManagementGrpcServiceTest {
     EquipmentService equipmentService = Mockito.mock(EquipmentService.class);
     InventoryService inventoryService = Mockito.mock(InventoryService.class);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    EntityManagementGrpcService service =
-        newService(
-            pingService,
-            characterService,
-            equipmentService,
-            inventoryService,
-            roomEntityService,
-            new SimpleMeterRegistry());
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    SessionContext.clear();
 
-    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
-        ref = new AtomicReference<>();
-    service.listCharactersByAccount(
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
-            .setTenantId("0")
-            .setAccountId("1")
-            .setGameInstanceId("44")
-            .setPlayableStateScope(
-                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                    .PLAYABLE_STATE_SCOPE_SHARED)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
-            ref.set(value);
-          }
+    ListCharactersByAccountResponse response =
+        invokeCharacterRosterWithPeer(
+            service, characterRosterRequest("0", "1", "44"), peer("game-session-service"));
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals("tenantId must be positive", response.getError().getMessage());
     verifyNoInteractions(characterService);
   }
 
@@ -2055,44 +2173,16 @@ class EntityManagementGrpcServiceTest {
     ContainerService containerService = Mockito.mock(ContainerService.class);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
     io.micrometer.core.instrument.MeterRegistry meterRegistry = new SimpleMeterRegistry();
-    EntityManagementGrpcService service =
-        newServiceWithoutContext(
-            pingService,
-            characterService,
-            equipmentService,
-            inventoryService,
-            containerService,
-            roomEntityService,
-            meterRegistry);
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
     SessionContext.setContext("not-a-long", List.of(), Map.of());
 
-    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
-        ref = new AtomicReference<>();
-    service.listCharactersByAccount(
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
-            .setTenantId("1")
-            .setAccountId("44")
-            .setGameInstanceId("44")
-            .setPlayableStateScope(
-                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                    .PLAYABLE_STATE_SCOPE_SHARED)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
-            ref.set(value);
-          }
+    ListCharactersByAccountResponse response =
+        invokeCharacterRosterWithPeer(
+            service, characterRosterRequest("1", "44", "44"), peer("game-session-service"));
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
+    assertEquals("PERMISSION_DENIED", response.getError().getCode());
     verifyNoInteractions(characterService);
+    SessionContext.clear();
   }
 
   @Test
@@ -2117,42 +2207,15 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    EntityManagementGrpcService service =
-        newService(
-            pingService,
-            characterService,
-            equipmentService,
-            inventoryService,
-            roomEntityService,
-            meterRegistry);
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    SessionContext.clear();
 
-    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
-        ref = new AtomicReference<>();
-    service.listCharactersByAccount(
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
-            .setTenantId("1")
-            .setAccountId("1")
-            .setGameInstanceId("44")
-            .setPlayableStateScope(
-                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                    .PLAYABLE_STATE_SCOPE_SHARED)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
-            ref.set(value);
-          }
+    ListCharactersByAccountResponse response =
+        invokeCharacterRosterWithPeer(
+            service, characterRosterRequest("1", "1", "44"), peer("game-session-service"));
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INTERNAL", ref.get().getError().getCode());
+    assertNotNull(response);
+    assertEquals("INTERNAL", response.getError().getCode());
   }
 
   @Test
@@ -2168,40 +2231,22 @@ class EntityManagementGrpcServiceTest {
     Mockito.when(meterRegistry.counter(Mockito.anyString(), Mockito.any(String[].class)))
         .thenReturn(counter);
     RoomEntityService roomEntityService = Mockito.mock(RoomEntityService.class);
-    EntityManagementGrpcService service =
-        newService(
-            pingService,
-            characterService,
-            equipmentService,
-            inventoryService,
-            roomEntityService,
-            meterRegistry);
+    EntityManagementGrpcService service = characterRosterService(characterService, TEST_NAMESPACE);
+    SessionContext.clear();
 
-    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
-        ref = new AtomicReference<>();
-    service.listCharactersByAccount(
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest.newBuilder()
-            .setAccountId("1")
-            .setGameInstanceId("44")
-            .setPlayableStateScope(
-                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                    .PLAYABLE_STATE_SCOPE_SHARED)
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(
-              net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse value) {
-            ref.set(value);
-          }
+    ListCharactersByAccountResponse response =
+        invokeCharacterRosterWithPeer(
+            service,
+            ListCharactersByAccountRequest.newBuilder()
+                .setAccountId("1")
+                .setGameInstanceId("44")
+                .setPlayableStateScope(
+                    net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                        .PLAYABLE_STATE_SCOPE_SHARED)
+                .build(),
+            peer("game-session-service"));
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
   }
 
   @Test

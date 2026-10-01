@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILES=(-f "$ROOT_DIR/docker/docker-compose.yml" -f "$ROOT_DIR/docker/docker-compose.override.yml")
+COMPOSE_FILES=(
+  -f "$ROOT_DIR/docker/docker-compose.yml"
+  -f "$ROOT_DIR/docker/docker-compose.override.yml"
+  -f "$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"
+)
 TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
@@ -34,13 +38,14 @@ echo "Restart-state proof: preserve local compose volumes, restart the stack, th
 echo "Local volumes are left intact."
 
 require_run_owned_compose_project
+export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_ENV_SCRIPT"
-bash "$ENSURE_CERTS_SCRIPT"
+bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 bash "$BUILD_JARS_SCRIPT"
 docker compose "${COMPOSE_FILES[@]}" up -d --build --remove-orphans
 docker compose "${COMPOSE_FILES[@]}" restart
 
-bash "$HEALTH_SCRIPT"
+bash "$HEALTH_SCRIPT" "${COMPOSE_FILES[@]}"
 # Both transport legs are baseline-only; mutation parity requires independent
 # transport identities/state and is rejected by this wrapper above.
 bash "$WS_SMOKE_SCRIPT"

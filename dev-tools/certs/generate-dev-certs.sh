@@ -27,7 +27,7 @@ if [[ "${1:-}" == "--workload" ]]; then
     exit 1
   }
   case "$workload" in
-    game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service)
+    game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service)
       ;;
     *)
       echo "unsupported gRPC publication workload: $workload" >&2
