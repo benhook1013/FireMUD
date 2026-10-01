@@ -45,7 +45,7 @@ public class GameplayAdmissionPointerRepository {
    * Non-Postgres dialects skip the lock for local test compatibility.
    */
   public void lockForBootstrap() {
-    lockRuntimeTarget(BOOTSTRAP_ADVISORY_LOCK_KEY);
+    lockAdvisoryTransaction(BOOTSTRAP_ADVISORY_LOCK_KEY);
   }
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(
@@ -57,6 +57,19 @@ public class GameplayAdmissionPointerRepository {
                 .eq(tenantId)
                 .and(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.eq(worldSlug))
                 .and(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.eq(realmSlug)))
+        .fetchOptional(this::toEntity);
+  }
+
+  public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+      Long tenantId, String worldSlug, String realmSlug) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(
+            GAMEPLAY_ADMISSION_POINTER
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.eq(worldSlug))
+                .and(GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.eq(realmSlug)))
+        .forUpdate()
         .fetchOptional(this::toEntity);
   }
 
@@ -266,6 +279,10 @@ public class GameplayAdmissionPointerRepository {
   }
 
   private void lockRuntimeTarget(String lockKey) {
+    lockAdvisoryTransaction(lockKey);
+  }
+
+  private void lockAdvisoryTransaction(String lockKey) {
     // The test profile uses H2, which does not implement PostgreSQL advisory locks.
     // Production remains protected by the transaction-scoped PostgreSQL lock.
     if (dsl.dialect().family() != SQLDialect.POSTGRES) {

@@ -23,7 +23,7 @@ public class GameplayAdmissionPointerEventRepository {
     this.dsl = dsl;
   }
 
-  public List<GameplayAdmissionPointerEvent> findByWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+  public List<GameplayAdmissionPointerEvent> findByWorldSlugAndRealmSlugOrderByIdDesc(
       String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
         .where(
@@ -31,15 +31,12 @@ public class GameplayAdmissionPointerEventRepository {
                 .WORLD_SLUG
                 .eq(worldSlug)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(
-            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
-            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
   }
 
-  public List<GameplayAdmissionPointerEvent>
-      findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
-          Long tenantId, String worldSlug, String realmSlug) {
+  public List<GameplayAdmissionPointerEvent> findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
+      Long tenantId, String worldSlug, String realmSlug) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
         .where(
             GAMEPLAY_ADMISSION_POINTER_EVENT
@@ -47,9 +44,7 @@ public class GameplayAdmissionPointerEventRepository {
                 .eq(tenantId)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
-        .orderBy(
-            GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
-            GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
   }
 
@@ -69,6 +64,11 @@ public class GameplayAdmissionPointerEventRepository {
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID, entity.getTenantId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.POINTER_VERSION, entity.getPointerVersion())
+            .set(GAMEPLAY_ADMISSION_POINTER_EVENT.CATALOG_REVISION, entity.getCatalogRevision())
+            .set(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_ID, entity.getRealmId())
+            .set(
+                GAMEPLAY_ADMISSION_POINTER_EVENT.PLAYABLE_STATE_NAMESPACE_ID,
+                entity.getPlayableStateNamespaceId())
             .set(GAMEPLAY_ADMISSION_POINTER_EVENT.VISIBLE, entity.isVisible())
             .set(
                 GAMEPLAY_ADMISSION_POINTER_EVENT.PUBLIC_PRODUCTION_REALM,
@@ -120,6 +120,9 @@ public class GameplayAdmissionPointerEventRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setPointerVersion(entity.getPointerVersion());
+    record.setCatalogRevision(entity.getCatalogRevision());
+    record.setRealmId(entity.getRealmId());
+    record.setPlayableStateNamespaceId(entity.getPlayableStateNamespaceId());
     record.setVisible(entity.isVisible());
     record.setPublicProductionRealm(entity.isPublicProductionRealm());
     record.setRequiresCharacterSelection(entity.isRequiresCharacterSelection());
@@ -142,6 +145,10 @@ public class GameplayAdmissionPointerEventRepository {
     entity.setTenantId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID));
     entity.setGameInstanceId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.GAME_INSTANCE_ID));
     entity.setPointerVersion(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.POINTER_VERSION));
+    entity.setCatalogRevision(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.CATALOG_REVISION));
+    entity.setRealmId(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_ID));
+    entity.setPlayableStateNamespaceId(
+        record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.PLAYABLE_STATE_NAMESPACE_ID));
     entity.setVisible(Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.VISIBLE)));
     entity.setPublicProductionRealm(
         Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER_EVENT.PUBLIC_PRODUCTION_REALM)));

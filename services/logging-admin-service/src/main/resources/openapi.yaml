@@ -1242,6 +1242,17 @@ components:
           type: integer
         pointerVersion:
           type: integer
+        catalogRevision:
+          type: integer
+          nullable: true
+        realmId:
+          type: string
+          format: uuid
+          nullable: true
+        playableStateNamespaceId:
+          type: string
+          format: uuid
+          nullable: true
         visible:
           type: boolean
         publicProductionRealm:
@@ -1659,6 +1670,13 @@ paths:
     get:
       summary: List visible gameplay admission pointers
       operationId: listAdmissionPointers
+      description: >-
+        Tenant-scoped callers receive pointers only for their authorized tenant
+        scopes. Global platform administrators and moderators receive the
+        all-tenant list. Each current pointer in the selected scope must have a
+        latest audit row matching its catalog revision, realm ID, and playable-state
+        namespace. Missing or incomplete current authority in that scope returns
+        503. Historical audit reads preserve unknown legacy identity fields.
       responses:
         '200':
           description: Admission pointer list
@@ -1675,6 +1693,12 @@ paths:
                       $ref: '#/components/schemas/AdmissionPointerDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Current admission-pointer authority or matching audit evidence is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit:
     get:
       summary: Read admission-pointer audit history
@@ -1743,6 +1767,12 @@ paths:
                     $ref: '#/components/schemas/GameInstanceRuntimeStateDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Current admission-pointer authority or required pointer identity is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers/version-upgrades/{tenantId}/{preparationId}:
     get:
       summary: Read a prepared version-upgrade proof (live read)

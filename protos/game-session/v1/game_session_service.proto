@@ -423,7 +423,11 @@ message AdmissionPointerControlPlaneEntry {
   string playable_state_namespace_id = 20;
 }
 
-message ListAdmissionPointersRequest {}
+message ListAdmissionPointersRequest {
+  // Empty requires a global privileged caller for the all-tenant read.
+  // Non-empty IDs must be positive and individually authorized by the forwarded caller context.
+  repeated int64 tenant_ids = 1;
+}
 
 message ListAdmissionPointersResponse {
   repeated AdmissionPointerControlPlaneEntry pointers = 1;
@@ -1102,6 +1106,7 @@ message SetAdmissionPointerRequest {
   optional int64 expected_pointer_version = 14;
   string prepared_version_upgrade_id = 15;
   bool public_production_realm = 16;
+  optional int64 expected_catalog_revision = 17;
 }
 
 message SetAdmissionPointerResponse {
@@ -1119,6 +1124,7 @@ message ExecutePreparedVersionCutoverRequest {
   string reason = 7;
   string control_plane_request_id = 8;
   optional int64 expected_pointer_version = 9;
+  optional int64 expected_catalog_revision = 10;
 }
 
 message ExecutePreparedVersionCutoverResponse {

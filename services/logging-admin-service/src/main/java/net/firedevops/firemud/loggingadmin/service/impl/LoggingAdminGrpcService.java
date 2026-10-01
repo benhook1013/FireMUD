@@ -1,6 +1,7 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -173,50 +174,11 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   @Timed(value = "loggingadminGrpc.createLogEvent")
   public void createLogEvent(
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
-    try {
-      AdminRoleGuard.requireAdminRole();
-      var dto =
-          logEventService.createLogEvent(
-              new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
-                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-                  RequestIdValidation.parseOptionalPositiveLong(
-                      request.getAccountId(), "accountId"),
-                  request.getType(),
-                  request.getMessage()));
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder().setLogEventId(String.valueOf(dto.id())).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (AdminAuthorizationException ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "CreateLogEvent",
-                      "PERMISSION_DENIED",
-                      ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "CreateLogEvent", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateLogEvent", ex))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onError(
+        Status.UNIMPLEMENTED
+            .withDescription(
+                "Typed account audit receipt receiver is unavailable in this service revision")
+            .asRuntimeException());
   }
 
   @Override

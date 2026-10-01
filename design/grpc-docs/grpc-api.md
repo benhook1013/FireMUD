@@ -7431,6 +7431,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | reason | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
 | expected_pointer_version | [int64](#int64) | optional |  |
+| expected_catalog_revision | [int64](#int64) | optional |  |
 
 
 
@@ -8087,6 +8088,11 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 ### ListAdmissionPointersRequest
 
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| tenant_ids | [int64](#int64) | repeated | Empty requires a global privileged caller for the all-tenant read. Non-empty IDs must be positive and individually authorized by the forwarded caller context. |
 
 
 
@@ -9286,6 +9292,7 @@ Resume ticks after an authorized maintenance workflow completes.
 | expected_pointer_version | [int64](#int64) | optional |  |
 | prepared_version_upgrade_id | [string](#string) |  |  |
 | public_production_realm | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) | optional |  |
 
 
 

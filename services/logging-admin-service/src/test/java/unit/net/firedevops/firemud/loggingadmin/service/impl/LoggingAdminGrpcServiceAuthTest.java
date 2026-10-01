@@ -3,20 +3,20 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.never;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.Timestamp;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.security.SessionContext;
-import net.firedevops.firemud.loggingadmin.dto.LogEventDto;
 import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
@@ -73,51 +73,18 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void createLogEventUsesLogEventServiceWithoutCallingModeration() {
-    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+  void createLogEventFailsClosedWithoutInvokingLegacyWriter() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    ModerationService moderationService = Mockito.mock(ModerationService.class);
-    when(logEventService.createLogEvent(any()))
-        .thenReturn(
-            new LogEventDto(
-                77L,
-                1L,
-                42L,
-                "ACCOUNT_CREATED",
-                "account created",
-                Instant.parse("2026-01-01T00:00:00Z")));
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            logEventService,
-            moderationService,
-            new SimpleMeterRegistry());
+    assertCreateLogEventUnavailable(validCreateLogEventRequest(), logEventService);
+  }
 
-    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
-    service.createLogEvent(
-        CreateLogEventRequest.newBuilder()
-            .setTenantId("1")
-            .setAccountId("42")
-            .setType("ACCOUNT_CREATED")
-            .setMessage("account created")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(CreateLogEventResponse value) {
-            ref.set(value);
-          }
+  @Test
+  void createLogEventFailsClosedBeforeTypedRequestValidation() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    CreateLogEventRequest unsupportedDigestVersion =
+        validCreateLogEventRequest().toBuilder().setPayloadDigestVersion(2).build();
 
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("77", ref.get().getLogEventId());
-    verify(logEventService).createLogEvent(any());
-    verify(moderationService, never()).applyAction(any());
+    assertCreateLogEventUnavailable(unsupportedDigestVersion, logEventService);
   }
 
   @Test
@@ -256,44 +223,6 @@ class LoggingAdminGrpcServiceAuthTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(logQueryService);
-  }
-
-  @Test
-  void createLogEventRejectsZeroAccountIdBeforeDispatch() {
-    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            logEventService,
-            Mockito.mock(ModerationService.class),
-            new SimpleMeterRegistry());
-
-    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
-    service.createLogEvent(
-        CreateLogEventRequest.newBuilder()
-            .setTenantId("1")
-            .setAccountId("0")
-            .setType("ACCOUNT_CREATED")
-            .setMessage("account created")
-            .build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(CreateLogEventResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be positive", ref.get().getError().getMessage());
-    verifyNoInteractions(logEventService);
   }
 
   @Test
@@ -639,5 +568,57 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     verifyNoInteractions(moderationService);
+  }
+
+  private static void assertCreateLogEventUnavailable(
+      CreateLogEventRequest request, LogEventService logEventService) {
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            logEventService,
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    service.createLogEvent(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateLogEventResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable throwable) {
+            error.set(throwable);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNull(response.get());
+    assertNotNull(error.get());
+    assertEquals(Status.Code.UNIMPLEMENTED, Status.fromThrowable(error.get()).getCode());
+    verifyNoInteractions(logEventService, moderationService);
+  }
+
+  private static CreateLogEventRequest validCreateLogEventRequest() {
+    ByteString payload = ByteString.copyFromUtf8("{}");
+    return CreateLogEventRequest.newBuilder()
+        .setScope(
+            net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+        .setTenantId("1")
+        .setAuditEventId("d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3")
+        .setProducerService("account-service")
+        .setEventType("ACCOUNT_REGISTERED")
+        .setOccurredAt(Timestamp.newBuilder().setSeconds(1).build())
+        .setSchemaVersion(1)
+        .setPayload(payload)
+        .setPayloadDigestVersion(1)
+        .setPayloadDigest("sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")
+        .build();
   }
 }
