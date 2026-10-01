@@ -601,9 +601,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                         .findFirst()
                         .orElse("0")),
                 new OutboxCheckpointEntry(tenantStreamKey, "0")));
-    if (!"ACTIVE".equals(snapshot.membershipBaseline().membershipLifecycleState())
-        || !snapshot.gameplayAdmissionAllowed()
-        || !snapshot.roles().contains("player")
+    String lifecycleState = snapshot.membershipBaseline().membershipLifecycleState();
+    boolean activeMembership = "ACTIVE".equals(lifecycleState);
+    if ((!activeMembership && !"INACTIVE".equals(lifecycleState))
+        || snapshot.gameplayAdmissionAllowed() != activeMembership
+        || (activeMembership && !snapshot.roles().contains("player"))
         || !snapshot.outboxCheckpoints().equals(expectedPositiveCheckpoints)
         || snapshot.outboxSourceEvidence().size() != 1) {
       throw new IllegalArgumentException("Positive runtime membership snapshot is incomplete");

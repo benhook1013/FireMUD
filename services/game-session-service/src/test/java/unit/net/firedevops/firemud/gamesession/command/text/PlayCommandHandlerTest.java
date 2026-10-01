@@ -1121,26 +1121,28 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playNonPublicInactiveMembershipDoesNotUsePublicJoin() {
-    SessionContext context = previewRealmContext();
+  void playNonPublicLeftMembershipRequiresEnrollment() {
+    SessionContext context = unboundContext();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    var leftMembership =
+        freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
+                123L, 22L, List.of("designer", "player")));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
         .thenAnswer(
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                    .echoRequestId(
-                        freshMembership(
-                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                                .inactive(123L, 22L, "3")),
-                        invocation.getArgument(0)));
+                    .echoRequestId(leftMembership, invocation.getArgument(0)));
 
     PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
+    assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.NON_PUBLIC_ENROLLMENT_REQUIRED_CODE);
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.non-public-enrollment-required");
+    assertThat(result.outputs()).hasSize(1);
     Mockito.verify(accountClient, never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -1148,19 +1150,56 @@ class PlayCommandHandlerTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString());
-    Mockito.verify(entityManagementClient, never())
-        .listCharactersByAccount(
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        moderationPolicyClient,
+        scriptEventPublisher);
+  }
+
+  @Test
+  void playBoundNonPublicLeftMembershipRequiresEnrollmentAndClearsBinding() {
+    SessionContext context = previewRealmContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    var leftMembership =
+        freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
+                123L, 22L, List.of("designer", "player")));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(leftMembership, invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.NON_PUBLIC_ENROLLMENT_REQUIRED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.non-public-enrollment-required");
+    assertThat(result.outputs()).hasSize(1);
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
-            Mockito.any(PlayableStateScope.class));
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verify(gameplayPresenceLifecycleService)
+        .clearGameplayBinding(context, "non_public_enrollment_required");
     Mockito.verify(sessionContextService)
         .save(
             Mockito.argThat(
                 saved ->
                     saved.characterId() == 0L
+                        && saved.characterName() == null
                         && saved.gameInstanceId() == 0L
                         && saved.roomInstanceId() == null));
+    Mockito.verifyNoInteractions(
+        entityManagementClient, moderationPolicyClient, scriptEventPublisher);
   }
 
   @Test
@@ -1457,20 +1496,52 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playRequiresExplicitJoinWhenPublicProductionMembershipIsInactive() {
-    SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+  void playLeftMembershipRequiresJoinForPublicProduction() {
+    SessionContext context = unboundContext();
+    var leftMembership =
+        freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
+                123L, 22L, List.of("designer", "player")));
+    var leftEvent =
+        MembershipAuthorityEventV1Codec.verify(
+            leftMembership.getOutboxSourceEvidence(0).getCanonicalEventJson());
+    assertThat(leftMembership.getMembershipExists()).isTrue();
+    assertThat(leftMembership.getGameplayAdmissionAllowed()).isFalse();
+    assertThat(leftMembership.getMembershipLifecycleState()).isEqualTo("INACTIVE");
+    assertThat(leftMembership.getMembershipVersionMap())
+        .containsExactly(Map.entry(leftMembership.getTenantId(), "3"));
+    assertThat(leftMembership.getMembershipAuthorityGeneration()).isEqualTo("2");
+    assertThat(leftMembership.getIssuanceFence()).isEqualTo("2");
+    assertThat(leftMembership.getRolesList()).containsExactly("designer", "player");
+    assertThat(leftMembership.getAuthorityTuple().getMembershipAuthorityGenerationMap())
+        .containsExactly(Map.entry(leftMembership.getTenantId(), "2"));
+    assertThat(leftMembership.getOutboxCheckpointsList())
+        .anySatisfy(
+            checkpoint -> {
+              assertThat(checkpoint.getOutboxStreamKey()).isEqualTo(leftEvent.outboxStreamKey());
+              assertThat(checkpoint.getOutboxSequence()).isEqualTo("2");
+            });
+    assertThat(leftMembership.getOutboxSourceEvidence(0).getEventId())
+        .isEqualTo(leftEvent.eventId());
+    assertThat(leftMembership.getOutboxSourceEvidence(0).getEventDigest())
+        .isEqualTo(leftEvent.eventDigest());
+    assertThat(leftMembership.getOutboxSourceEvidence(0).getCanonicalEventJson())
+        .isEqualTo(leftEvent.canonicalJson());
+    assertThat(leftEvent.outboxSequence()).isEqualTo("2");
+    assertThat(leftEvent.membershipVersion())
+        .containsExactly(Map.entry(leftMembership.getTenantId(), "3"));
+    assertThat(leftEvent.membershipAuthorityGeneration()).isEqualTo("2");
+    assertThat(leftEvent.issuanceFence()).isEqualTo("2");
+    assertThat(leftEvent.callerBoundAuthorityInvalidated()).isTrue();
+    assertThat(leftEvent.roles()).containsExactly("designer", "player");
+    assertThat(leftEvent.gameplayAdmissionAllowed()).isFalse();
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
         .thenAnswer(
             invocation ->
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                    .echoRequestId(
-                        freshMembership(
-                            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                                .inactive(123L, 22L, "4")),
-                        invocation.getArgument(0)));
+                    .echoRequestId(leftMembership, invocation.getArgument(0)));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1480,15 +1551,91 @@ class PlayCommandHandlerTest {
         .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.join-required");
+    assertThat(result.outputs()).hasSize(1);
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        moderationPolicyClient,
+        scriptEventPublisher);
+  }
+
+  @Test
+  void playBoundLeftMembershipRequiresJoinAndClearsBindingForPublicProduction() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    var leftMembership =
+        freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
+                123L, 22L, List.of("designer", "player")));
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(leftMembership, invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.join-required");
+    assertThat(result.outputs()).hasSize(1);
     Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "join_required");
-    Mockito.verifyNoInteractions(entityManagementClient);
     Mockito.verify(sessionContextService)
         .save(
             Mockito.argThat(
                 saved ->
                     saved.characterId() == 0L
+                        && saved.characterName() == null
                         && saved.gameInstanceId() == 0L
                         && saved.roomInstanceId() == null));
+    Mockito.verifyNoInteractions(
+        entityManagementClient, moderationPolicyClient, scriptEventPublisher);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "membership-generation",
+        "issuance-fence",
+        "zero-sequence",
+        "removed-event",
+        "altered-roles",
+        "admission-allowed"
+      })
+  void contradictoryLeftEventEvidenceCannotAdmitGameplay(String defect) {
+    SessionContext context = unboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(
+                        freshMembership(leftMembershipWithDefect(defect)),
+                        invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    assertThat(result.outputs()).hasSize(1);
+    assertThat(result.outputs().get(0).payload()).isInstanceOf(ErrorOutput.class);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.world-access-denied");
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        moderationPolicyClient,
+        scriptEventPublisher);
   }
 
   @ParameterizedTest
@@ -2253,6 +2400,47 @@ class PlayCommandHandlerTest {
     return response.toBuilder().setEvaluatedAt(Instant.now().toString()).build();
   }
 
+  private static GetTenantMembershipForRuntimeResponse leftMembershipWithDefect(String defect) {
+    var response =
+        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
+            123L, 22L, List.of("designer", "player"));
+    var builder = response.toBuilder();
+    switch (defect) {
+      case "membership-generation" -> {
+        String tenantUuid = response.getTenantId();
+        builder
+            .setMembershipAuthorityGeneration("3")
+            .setMembershipBaseline(
+                response.getMembershipBaseline().toBuilder().setMembershipAuthorityGeneration("3"))
+            .setAuthorityTuple(
+                response.getAuthorityTuple().toBuilder()
+                    .putMembershipAuthorityGeneration(tenantUuid, "3"));
+      }
+      case "issuance-fence" -> builder.setIssuanceFence("3");
+      case "zero-sequence" -> {
+        String membershipStream = response.getOutboxSourceEvidence(0).getOutboxStreamKey();
+        boolean updated = false;
+        for (int index = 0; index < response.getOutboxCheckpointsCount(); index++) {
+          var checkpoint = response.getOutboxCheckpoints(index);
+          if (checkpoint.getOutboxStreamKey().equals(membershipStream)) {
+            builder.setOutboxCheckpoints(
+                index, checkpoint.toBuilder().setOutboxSequence("0").build());
+            updated = true;
+            break;
+          }
+        }
+        if (!updated) {
+          throw new IllegalStateException("LEFT fixture is missing its membership checkpoint");
+        }
+      }
+      case "removed-event" -> builder.clearOutboxSourceEvidence();
+      case "altered-roles" -> builder.clearRoles().addRoles("player");
+      case "admission-allowed" -> builder.setGameplayAdmissionAllowed(true);
+      default -> throw new IllegalArgumentException("Unknown LEFT evidence defect: " + defect);
+    }
+    return builder.build();
+  }
+
   private void assertIdentityUnavailableWithoutMutation(PlayCommandHandlingResult result) {
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
@@ -2309,6 +2497,25 @@ class PlayCommandHandlerTest {
         "preview",
         1L,
         "SHARED");
+  }
+
+  private SessionContext unboundContext() {
+    return new SessionContext(
+        1L,
+        22L,
+        123L,
+        "demo@example.com",
+        0L,
+        null,
+        0L,
+        null,
+        "jwt-token",
+        null,
+        0L,
+        null,
+        null,
+        0L,
+        null);
   }
 
   private TextCommand previewRealmPlayCommand() {

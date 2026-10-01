@@ -35,6 +35,12 @@ public final class RuntimeMembershipTestFixtures {
     return complete(accountId, tenantId, true, "INACTIVE", false, membershipVersion);
   }
 
+  public static GetTenantMembershipForRuntimeResponse left(
+      long accountId, long tenantId, List<String> retainedRoles) {
+    return complete(
+        accountId, tenantId, true, "INACTIVE", false, "3", "2", "2", "2", true, retainedRoles);
+  }
+
   public static GetTenantMembershipForRuntimeResponse echoRequestId(
       GetTenantMembershipForRuntimeResponse response, PlayerExecutionContext request) {
     return response.toBuilder().setRequestId(request.getRequestId()).build();
@@ -83,6 +89,32 @@ public final class RuntimeMembershipTestFixtures {
       String lifecycle,
       boolean admitted,
       String membershipVersion) {
+    return complete(
+        accountId,
+        tenantId,
+        exists,
+        lifecycle,
+        admitted,
+        membershipVersion,
+        "1",
+        "1",
+        exists ? "1" : "0",
+        false,
+        admitted ? List.of("player") : List.of());
+  }
+
+  private static GetTenantMembershipForRuntimeResponse complete(
+      long accountId,
+      long tenantId,
+      boolean exists,
+      String lifecycle,
+      boolean admitted,
+      String membershipVersion,
+      String membershipAuthorityGeneration,
+      String issuanceFence,
+      String outboxSequence,
+      boolean callerBoundAuthorityInvalidated,
+      List<String> roles) {
     String accountUuid = uuid(accountId);
     String tenantUuid = uuid(tenantId);
     String membershipStream = STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
@@ -91,7 +123,7 @@ public final class RuntimeMembershipTestFixtures {
             List.of(
                 checkpoint(STREAM_PREFIX + "account/" + accountUuid, "0"),
                 checkpoint(STREAM_PREFIX + "issuer/" + ISSUER, "0"),
-                checkpoint(membershipStream, exists ? "1" : "0"),
+                checkpoint(membershipStream, outboxSequence),
                 checkpoint(STREAM_PREFIX + "tenant/" + tenantUuid, "0")));
     checkpoints.sort(
         (first, second) -> first.getOutboxStreamKey().compareTo(second.getOutboxStreamKey()));
@@ -100,13 +132,13 @@ public final class RuntimeMembershipTestFixtures {
             .setIssuerAuthGeneration("1")
             .setAccountAuthorityGeneration("1")
             .putTenantAuthorityGeneration(tenantUuid, "1")
-            .putMembershipAuthorityGeneration(tenantUuid, "1")
+            .putMembershipAuthorityGeneration(tenantUuid, membershipAuthorityGeneration)
             .build();
     RuntimeMembershipBaseline baseline =
         RuntimeMembershipBaseline.newBuilder()
             .setMembershipLifecycleState(lifecycle)
             .putMembershipVersion(tenantUuid, membershipVersion)
-            .setMembershipAuthorityGeneration("1")
+            .setMembershipAuthorityGeneration(membershipAuthorityGeneration)
             .build();
     GetTenantMembershipForRuntimeResponse.Builder response =
         GetTenantMembershipForRuntimeResponse.newBuilder()
@@ -118,15 +150,13 @@ public final class RuntimeMembershipTestFixtures {
             .setMembershipLifecycleState(lifecycle)
             .setGameplayAdmissionAllowed(admitted)
             .putMembershipVersion(tenantUuid, membershipVersion)
-            .setMembershipAuthorityGeneration("1")
+            .setMembershipAuthorityGeneration(membershipAuthorityGeneration)
             .setMembershipBaseline(baseline)
             .setAuthorityTuple(tuple)
-            .setIssuanceFence("1")
+            .setIssuanceFence(issuanceFence)
             .addAllOutboxCheckpoints(checkpoints)
             .setEvaluatedAt(Instant.now().toString());
-    if (admitted) {
-      response.addRoles("player");
-    }
+    response.addAllRoles(roles);
     if (exists) {
       MembershipAuthorityEventV1Codec.MembershipEvent event =
           MembershipAuthorityEventV1Codec.seal(
@@ -136,30 +166,35 @@ public final class RuntimeMembershipTestFixtures {
                   Map.entry("eventId", EVENT_ID),
                   Map.entry("requestId", "runtime-membership-request"),
                   Map.entry("outboxStreamKey", membershipStream),
-                  Map.entry("outboxSequence", "1"),
+                  Map.entry("outboxSequence", outboxSequence),
                   Map.entry("sourceScope", "membership/" + accountUuid + "/" + tenantUuid),
                   Map.entry("accountId", accountUuid),
                   Map.entry("tenantId", tenantUuid),
                   Map.entry("membershipExists", true),
                   Map.entry("membershipLifecycleState", lifecycle),
                   Map.entry("membershipVersion", Map.of(tenantUuid, membershipVersion)),
-                  Map.entry("membershipAuthorityGeneration", "1"),
+                  Map.entry("membershipAuthorityGeneration", membershipAuthorityGeneration),
                   Map.entry(
                       "authorityTuple",
                       Map.of(
-                          "issuerAuthGeneration", "1",
-                          "accountAuthorityGeneration", "1",
-                          "tenantAuthorityGeneration", Map.of(tenantUuid, "1"),
-                          "membershipAuthorityGeneration", Map.of(tenantUuid, "1"),
-                          "privateRealmGrantVersions", List.of())),
-                  Map.entry("issuanceFence", "1"),
-                  Map.entry("roles", admitted ? List.of("player") : List.of()),
+                          "issuerAuthGeneration",
+                          "1",
+                          "accountAuthorityGeneration",
+                          "1",
+                          "tenantAuthorityGeneration",
+                          Map.of(tenantUuid, "1"),
+                          "membershipAuthorityGeneration",
+                          Map.of(tenantUuid, membershipAuthorityGeneration),
+                          "privateRealmGrantVersions",
+                          List.of())),
+                  Map.entry("issuanceFence", issuanceFence),
+                  Map.entry("roles", roles),
                   Map.entry("gameplayAdmissionAllowed", admitted),
-                  Map.entry("callerBoundAuthorityInvalidated", false)));
+                  Map.entry("callerBoundAuthorityInvalidated", callerBoundAuthorityInvalidated)));
       response.addOutboxSourceEvidence(
           RuntimeOutboxSourceEvidence.newBuilder()
               .setOutboxStreamKey(membershipStream)
-              .setOutboxSequence("1")
+              .setOutboxSequence(outboxSequence)
               .setEventId(event.eventId())
               .setEventDigest(event.eventDigest())
               .setCanonicalEventJson(event.canonicalJson()));

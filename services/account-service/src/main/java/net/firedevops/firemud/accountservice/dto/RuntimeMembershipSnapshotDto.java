@@ -51,9 +51,13 @@ public record RuntimeMembershipSnapshotDto(
       throw new IllegalArgumentException(
           "Runtime membership baseline differs from its tenant tuple");
     }
-    if (membershipExists != "ACTIVE".equals(membershipBaseline.membershipLifecycleState())
-        || gameplayAdmissionAllowed != membershipExists
-        || membershipExists != roles.contains("player")) {
+    String lifecycleState = membershipBaseline.membershipLifecycleState();
+    boolean presentLifecycle = "ACTIVE".equals(lifecycleState) || "INACTIVE".equals(lifecycleState);
+    boolean activeMembership = "ACTIVE".equals(lifecycleState);
+    if (membershipExists != presentLifecycle
+        || gameplayAdmissionAllowed != activeMembership
+        || (!membershipExists && !roles.isEmpty())
+        || (activeMembership && !roles.contains("player"))) {
       throw new IllegalArgumentException("Runtime membership state is not a supported snapshot");
     }
     requireConsistentSourceEvent(
@@ -177,6 +181,7 @@ public record RuntimeMembershipSnapshotDto(
         throw new IllegalArgumentException("Runtime membership baseline is not canonical");
       }
       if (!"ACTIVE".equals(membershipLifecycleState)
+          && !"INACTIVE".equals(membershipLifecycleState)
           && !"MISSING".equals(membershipLifecycleState)) {
         throw new IllegalArgumentException("Runtime membership baseline lifecycle is unsupported");
       }

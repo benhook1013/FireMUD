@@ -153,18 +153,37 @@ class AccountGrpcServiceTest {
       List<OutboxCheckpointEntry> checkpoints,
       List<OutboxSourceEvidence> sourceEvidence,
       MembershipEvent sourceEvent) {
+    String lifecycleState = membershipExists ? "ACTIVE" : "MISSING";
+    return runtimeMembershipSnapshot(
+        requestAccountUuid,
+        lifecycleState,
+        membershipExists,
+        membershipExists ? "2" : "1",
+        membershipExists ? List.of("player") : List.of(),
+        checkpoints,
+        sourceEvidence,
+        sourceEvent);
+  }
+
+  private static RuntimeMembershipSnapshotDto runtimeMembershipSnapshot(
+      String requestAccountUuid,
+      String lifecycleState,
+      boolean gameplayAdmissionAllowed,
+      String membershipVersion,
+      List<String> roles,
+      List<OutboxCheckpointEntry> checkpoints,
+      List<OutboxSourceEvidence> sourceEvidence,
+      MembershipEvent sourceEvent) {
+    boolean membershipExists = !"MISSING".equals(lifecycleState);
     return new RuntimeMembershipSnapshotDto(
         requestAccountUuid,
         TENANT_UUID,
         ACCOUNT_UUID,
         TENANT_UUID,
         membershipExists,
-        membershipExists,
-        new MembershipBaseline(
-            membershipExists ? "ACTIVE" : "MISSING",
-            Map.of(TENANT_UUID, membershipExists ? "2" : "1"),
-            "1"),
-        membershipExists ? List.of("player") : List.of(),
+        gameplayAdmissionAllowed,
+        new MembershipBaseline(lifecycleState, Map.of(TENANT_UUID, membershipVersion), "1"),
+        roles,
         new AuthorityTuple(
             "1",
             "1",
@@ -1849,6 +1868,199 @@ class AccountGrpcServiceTest {
     assertEquals(
         runtimeMembershipAuthorityEvent(Map.of()).canonicalJson(),
         response.getOutboxSourceEvidence(0).getCanonicalEventJson());
+  }
+
+  @Test
+  void encodeRuntimeMembershipCandidateEncodesInactivePositiveSnapshotWithoutAdmission() {
+    MembershipEvent inactiveEvent =
+        runtimeMembershipAuthorityEvent(
+            Map.of(
+                "membershipLifecycleState",
+                "INACTIVE",
+                "membershipVersion",
+                Map.of(TENANT_UUID, "3"),
+                "roles",
+                List.of("player"),
+                "gameplayAdmissionAllowed",
+                false));
+    RuntimeMembershipSnapshotDto snapshot =
+        runtimeMembershipSnapshot(
+            ACCOUNT_UUID,
+            "INACTIVE",
+            false,
+            "3",
+            List.of("player"),
+            runtimeMembershipCheckpoints("1"),
+            runtimeMembershipSourceEvidence(inactiveEvent),
+            inactiveEvent);
+
+    GetTenantMembershipForRuntimeResponse response =
+        AccountGrpcService.encodeRuntimeMembershipCandidate(
+            validRuntimeMembershipContext(), snapshot);
+
+    assertTrue(response.getMembershipExists());
+    assertFalse(response.getGameplayAdmissionAllowed());
+    assertEquals("INACTIVE", response.getMembershipLifecycleState());
+    assertEquals(List.of("player"), response.getRolesList());
+    assertEquals(Map.of(TENANT_UUID, "3"), response.getMembershipVersionMap());
+    assertEquals(1, response.getOutboxSourceEvidenceCount());
+    assertEquals(inactiveEvent.eventId(), response.getOutboxSourceEvidence(0).getEventId());
+    assertEquals(inactiveEvent.eventDigest(), response.getOutboxSourceEvidence(0).getEventDigest());
+    assertEquals(
+        inactiveEvent.canonicalJson(), response.getOutboxSourceEvidence(0).getCanonicalEventJson());
+  }
+
+  @Test
+  void encodeRuntimeMembershipCandidatePreservesInactiveRolesWithoutAdmission() {
+    MembershipEvent inactiveEvent =
+        runtimeMembershipAuthorityEvent(
+            Map.of(
+                "membershipLifecycleState",
+                "INACTIVE",
+                "membershipVersion",
+                Map.of(TENANT_UUID, "3"),
+                "roles",
+                List.of("designer"),
+                "gameplayAdmissionAllowed",
+                false));
+    RuntimeMembershipSnapshotDto snapshot =
+        runtimeMembershipSnapshot(
+            ACCOUNT_UUID,
+            "INACTIVE",
+            false,
+            "3",
+            List.of("designer"),
+            runtimeMembershipCheckpoints("1"),
+            runtimeMembershipSourceEvidence(inactiveEvent),
+            inactiveEvent);
+
+    GetTenantMembershipForRuntimeResponse response =
+        AccountGrpcService.encodeRuntimeMembershipCandidate(
+            validRuntimeMembershipContext(), snapshot);
+
+    assertTrue(response.getMembershipExists());
+    assertFalse(response.getGameplayAdmissionAllowed());
+    assertEquals("INACTIVE", response.getMembershipLifecycleState());
+    assertEquals(List.of("designer"), response.getRolesList());
+  }
+
+  @Test
+  void runtimeMembershipSnapshotRejectsActiveMembershipWithoutPlayerRole() {
+    MembershipEvent activeEvent =
+        runtimeMembershipAuthorityEvent(Map.of("roles", List.of("designer")));
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                "ACTIVE",
+                true,
+                "2",
+                List.of("designer"),
+                runtimeMembershipCheckpoints("1"),
+                runtimeMembershipSourceEvidence(activeEvent),
+                activeEvent));
+  }
+
+  @Test
+  void runtimeMembershipSnapshotRejectsIncompleteOrContradictoryInactiveEvidence() {
+    MembershipEvent inactiveEvent =
+        runtimeMembershipAuthorityEvent(
+            Map.of(
+                "membershipLifecycleState",
+                "INACTIVE",
+                "membershipVersion",
+                Map.of(TENANT_UUID, "3"),
+                "roles",
+                List.of("player"),
+                "gameplayAdmissionAllowed",
+                false));
+    List<OutboxSourceEvidence> inactiveEvidence = runtimeMembershipSourceEvidence(inactiveEvent);
+    List<OutboxCheckpointEntry> checkpoints = runtimeMembershipCheckpoints("1");
+    List<OutboxCheckpointEntry> missingMembershipCheckpoint =
+        checkpoints.stream()
+            .filter(item -> !item.outboxStreamKey().equals(inactiveEvent.outboxStreamKey()))
+            .toList();
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                "INACTIVE",
+                false,
+                "3",
+                List.of("player"),
+                checkpoints,
+                List.of(),
+                null));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new OutboxSourceEvidence(
+                inactiveEvent.outboxStreamKey(),
+                inactiveEvent.outboxSequence(),
+                inactiveEvent.eventId(),
+                "",
+                inactiveEvent.canonicalJson()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                "INACTIVE",
+                false,
+                "3",
+                List.of("player"),
+                missingMembershipCheckpoint,
+                inactiveEvidence,
+                inactiveEvent));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                "INACTIVE",
+                false,
+                "3",
+                List.of("player"),
+                runtimeMembershipCheckpoints("0"),
+                inactiveEvidence,
+                inactiveEvent));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                "INACTIVE",
+                false,
+                "3",
+                List.of("player"),
+                checkpoints,
+                runtimeMembershipSourceEvidence(
+                    runtimeMembershipAuthorityEvent(
+                        Map.of(
+                            "membershipVersion", Map.of(TENANT_UUID, "3"),
+                            "roles", List.of("player")))),
+                inactiveEvent));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            runtimeMembershipSnapshot(
+                ACCOUNT_UUID,
+                "INACTIVE",
+                true,
+                "3",
+                List.of("player"),
+                checkpoints,
+                inactiveEvidence,
+                inactiveEvent));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            runtimeMembershipAuthorityEvent(
+                Map.of("membershipLifecycleState", "INACTIVE", "gameplayAdmissionAllowed", true)));
   }
 
   @Test

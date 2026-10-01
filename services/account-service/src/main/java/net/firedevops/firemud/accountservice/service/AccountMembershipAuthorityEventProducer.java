@@ -309,6 +309,168 @@ public class AccountMembershipAuthorityEventProducer {
   }
 
   /**
+   * Reads exact current retained INACTIVE evidence without enrolling or authorizing the pair. The
+   * positive immutable receipt, closed event, current generation/fence and existing pair row must
+   * all agree under the same Account owner-row fence.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public RuntimeMembershipSnapshotDto readCurrentPairBoundInactiveMembershipSnapshot(
+      long accountId, long legacyTenantId) {
+    requireActiveOwnerTransaction();
+    if (accountId <= 0L || legacyTenantId <= 0L) {
+      throw new IllegalArgumentException("Account and retained tenant identities must be positive");
+    }
+    joinOperationRepository.lockAccount(accountId);
+    Identity identity = resolveIdentity(accountId, legacyTenantId);
+    JoinMembershipProof membership =
+        membershipRepository
+            .findJoinProofForUpdate(accountId, legacyTenantId)
+            .orElseThrow(
+                () -> new IllegalStateException("Current Account membership row is absent"));
+    if (membership.accountId() != accountId
+        || membership.tenantId() != legacyTenantId
+        || membership.membershipId() <= 0L
+        || membership.membershipVersion() <= 0L
+        || membership.membershipAuthorityGeneration() <= 0L
+        || !"INACTIVE".equals(membership.lifecycleState())
+        || membership.gameplayAdmissionAllowed()
+        || !"EXPLICIT_JOIN".equals(membership.authorityProvenance())) {
+      throw new IllegalStateException(
+          "Current Account membership is not an explicit retained inactive membership");
+    }
+
+    RoleSnapshot roles =
+        roleSnapshotRepository
+            .findForUpdate(
+                accountId,
+                legacyTenantId,
+                membership.membershipId(),
+                membership.membershipVersion())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Current Account membership role snapshot is absent"));
+    List<String> exactRoles;
+    try {
+      exactRoles =
+          AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(roles.roles());
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException("Current Account role snapshot is not canonical", exception);
+    }
+    if (roles.accountId() != accountId
+        || roles.tenantId() != legacyTenantId
+        || roles.membershipId() != membership.membershipId()
+        || roles.snapshotVersion() != membership.membershipVersion()) {
+      throw new IllegalStateException(
+          "Current Account role snapshot differs from its exact inactive membership");
+    }
+
+    MembershipTransitionReceipt receipt =
+        transitionReceiptRepository
+            .findLatestReceipt(accountId, legacyTenantId)
+            .orElseThrow(
+                () -> new IllegalStateException("Current inactive membership receipt is absent"));
+    if (!MembershipTransitionReceiptDigest.receiptStreamKey(accountId, legacyTenantId)
+            .equals(receipt.receiptStreamKey())
+        || receipt.receiptSequence() <= 0L
+        || receipt.receiptId() == null
+        || receipt.receiptDigest() == null
+        || !MembershipTransitionReceiptDigest.EVIDENCE_STATUS.equals(receipt.evidenceStatus())
+        || !"MEMBERSHIP_LEFT".equals(receipt.transitionType())
+        || receipt.requestId() == null
+        || receipt.requestId().isBlank()
+        || receipt.membershipId() != membership.membershipId()) {
+      throw new IllegalStateException(
+          "Current inactive membership lacks its exact positive LEFT receipt");
+    }
+
+    CompositeSnapshot authoritySnapshot = readSnapshot(identity);
+    ScopeState membershipAuthority = only(authoritySnapshot.memberships(), "membership");
+    requireMatchingFence(authoritySnapshot, membershipAuthority, identity.accountUuid());
+    if (membershipAuthority.generation() != membership.membershipAuthorityGeneration()) {
+      throw new IllegalStateException(
+          "Current inactive membership differs from its V31 authority generation");
+    }
+    List<OutboxCheckpointEntry> upstreamCheckpoints =
+        readBaselineUpstreamCheckpoints(identity, authoritySnapshot);
+    String streamKey = membershipStreamKey(identity);
+    Checkpoint checkpoint =
+        authorityOutboxRepository
+            .readCheckpoint(streamKey)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException("Current inactive membership has no V33 checkpoint"));
+    if (checkpoint.outboxSequence() <= 0L) {
+      throw new IllegalStateException("Current inactive membership checkpoint is not positive");
+    }
+    Event event =
+        authorityOutboxRepository
+            .findEvent(streamKey, checkpoint.outboxSequence())
+            .orElseThrow(
+                () -> new IllegalStateException("Current inactive checkpoint has no event"));
+    if (!checkpointMatches(checkpoint, event)) {
+      throw new IllegalStateException("Current inactive checkpoint differs from its event");
+    }
+    MembershipEvent verified = verifyStoredEvent(event, identity, event.requestId());
+    if (!receipt.requestId().equals(verified.requestId())) {
+      throw new IllegalStateException("Current inactive receipt differs from its latest event");
+    }
+    requireCurrentMembershipEvent(
+        identity,
+        membership.membershipId(),
+        membership.lifecycleState(),
+        membership.gameplayAdmissionAllowed(),
+        membership.membershipVersion(),
+        membership.membershipAuthorityGeneration(),
+        membership.authorityProvenance(),
+        roles,
+        receipt.requestId(),
+        true,
+        authoritySnapshot);
+
+    PairAuthority pair =
+        pairAuthorityRepository
+            .readForUpdate(identity.accountUuid(), identity.tenantUuid())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Current inactive membership pair authority is absent"));
+    if (!verifiedProvenance(identity).equals(pair.provenance())
+        || !pair.membershipExists()
+        || pair.membershipVersion() != membership.membershipVersion()
+        || pair.membershipAuthorityGeneration() != membership.membershipAuthorityGeneration()
+        || pair.lastEventSequence() != checkpoint.outboxSequence()
+        || !checkpoint.sourceEventId().equals(pair.lastEventId())
+        || !checkpoint.sourceEventDigest().equals(pair.lastEventDigest())
+        || !pair.lastTransitionInvalidated()) {
+      throw new IllegalStateException(
+          "Current inactive membership differs from its durable pair authority");
+    }
+
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(upstreamCheckpoints);
+    checkpoints.add(
+        new OutboxCheckpointEntry(streamKey, Long.toString(checkpoint.outboxSequence())));
+    return new RuntimeMembershipSnapshotDto(
+        identity.accountUuid().toString(),
+        identity.tenantUuid().toString(),
+        identity.accountUuid().toString(),
+        identity.tenantUuid().toString(),
+        true,
+        false,
+        new RuntimeMembershipSnapshotDto.MembershipBaseline(
+            "INACTIVE",
+            membershipVersionMap(verified, identity),
+            verified.membershipAuthorityGeneration()),
+        exactRoles,
+        verified.authorityTuple(),
+        verified.issuanceFence(),
+        Instant.now(),
+        orderedCheckpoints(checkpoints),
+        List.of(sourceEvidence(checkpoint, event)),
+        verified);
+  }
+
+  /**
    * Reads only an already-existing positive membership for exact canonical Account and tenant
    * UUIDs, under the Account owner transaction and row fence.
    *
@@ -417,7 +579,13 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalArgumentException("Account and retained tenant identities must be positive");
     }
     preparePairAuthorityForRuntimeSnapshot(accountId, legacyTenantId);
-    if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isPresent()) {
+    Optional<JoinMembershipProof> currentMembership =
+        membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId);
+    if (currentMembership.isPresent()
+        && "INACTIVE".equals(currentMembership.orElseThrow().lifecycleState())) {
+      return readCurrentPairBoundInactiveMembershipSnapshot(accountId, legacyTenantId);
+    }
+    if (currentMembership.isPresent()) {
       PositiveMembershipSnapshot positive =
           readCurrentPairBoundPositiveMembershipSnapshot(accountId, legacyTenantId);
       return new RuntimeMembershipSnapshotDto(
@@ -781,8 +949,8 @@ public class AccountMembershipAuthorityEventProducer {
    *
    * <p>A never-joined pair reuses JOIN's committed absence enrollment, then proves the resulting
    * sequence-zero snapshot. An existing membership is enrolled only through its exact current
-   * active receipt/event proof and is read back against the pair row. Inactive, unproved, or
-   * contradictory history remains denied; this method does not mutate membership or event history.
+   * active or inactive receipt/event proof and is read back against the pair row. No retained
+   * inactive path enrolls or changes membership/event history.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void preparePairAuthorityForRuntimeSnapshot(long accountId, long legacyTenantId) {
@@ -793,9 +961,16 @@ public class AccountMembershipAuthorityEventProducer {
     // Keep the same lock order as JOIN before resolving identity or inspecting retained history.
     joinOperationRepository.lockAccount(accountId);
     resolveIdentity(accountId, legacyTenantId);
-    if (membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId).isEmpty()) {
+    Optional<JoinMembershipProof> currentMembership =
+        membershipRepository.findJoinProofForUpdate(accountId, legacyTenantId);
+    if (currentMembership.isEmpty()) {
       preparePairAuthorityForJoin(accountId, legacyTenantId);
       readNeverJoinedMembershipSnapshot(accountId, legacyTenantId);
+      return;
+    }
+
+    if ("INACTIVE".equals(currentMembership.orElseThrow().lifecycleState())) {
+      readCurrentPairBoundInactiveMembershipSnapshot(accountId, legacyTenantId);
       return;
     }
 
@@ -981,7 +1156,7 @@ public class AccountMembershipAuthorityEventProducer {
           "New Account membership acquired V33 authority-event history before publication");
     }
     Checkpoint checkpoint =
-        appendAndReadBack(identity, requestId, membership, snapshot, false, true);
+        appendAndReadBack(identity, requestId, membership, snapshot, false, true, false);
     PairAuthority committed =
         pairAuthorityRepository.commitTransition(
             absenceBaseline,
@@ -1046,7 +1221,7 @@ public class AccountMembershipAuthorityEventProducer {
           "Committed Account membership tuple differs from the reactivation candidate");
     }
     Checkpoint checkpoint =
-        appendAndReadBack(identity, requestId, membership, committedCandidate, true, false);
+        appendAndReadBack(identity, requestId, membership, committedCandidate, true, false, false);
     PairAuthority committed =
         pairAuthorityRepository.commitTransition(
             priorPair,
@@ -1061,6 +1236,72 @@ public class AccountMembershipAuthorityEventProducer {
             != membership.getMembershipAuthorityGeneration()) {
       throw new IllegalStateException(
           "Reactivated membership pair authority readback differs from its event");
+    }
+    return checkpoint;
+  }
+
+  /** Compare-and-advances an existing active member to its committed non-admitting LEFT event. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Checkpoint publishLeftMembershipChange(
+      long accountId, long legacyTenantId, String requestId, AccountTenantMembership membership) {
+    requireActiveOwnerTransaction();
+    Identity identity = resolveIdentity(accountId, legacyTenantId);
+    requireMembershipIdentity(accountId, legacyTenantId, membership);
+    if (!"INACTIVE".equals(membership.getLifecycleState())
+        || membership.isGameplayAdmissionAllowed()
+        || !"EXPLICIT_JOIN".equals(membership.getAuthorityProvenance())) {
+      throw new IllegalStateException("LEFT Account membership is not inactive and explicit");
+    }
+    long expectedPriorVersion = decrementPositive(membership.getMembershipVersion());
+    long expectedPriorGeneration = decrementPositive(membership.getMembershipAuthorityGeneration());
+    PairAuthority priorPair =
+        pairAuthorityRepository
+            .readForUpdate(identity.accountUuid(), identity.tenantUuid())
+            .orElseThrow(() -> new IllegalStateException("LEFT membership has no pair authority"));
+    if (!verifiedProvenance(identity).equals(priorPair.provenance())
+        || !priorPair.membershipExists()
+        || priorPair.membershipVersion() != expectedPriorVersion
+        || priorPair.membershipAuthorityGeneration() != expectedPriorGeneration
+        || priorPair.lastEventSequence() <= 0L) {
+      throw new IllegalStateException("LEFT membership differs from its prior pair authority");
+    }
+    CompositeSnapshot beforeAdvance = readSnapshot(identity);
+    ScopeState currentMembership = only(beforeAdvance.memberships(), "membership");
+    requireMatchingFence(beforeAdvance, currentMembership, identity.accountUuid());
+    if (currentMembership.generation() != expectedPriorGeneration) {
+      throw new IllegalStateException(
+          "Embedded and canonical Account membership generations differ at LEFT");
+    }
+    ScopeState advanced =
+        authorityGenerationRepository.advance(currentMembership, beforeAdvance.issuanceFence());
+    if (advanced.generation() != membership.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException(
+          "Account membership authority generation did not advance at LEFT");
+    }
+    CompositeSnapshot committedCandidate = readSnapshot(identity);
+    ScopeState committedMembership = only(committedCandidate.memberships(), "membership");
+    requireMatchingFence(committedCandidate, committedMembership, identity.accountUuid());
+    if (committedMembership.generation() != membership.getMembershipAuthorityGeneration()) {
+      throw new IllegalStateException(
+          "Committed Account membership tuple differs from the LEFT candidate");
+    }
+    Checkpoint checkpoint =
+        appendAndReadBack(identity, requestId, membership, committedCandidate, true, false, true);
+    PairAuthority committed =
+        pairAuthorityRepository.commitTransition(
+            priorPair,
+            new PairTransition(
+                true,
+                checkpoint.outboxSequence(),
+                checkpoint.sourceEventId(),
+                checkpoint.sourceEventDigest(),
+                true));
+    if (committed.membershipVersion() != membership.getMembershipVersion()
+        || committed.membershipAuthorityGeneration()
+            != membership.getMembershipAuthorityGeneration()
+        || !committed.lastTransitionInvalidated()) {
+      throw new IllegalStateException(
+          "LEFT membership pair authority readback differs from its event");
     }
     return checkpoint;
   }
@@ -1120,9 +1361,14 @@ public class AccountMembershipAuthorityEventProducer {
       AccountTenantMembership membership,
       CompositeSnapshot snapshot,
       boolean callerBoundAuthorityInvalidated,
-      boolean newMembership) {
-    requirePositive(requestId, "JOIN request ID");
-    requireActiveMembership(membership);
+      boolean newMembership,
+      boolean inactiveMembership) {
+    requirePositive(requestId, "membership transition request ID");
+    if (inactiveMembership) {
+      requireInactiveMembership(membership);
+    } else {
+      requireActiveMembership(membership);
+    }
     ScopeState issuer = snapshot.issuer();
     ScopeState account = snapshot.account();
     ScopeState tenant = only(snapshot.tenants(), "tenant");
@@ -1137,10 +1383,11 @@ public class AccountMembershipAuthorityEventProducer {
           "A new Account membership cannot reuse a retained generation");
     }
     if (!newMembership && !callerBoundAuthorityInvalidated) {
-      throw new IllegalStateException("Membership reactivation must invalidate caller authority");
+      throw new IllegalStateException(
+          "Membership lifecycle transition must invalidate caller authority");
     }
     readBaselineUpstreamCheckpoints(identity, snapshot);
-    RoleSnapshot roles = requireRoleSnapshot(identity, membership);
+    RoleSnapshot roles = requireRoleSnapshot(identity, membership, inactiveMembership);
     String streamKey = membershipStreamKey(identity);
     String expectedEventId = eventIdForRequest(requestId);
     MembershipEvent[] candidate = new MembershipEvent[1];
@@ -1483,9 +1730,10 @@ public class AccountMembershipAuthorityEventProducer {
         new String(event.payload(), StandardCharsets.UTF_8));
   }
 
-  private RoleSnapshot requireRoleSnapshot(Identity identity, AccountTenantMembership membership) {
+  private RoleSnapshot requireRoleSnapshot(
+      Identity identity, AccountTenantMembership membership, boolean inactiveMembership) {
     if (membership.getId() == null || membership.getMembershipVersion() <= 0L) {
-      throw new IllegalStateException("Account JOIN membership role identity is incomplete");
+      throw new IllegalStateException("Account membership role identity is incomplete");
     }
     RoleSnapshot snapshot =
         roleSnapshotRepository
@@ -1494,15 +1742,29 @@ public class AccountMembershipAuthorityEventProducer {
                 identity.legacyTenantId(),
                 membership.getId(),
                 membership.getMembershipVersion())
-            .orElseThrow(() -> new IllegalStateException("Account JOIN role snapshot is absent"));
+            .orElseThrow(
+                () -> new IllegalStateException("Account membership role snapshot is absent"));
+    List<String> exactRoles;
+    try {
+      exactRoles =
+          AccountTenantMembershipRoleSnapshotRepository.requireCanonicalRoleSet(snapshot.roles());
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException(
+          "Account membership role snapshot is not canonical", exception);
+    }
     if (snapshot.accountId() != identity.accountId()
         || snapshot.tenantId() != identity.legacyTenantId()
         || snapshot.membershipId() != membership.getId()
         || snapshot.snapshotVersion() != membership.getMembershipVersion()
-        || !snapshot.roles().contains("player")) {
-      throw new IllegalStateException("Account JOIN role snapshot differs from its membership");
+        || (!inactiveMembership && !exactRoles.contains("player"))) {
+      throw new IllegalStateException("Account role snapshot differs from its membership");
     }
-    return snapshot;
+    return new RoleSnapshot(
+        snapshot.accountId(),
+        snapshot.tenantId(),
+        snapshot.membershipId(),
+        snapshot.snapshotVersion(),
+        exactRoles);
   }
 
   private CompositeSnapshot readSnapshot(Identity identity) {
@@ -1621,6 +1883,17 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
+  private void requireInactiveMembership(AccountTenantMembership membership) {
+    if (membership.getMembershipVersion() <= 0L
+        || membership.getMembershipAuthorityGeneration() <= 0L
+        || !"INACTIVE".equals(membership.getLifecycleState())
+        || membership.isGameplayAdmissionAllowed()
+        || !"EXPLICIT_JOIN".equals(membership.getAuthorityProvenance())) {
+      throw new IllegalStateException(
+          "LEFT event requires a persisted inactive explicit membership");
+    }
+  }
+
   private String membershipStreamKey(Identity identity) {
     return membershipStreamKey(identity.accountUuid(), identity.tenantUuid());
   }
@@ -1662,7 +1935,7 @@ public class AccountMembershipAuthorityEventProducer {
 
   private long decrementPositive(long value) {
     if (value <= 1L) {
-      throw new IllegalStateException("Reactivation requires prior positive membership history");
+      throw new IllegalStateException("Membership lifecycle requires prior positive history");
     }
     return value - 1L;
   }
