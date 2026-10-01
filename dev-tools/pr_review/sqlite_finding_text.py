@@ -149,25 +149,29 @@ def _hosted_issue_markdown(
     )
     # Security taxonomy is metadata only when the provider header and an
     # adjacent exploitability/CWE block prove that a later authored remediation exists.
-    security_header = any(
-        _is_badge_line(line) and len(line.split("|")) in {3, 4}
-        and _badge_label_text(line.split("|")[0]).casefold() == "security & privacy"
-        for line in value.splitlines()
+    value = "\n".join(
+        line for line in value.splitlines()
+        if not _is_evidence_label(_headline_text(html.unescape(line)))
+        and line.strip() not in {"---", "***", "___"}
     )
-    if security_header:
-        pattern = re.compile(
-            r"^\*\*([^\n*]+)\*\*[ \t]*\n[ \t\n]*"
-            r"((?:\*\*(?:Reachability|Exploitability|CWE):\*\*[^\n]*\n[ \t\n]*)+)"
-            r"(?=\*\*[^\n*]+\*\*(?:[ \t]|$))", re.MULTILINE
-        )
-        def strip_classification(match: re.Match[str]) -> str:
-            metadata = match.group(2)
-            if "**Exploitability:**" not in metadata or not re.search(r"\*\*CWE:\*\*.*CWE-[0-9]+", metadata):
-                return match.group()
-            if classification_titles is not None:
-                classification_titles.add(match.group(1))
-            return ""
-        value = pattern.sub(strip_classification, value)
+    pattern = re.compile(
+        r"^([^\n]+)\n[ \t\n]*\*\*([^\n*]+)\*\*[ \t]*\n[ \t\n]*"
+        r"((?:\*\*(?:Reachability|Exploitability|CWE):\*\*[^\n]*\n[ \t\n]*)+)"
+        r"(?=\*\*[^\n*]+\*\*(?:[ \t]|$))", re.MULTILINE
+    )
+    def strip_classification(match: re.Match[str]) -> str:
+        header, classification, metadata = match.groups()
+        if (
+            not _is_badge_line(header) or len(header.split("|")) not in {3, 4}
+            or _badge_label_text(header.split("|")[0]).casefold() != "security & privacy"
+            or "**Exploitability:**" not in metadata
+            or not re.search(r"\*\*CWE:\*\*.*CWE-[0-9]+", metadata)
+        ):
+            return match.group()
+        if classification_titles is not None:
+            classification_titles.add(classification)
+        return header + "\n"
+    value = pattern.sub(strip_classification, value)
     lines = []
     for raw in value.splitlines():
         line = _headline_text(html.unescape(raw.rstrip()))
@@ -318,3 +322,38 @@ def _hosted_display_severity(value: str) -> str | None:
             if label is not None:
                 found.add(label)
     return next(iter(found)) if len(found) == 1 else None
+
+
+def _hosted_aggregate_display_detail(findings: list[dict[str, Any]], stored_title: str) -> str:
+    """Keep each retained aggregate section represented within the shared display limit."""
+
+    total = len(findings)
+    note = f"Historical aggregate: {total} provider findings were recorded as one item"
+    excerpt = "[Section excerpt truncated; see original source comment.]"
+    entries = []
+    minimum = len(note) + 100  # Reserve a bounded explicit omitted-section count.
+    for index, finding in enumerate(findings, 1):
+        title = finding["title"]
+        heading = f"**Provider section {index}**"
+        if index > 1 or (stored_title != title and not _unusable_hosted_title(stored_title)):
+            heading = f"**Provider section {index}: {title}**"
+        body = finding["display_detail"]
+        required = len(heading) + len(excerpt) + min(len(body), 32) + 6
+        if minimum + required > 8000:
+            break
+        entries.append((heading, body))
+        minimum += required
+    omitted = total - len(entries)
+    if omitted:
+        note += f"\n\nOmitted {omitted} provider sections; see original source comment."
+    fixed = len(note) + sum(len(heading) + len(excerpt) + 6 for heading, _ in entries)
+    budget = max(0, (8000 - fixed) // len(entries)) if entries else 0
+    parts = [note]
+    for heading, body in entries:
+        section = heading
+        if body:
+            section += "\n\n" + body[:budget].rstrip()
+            if len(body) > budget:
+                section += "\n\n" + excerpt
+        parts.append(section)
+    return "\n\n".join(parts)

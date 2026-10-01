@@ -120,6 +120,21 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_security_header_binds_only_its_adjacent_classification_block(self) -> None:
+        header = "_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_"
+        classification = "**Authored classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**\nKeep the prose."
+        detached = header + "\nAn ordinary prose interruption breaks provenance.\n" + classification
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, detached)[0]
+        self.assertEqual(finding["classification_titles"], [])
+        self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+        bound_then_authored = (header + "\n<details><summary>Analysis chain</summary>Diagnostic noise</details>\n"
+                               "**Provider classification**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n"
+                               "**Actual remedy.**\nOrdinary unrelated issue prose.\n" + classification)
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, bound_then_authored)[0]
+        self.assertEqual(finding["classification_titles"], ["Provider classification"])
+        self.assertIn("**Authored classification**", finding["display_detail"])
+        self.assertIn("**Exploitability:** Difficult", finding["display_detail"])
+
     def test_security_metadata_requires_complete_strict_provider_badge(self) -> None:
         metadata = "\n**Authorization Bypass**\n**Exploitability:** Difficult\n**CWE:** CWE-693\n**Require durable proof.**\nKeep the prose."
         valid = ("_🔒 Security & Privacy_ | _🟠 Major_ | _🏗️ Heavy lift_",

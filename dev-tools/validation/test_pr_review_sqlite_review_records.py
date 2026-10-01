@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review import sqlite_backup, sqlite_hosted_capture, sqlite_provider_imports, sqlite_review_records
 from pr_review.evidence import Checkpoint
-from pr_review.sqlite_finding_text import _safe_finding_detail
+from pr_review.sqlite_finding_text import _hosted_aggregate_display_detail, _safe_finding_detail
 from pr_review.sqlite_review_records import (
     AttemptNotFound,
     FindingObservation,
@@ -187,6 +187,30 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(finding["display_title"], "Require durability proof for the existing-marker outcome.")
         self.assertEqual(self.records.history(2879)["routes"][0]["display_title"], finding["display_title"])
 
+    def test_aggregate_long_first_body_keeps_later_section_with_excerpt_notice(self) -> None:
+        self.hosted_display_run(title="First actual issue.")
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = (
+            "**First actual issue.**\n" + "Long first section prose. " * 400 +
+            "\n<!-- cr-comment:v1:" + "a" * 24 + " -->\n"
+            "**Second actual issue.**\nLater issue explanation must remain visible.\n"
+            "<!-- cr-comment:v1:" + "b" * 24 + " -->")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": json.dumps(archive)})
+        history = self.records.history(2839)
+        detail = history["findings"][0]["display_detail"]
+        self.assertLessEqual(len(detail), 8000)
+        self.assertIn("Provider section 1", detail)
+        self.assertIn("Provider section 2: Second actual issue.", detail)
+        self.assertIn("Later issue explanation must remain visible.", detail)
+        self.assertIn("Section excerpt truncated", detail)
+        self.assertEqual(history["runs"][0]["counts"], {"found": 1, "accepted": 0, "routed": 1})
+        many = [{"title": "Authored issue " + "x" * 280, "display_detail": "Long issue body. " * 600} for _ in range(1000)]
+        bounded = _hosted_aggregate_display_detail(many, many[0]["title"])
+        self.assertLessEqual(len(bounded), 8000)
+        self.assertIn("Omitted ", bounded)
+        self.assertIn("provider sections; see original source comment.", bounded)
+        self.assertIn("Historical aggregate: 1000", bounded)
+
     def test_existing_legacy_aggregate_exposes_both_sections_without_new_findings(self) -> None:
         self.hosted_display_run(title="First actual issue.")
         for second_severity, expected in (("Major", "Major"), ("Minor", None)):
@@ -212,7 +236,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 self.assertEqual(finding["display_severity"], expected)
                 self.assertEqual(finding["display_detail"],
                                  "Historical aggregate: 2 provider findings were recorded as one item\n\n"
-                                 "First issue explanation.\n\n**Second actual issue.**\n\nSecond issue explanation.")
+                                 "**Provider section 1**\n\nFirst issue explanation.\n\n"
+                                 "**Provider section 2: Second actual issue.**\n\nSecond issue explanation.")
                 self.assertEqual(self.records.history(2879)["routes"][0]["display_detail"], finding["display_detail"])
                 with sqlite3.connect(self.database) as connection:
                     self.assertEqual(list(connection.iterdump()), before)

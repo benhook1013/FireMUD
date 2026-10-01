@@ -3256,19 +3256,13 @@ class SqliteReviewRecords:
                     (run_id, source_pr, aggregate_key),
                 ).fetchone()
                 if len(findings) > 1 and aggregate is not None:
-                    from .sqlite_finding_text import _unusable_hosted_title
+                    from .sqlite_finding_text import _hosted_aggregate_display_detail
 
                     first_title = findings[0]["title"]
-                    parts = [f"Historical aggregate: {len(findings)} provider findings were recorded as one item"]
-                    for index, finding in enumerate(findings):
-                        if index or (aggregate[0] != first_title and not _unusable_hosted_title(aggregate[0])):
-                            parts.append(f"**{finding['title']}**")
-                        if finding["display_detail"]:
-                            parts.append(finding["display_detail"])
                     severity = {finding["display_severity"] for finding in findings}
                     titles[aggregate_key] = {
                         "display_title": first_title,
-                        "display_detail": "\n\n".join(parts)[:8000].rstrip(),
+                        "display_detail": _hosted_aggregate_display_detail(findings, aggregate[0]),
                         "display_severity": next(iter(severity)) if len(severity) == 1 else None,
                     }
                 for finding in findings:
