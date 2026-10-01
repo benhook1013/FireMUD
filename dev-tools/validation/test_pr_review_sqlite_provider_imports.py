@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -125,6 +126,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
         events = [
             {
                 "type": "finding",
+                "severity": "minor",
                 "codegenInstructions": instructions
                 or (
                     "Validate the route before using it.\n"
@@ -423,6 +425,31 @@ class SqliteProviderImportsTest(unittest.TestCase):
                 scope="broad",
             )
 
+    def test_hosted_reimport_preserves_original_wrapper_projection(self) -> None:
+        body = (
+            "<details>\n<summary>Supported by static analysis</summary>\n"
+            "Script executed:\n```bash\necho analysis\n```\n</details>\n"
+            "Compare the incoming request with the existing workflow identity."
+        )
+        self.hosted_capture(finding_body=body)
+        arguments = {
+            "repo": REPO, "pr_number": PR,
+            "checkpoint": self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->"),
+            "actor": "reviewer", "common": self.common, "scope": "broad",
+        }
+        with patch("pr_review.sqlite_hosted_capture._hosted_title_choice", return_value=("<details>", False)):
+            first = pr_review.sqlite_provider_imports.import_hosted_checkpoint(self.records, **arguments)
+        self.records.archive_imported_artifacts(first["run_id"], first["archive_artifacts"])
+        before = self.records.history(PR)
+        replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(self.records, **arguments)
+        self.records.archive_imported_artifacts(replay["run_id"], replay["archive_artifacts"])
+        after = self.records.history(PR)
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(before, after)
+        self.assertEqual(after["findings"][0]["title"], "<details>")
+        self.assertEqual(after["findings"][0]["display_title"],
+                         "Compare the incoming request with the existing workflow identity.")
+
     def test_hosted_import_prefers_bold_actionable_headline_over_badge(self) -> None:
         self.hosted_capture(
             finding_body=(
@@ -545,6 +572,13 @@ class SqliteProviderImportsTest(unittest.TestCase):
             scope="broad",
         )
 
+        self.records.archive_imported_artifacts(first["run_id"], first["archive_artifacts"])
+        self.records.link_provider_origin(
+            repository=REPO, source_pr=PR, channel="cli", provider_id="run:run.Importer",
+            checkpoint_id=checkpoint.comment_id,
+            checkpoint_fingerprint=pr_review.sqlite_provider_imports._checkpoint_fingerprint(checkpoint),
+            run_id=first["run_id"],
+        )
         history = self.records.history(PR)
         self.assertFalse(first["idempotent_replay"])
         self.assertTrue(replay["idempotent_replay"])
@@ -566,6 +600,15 @@ class SqliteProviderImportsTest(unittest.TestCase):
         routes = self.records.open_routes()
         self.assertEqual(len(routes), 1)
         self.assertIsNone(routes[0]["target_pr"])
+        self.assertEqual(history["findings"][0]["display_severity"], "Minor")
+        self.assertEqual(routes[0]["display_severity"], "Minor")
+        self.records.retarget_route(routes[0]["route_id"], target_pr=2879, actor="owner", reason="Assign receiver")
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_severity"], "Minor")
+        with sqlite3.connect(self.records.path) as connection:
+            connection.execute("UPDATE provider_origins SET provider_id = 'run:wrong' WHERE run_id = ?",
+                               (history["runs"][0]["run_id"],))
+        self.assertNotIn("display_severity", self.records.history(PR)["findings"][0])
+        self.assertNotIn("display_severity", self.records.history(2879)["routes"][0])
 
     def test_cli_import_starts_detail_after_safety_preamble_and_locator(self) -> None:
         instructions = (

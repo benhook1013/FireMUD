@@ -20,6 +20,34 @@ from pr_review.state import FindingRoute, ReviewState, StateStore, SummaryFindin
 
 
 class ReviewRecordsCliTest(unittest.TestCase):
+    def test_records_source_resolve_requires_a_full_commit_sha(self) -> None:
+        prefix = [
+            "records",
+            "source",
+            "resolve",
+            "--source-pr",
+            "2885",
+            "--run-id",
+            "run.source-resolution-cli",
+            "--finding-key",
+            "accepted-key",
+            "--resolution-id",
+            "source-resolution-cli-proof",
+            "--fix-sha",
+        ]
+        parsed = cli._parser().parse_args([*prefix, "a" * 40, "--actor", "owner", "--proof-note", "verified"])
+        self.assertEqual(parsed.fix_sha, "a" * 40)
+        uppercase = "A" * 40
+        parsed_uppercase = cli._parser().parse_args(
+            [*prefix, uppercase, "--actor", "owner", "--proof-note", "verified"]
+        )
+        self.assertEqual(parsed_uppercase.fix_sha, uppercase)
+        for invalid_sha in ("a" * 12, "g" * 40, "a" * 39, "a" * 41):
+            with self.subTest(invalid_sha=invalid_sha), self.assertRaises(SystemExit):
+                cli._parser().parse_args(
+                    [*prefix, invalid_sha, "--actor", "owner", "--proof-note", "verified"]
+                )
+
     def test_subagent_start_rejects_oversized_coverage_before_recording(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         for length, expected in ((200, 0), (201, 2)):
@@ -262,6 +290,88 @@ class ReviewRecordsCliTest(unittest.TestCase):
             SqliteReviewRecords(self.database).history(2893)["runs"][0]["finished_at"],
             expected_finished_at,
         )
+
+    def test_records_source_resolve_records_exact_accepted_fix_without_changing_counts(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        records.import_completed_run(
+            run_id="run.source-resolution-cli",
+            source_pr=2885,
+            channel="cli",
+            source_head="a" * 40,
+            reviewer="CodeRabbit",
+            findings=(FindingObservation(source_finding_key="accepted-key", title="Accepted finding"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "accepted-key",
+                    "decision_id": "source-resolution-cli-decision",
+                    "decision": "accepted",
+                    "actor": "reviewer",
+                    "reason": "owned by this PR",
+                },
+            ),
+        )
+
+        code, result = self.invoke(
+            "source",
+            "resolve",
+            "--source-pr",
+            "2885",
+            "--run-id",
+            "run.source-resolution-cli",
+            "--finding-key",
+            "accepted-key",
+            "--resolution-id",
+            "source-resolution-cli-proof",
+            "--fix-sha",
+            "b" * 40,
+            "--actor",
+            "owner",
+            "--proof-note",
+            "Verified fixed in the exact source commit",
+            "--resolved-at",
+            "2026-09-30T12:00:00Z",
+            "--database",
+            str(self.database),
+        )
+
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["result"]["outcome"], "accepted_fixed")
+        self.assertFalse(result["result"]["idempotent_replay"])
+        self.assertEqual(
+            records.source_resolution_status(
+                "run.source-resolution-cli",
+                source_pr=2885,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=1,
+            ),
+            "resolved",
+        )
+        self.assertEqual(records.history(2885)["runs"][0]["counts"], {"found": 1, "accepted": 1, "routed": 0})
+
+        wrong_pr_code, _ = self.invoke(
+            "source",
+            "resolve",
+            "--source-pr",
+            "2886",
+            "--run-id",
+            "run.source-resolution-cli",
+            "--finding-key",
+            "accepted-key",
+            "--resolution-id",
+            "wrong-pr-proof",
+            "--fix-sha",
+            "b" * 40,
+            "--actor",
+            "owner",
+            "--proof-note",
+            "Must bind to the exact source PR",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(wrong_pr_code, 2)
+        self.assertEqual(len(records.history(2885)["source_resolutions"]), 1)
 
     def test_failed_subagent_pass_has_no_completed_run(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))

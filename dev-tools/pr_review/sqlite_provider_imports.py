@@ -174,7 +174,7 @@ def import_cli_checkpoint(
     _validate_checkpoint(checkpoint, "CLI")
     if checkpoint.run_id is None:
         raise ProviderImportError("CLI checkpoint has no exact run marker")
-    capture = evidence.load_cli_capture(checkpoint, repo, pr_number, common, records=records)
+    capture = evidence.load_cli_capture_for_repair(checkpoint, repo, pr_number, common, records=records)
     source_head = capture.metadata.get("candidate_sha", "")
     if not evidence.EXACT_SHA.fullmatch(source_head):
         raise ProviderImportError("CLI capture has no exact candidate head")
@@ -289,6 +289,7 @@ def _hosted_archive_artifacts(
         "pull_request": pr_number,
         "review_id": review_id,
         "checkpoint": checkpoint.as_json(),
+        "checkpoint_fields": dataclasses.asdict(checkpoint),
         "checkpoint_fingerprint": _checkpoint_fingerprint(checkpoint),
         "snapshot_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
         "decision_file_present": capture.decision_file_present,
@@ -335,6 +336,7 @@ def _cli_archive_artifacts(
         "repository": repo.casefold(),
         "pull_request": pr_number,
         "checkpoint": checkpoint.as_json(),
+        "checkpoint_fields": dataclasses.asdict(checkpoint),
         "checkpoint_fingerprint": _checkpoint_fingerprint(checkpoint),
         "metadata_json": parsed_metadata,
         "metadata_json_text": metadata_json,
@@ -525,6 +527,7 @@ def _import_reply_only_hosted_checkpoint(
                 "trigger_state": trigger_state,
                 "zero_reply_proof": proof,
                 "checkpoint": checkpoint.as_json(),
+                "checkpoint_fields": dataclasses.asdict(checkpoint),
                 "checkpoint_fingerprint": _checkpoint_fingerprint(checkpoint),
                 "current_head": current_head,
                 "response_id": checkpoint.hosted_review_id,

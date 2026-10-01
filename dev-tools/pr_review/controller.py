@@ -62,12 +62,18 @@ class StaleReviewTarget(ControllerError):
     """A direct-to-default target's base advanced before review could begin."""
 
 
+class HostedAdmissionBusy(ControllerError):
+    """A Hosted admission lock is held; provider activity is not implied."""
+
+
 class _SelectionChanged(ControllerError):
     """Durable selection inputs changed before provider admission."""
 
 
 GIT_TIMEOUT_SECONDS = 30
 MAX_BASE_RESELECTIONS = 2
+HOSTED_ADMISSION_RETRY_BASE_SECONDS = 0.05
+HOSTED_ADMISSION_RETRY_MAX_SECONDS = 0.2
 LEGACY_UNCHECKPOINTED = re.compile(r"^trigger-uncheckpointed:[1-9][0-9]*$")
 DRAFT_PR_NOTICE = "Draft PR — mark ready for review if preparation is complete."
 
@@ -1709,6 +1715,9 @@ class ReviewController:
             and accepted > 0
         ):
             return False
+        has_source_resolution = _field(value, "source_resolution_status") is not None
+        if has_source_resolution:
+            return _field(value, "source_resolution_status") != "resolved"
         reviewed_head = _field(value, "head", "reviewed_head")
         if not isinstance(reviewed_head, str) or reviewed_head.casefold() == current_head.casefold():
             return True
@@ -1716,6 +1725,13 @@ class ReviewController:
             return not self.git.is_ancestor(_sha(reviewed_head, "accepted finding head"), current_head)
         except (ControllerError, OSError, ValueError, subprocess.SubprocessError):
             return True
+
+    @staticmethod
+    def _accepted_findings_pending_reason(value: Any) -> str:
+        status = _field(value, "source_resolution_status")
+        if status == "unavailable" or status == "error":
+            return "source-resolution records are unavailable; accepted-finding proof remains pending"
+        return "accepted findings need a published corrected head before review can stop"
 
     @staticmethod
     def _legacy_transition_record(value: Any, pr: int, current_head: str) -> None:
@@ -2679,20 +2695,25 @@ class ReviewController:
                     if type(evidence_value.accepted) is not int or evidence_value.accepted < 0:
                         raise ControllerError(f"{selected.value} channel has a malformed accepted finding count")
                     if evidence_value.accepted > 0:
-                        reviewed_head = _field(value, "head", "reviewed_head")
-                        try:
-                            reviewed_head = _sha(reviewed_head, "accepted finding reviewed head")
-                            has_corrected_descendant = not require_checkpoint_ancestry or self.git.is_ancestor(
-                                reviewed_head, current.child_head
-                            )
-                        except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as exc:
-                            raise ControllerError(
-                                "could not verify corrected-head ancestry for accepted findings"
-                            ) from exc
-                        if not has_corrected_descendant or reviewed_head == current.child_head.casefold():
-                            raise ControllerError(
-                                "accepted findings need a published corrected head before review can stop"
-                            )
+                        has_source_resolution = _field(value, "source_resolution_status") is not None
+                        if has_source_resolution:
+                            if self._accepted_findings_pending(value, current.child_head):
+                                raise ControllerError(self._accepted_findings_pending_reason(value))
+                        else:
+                            reviewed_head = _field(value, "head", "reviewed_head")
+                            try:
+                                reviewed_head = _sha(reviewed_head, "accepted finding reviewed head")
+                                has_corrected_descendant = not require_checkpoint_ancestry or self.git.is_ancestor(
+                                    reviewed_head, current.child_head
+                                )
+                            except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as exc:
+                                raise ControllerError(
+                                    "could not verify corrected-head ancestry for accepted findings"
+                                ) from exc
+                            if not has_corrected_descendant or reviewed_head == current.child_head.casefold():
+                                raise ControllerError(
+                                    "accepted findings need a published corrected head before review can stop"
+                                )
                 active_hosted_identity = (_field(value, "trigger_id"), _field(value, "response_id"))
                 if (
                     allow_exact_hosted_overlap
@@ -2833,8 +2854,13 @@ class ReviewController:
         if type(accepted) is not int or accepted < 0:
             raise ControllerError("latest attributable checkpoint has a malformed accepted count")
         reviewed_head = _field(latest, "head", "reviewed_head")
-        if accepted > 0 and reviewed_head.casefold() == current.child_head.casefold():
-            raise ControllerError("accepted findings need a published corrected head before review can stop")
+        has_source_resolution = _field(latest, "source_resolution_status") is not None
+        if (
+            accepted > 0
+            and reviewed_head.casefold() == current.child_head.casefold()
+            and (not has_source_resolution or self._accepted_findings_pending(latest, current.child_head))
+        ):
+            raise ControllerError(self._accepted_findings_pending_reason(latest))
         retained = (retained_fingerprints, retained_reason) if retained_fingerprints else None
         return latest, retained, histories
 
@@ -3347,6 +3373,7 @@ class ReviewController:
         )
 
         def result(status: str, reason: str, *, control: str, details: str | None = None) -> dict[str, Any]:
+            cap_stopped = status in {"CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING"}
             return {
                 "status": status,
                 "reason": reason,
@@ -3355,7 +3382,7 @@ class ReviewController:
                 "checkpoint": latest["checkpoint"] if latest else None,
                 "accepted": latest["accepted"] if latest else None,
                 "handoff_head": allocation.handoff_head,
-                "stop_basis": "human_cap" if status == "CAP_AUDITED_STOP" else allocation.stop_basis,
+                "stop_basis": "human_cap" if cap_stopped else allocation.stop_basis,
                 "baseline_checkpoint": allocation.baseline_checkpoint,
                 "min_additional_completed": minimum,
                 "max_additional_completed": cap,
@@ -3371,7 +3398,7 @@ class ReviewController:
                 "cap": cap,
                 "remaining": max(0, cap - used - in_flight) if cap is not None else None,
                 "in_flight": in_flight,
-                "selection_control": control,
+                "selection_control": "maximum" if cap_stopped else control,
                 "controlling_reason": reason,
             }
 
@@ -3391,10 +3418,13 @@ class ReviewController:
 
         if any(completed["accepted"] > 0 for completed in snapshot["results"]):
             if current is None or reconciliation_result is None:
+                cap_reached = cap is not None and used >= cap
                 return result(
-                    "CAP_EXHAUSTED_PENDING" if cap is not None and used >= cap else "CAP_FINDINGS_PENDING",
-                    "accepted findings remain pending; current fix evidence is unavailable",
+                    "CAP_EXHAUSTED_PENDING" if cap_reached else "CAP_FINDINGS_PENDING",
+                    "cap exhausted; findings pending" if cap_reached
+                    else "accepted findings remain pending; current fix evidence is unavailable",
                     control="unresolved_work",
+                    details="current fix evidence is unavailable" if cap_reached else None,
                 )
             checkpoint_pin = latest["checkpoint"] if latest else _field(baseline, "checkpoint", "checkpoint_id")
             try:
@@ -3649,18 +3679,26 @@ class ReviewController:
             return result(
                 "EXHAUSTED_PENDING", "current review, finding, or thread obligations remain", checkpoint, accepted
             )
-        if any(
-            _field(item, "completed") is True
-            and _field(item, "attributable") is True
-            and _field(item, "provisional") is not True
-            and _field(item, "correction") is not True
-            and _field(item, "head", "reviewed_head") == current.child_head
-            and type(_field(item, "accepted")) is int
-            and _field(item, "accepted") > 0
-            for item in history
-        ):
+        pending_source = next(
+            (
+                item
+                for item in history
+                if _field(item, "completed") is True
+                and _field(item, "attributable") is True
+                and _field(item, "provisional") is not True
+                and _field(item, "correction") is not True
+                and _field(item, "head", "reviewed_head") == current.child_head
+                and type(_field(item, "accepted")) is int
+                and _field(item, "accepted") > 0
+            ),
+            None,
+        )
+        if pending_source is not None:
             return result(
-                "EXHAUSTED_PENDING", "accepted findings need a published corrected head", checkpoint, accepted
+                "EXHAUSTED_PENDING",
+                self._accepted_findings_pending_reason(pending_source),
+                checkpoint,
+                accepted,
             )
         if allocation.handoff_checkpoint is None:
             return result(
@@ -3843,9 +3881,12 @@ class ReviewController:
             handed_off_prs=(
                 pr
                 for pr, view in channel_allocations.items()
-                if view["status"] in {"HANDED_OFF", "CAP_AUDITED_STOP"} or view["status"] == "CAP_TAPERED"
+                if view["status"] in {"HANDED_OFF", "CAP_TAPERED"}
             ),
-            human_stopped_prs=(pr for pr, view in channel_allocations.items() if view["status"] == "STOPPED"),
+            human_stopped_prs=(
+                pr for pr, view in channel_allocations.items()
+                if view["status"] in {"STOPPED", "CAP_AUDITED_STOP", "CAP_EXHAUSTED_PENDING"}
+            ),
             exhausted_prs=(pr for pr, view in channel_allocations.items() if view["status"] == "EXHAUSTED_PENDING"),
             allocation_blocks={
                 pr: view["reason"] for pr, view in channel_allocations.items() if view["status"] == "INVALID"
@@ -3856,7 +3897,6 @@ class ReviewController:
                 if view["status"]
                 in {
                     "CAP_FINDINGS_PENDING",
-                    "CAP_EXHAUSTED_PENDING",
                     "CAP_TAPERED_PENDING",
                 }
                 or (view["status"] == "CAP_ACTIVE" and view.get("selection_control") == "unresolved_work")
@@ -5254,12 +5294,28 @@ class ReviewController:
     ) -> None:
         """Serialize admission with human decisions, releasing before execution."""
 
+        observed_allocation = self._state().allocations.get(f"{pr}:{channel}")
+        cap_history = None
+        if (observed_allocation is not None and observed_allocation.stop_basis is None
+                and observed_allocation.max_additional_completed is not None):
+            # The adapter owns provider exclusion here; refresh outside the short mutation lock.
+            refresh = getattr(self._evidence_provider, "admission_history", None)
+            cap_history = list(refresh(pr, channel)) if callable(refresh) else _history(
+                self._evidence_provider, pr, policy.Channel(channel)
+            )
+
         def admit(state: ReviewState) -> ReviewState:
             allocation = state.allocations.get(f"{pr}:{channel}")
             if pr not in state.ordered_prs or (allocation is not None and allocation.stop_basis is not None):
                 raise ControllerError(f"{channel} review discovery is stopped for PR #{pr}")
             if selection_inputs is not None and self._selection_inputs(state, pr, channel) != selection_inputs:
                 raise _SelectionChanged("review selection changed before admission")
+            if allocation != observed_allocation:
+                raise _SelectionChanged("review allocation changed before admission")
+            if cap_history is not None:
+                snapshot = self._bounded_allocation_evidence(allocation, cap_history)
+                if snapshot["error"] is not None or len(snapshot["results"]) >= allocation.max_additional_completed:
+                    raise _SelectionChanged("review cap evidence changed before admission")
             reserve()
             return state
 
@@ -5291,6 +5347,12 @@ class ReviewController:
                 if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
                     raise
                 selected = self._target(policy.Channel.HOSTED, selected.pr)
+                self._ensure_runnable(selected)
+            except HostedAdmissionBusy:
+                if attempt == MAX_BASE_RESELECTIONS:
+                    raise
+                time.sleep(min(HOSTED_ADMISSION_RETRY_BASE_SECONDS * (attempt + 1), HOSTED_ADMISSION_RETRY_MAX_SECONDS))
+                selected = self._target(policy.Channel.HOSTED, expected_pr)
                 self._ensure_runnable(selected)
         raise AssertionError("bounded Hosted reselection loop exhausted unexpectedly")
 
