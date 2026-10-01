@@ -131,7 +131,11 @@ elif "get" in args and any(arg.startswith("validatingadmissionpolicy") for arg i
         output("Deny")
 elif "get" in args and "deployment" in args:
     if "--ignore-not-found" in args:
-        output("" if case == "absent" else "deployment.apps/firemud-hosted-identity-controller")
+        output(
+            ""
+            if case in ("absent", "absent-active-orphan", "absent-paused-orphan")
+            else "deployment.apps/firemud-hosted-identity-controller"
+        )
     elif "ACTIVATION_MODE" in joined:
         count = int(state.read_text()) if state.exists() else 0
         state.write_text(str(count + 1))
@@ -153,9 +157,15 @@ elif "get" in args and "deployment" in args:
 elif "get" in args and "pods" in args:
     if case in ("paused-stale-active", "old-active-pods"):
         output("controller-old\tactive\n")
+    elif case == "absent-active-orphan":
+        output("controller-orphan\tactive\n")
+    elif case == "absent-paused-orphan":
+        output("controller-orphan\tpaused\n")
     elif case == "missing-pod-mode":
         output("controller-missing-mode\t\n")
     elif case == "absent-matching-pods":
+        output("")
+    elif case == "absent":
         output("")
     else:
         output("controller-current\tpaused\n")
@@ -178,6 +188,8 @@ cases = {
     "missing-pod-mode": False,
     "absent-matching-pods": False,
     "absent": True,
+    "absent-active-orphan": False,
+    "absent-paused-orphan": False,
     "converged": True,
     "marker-change": False,
 }

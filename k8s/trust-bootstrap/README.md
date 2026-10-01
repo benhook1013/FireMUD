@@ -114,24 +114,32 @@ if [[ -n "$controller_resource" ]]; then
     exit 1
   }
 
-  controller_pods="$(kubectl -n firemud-system get pods \
-    -l app.kubernetes.io/name=hosted-environment-identity-controller,app.kubernetes.io/component=controller \
-    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE")].value}{"\n"}{end}')"
-  controller_pod_count=0
-  while IFS=$'\t' read -r controller_pod_name controller_pod_mode; do
-    [[ -n "$controller_pod_name" ]] || continue
-    controller_pod_count=$((controller_pod_count + 1))
-    [[ "$controller_pod_mode" == paused ]] || {
-      echo "hosted identity controller Pod ${controller_pod_name} is not exactly paused; keep it paused before CA installation" >&2
-      exit 1
-    }
-  done <<< "$controller_pods"
+else
+  controller_mode=absent
+fi
+
+controller_pods="$(kubectl -n firemud-system get pods \
+  -l app.kubernetes.io/name=hosted-environment-identity-controller,app.kubernetes.io/component=controller \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[?(@.name=="controller")].env[?(@.name=="FIREMUD_HOSTED_IDENTITY_ACTIVATION_MODE")].value}{"\n"}{end}')"
+controller_pod_count=0
+while IFS=$'\t' read -r controller_pod_name controller_pod_mode; do
+  [[ -n "$controller_pod_name" ]] || continue
+  controller_pod_count=$((controller_pod_count + 1))
+  [[ "$controller_pod_mode" == paused ]] || {
+    echo "hosted identity controller Pod ${controller_pod_name} is not exactly paused; keep it paused before CA installation" >&2
+    exit 1
+  }
+done <<< "$controller_pods"
+if [[ -n "$controller_resource" ]]; then
   [[ "$controller_pod_count" == "$controller_desired_replicas" ]] || {
     echo "hosted identity controller Pods do not match converged replicas; keep it paused before CA installation" >&2
     exit 1
   }
 else
-  controller_mode=absent
+  [[ "$controller_pod_count" == 0 ]] || {
+    echo "hosted identity controller Deployment is absent but matching Pods remain; keep the pre-CA gate closed" >&2
+    exit 1
+  }
 fi
 printf 'controllerActivation=%s\n' "${controller_mode:-absent}"
 
