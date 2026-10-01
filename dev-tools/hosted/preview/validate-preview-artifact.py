@@ -1600,24 +1600,6 @@ def validate_service_consumers(
             for entry in container.get("env", [])
             if isinstance(entry, dict)
         }
-        if service in DISTINCT_GRPC_WORKLOADS:
-            namespace_identity = next(
-                (
-                    entry
-                    for entry in container.get("env", [])
-                    if isinstance(entry, dict)
-                    and entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
-                ),
-                None,
-            )
-            if namespace_identity != {
-                "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
-                "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
-            }:
-                fail(
-                    f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
-                    "from metadata.namespace"
-                )
         for env_name, expected_path in expected_grpc_paths.items():
             if declared_grpc_paths.get(env_name) != expected_path:
                 fail(

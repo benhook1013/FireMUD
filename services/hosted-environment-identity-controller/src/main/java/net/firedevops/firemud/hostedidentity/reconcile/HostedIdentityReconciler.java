@@ -514,9 +514,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
               HostedIdentityContract.TELNET_ROLE,
               HostedIdentityContract.GATEWAY_INTERNAL_WS_ROLE,
               HostedIdentityContract.TCP_PROXY_BRIDGE_ROLE,
-              HostedIdentityContract.GRPC_ROLE,
-              HostedIdentityContract.GRPC_ACCOUNT_ROLE,
-              HostedIdentityContract.GRPC_GAME_SESSION_ROLE -> {
+              HostedIdentityContract.GRPC_ROLE -> {
             if (materialsByRole.putIfAbsent(role, material) != null) {
               throw new IllegalArgumentException("duplicate identity material role: " + role);
             }

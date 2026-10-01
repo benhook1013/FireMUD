@@ -345,7 +345,7 @@ class DeploymentRolloutServiceTest {
     grpcWorkloads.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
     grpcWorkloads.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
     Map<String, ArgumentCaptor<Deployment>> pendingReplacements = new LinkedHashMap<>();
-    Map<String, ReplaceDeletable<Deployment>> pendingLocks = new LinkedHashMap<>();
+    Map<String, ReplaceDeletable<Deployment>> workloadLocks = new LinkedHashMap<>();
 
     for (String pendingWorkload :
         List.of(
@@ -386,9 +386,9 @@ class DeploymentRolloutServiceTest {
             .thenAnswer(invocation -> replacement.getValue());
         ReplaceDeletable<Deployment> locked = mock(ReplaceDeletable.class);
         when(resource.lockResourceVersion("rv-3")).thenReturn(locked);
+        workloadLocks.put(workload, locked);
         if (pendingWorkload.equals(workload)) {
           pendingReplacements.put(pendingWorkload, replacement);
-          pendingLocks.put(pendingWorkload, locked);
         }
       }
 
@@ -404,8 +404,14 @@ class DeploymentRolloutServiceTest {
                   () -> {});
 
       assertEquals(false, result.grpcReady(), pendingWorkload + " leaf rollout remains pending");
-      verify(pendingLocks.get(pendingWorkload))
+      verify(workloadLocks.get(pendingWorkload))
           .replace(pendingReplacements.get(pendingWorkload).capture());
+      for (String workload : grpcWorkloads) {
+        if (!pendingWorkload.equals(workload)) {
+          verify(workloadLocks.get(workload), never())
+              .replace(org.mockito.ArgumentMatchers.any(Deployment.class));
+        }
+      }
     }
   }
 

@@ -348,7 +348,7 @@ if labelled_objects != {("Deployment", "tcp-proxy-service"), ("Service", "tcp-pr
         "certificate identity mode label rendered on an unexpected hosted object"
     )
 
-for workload in ("account-service", "game-session-service"):
+for workload in ("account-service", "game-session-service", "social-groups-service"):
     workload_policy = named("NetworkPolicy", f"{workload}-controller-ingress")["spec"]
     if workload_policy != {
         "podSelector": {"matchLabels": {"app": workload}},
@@ -500,7 +500,11 @@ documents = [
 if any(
     document.get("kind") == "NetworkPolicy"
     and document.get("metadata", {}).get("name")
-    in {"account-service-controller-ingress", "game-session-service-controller-ingress"}
+    in {
+        "account-service-controller-ingress",
+        "game-session-service-controller-ingress",
+        "social-groups-service-controller-ingress",
+    }
     for document in documents
 ):
     raise SystemExit(
