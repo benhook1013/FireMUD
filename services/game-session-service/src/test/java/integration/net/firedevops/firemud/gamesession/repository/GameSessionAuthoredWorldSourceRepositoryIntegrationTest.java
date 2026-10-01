@@ -270,6 +270,13 @@ class GameSessionAuthoredWorldSourceRepositoryIntegrationTest {
                 fixture.dsl.execute(
                     "TRUNCATE TABLE game_session_authored_world_tenant_source_binding"))
         .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("cannot truncate a table referenced in a foreign key constraint");
+    assertThatThrownBy(
+            () ->
+                fixture.dsl.execute(
+                    "TRUNCATE TABLE game_session_authored_world_tenant_source_binding, "
+                        + "game_session_authored_world_source_intake"))
+        .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("authored-world source evidence is immutable");
 
     assertThatThrownBy(
