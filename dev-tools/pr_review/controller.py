@@ -1709,6 +1709,11 @@ class ReviewController:
             and accepted > 0
         ):
             return False
+        has_source_resolution = (
+            isinstance(value, Mapping) and "source_resolution_status" in value
+        ) or hasattr(value, "source_resolution_status")
+        if has_source_resolution:
+            return _field(value, "source_resolution_status") != "resolved"
         reviewed_head = _field(value, "head", "reviewed_head")
         if not isinstance(reviewed_head, str) or reviewed_head.casefold() == current_head.casefold():
             return True

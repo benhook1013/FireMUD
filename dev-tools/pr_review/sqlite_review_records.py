@@ -30,7 +30,7 @@ from .state import FindingRoute, ReviewState
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
-_RECORDS_SCHEMA_VERSION = 6
+_RECORDS_SCHEMA_VERSION = 7
 _RECORDS_METADATA_TABLE = "review_records_metadata"
 _RECORDS_TABLES = {
     _RECORDS_METADATA_TABLE,
@@ -48,6 +48,7 @@ _RECORDS_TABLES = {
     "imported_artifacts",
     "historical_provider_gaps",
     "historical_gap_artifacts",
+    "source_finding_resolutions",
 }
 
 
@@ -394,7 +395,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("cannot bootstrap SQLite review records") from exc
 
     def migrate(self) -> None:
-        """Upgrade existing v4/v5 records atomically and fence older state writers.
+        """Upgrade existing v4/v5/v6 records atomically and fence older state writers.
 
         This is an explicit offline cutover operation. It does not read or edit
         the controller's legacy capture directories and is safe to retry after
@@ -416,34 +417,41 @@ class SqliteReviewRecords:
                     self._raise_controller_writer_fence(connection)
                     connection.commit()
                     return
-                if row[0] not in {4, 5}:
+                if row[0] not in {4, 5, 6}:
                     raise ReviewRecordsError(f"unsupported review-records schema version {row[0]}")
                 existing = self._table_names(connection)
-                added = (
-                    {
-                        "review_attempts",
-                        "review_artifacts",
-                        "source_decision_corrections",
-                        "provider_origins",
-                        "imported_artifacts",
-                        "historical_provider_gaps",
-                        "historical_gap_artifacts",
-                    }
-                    if row[0] == 4
-                    else {
-                        "provider_origins",
-                        "imported_artifacts",
-                        "historical_provider_gaps",
-                        "historical_gap_artifacts",
-                    }
-                )
-                required = _RECORDS_TABLES - added
+                if row[0] == 6:
+                    added = {"source_finding_resolutions"}
+                    required = _RECORDS_TABLES - added
+                else:
+                    added = (
+                        {
+                            "review_attempts",
+                            "review_artifacts",
+                            "source_decision_corrections",
+                            "provider_origins",
+                            "imported_artifacts",
+                            "historical_provider_gaps",
+                            "historical_gap_artifacts",
+                        }
+                        if row[0] == 4
+                        else {
+                            "provider_origins",
+                            "imported_artifacts",
+                            "historical_provider_gaps",
+                            "historical_gap_artifacts",
+                        }
+                    )
+                    added.add("source_finding_resolutions")
+                    required = _RECORDS_TABLES - added
                 if not required <= existing or added & existing:
                     raise ReviewRecordsError("review-records schema is incomplete or partially upgraded")
                 if row[0] == 4:
                     self._create_attempt_schema(connection)
-                self._create_origin_schema(connection)
-                self._create_historical_gap_schema(connection)
+                if row[0] in {4, 5}:
+                    self._create_origin_schema(connection)
+                    self._create_historical_gap_schema(connection)
+                self._create_source_finding_resolution_schema(connection)
                 self._raise_controller_writer_fence(connection)
                 connection.execute(
                     "UPDATE review_records_metadata SET records_schema_version = ?, min_writer_build = ? "
@@ -1062,6 +1070,11 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if initial is None or supersedes_id != (latest or initial)[0]:
                     raise ReviewRecordsError("correction does not name the latest exact decision")
+                if decision != "accepted" and connection.execute(
+                    "SELECT 1 FROM source_finding_resolutions WHERE run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
+                ).fetchone() is not None:
+                    raise ReviewRecordsError("a resolved source finding cannot be corrected away from accepted")
                 if connection.execute(
                     "SELECT 1 FROM source_decision_corrections WHERE correction_id = ?", (correction_id,)
                 ).fetchone():
@@ -1382,6 +1395,214 @@ class SqliteReviewRecords:
             "route_id": route_id,
             "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},
         }
+
+    def record_source_resolution(
+        self,
+        run_id: str,
+        source_finding_key: str,
+        *,
+        source_pr: int,
+        resolution_id: str,
+        fix_sha: str,
+        actor: str,
+        proof_note: str,
+        resolved_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Record one immutable accepted-fix proof for an exact source finding."""
+
+        run_id = _safe_identifier(run_id, "run_id", maximum=100)
+        source_finding_key = _safe_identifier(source_finding_key, "source_finding_key", maximum=200)
+        source_pr = _positive_pr(source_pr, "source PR")
+        resolution_id = _safe_identifier(resolution_id, "resolution_id", maximum=200)
+        fix_sha = _text(fix_sha, "fix SHA", maximum=64)
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", fix_sha):
+            raise ReviewRecordsError("fix SHA must be a full 40- or 64-character commit identifier")
+        actor = _bounded_text(actor, "actor", maximum=100)
+        proof_note = _bounded_text(proof_note, "proof note", maximum=300)
+        resolved_at = _timestamp(resolved_at, "resolved_at")
+        try:
+            with self._write_connection() as connection:
+                run = connection.execute(
+                    "SELECT source_pr, channel, outcome, attributable, finalized FROM review_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                if run is None:
+                    raise ReviewRecordsError("source run does not exist")
+                observed_pr, channel, outcome, attributable, finalized = run
+                if observed_pr != source_pr:
+                    raise ReviewRecordsError("source PR does not match the exact source run")
+                if outcome != "completed" or not attributable or not finalized:
+                    raise ReviewRecordsError("source resolution requires a completed attributable finalized run")
+                finding = connection.execute(
+                    "SELECT f.finding_id, o.disposition FROM finding_observations o "
+                    "JOIN findings f USING (finding_id) "
+                    "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = ? "
+                    "AND f.source_finding_key = ?",
+                    (run_id, source_pr, channel, source_finding_key),
+                ).fetchone()
+                if finding is None:
+                    raise ReviewRecordsError("source finding was not observed in that exact run and PR")
+                finding_id, disposition = finding
+                if disposition != "accepted":
+                    raise ReviewRecordsError("only an effectively accepted source finding can be resolved")
+                if connection.execute(
+                    "SELECT 1 FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
+                ).fetchone() is None:
+                    raise ReviewRecordsError("accepted source finding has no source decision evidence")
+
+                expected = (
+                    run_id,
+                    finding_id,
+                    source_pr,
+                    channel,
+                    "accepted_fixed",
+                    fix_sha,
+                    actor,
+                    proof_note,
+                )
+                existing = connection.execute(
+                    "SELECT resolution_id, run_id, finding_id, source_pr, source_channel, outcome, fix_sha, "
+                    "actor, proof_note, resolved_at FROM source_finding_resolutions "
+                    "WHERE run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
+                ).fetchone()
+                if existing is not None:
+                    same_claim = tuple(existing[:9]) == (resolution_id, *expected)
+                    if not same_claim:
+                        raise ReviewRecordsError("source finding already has a different immutable resolution")
+                    return {
+                        "resolution_id": existing[0],
+                        "run_id": existing[1],
+                        "finding_id": existing[2],
+                        "source_pr": existing[3],
+                        "source_channel": existing[4],
+                        "outcome": existing[5],
+                        "fix_sha": existing[6],
+                        "actor": existing[7],
+                        "proof_note": existing[8],
+                        "resolved_at": existing[9],
+                        "idempotent_replay": True,
+                    }
+                if connection.execute(
+                    "SELECT 1 FROM source_finding_resolutions WHERE resolution_id = ?", (resolution_id,)
+                ).fetchone() is not None:
+                    raise ReviewRecordsError("source resolution ID is already used")
+                connection.execute(
+                    "INSERT INTO source_finding_resolutions "
+                    "(resolution_id, run_id, finding_id, source_pr, source_channel, outcome, fix_sha, actor, "
+                    "proof_note, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (resolution_id, *expected, resolved_at),
+                )
+        except ReviewRecordsError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise ReviewRecordsError("source finding resolution conflicts with existing immutable records") from exc
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError("cannot record SQLite source finding resolution") from exc
+        return {
+            "resolution_id": resolution_id,
+            "run_id": run_id,
+            "finding_id": finding_id,
+            "source_pr": source_pr,
+            "source_channel": channel,
+            "outcome": "accepted_fixed",
+            "fix_sha": fix_sha,
+            "actor": actor,
+            "proof_note": proof_note,
+            "resolved_at": resolved_at,
+            "idempotent_replay": False,
+        }
+
+    @_translate_database_errors
+    def source_resolution_status(
+        self,
+        run_id: str,
+        *,
+        source_pr: int,
+        source_channel: ReviewChannel,
+        source_head: str,
+        accepted_count: int,
+    ) -> str:
+        """Return ``resolved`` only when every exact accepted observation has proof."""
+
+        run_id = _safe_identifier(run_id, "run_id", maximum=100)
+        source_pr = _positive_pr(source_pr, "source PR")
+        if not isinstance(source_channel, str) or source_channel not in {"hosted", "cli", "manual", "subagent"}:
+            raise ReviewRecordsError("source channel is invalid")
+        source_head = _text(source_head, "source head", maximum=64)
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", source_head):
+            raise ReviewRecordsError("source head must be a full commit identifier")
+        if isinstance(accepted_count, bool) or not isinstance(accepted_count, int) or accepted_count < 0:
+            raise ReviewRecordsError("accepted count must be a non-negative integer")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            run = connection.execute(
+                "SELECT source_pr, channel, source_head, outcome, attributable, accepted_count, finalized "
+                "FROM review_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if (
+                run is None
+                or run[0] != source_pr
+                or run[1] != source_channel
+                or not isinstance(run[2], str)
+                or run[2].casefold() != source_head.casefold()
+                or run[3] != "completed"
+                or not run[4]
+                or run[5] != accepted_count
+                or not run[6]
+            ):
+                return "pending"
+            accepted = connection.execute(
+                "SELECT o.finding_id, f.source_finding_key, r.resolution_id, r.source_pr, r.source_channel, "
+                "r.outcome, r.fix_sha, r.actor, r.proof_note, r.resolved_at, "
+                "(SELECT COUNT(*) FROM decisions d WHERE d.decision_scope = 'source' "
+                "AND d.run_id = o.run_id AND d.finding_id = o.finding_id) "
+                "FROM finding_observations o JOIN findings f USING (finding_id) "
+                "LEFT JOIN source_finding_resolutions r ON r.run_id = o.run_id AND r.finding_id = o.finding_id "
+                "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = ? AND o.disposition = 'accepted'",
+                (run_id, source_pr, source_channel),
+            ).fetchall()
+            all_resolutions = connection.execute(
+                "SELECT COUNT(*) FROM source_finding_resolutions WHERE run_id = ?", (run_id,)
+            ).fetchone()[0]
+            if len(accepted) != accepted_count or all_resolutions != accepted_count:
+                return "pending"
+            for row in accepted:
+                (
+                    _,
+                    source_finding_key,
+                    resolution_id,
+                    proof_pr,
+                    proof_channel,
+                    outcome,
+                    fix_sha,
+                    actor,
+                    note,
+                    at,
+                    decision_count,
+                ) = row
+                if (
+                    not isinstance(source_finding_key, str)
+                    or not isinstance(resolution_id, str)
+                    or decision_count < 1
+                    or proof_pr != source_pr
+                    or proof_channel != source_channel
+                    or outcome != "accepted_fixed"
+                    or not isinstance(fix_sha, str)
+                    or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", fix_sha)
+                ):
+                    return "pending"
+                try:
+                    _bounded_text(actor, "actor", maximum=100)
+                    _bounded_text(note, "proof note", maximum=300)
+                    _timestamp(at, "resolved_at")
+                except ReviewRecordsError:
+                    return "pending"
+            return "resolved"
 
     def import_completed_run(
         self,
@@ -2072,6 +2293,63 @@ class SqliteReviewRecords:
                         (pr,),
                     )
                 ]
+                source_resolutions = []
+                for row in connection.execute(
+                    "SELECT r.resolution_id, r.run_id, r.finding_id, r.source_pr, r.source_channel, "
+                    "f.source_finding_key, r.outcome, r.fix_sha, r.actor, r.proof_note, r.resolved_at, "
+                    "o.source_pr, o.source_channel, rr.source_pr, rr.channel "
+                    "FROM source_finding_resolutions r JOIN findings f USING (finding_id) "
+                    "JOIN finding_observations o ON o.run_id = r.run_id AND o.finding_id = r.finding_id "
+                    "JOIN review_runs rr ON rr.run_id = r.run_id "
+                    "WHERE r.source_pr = ? ORDER BY r.resolved_at, r.resolution_id",
+                    (pr,),
+                ):
+                    (
+                        resolution_id,
+                        run_id,
+                        finding_id,
+                        source_pr,
+                        source_channel,
+                        source_finding_key,
+                        outcome,
+                        fix_sha,
+                        actor,
+                        proof_note,
+                        resolved_at,
+                        observation_pr,
+                        observation_channel,
+                        run_pr,
+                        run_channel,
+                    ) = row
+                    if (
+                        source_pr != pr
+                        or source_channel not in {"hosted", "cli", "manual", "subagent"}
+                        or observation_pr != source_pr
+                        or observation_channel != source_channel
+                        or run_pr != source_pr
+                        or run_channel != source_channel
+                        or outcome != "accepted_fixed"
+                        or not isinstance(fix_sha, str)
+                        or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", fix_sha)
+                    ):
+                        raise ReviewRecordsError("stored source finding resolution is malformed")
+                    source_resolutions.append(
+                        {
+                            "resolution_id": _safe_identifier(resolution_id, "resolution_id", maximum=200),
+                            "run_id": _safe_identifier(run_id, "run_id", maximum=100),
+                            "finding_id": _safe_identifier(finding_id, "finding_id", maximum=64),
+                            "source_pr": source_pr,
+                            "source_channel": source_channel,
+                            "source_finding_key": _safe_identifier(
+                                source_finding_key, "source_finding_key", maximum=200
+                            ),
+                            "outcome": outcome,
+                            "fix_sha": fix_sha,
+                            "actor": _bounded_text(actor, "actor", maximum=100),
+                            "proof_note": _bounded_text(proof_note, "proof note", maximum=300),
+                            "resolved_at": _timestamp(resolved_at, "resolved_at"),
+                        }
+                    )
                 attempts = []
                 for row in connection.execute(
                     "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
@@ -2103,6 +2381,7 @@ class SqliteReviewRecords:
                             "diagnostic": row[12],
                             "origin": metadata.get("origin"),
                             "legacy_outcome": metadata.get("legacy_outcome"),
+                            "repository": metadata.get("repository"),
                         }
                     )
                 corrections = [
@@ -2197,6 +2476,7 @@ class SqliteReviewRecords:
                     "findings": observations,
                     "routes": routes,
                     "decisions": decisions,
+                    "source_resolutions": source_resolutions,
                     "attempts": attempts,
                     "corrections": corrections,
                     "provider_origins": provider_origins,
@@ -2761,6 +3041,7 @@ class SqliteReviewRecords:
             "proof_or_reason TEXT NOT NULL, resolved_at TEXT NOT NULL, "
             "FOREIGN KEY (route_id) REFERENCES routes(route_id))"
         )
+        SqliteReviewRecords._create_source_finding_resolution_schema(connection)
         connection.execute("CREATE INDEX review_runs_source_pr_idx ON review_runs(source_pr, started_at)")
         connection.execute("CREATE INDEX routes_target_status_idx ON routes(target_pr, status, source_pr)")
         SqliteReviewRecords._create_attempt_schema(connection)
@@ -2769,6 +3050,24 @@ class SqliteReviewRecords:
         connection.execute(
             "INSERT INTO review_records_metadata VALUES (1, ?, ?, ?, ?)",
             (_RECORDS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version, WRITER_BUILD),
+        )
+
+    @staticmethod
+    def _create_source_finding_resolution_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE source_finding_resolutions ("
+            "resolution_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, finding_id TEXT NOT NULL, "
+            "source_pr INTEGER NOT NULL CHECK (source_pr > 0), "
+            "source_channel TEXT NOT NULL CHECK (source_channel IN ('hosted', 'cli', 'manual', 'subagent')), "
+            "outcome TEXT NOT NULL CHECK (outcome = 'accepted_fixed'), "
+            "fix_sha TEXT NOT NULL CHECK (length(fix_sha) IN (40, 64)), actor TEXT NOT NULL, "
+            "proof_note TEXT NOT NULL, resolved_at TEXT NOT NULL, UNIQUE (run_id, finding_id), "
+            "FOREIGN KEY (run_id, source_pr, source_channel) REFERENCES review_runs(run_id, source_pr, channel), "
+            "FOREIGN KEY (run_id, finding_id) REFERENCES finding_observations(run_id, finding_id))"
+        )
+        connection.execute(
+            "CREATE INDEX source_finding_resolutions_pr_idx "
+            "ON source_finding_resolutions(source_pr, source_channel, run_id)"
         )
 
     @staticmethod

@@ -22,7 +22,7 @@ from pr_review.sqlite_review_records import (
     _archive_artifact,
 )
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
-from pr_review.state import FindingRoute
+from pr_review.state import FindingRoute, StateError
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
@@ -470,6 +470,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE imported_artifacts")
             connection.execute("DROP TABLE historical_gap_artifacts")
             connection.execute("DROP TABLE historical_provider_gaps")
+            connection.execute("DROP TABLE source_finding_resolutions")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 4, min_writer_build = 2")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
         old_writer = SqliteStateStore(self.database, writer_build=2)
@@ -481,7 +482,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             old_writer.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
-                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 6
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 7
             )
 
     def test_v5_upgrade_preserves_attempts_and_fences_previous_writer(self) -> None:
@@ -493,6 +494,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE provider_origins")
             connection.execute("DROP TABLE historical_gap_artifacts")
             connection.execute("DROP TABLE historical_provider_gaps")
+            connection.execute("DROP TABLE source_finding_resolutions")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 5, min_writer_build = 3")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 3")
         self.records.migrate()
@@ -500,7 +502,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(self.records.attempt_history(2893)[0]["state"], "rate_limited")
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
-                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 6
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 7
             )
         with self.assertRaisesRegex(Exception, rf"requires writer build {WRITER_BUILD}\b"):
             SqliteStateStore(self.database, writer_build=3).update(lambda state: state)
@@ -1005,6 +1007,250 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 decision="rejected",
                 actor="reviewer",
                 reason="too late",
+            )
+
+    def test_source_finding_resolution_requires_exact_accepted_source_and_preserves_counts(self) -> None:
+        self.bootstrap()
+        self.records.import_completed_run(
+            run_id="source-resolution-run",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            reviewer="CodeRabbit",
+            findings=(
+                self.observation("fixed-one"),
+                self.observation("fixed-two"),
+                self.observation("routed-one"),
+                self.observation("rejected-one"),
+            ),
+            source_decisions=(
+                {
+                    "source_finding_key": "fixed-one",
+                    "decision_id": "source-resolution-accepted-one",
+                    "decision": "accepted",
+                    "actor": "reviewer",
+                    "reason": "owned by this PR",
+                },
+                {
+                    "source_finding_key": "fixed-two",
+                    "decision_id": "source-resolution-accepted-two",
+                    "decision": "accepted",
+                    "actor": "reviewer",
+                    "reason": "owned by this PR",
+                },
+                {
+                    "source_finding_key": "routed-one",
+                    "decision_id": "source-resolution-routed",
+                    "decision": "routed",
+                    "target_pr": 2879,
+                    "actor": "reviewer",
+                    "reason": "belongs to the target PR",
+                },
+                {
+                    "source_finding_key": "rejected-one",
+                    "decision_id": "source-resolution-rejected",
+                    "decision": "rejected",
+                    "actor": "reviewer",
+                    "reason": "not actionable",
+                },
+            ),
+        )
+        before = self.records.history(2828)["runs"][0]["counts"]
+        self.assertEqual(before, {"found": 4, "accepted": 2, "routed": 1})
+
+        def resolve(key: str, resolution_id: str) -> dict[str, object]:
+            return self.records.record_source_resolution(
+                "source-resolution-run",
+                key,
+                source_pr=2828,
+                resolution_id=resolution_id,
+                fix_sha="b" * 40,
+                actor="owner",
+                proof_note="Verified as fixed in the retained source commit",
+                resolved_at="2026-09-30T12:00:00Z",
+            )
+
+        with self.assertRaisesRegex(ReviewRecordsError, "source PR does not match"):
+            self.records.record_source_resolution(
+                "source-resolution-run",
+                "fixed-one",
+                source_pr=2879,
+                resolution_id="wrong-source-pr",
+                fix_sha="b" * 40,
+                actor="owner",
+                proof_note="Wrong PR must not claim this finding",
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "only an effectively accepted"):
+            resolve("routed-one", "routed-resolution")
+        with self.assertRaisesRegex(ReviewRecordsError, "only an effectively accepted"):
+            resolve("rejected-one", "rejected-resolution")
+
+        self.assertEqual(
+            self.records.source_resolution_status(
+                "source-resolution-run",
+                source_pr=2828,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=2,
+            ),
+            "pending",
+        )
+        first = resolve("fixed-one", "source-resolution-one")
+        self.assertFalse(first["idempotent_replay"])
+        self.assertEqual(
+            self.records.source_resolution_status(
+                "source-resolution-run",
+                source_pr=2828,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=2,
+            ),
+            "pending",
+        )
+        resolve("fixed-two", "source-resolution-two")
+        self.assertEqual(
+            self.records.source_resolution_status(
+                "source-resolution-run",
+                source_pr=2828,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=2,
+            ),
+            "resolved",
+        )
+        self.assertEqual(
+            self.records.source_resolution_status(
+                "source-resolution-run",
+                source_pr=2828,
+                source_channel="cli",
+                source_head="c" * 40,
+                accepted_count=2,
+            ),
+            "pending",
+        )
+        self.assertEqual(
+            self.records.source_resolution_status(
+                "source-resolution-run",
+                source_pr=2879,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=2,
+            ),
+            "pending",
+        )
+
+        repeated = self.records.record_source_resolution(
+            "source-resolution-run",
+            "fixed-one",
+            source_pr=2828,
+            resolution_id="source-resolution-one",
+            fix_sha="b" * 40,
+            actor="owner",
+            proof_note="Verified as fixed in the retained source commit",
+            resolved_at="2026-10-01T12:00:00Z",
+        )
+        self.assertTrue(repeated["idempotent_replay"])
+        history = self.records.history(2828)
+        self.assertEqual(history["runs"][0]["counts"], before)
+        self.assertEqual(len(history["source_resolutions"]), 2)
+        self.assertEqual(history["source_resolutions"][0]["fix_sha"], "b" * 40)
+        with self.assertRaisesRegex(ReviewRecordsError, "different immutable resolution"):
+            self.records.record_source_resolution(
+                "source-resolution-run",
+                "fixed-one",
+                source_pr=2828,
+                resolution_id="replacement-resolution",
+                fix_sha="c" * 40,
+                actor="owner",
+                proof_note="A later claim cannot overwrite the recorded proof",
+            )
+
+    def test_source_finding_resolution_rejects_partial_or_invalid_proof(self) -> None:
+        self.bootstrap()
+        self.records.record_run(
+            run_id="source-resolution-incomplete",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            findings=(self.observation("unfinalized"),),
+        )
+        self.records.record_source_decision(
+            "source-resolution-incomplete",
+            "unfinalized",
+            decision_id="unfinalized-accepted",
+            decision="accepted",
+            actor="reviewer",
+            reason="owned by this PR",
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "finalized run"):
+            self.records.record_source_resolution(
+                "source-resolution-incomplete",
+                "unfinalized",
+                source_pr=2828,
+                resolution_id="unfinalized-resolution",
+                fix_sha="b" * 40,
+                actor="owner",
+                proof_note="A nonfinalized run cannot have a resolution",
+            )
+        self.records.finalize_run("source-resolution-incomplete")
+        for fix_sha, proof_note in (
+            ("short", "invalid commit identifier"),
+            ("b" * 40, "password=not-allowed"),
+        ):
+            with self.subTest(fix_sha=fix_sha, proof_note=proof_note), self.assertRaises(ReviewRecordsError):
+                self.records.record_source_resolution(
+                    "source-resolution-incomplete",
+                    "unfinalized",
+                    source_pr=2828,
+                    resolution_id="invalid-proof",
+                    fix_sha=fix_sha,
+                    actor="owner",
+                    proof_note=proof_note,
+                )
+
+    def test_v6_upgrade_adds_source_resolution_schema_and_rejects_v6_writers(self) -> None:
+        self.bootstrap()
+        self.records.record_run(
+            run_id="v6-retained-run",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            findings=(self.observation("finding"),),
+        )
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("DROP TABLE source_finding_resolutions")
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 6 WHERE singleton = 1")
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 5 WHERE singleton = 1")
+
+        self.records.migrate()
+        self.assertEqual(self.records.history(2828)["runs"][0]["run_id"], "v6-retained-run")
+        self.assertEqual(SqliteStateStore(self.database).status()["min_writer_build"], WRITER_BUILD)
+        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
+            SqliteStateStore(self.database, writer_build=5).update(lambda state: state)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT records_schema_version FROM review_records_metadata WHERE singleton = 1"
+                ).fetchone()[0],
+                7,
+            )
+            self.assertIsNotNone(
+                connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'source_finding_resolutions'"
+                ).fetchone()
+            )
+
+        with (
+            patch.object(sqlite_review_records, "_RECORDS_SCHEMA_VERSION", 6),
+            self.assertRaisesRegex(RecordsSchemaIncompatible, "schema version 7"),
+        ):
+            self.records.record_source_decision(
+                "v6-retained-run",
+                "finding",
+                decision_id="old-writer-attempt",
+                decision="accepted",
+                actor="old writer",
+                reason="must fail closed",
             )
 
     def test_completed_import_is_atomic_when_a_later_route_conflicts(self) -> None:

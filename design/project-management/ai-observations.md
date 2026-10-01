@@ -169,3 +169,10 @@ Entry format:
   - Observation: the runtime audit flattened the active CLI observation into a generic unresolved-finding string before the controller's existing exact-identity overlap check could run. A controller regression with a mocked empty audit did not exercise that adapter interaction.
   - Expected pattern: preserve structured run/lock-owner/head/parent/patch evidence through the audit and test the real adapter-to-allocation path. Permit only positively verified same-candidate overlap; genuine pending findings and incomplete identities remain held.
   - Outcome: the bounded controller/runtime correction passes real-adapter overlap and refusal regressions; live request verification follows publication. The running CLI was not interrupted, and no duplicate Hosted request or private-state bypass was used.
+
+- `2026-10-01`: Preserve native observation when a sentinel slot is unavailable
+  - Context: a read-only Hosted sentinel launch for #2839 was refused with `agent thread limit reached`; the visible agents contained useful active work and completed helpers, but no clearly obsolete pending or interrupted thread to recover.
+  - Observation: this is structural harness exhaustion, not evidence of model quota exhaustion or a failed provider request. The exact slot-accounting cause remains unknown.
+  - Expected pattern: preserve useful workers and the posted trigger, use the canonical exact-trigger native waiter when available, and do not change models, interrupt useful work, duplicate the review, or repeatedly probe for a slot.
+  - Outcome: the native waiter promptly identified the attributable rate limit and its exact reset; no duplicate review was posted.
+  - Reconsideration trigger: investigate slot accounting only if structural exhaustion repeatedly prevents wake-capable observation and no native wait can preserve the transition.

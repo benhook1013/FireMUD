@@ -81,6 +81,10 @@ _EXPECTED_COLUMNS = {
     "resolutions": (
         "resolution_id", "route_id", "resolution_pr", "outcome", "actor", "proof_or_reason", "resolved_at",
     ),
+    "source_finding_resolutions": (
+        "resolution_id", "run_id", "finding_id", "source_pr", "source_channel", "outcome", "fix_sha",
+        "actor", "proof_note", "resolved_at",
+    ),
     "review_attempts": (
         "attempt_id", "source_pr", "channel", "candidate_sha", "state", "started_at", "finished_at",
         "duration_seconds", "exit_status", "trigger_id", "provider_review_id", "checkpoint_id",
@@ -107,6 +111,7 @@ _EXPECTED_COLUMNS = {
 _EXPECTED_INDEXES = {
     "review_runs_source_pr_idx", "routes_target_status_idx", "review_attempts_pr_idx",
     "source_corrections_finding_idx", "provider_origins_source_idx", "historical_gaps_source_idx",
+    "source_finding_resolutions_pr_idx",
 }
 _TEXT_COLUMNS = {
     "controller_metadata": (),
@@ -119,6 +124,10 @@ _TEXT_COLUMNS = {
     "route_target_history": ("route_id", "changed_at", "actor", "reason"),
     "decisions": ("decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision", "actor", "reason", "decided_at"),
     "resolutions": ("resolution_id", "route_id", "outcome", "actor", "proof_or_reason", "resolved_at"),
+    "source_finding_resolutions": (
+        "resolution_id", "run_id", "finding_id", "source_channel", "outcome", "fix_sha", "actor",
+        "proof_note", "resolved_at",
+    ),
     "review_attempts": ("attempt_id", "channel", "candidate_sha", "state", "started_at", "finished_at", "trigger_id", "provider_review_id", "checkpoint_id", "run_id", "diagnostic", "metadata_json"),
     "review_artifacts": ("attempt_id", "kind", "content", "source_sha256"),
     "source_decision_corrections": (
