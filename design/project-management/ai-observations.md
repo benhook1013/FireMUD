@@ -174,3 +174,8 @@ Entry format:
   - Context: a final #2917 tracker edit began a paragraph with a PR hash, which Markdown lint interpreted as a malformed heading. The documentation gate exited nonzero, but its redirected log was not inspected before the local commit.
   - Observation: no push occurred; inspection identified the lint failure and the unvalidated claim was corrected in a follow-up commit. Earlier successful documentation checks did not cover that last edit.
   - Expected pattern: consume every final gate's exit status and failure log before committing or publishing proof claims; after a status-only edit, validate that exact edited scope rather than inheriting the preceding green result.
+
+- `2026-10-01`: Pin module-local configuration in configuration contract tests
+  - Context: the Game Design owner-read test loaded `application.yml` by its generic classpath name, while several modules provide that same resource name.
+  - Observation: the test saw an empty method allowlist rather than the owning service's configuration. Loading the module's explicit `src/main/resources` files exposed the actual default and production lists; the corrected assertion passed without weakening the required methods. This is local configuration proof, not live workload authentication.
+  - Expected pattern: use an explicit owner-module resource when proving a service's configuration, and keep runtime classpath precedence and authenticated deployment proof separate.

@@ -939,6 +939,21 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
+      - name: Run Game Design retained Game Session association PostgreSQL component proof
+        if: ${{ matrix.module == 'game-design-service' }}
+        run: |
+          ./gradlew :game-design-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#appliesAuditedAssociationForFreshAndRetainedGameSources()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnOneImmutableReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#ownerRollbackLeavesNoClaimAndLostAcknowledgementRetryReadsExactReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
+            game-design-service
+
       - name: Run Game Session authored-world intake PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
