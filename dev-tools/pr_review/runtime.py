@@ -25,7 +25,7 @@ from .cli_runner import (
     run_cli_review,
 )
 from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
-from .sqlite_review_records import SqliteReviewRecords
+from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
 from .state import (
     ControllerStateStore,
     StateError,
@@ -124,12 +124,15 @@ class LiveEvidence:
         repo: str,
         live: LiveGitHub,
         state_store: StateStore | ControllerStateStore | None = None,
+        records: SqliteReviewRecords | None = None,
     ) -> None:
         self.repo = repo
         self.live = live
         self.state_store = state_store
+        self.records = records
         self._payloads: dict[int, dict[str, Any]] = {}
         self._histories: dict[tuple[int, str], list[dict[str, Any]]] = {}
+        self._records_histories: dict[int, dict[str, Any] | None] = {}
 
     def _payload(self, pr: int) -> dict[str, Any]:
         if pr not in self._payloads:
@@ -1712,6 +1715,127 @@ class LiveEvidence:
             values = self._current_hosted_history(pr, head, payload, set(), operational_only=True)
         return values
 
+    def _source_resolution_status(
+        self,
+        pr: int,
+        channel: str,
+        checkpoint: evidence.Checkpoint,
+        source_head: str,
+    ) -> str | None:
+        """Bind structured checkpoints to durable proof; leave legacy ones unbound."""
+
+        run_id: str | None = None
+        if channel == "cli":
+            if not isinstance(checkpoint.run_id, str) or not checkpoint.run_id:
+                return None
+            run_id = checkpoint.run_id
+            if self.records is None:
+                return "pending"
+        if channel == "hosted":
+            if type(checkpoint.comment_id) is not int or type(checkpoint.hosted_review_id) is not int:
+                return None
+            if self.records is None:
+                return None
+            if pr not in self._records_histories:
+                try:
+                    self._records_histories[pr] = self.records.history(pr)
+                except (ReviewRecordsError, OSError):
+                    self._records_histories[pr] = None
+            history = self._records_histories[pr]
+            if not isinstance(history, Mapping):
+                return "pending"
+            origins = history.get("provider_origins", [])
+            attempts = history.get("attempts", [])
+            if not isinstance(origins, Sequence) or isinstance(origins, (str, bytes)):
+                return "pending"
+            if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
+                return "pending"
+            provider_ids = {str(checkpoint.hosted_review_id), f"review:{checkpoint.hosted_review_id}"}
+            checkpoint_origins = [
+                item
+                for item in origins
+                if isinstance(item, Mapping)
+                and item.get("source_pr") == pr
+                and item.get("checkpoint_id") == checkpoint.comment_id
+            ]
+            if checkpoint_origins:
+                if len(checkpoint_origins) != 1:
+                    return "pending"
+                origin = checkpoint_origins[0]
+                if (
+                    origin.get("channel") != "hosted"
+                    or origin.get("provider_id") not in provider_ids
+                    or origin.get("repository") != self.repo.casefold()
+                ):
+                    return "pending"
+                run_id = origin.get("run_id")
+            else:
+                conflicting_provider_origins = [
+                    item
+                    for item in origins
+                    if isinstance(item, Mapping)
+                    and item.get("source_pr") == pr
+                    and item.get("channel") == "hosted"
+                    and item.get("provider_id") in provider_ids
+                ]
+                if conflicting_provider_origins:
+                    return "pending"
+                # A Hosted import may be synced before its public checkpoint is
+                # posted, leaving provider_origins empty and checkpoint_id
+                # unset. The completed attempt still binds the immutable review
+                # ID and candidate SHA, so use that pair without inventing a
+                # checkpoint identity.
+                provider_attempts = [
+                    item
+                    for item in attempts
+                    if isinstance(item, Mapping)
+                    and item.get("channel") == "hosted"
+                    and item.get("provider_review_id") == str(checkpoint.hosted_review_id)
+                ]
+                checkpoint_attempts = [
+                    item
+                    for item in attempts
+                    if isinstance(item, Mapping)
+                    and item.get("channel") == "hosted"
+                    and item.get("checkpoint_id") == str(checkpoint.comment_id)
+                ]
+                candidates: dict[str, Mapping[str, Any]] = {}
+                for attempt in (*provider_attempts, *checkpoint_attempts):
+                    attempt_id = attempt.get("attempt_id")
+                    if not isinstance(attempt_id, str) or not attempt_id:
+                        return "pending"
+                    prior = candidates.get(attempt_id)
+                    if prior is not None and dict(prior) != dict(attempt):
+                        return "pending"
+                    candidates[attempt_id] = attempt
+                if not candidates:
+                    return None
+                if len(candidates) != 1:
+                    return "pending"
+                attempt = next(iter(candidates.values()))
+                if (
+                    attempt.get("provider_review_id") != str(checkpoint.hosted_review_id)
+                    or attempt.get("candidate_sha") != source_head
+                    or attempt.get("state") != "completed"
+                    or not isinstance(attempt.get("repository"), str)
+                    or attempt["repository"].casefold() != self.repo.casefold()
+                    or attempt.get("checkpoint_id") not in (None, str(checkpoint.comment_id))
+                ):
+                    return "pending"
+                run_id = attempt.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            return "pending"
+        try:
+            return self.records.source_resolution_status(
+                run_id,
+                source_pr=pr,
+                source_channel=channel,
+                source_head=source_head,
+                accepted_count=checkpoint.accepted,
+            )
+        except (ReviewRecordsError, OSError):
+            return "pending"
+
     def history(self, pr: int, channel: str, *, now: datetime | None = None) -> Sequence[dict[str, Any]]:
         key = (pr, channel)
         # A time-pinned audit must classify cooldowns at its own cutoff instead
@@ -1801,35 +1925,41 @@ class LiveEvidence:
                 completed = attributable = True
                 exact_head = str(proof["commit_id"])
                 anchor = dict(record["anchor"])
-            anchor_complete = self._anchor_complete(anchor)
-            values.append(
-                {
-                    "pr": pr,
-                    "head": exact_head,
-                    "reviewed_head": exact_head,
-                    "comment_id": checkpoint.comment_id,
-                    "observed_at": checkpoint.created_at,
-                    "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
-                    "completed": completed,
-                    "attributable": attributable,
-                    "anchored": anchor_complete if completed else None,
-                    "accepted": checkpoint.accepted,
-                    "raw": checkpoint.raw_found,
-                    "routed": checkpoint.routed,
-                    "correction": checkpoint.correction,
-                    "corrected_state": completed and exact_head == head,
-                    "provisional": provisional,
-                    "reason": (
-                        "CLI capture context is unavailable; checkpoint attribution cannot be verified"
-                        if cli_context_error is not None
-                        else capture.metadata.get("reason", "")
-                        if channel == "cli" and capture is not None
-                        else ""
-                    ),
-                    **({"held": True, "capture_context_available": False} if cli_context_error is not None else {}),
-                    **anchor,
-                }
+            source_resolution_status = (
+                self._source_resolution_status(pr, channel, checkpoint, exact_head)
+                if checkpoint.accepted > 0 and not checkpoint.correction
+                else None
             )
+            anchor_complete = self._anchor_complete(anchor)
+            value = {
+                "pr": pr,
+                "head": exact_head,
+                "reviewed_head": exact_head,
+                "comment_id": checkpoint.comment_id,
+                "observed_at": checkpoint.created_at,
+                "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
+                "completed": completed,
+                "attributable": attributable,
+                "anchored": anchor_complete if completed else None,
+                "accepted": checkpoint.accepted,
+                "raw": checkpoint.raw_found,
+                "routed": checkpoint.routed,
+                "correction": checkpoint.correction,
+                "corrected_state": completed and exact_head == head,
+                "provisional": provisional,
+                "reason": (
+                    "CLI capture context is unavailable; checkpoint attribution cannot be verified"
+                    if cli_context_error is not None
+                    else capture.metadata.get("reason", "")
+                    if channel == "cli" and capture is not None
+                    else ""
+                ),
+                **({"held": True, "capture_context_available": False} if cli_context_error is not None else {}),
+                **anchor,
+            }
+            if source_resolution_status is not None:
+                value["source_resolution_status"] = source_resolution_status
+            values.append(value)
         if channel == "cli" and cli_context_error is None:
             # CLI already holds its process lock and pins canonical metadata
             # before execution. Read that reservation; no second activity store
@@ -2850,7 +2980,7 @@ def default_controller(repo: str | None = None) -> ReviewController:
     live = LiveGitHub(selected)
     store = ControllerStateStore()
     records = SqliteReviewRecords(sqlite_state_path(store.path)) if store.path.is_dir() else None
-    observations = LiveEvidence(selected, live, store)
+    observations = LiveEvidence(selected, live, store, records=records)
     git_provider = DefaultGitProvider()
     hosted_runner = HostedRunner(selected, live, store, records=records)
 

@@ -58,6 +58,7 @@ class SqliteBackupTest(unittest.TestCase):
             run_id="backup-fixture-run",
             source_pr=123,
             channel="manual",
+            source_head="c" * 40,
             reviewer="fixture reviewer",
             findings=[
                 FindingObservation(
@@ -66,6 +67,25 @@ class SqliteBackupTest(unittest.TestCase):
                     detail="Synthetic bounded review detail.",
                 )
             ],
+        )
+        records.record_source_decision(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            decision_id="backup-fixture-source-decision",
+            decision="accepted",
+            actor="fixture reviewer",
+            reason="owned by the source PR",
+        )
+        records.finalize_run("backup-fixture-run")
+        records.record_source_resolution(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            source_pr=123,
+            resolution_id="backup-fixture-resolution",
+            fix_sha="d" * 40,
+            actor="fixture owner",
+            proof_note="Verified fix proof for backup readback",
+            resolved_at="2026-09-29T01:02:00Z",
         )
         records.start_attempt(
             attempt_id="run.backupfixture", source_pr=123, channel="cli",
@@ -101,6 +121,7 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertEqual(sorted(run["run_id"] for run in history["runs"]),
                          ["backup-fixture-run", "backup-provider-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
+        self.assertEqual(history["source_resolutions"][0]["fix_sha"], "d" * 40)
         self.assertEqual([attempt["state"] for attempt in history["attempts"]], ["completed"])
         self.assertEqual(history["provider_origins"][0]["checkpoint_id"], 123456)
         self.assertEqual(history["imported_artifacts"][0]["kind"], "cli_events")
@@ -302,6 +323,17 @@ class SqliteBackupTest(unittest.TestCase):
             connection.execute(
                 "UPDATE review_runs SET import_payload_json = ?",
                 (json.dumps({"findings": [{"detail": "Bearer synthetic-secret-value"}]}),),
+            )
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch, self.assertRaisesRegex(BackupError, "credential- or raw-secret"):
+            backup_database(self.database, **self._backup_arguments())
+        self.assertEqual(self.sftp_batches, [])
+
+    def test_source_resolution_proof_is_screened_before_sftp(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE source_finding_resolutions SET proof_note = ? WHERE resolution_id = ?",
+                ("Bearer synthetic-secret-value", "backup-fixture-resolution"),
             )
         (sftp_patch,) = self._transport_patches()
         with sftp_patch, self.assertRaisesRegex(BackupError, "credential- or raw-secret"):

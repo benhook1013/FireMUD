@@ -48,6 +48,7 @@ from pr_review.policy import (
     taper_satisfied,
 )
 from pr_review.runtime import LiveEvidence, LiveGitHub
+from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 from pr_review.state import (
     Judgment,
@@ -3611,6 +3612,219 @@ class ControllerTests(unittest.TestCase):
         for flag in ("correction", "non_counting", "provisional"):
             with self.subTest(flag=flag):
                 self.assertFalse(controller._accepted_findings_pending({**accepted, flag: True}, HEAD_1))
+
+    def test_durable_source_resolution_controls_accepted_finding_obligations_across_heads(self):
+        controller = self.make({1: pr(1, HEAD_2)}, heads={"feature-1": HEAD_2})
+        accepted = {
+            "pr": 1,
+            "head": HEAD_1,
+            "checkpoint": "accepted-old",
+            "completed": True,
+            "attributable": True,
+            "accepted": 1,
+        }
+
+        self.assertTrue(controller._accepted_findings_pending({**accepted, "source_resolution_status": "pending"}, HEAD_2))
+        self.assertTrue(
+            controller._accepted_findings_pending({**accepted, "source_resolution_status": "unavailable"}, HEAD_2)
+        )
+        controller.git.is_ancestor = lambda _ancestor, _descendant: False
+        self.assertFalse(
+            controller._accepted_findings_pending({**accepted, "source_resolution_status": "resolved"}, HEAD_2)
+        )
+
+    def test_live_evidence_requires_exact_sqlite_source_binding_for_resolutions(self):
+        class RecordsReader:
+            def __init__(self, origins, status="resolved", error=None, attempts=None):
+                self.origins = origins
+                self.status = status
+                self.error = error
+                self.attempts = attempts or []
+                self.calls = []
+
+            def history(self, pr):
+                return {"provider_origins": self.origins, "attempts": self.attempts}
+
+            def source_resolution_status(self, run_id, **kwargs):
+                self.calls.append((run_id, kwargs))
+                if self.error is not None:
+                    raise self.error
+                return self.status
+
+        hosted_records = RecordsReader(
+            [
+                {
+                    "source_pr": 42,
+                    "channel": "hosted",
+                    "repository": "owner/repo",
+                    "checkpoint_id": 7001,
+                    "provider_id": "review:9001",
+                    "run_id": "hosted-run",
+                }
+            ]
+        )
+        hosted_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=hosted_records)
+        hosted_checkpoint = SimpleNamespace(
+            run_id=None,
+            comment_id=7001,
+            hosted_review_id=9001,
+            accepted=2,
+        )
+        self.assertEqual(
+            hosted_evidence._source_resolution_status(42, "hosted", hosted_checkpoint, HEAD_1),
+            "resolved",
+        )
+        self.assertEqual(hosted_records.calls[0][0], "hosted-run")
+        self.assertEqual(hosted_records.calls[0][1]["accepted_count"], 2)
+
+        mismatched_records = RecordsReader(
+            [
+                {
+                    "source_pr": 42,
+                    "channel": "hosted",
+                    "checkpoint_id": 7001,
+                    "provider_id": "9002",
+                    "run_id": "wrong-provider-run",
+                }
+            ]
+        )
+        mismatched_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=mismatched_records)
+        self.assertEqual(
+            mismatched_evidence._source_resolution_status(42, "hosted", hosted_checkpoint, HEAD_1),
+            "pending",
+        )
+        self.assertEqual(mismatched_records.calls, [])
+
+        unreadable_records = RecordsReader([], error=ReviewRecordsError("source proof is unreadable"))
+        cli_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=unreadable_records)
+        cli_checkpoint = SimpleNamespace(run_id="run." + "a" * 32, comment_id=None, hosted_review_id=None, accepted=1)
+        self.assertEqual(cli_evidence._source_resolution_status(42, "cli", cli_checkpoint, HEAD_1), "pending")
+
+        unlinked_records = RecordsReader([])
+        unlinked_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=unlinked_records)
+        self.assertIsNone(
+            unlinked_evidence._source_resolution_status(42, "hosted", hosted_checkpoint, HEAD_1)
+        )
+        self.assertIsNone(
+            LiveEvidence("owner/repo", LiveGitHub("owner/repo"))._source_resolution_status(
+                42, "cli", SimpleNamespace(run_id=None, comment_id=None, hosted_review_id=None), HEAD_1
+            )
+        )
+        legacy_controller = self.make({42: pr(42, HEAD_2)}, heads={"feature-42": HEAD_2})
+        legacy_value = {
+            "pr": 42,
+            "head": HEAD_1,
+            "checkpoint": "7001",
+            "completed": True,
+            "attributable": True,
+            "accepted": 1,
+        }
+        self.assertFalse(legacy_controller._accepted_findings_pending(legacy_value, HEAD_2))
+        legacy_controller.git.is_ancestor = lambda _ancestor, _descendant: False
+        self.assertTrue(legacy_controller._accepted_findings_pending(legacy_value, HEAD_2))
+
+    def test_hosted_import_before_checkpoint_uses_review_and_head_for_durable_resolution(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        database = Path(directory.name) / "records.sqlite3"
+        state = SqliteStateStore(database)
+        state.update(lambda current: current)
+        records = SqliteReviewRecords(database)
+        records.bootstrap()
+
+        run_id = "hosted-import-before-checkpoint"
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=42,
+            channel="hosted",
+            candidate_sha=HEAD_1,
+            started_at="2026-09-30T10:00:00Z",
+            metadata={"repository": "owner/repo"},
+        )
+        records.finish_attempt(
+            run_id,
+            state="completed",
+            finished_at="2026-09-30T10:05:00Z",
+            trigger_id="6001",
+            provider_review_id="9001",
+            checkpoint_id=None,
+        )
+        finding_keys = ("finding-a", "finding-b", "finding-c")
+        records.import_completed_run(
+            run_id=run_id,
+            source_pr=42,
+            channel="hosted",
+            source_head=HEAD_1,
+            reviewer="CodeRabbit",
+            scope="broad",
+            started_at="2026-09-30T10:00:00Z",
+            finished_at="2026-09-30T10:05:00Z",
+            finalized_at="2026-09-30T10:06:00Z",
+            findings=tuple(FindingObservation(key, f"Finding {key}") for key in finding_keys),
+            source_decisions=tuple(
+                {
+                    "source_finding_key": key,
+                    "decision_id": f"decision-{key}",
+                    "decision": "accepted",
+                    "actor": "reviewer",
+                    "reason": "accepted in the imported source run",
+                }
+                for key in finding_keys
+            ),
+        )
+        records.link_attempt_run(run_id, run_id)
+        before = records.history(42)["runs"][0]["counts"]
+        self.assertEqual(before, {"found": 3, "accepted": 3, "routed": 0})
+        self.assertEqual(records.history(42)["provider_origins"], [])
+        self.assertIsNone(records.history(42)["attempts"][0]["checkpoint_id"])
+
+        checkpoint = SimpleNamespace(run_id=None, comment_id=7001, hosted_review_id=9001, accepted=3)
+        evidence_before = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+        self.assertEqual(
+            evidence_before._source_resolution_status(42, "hosted", checkpoint, HEAD_1), "pending"
+        )
+        records.record_source_resolution(
+            run_id,
+            finding_keys[0],
+            source_pr=42,
+            resolution_id="fixed-finding-a",
+            fix_sha="1" * 40,
+            actor="owner",
+            proof_note="Verified fix retained in the source history",
+            resolved_at="2026-09-30T10:10:00Z",
+        )
+        self.assertEqual(
+            evidence_before._source_resolution_status(42, "hosted", checkpoint, HEAD_1), "pending"
+        )
+        for index, key in enumerate(finding_keys[1:], start=2):
+            records.record_source_resolution(
+                run_id,
+                key,
+                source_pr=42,
+                resolution_id=f"fixed-finding-{index}",
+                fix_sha=str(index) * 40,
+                actor="owner",
+                proof_note="Verified fix retained in the source history",
+                resolved_at="2026-09-30T10:11:00Z",
+            )
+
+        reconstructed = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+        resolution = reconstructed._source_resolution_status(42, "hosted", checkpoint, HEAD_1)
+        self.assertEqual(resolution, "resolved")
+        self.assertEqual(records.history(42)["runs"][0]["counts"], before)
+
+        controller = self.make({42: pr(42, HEAD_2)}, heads={"feature-42": HEAD_2})
+        controller.git.is_ancestor = lambda _ancestor, _descendant: False
+        accepted = {
+            "pr": 42,
+            "head": HEAD_1,
+            "checkpoint": "7001",
+            "completed": True,
+            "attributable": True,
+            "accepted": 3,
+            "source_resolution_status": resolution,
+        }
+        self.assertFalse(controller._accepted_findings_pending(accepted, HEAD_2))
 
     def test_hosted_stop_allows_older_cli_findings_on_corrected_descendant(self):
         values = {1: pr(1, HEAD_2)}
