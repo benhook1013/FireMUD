@@ -2602,7 +2602,10 @@ require_contains(
 require_contains(
     "design/architecture/system-architecture-redis-ops-access.md",
     [
-        "require Gateway's typed recovery probe through the existing authenticated owning-service maintenance API boundary while shared readiness remains `QUARANTINED`",
+        "require Gateway's typed recovery probe over the existing authenticated owning-service transport boundary only; that boundary provides authenticated transport, but no recovery endpoint is implemented while shared readiness remains `QUARANTINED`",
+        "Existing ACL-denial probes may also run through the documented isolated disposable/protected harness",
+        "key-scoped denials use a protected probe namespace that cannot contain shared deployment data",
+        "`FLUSHALL`, `FLUSHDB`, and `SCRIPT FLUSH` denials run only against an isolated disposable target with required cleanup/readback and never real tick state",
         "Normal player consume remains `OPEN`-only and is not invoked for this recovery proof",
         "timeout, malformed, below-threshold, or uncertain results fail closed",
         "This probe remains target-only and unimplemented, so the checklist is not yet executable for this gate",
@@ -2930,6 +2933,34 @@ require_contains(
         "shared readiness quarantined under an advanced `replayAdmissionFence`",
         "during that quarantine, an absent `jti` marker alone never proves first use",
         "[ADR 0029 readiness proof](./decisions/adr-0029-single-use-gameplay-connect-token-carriage.md)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis.md",
+    [
+        "the target `session:connect-token:v1:*` exact-input issuance-result projections",
+        "The current legacy result map remains a separate unversioned `session:connect-token:*` family",
+        "both families remain Account-owned",
+        "Gateway owns only the shared replay-domain exception",
+        "it never owns the Account auth or connect-token issuance prefixes",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-redis.md",
+    ["the target `session:connect-token:*` exact-input issuance-result projections"],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-incident-runbook.md",
+    [
+        "**Target state only, once the canonical gated coordination-maintenance operation is implemented and proven:** Execute the [Canonical Coordination Reset Sequence]",
+        "**Current deployments:** Do not execute the reset or mutate raw coordination keys. Preserve evidence, keep the affected scope fenced or stopped, use only the shipped `PauseTicksForScope` / `GetRuntimeOwnershipStatus` boundary and `coord_ops_ro` read-only inspection, then follow the [Current Operator Fallback]",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "require Gateway's typed recovery probe over the existing authenticated owning-service transport boundary only; that boundary provides authenticated transport, but no recovery endpoint is implemented",
+        "This probe remains target-only and unimplemented",
     ],
 )
 require_contains(
