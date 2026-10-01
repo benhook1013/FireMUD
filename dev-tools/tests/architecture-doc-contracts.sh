@@ -2628,6 +2628,54 @@ require_absent(
     "design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md",
     ["the owner must reconcile durable results before timeout, require matching scope/epoch evidence"],
 )
+require_contains(
+    "design/architecture/system-architecture-scripting-scheduler-and-timers.md",
+    [
+        "The end-to-end lifecycle and reload behavior in this target-state section",
+        "**Target state only:** Redis timer indexes, scheduler progress hints, queue pointers",
+        "This reload sequence is target-state behavior",
+        "current PostgreSQL schedule-definition and schedule-instance substrate",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md",
+    [
+        "the original positive `reservationClaimFence` stored in that tuple",
+        "its fresh reservation/recovery claim and fence are separate, independently validated execution authority",
+        "they do not replace or rewrite the original tuple fence",
+        "Exact tuple comparison and current owner/fence validation remain required before evaluation, dispatch, or reference delivery",
+        "This CAS and enrichment preserve the original reservation claim fence as immutable tuple evidence",
+        "the separately current fresh reservation/recovery claim and fence before redeeming the exact reference",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0048-durable-idempotent-operator-write-execution.md",
+    ["`reservationOwnerId`, current positive `reservationClaimFence`"],
+)
+require_contains(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    [
+        "Failures before the durable `STAGED` update leave the command `ACCEPTED`",
+        "failures after that update and before durable `tick_batch`/`tick_effect` creation can leave `STAGED` without a batch/effect",
+        "there is no recovery path for a `STAGED` command without a corresponding `tick_batch`/`tick_effect`",
+    ],
+)
+require_absent(
+    "design/architecture/microservices/game-session-service/runtime-and-data.md",
+    ["A crash or Redis loss in either window can strand a `STAGED` command"],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "ledger backlog does not authorize replay-controller remediation on the current-live branch",
+        "Target-state deployments may trigger replay-controller remediation only after the capability/proof gate",
+        "[Ledger Replay Controller](./system-architecture-tick-failures-and-operations.md#ledger-replay-controller)",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    ["If ledger backlog also accumulates, trigger ledger replay-controller remediation"],
+)
 
 print("architecture doc contracts passed")
 PY
