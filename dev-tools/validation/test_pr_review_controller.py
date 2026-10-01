@@ -2623,6 +2623,36 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(pending_progress["status"], "CAP_EXHAUSTED_PENDING")
         self.assertIn("accepted findings need a published corrected head", pending_progress["details"])
 
+    def test_fresh_taper_legacy_none_resolution_preserves_ancestry_waiver(self):
+        class LegacyEvidence(Evidence):
+            source_resolution_status = None
+
+        for as_object in (False, True):
+            with self.subTest(as_object=as_object):
+                legacy = self.allocation_evidence(
+                    head=HEAD_1, checkpoint="legacy-historical", accepted=1,
+                    source_resolution_status=None,
+                )
+                history = {(1, "hosted"): [
+                    LegacyEvidence.from_value(legacy) if as_object else legacy,
+                    self.allocation_evidence(head=HEAD_2, checkpoint="current-baseline"),
+                    self.scope_timeline_evidence(1, "hosted", HEAD_2),
+                ]}
+                controller = self.make({1: pr(1, HEAD_2)}, history, heads={"feature-1": HEAD_2})
+                controller.set_stack([1])
+                controller.git.is_ancestor = lambda _ancestor, _descendant: False
+                result = controller.decide_allocation(
+                    action="grant", pr=1, channel="hosted", head=HEAD_2,
+                    checkpoint="current-baseline", min_additional_completed=1,
+                    max_additional_completed=1, fresh_taper=True,
+                    reason="retain judged legacy evidence across reconstruction",
+                )
+                self.assertEqual(result["progress"]["status"], "CAP_ACTIVE")
+                controller.git.is_ancestor = lambda _ancestor, _descendant: True
+                self.assertFalse(controller._accepted_findings_pending(history[(1, "hosted")][0], HEAD_2))
+                controller.git.is_ancestor = lambda _ancestor, _descendant: False
+                self.assertTrue(controller._accepted_findings_pending(history[(1, "hosted")][0], HEAD_2))
+
     def test_fresh_taper_keeps_same_head_audit_and_active_work_holds(self):
         historical_head = "3f" * 20
         cases = (

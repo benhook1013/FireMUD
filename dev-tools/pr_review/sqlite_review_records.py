@@ -1088,12 +1088,11 @@ class SqliteReviewRecords:
         imported = connection.execute(
             "SELECT 1 FROM imported_artifacts WHERE run_id = ? LIMIT 1", (attempt_id,)
         ).fetchone()
-        artifacts = {
-            row[0]: row[1]
-            for row in connection.execute(
-                "SELECT kind, content FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
-            )
-        }
+        artifact_rows = connection.execute(
+            "SELECT kind, content, redactions FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
+        ).fetchall()
+        artifacts = {row[0]: row[1] for row in artifact_rows}
+        artifact_redactions = {row[0]: row[2] for row in artifact_rows}
         if not any((attempt, linked_attempt, run, origin, imported, artifacts)):
             return None
         if attempt is None:
@@ -1128,7 +1127,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("CLI SQL source run is not completed, attributable, and linked to its head")
 
         rows = connection.execute(
-            "SELECT f.source_finding_key, o.disposition, d.decision, d.reason, c.decision, c.reason, "
+            "SELECT f.source_finding_key, o.disposition, d.decision, d.reason, c.decision, c.reason, o.title, o.detail, "
             "(SELECT COUNT(*) FROM decisions d2 WHERE d2.run_id = o.run_id "
             "AND d2.finding_id = o.finding_id AND d2.decision_scope = 'source') "
             "FROM finding_observations o JOIN findings f USING (finding_id) "
@@ -1143,7 +1142,7 @@ class SqliteReviewRecords:
         observations: list[dict[str, Any]] = []
         decisions: dict[int, tuple[str, str]] = {}
         prefix = f"cli-run:{attempt_id}:finding:"
-        for key, disposition, decision, reason, correction, correction_reason, decision_count in rows:
+        for key, disposition, decision, reason, correction, correction_reason, title, detail, decision_count in rows:
             if not isinstance(key, str) or not key.startswith(prefix) or not key[len(prefix) :].isdigit():
                 raise ReviewRecordsError("CLI source finding has an invalid finding key")
             suffix = key[len(prefix) :]
@@ -1169,7 +1168,7 @@ class SqliteReviewRecords:
                 raise ReviewRecordsError("CLI source decisions conflict with stored finding dispositions")
             else:
                 decisions[index] = (effective_decision, effective_reason)
-            observations.append({"index": index, "source_finding_key": key, "disposition": disposition})
+            observations.append({"index": index, "source_finding_key": key, "disposition": disposition, "title": title, "detail": detail})
         if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(
             range(1, run[7] + 1)
         ):
@@ -1209,6 +1208,7 @@ class SqliteReviewRecords:
                 "finalized": bool(run[10]),
             },
             "artifacts": artifacts,
+            "artifact_redactions": artifact_redactions,
             "observations": observations,
             "decisions": decisions,
             "provider_origin": origin,

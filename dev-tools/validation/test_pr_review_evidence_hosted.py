@@ -19,6 +19,8 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as cli_module
 from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
+from pr_review.sqlite_finding_text import _safe_finding_detail
+from pr_review.sqlite_provider_imports import _cli_detail, _cli_finding_title
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
 
@@ -621,6 +623,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         candidate_sha: str = HEAD,
         finalized: bool = True,
         decide: bool = True,
+        instructions: tuple[str, ...] = ("The complete SQL finding remains available.",),
     ) -> SqliteReviewRecords:
         database = common / "controller.sqlite3"
         SqliteStateStore(database).update(lambda state: state)
@@ -648,14 +651,11 @@ class GithubAndEvidenceTests(unittest.TestCase):
         }
         if repository is not None:
             metadata["repository"] = repository
-        events = (
-            json.dumps({"type": "finding", "message": "The persisted SQL finding remains readable."})
-            + "\n"
-            + json.dumps(
-                {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["src/a.py"]}
-            )
-            + "\n"
-        )
+        events = "\n".join(json.dumps({
+            "type": "finding", "message": "The persisted SQL finding remains readable.", "codegenInstructions": text,
+        }) for text in instructions) + "\n" + json.dumps({
+            "type": "complete", "status": "review_completed", "findings": len(instructions), "reviewedFiles": ["src/a.py"],
+        }) + "\n"
         result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
         records.start_attempt(
             attempt_id=run_id,
@@ -678,12 +678,12 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "run_id": run_id,
                 "source_pr": PR,
                 "channel": "cli",
-                "findings": (
+                "findings": tuple(
                     FindingObservation(
-                        source_finding_key=f"cli-run:{run_id}:finding:1",
-                        title="Persisted finding",
-                        detail="The complete SQL finding remains available.",
-                    ),
+                        source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                        title=_cli_finding_title(text, f"CodeRabbit CLI finding {index}"),
+                        detail=_safe_finding_detail(_cli_detail(text)),
+                    ) for index, text in enumerate(instructions, 1)
                 ),
                 "source_head": candidate_sha,
                 "reviewer": "CodeRabbit CLI",
@@ -693,27 +693,21 @@ class GithubAndEvidenceTests(unittest.TestCase):
             },
         )
         if decide:
-            records.record_source_decision(
-                run_id,
-                f"cli-run:{run_id}:finding:1",
-                decision_id=f"{run_id}.decision.1",
-                decision="accepted",
-                actor="reviewer",
-                reason="Useful source finding",
-                decided_at="2026-09-30T00:00:10Z",
-            )
+            for index in range(1, len(instructions) + 1):
+                records.record_source_decision(
+                    run_id, f"cli-run:{run_id}:finding:{index}", decision_id=f"{run_id}.decision.{index}",
+                    decision="accepted", actor="reviewer", reason="Useful source finding",
+                    decided_at="2026-09-30T00:00:10Z",
+                )
             if finalized:
                 records.finalize_run(run_id, finalized_at="2026-09-30T00:00:11Z")
-                records.record_source_resolution(
-                    run_id,
-                    f"cli-run:{run_id}:finding:1",
-                    source_pr=PR,
-                    resolution_id=f"{run_id}.resolution.1",
-                    fix_sha="d" * 40,
-                    actor="reviewer",
-                    proof_note="The accepted source finding has verified proof.",
-                    resolved_at="2026-09-30T00:00:12Z",
-                )
+                for index in range(1, len(instructions) + 1):
+                    records.record_source_resolution(
+                        run_id, f"cli-run:{run_id}:finding:{index}", source_pr=PR,
+                        resolution_id=f"{run_id}.resolution.{index}", fix_sha="d" * 40,
+                        actor="reviewer", proof_note="The accepted source finding has verified proof.",
+                        resolved_at="2026-09-30T00:00:12Z",
+                    )
         return records
 
     @staticmethod
@@ -756,6 +750,36 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 ),
                 "resolved",
             )
+
+    def test_native_cli_sql_refuses_same_count_finding_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                row = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()
+                changed = row[0].replace("The complete SQL finding remains available.", "A different valid source finding.")
+                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+    def test_native_cli_sql_projection_preserves_redacted_bounded_findings_and_rejects_reordering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            secret = "ghp_" + "A" * 36
+            instructions = ("Validate token " + secret + " before use. " + "more detail " * 130, "Preserve the second distinct source finding.")
+            records = self._native_cli_records(common, instructions=instructions)
+            checkpoint = self._native_cli_checkpoint(found=2, accepted=2)
+            capture = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+            self.assertEqual(len(capture.findings), 2)
+            self.assertNotIn(secret, capture.findings[0]["codegenInstructions"])
+            self.assertGreater(len(capture.findings[0]["codegenInstructions"]), 1000)
+            with sqlite3.connect(records.path) as connection:
+                content = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()[0]
+                events = [json.loads(line) for line in content.splitlines()]
+                changed = "\n".join(json.dumps(event) for event in (events[1], events[0], events[2])) + "\n"
+                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
 
     def test_native_cli_sql_checkpoint_refuses_explicit_identity_and_count_mismatches(self):
         cases = (

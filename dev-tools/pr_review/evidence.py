@@ -747,6 +747,24 @@ def _cli_capture_from_sql(
     counts = run.get("counts")
     if not isinstance(counts, dict) or counts.get("found") != len(findings):
         raise CaptureInvalid("linked SQLite CLI event count does not match source run")
+    from .sqlite_finding_text import _safe_finding_detail
+    from .sqlite_provider_imports import _cli_detail, _cli_finding_title
+
+    observations = snapshot.get("observations")
+    if not isinstance(observations, list) or len(observations) != len(findings):
+        raise CaptureInvalid("linked SQLite CLI findings lack their source projections")
+    by_index = {item["index"]: item for item in observations}
+    # Writer titles truncate before redaction; redacted archive titles cannot
+    # reproduce that original boundary. Details redact before their bound.
+    compare_titles = snapshot.get("artifact_redactions", {}).get("cli_events", 0) == 0
+    for index, finding in enumerate(findings, 1):
+        observation = by_index.get(index)
+        instructions = finding.get("codegenInstructions")
+        if observation is None or (
+            (compare_titles and observation.get("title") != _cli_finding_title(instructions, f"CodeRabbit CLI finding {index}"))
+            or observation.get("detail") != _safe_finding_detail(_cli_detail(instructions))
+        ):
+            raise CaptureInvalid("linked SQLite CLI finding content conflicts with its source projection")
     candidate_files = metadata_value.get("candidate_files")
     if type(candidate_files) is not int or candidate_files < 0 or len(complete["reviewedFiles"]) != candidate_files:
         raise CaptureInvalid("linked SQLite CLI file count does not match archived result")

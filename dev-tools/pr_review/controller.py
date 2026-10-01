@@ -1709,9 +1709,7 @@ class ReviewController:
             and accepted > 0
         ):
             return False
-        has_source_resolution = (
-            isinstance(value, Mapping) and "source_resolution_status" in value
-        ) or hasattr(value, "source_resolution_status")
+        has_source_resolution = _field(value, "source_resolution_status") is not None
         if has_source_resolution:
             return _field(value, "source_resolution_status") != "resolved"
         reviewed_head = _field(value, "head", "reviewed_head")
@@ -2684,9 +2682,7 @@ class ReviewController:
                     if type(evidence_value.accepted) is not int or evidence_value.accepted < 0:
                         raise ControllerError(f"{selected.value} channel has a malformed accepted finding count")
                     if evidence_value.accepted > 0:
-                        has_source_resolution = (
-                            isinstance(value, Mapping) and "source_resolution_status" in value
-                        ) or hasattr(value, "source_resolution_status")
+                        has_source_resolution = _field(value, "source_resolution_status") is not None
                         if has_source_resolution:
                             if self._accepted_findings_pending(value, current.child_head):
                                 raise ControllerError(
@@ -2847,9 +2843,7 @@ class ReviewController:
         if type(accepted) is not int or accepted < 0:
             raise ControllerError("latest attributable checkpoint has a malformed accepted count")
         reviewed_head = _field(latest, "head", "reviewed_head")
-        has_source_resolution = (
-            isinstance(latest, Mapping) and "source_resolution_status" in latest
-        ) or hasattr(latest, "source_resolution_status")
+        has_source_resolution = _field(latest, "source_resolution_status") is not None
         if (
             accepted > 0
             and reviewed_head.casefold() == current.child_head.casefold()
