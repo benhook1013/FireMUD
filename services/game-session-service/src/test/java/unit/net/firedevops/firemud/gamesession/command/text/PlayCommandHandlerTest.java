@@ -910,7 +910,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
     Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
     Mockito.verify(entityManagementClient, never())
-        .findCharacterByName(Mockito.any(), Mockito.any(), Mockito.anyString());
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
   }
 

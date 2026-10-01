@@ -59,4 +59,15 @@ class AuthenticationExceptionHandlerTest {
     assertThat(response.getBody().error().code()).isEqualTo(code);
     assertThat(response.getBody().error().message()).isEqualTo("denied");
   }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ADMISSION_POINTER_UNAVAILABLE", "CONNECT_SCOPE_MISMATCH"})
+  void mapsInvalidOrStaleAdmissionRoutingEvidenceToConflict(String code) {
+    var response =
+        handler.handleAuthenticationException(new AuthenticationException(code, "rediscover"));
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    assertThat(response.getBody().error().code()).isEqualTo(code);
+    assertThat(response.getBody().error().message()).isEqualTo("rediscover");
+  }
 }
