@@ -1727,6 +1727,13 @@ class ReviewController:
             return True
 
     @staticmethod
+    def _accepted_findings_pending_reason(value: Any) -> str:
+        status = _field(value, "source_resolution_status")
+        if status == "unavailable" or status == "error":
+            return "source-resolution records are unavailable; accepted-finding proof remains pending"
+        return "accepted findings need a published corrected head before review can stop"
+
+    @staticmethod
     def _legacy_transition_record(value: Any, pr: int, current_head: str) -> None:
         """Validate one observation before allowing it into the legacy set."""
 
@@ -2691,9 +2698,7 @@ class ReviewController:
                         has_source_resolution = _field(value, "source_resolution_status") is not None
                         if has_source_resolution:
                             if self._accepted_findings_pending(value, current.child_head):
-                                raise ControllerError(
-                                    "accepted findings need a published corrected head before review can stop"
-                                )
+                                raise ControllerError(self._accepted_findings_pending_reason(value))
                         else:
                             reviewed_head = _field(value, "head", "reviewed_head")
                             try:
@@ -2855,7 +2860,7 @@ class ReviewController:
             and reviewed_head.casefold() == current.child_head.casefold()
             and (not has_source_resolution or self._accepted_findings_pending(latest, current.child_head))
         ):
-            raise ControllerError("accepted findings need a published corrected head before review can stop")
+            raise ControllerError(self._accepted_findings_pending_reason(latest))
         retained = (retained_fingerprints, retained_reason) if retained_fingerprints else None
         return latest, retained, histories
 
@@ -3670,18 +3675,26 @@ class ReviewController:
             return result(
                 "EXHAUSTED_PENDING", "current review, finding, or thread obligations remain", checkpoint, accepted
             )
-        if any(
-            _field(item, "completed") is True
-            and _field(item, "attributable") is True
-            and _field(item, "provisional") is not True
-            and _field(item, "correction") is not True
-            and _field(item, "head", "reviewed_head") == current.child_head
-            and type(_field(item, "accepted")) is int
-            and _field(item, "accepted") > 0
-            for item in history
-        ):
+        pending_source = next(
+            (
+                item
+                for item in history
+                if _field(item, "completed") is True
+                and _field(item, "attributable") is True
+                and _field(item, "provisional") is not True
+                and _field(item, "correction") is not True
+                and _field(item, "head", "reviewed_head") == current.child_head
+                and type(_field(item, "accepted")) is int
+                and _field(item, "accepted") > 0
+            ),
+            None,
+        )
+        if pending_source is not None:
             return result(
-                "EXHAUSTED_PENDING", "accepted findings need a published corrected head", checkpoint, accepted
+                "EXHAUSTED_PENDING",
+                self._accepted_findings_pending_reason(pending_source),
+                checkpoint,
+                accepted,
             )
         if allocation.handoff_checkpoint is None:
             return result(

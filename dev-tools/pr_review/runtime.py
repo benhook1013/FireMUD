@@ -1740,11 +1740,11 @@ class LiveEvidence:
                 return None
             if pr not in self._records_histories:
                 try:
-                    self._records_histories[pr] = self.records.history(pr)
+                    self._records_histories[pr] = self.records.history(pr, include_display=False)
                 except RecordsNotBootstrapped:
                     return None
                 except (ReviewRecordsError, OSError):
-                    return "pending"
+                    return "unavailable"
             history = self._records_histories[pr]
             if not isinstance(history, Mapping):
                 return "pending"
@@ -1847,7 +1847,7 @@ class LiveEvidence:
         except RecordsNotBootstrapped:
             return None
         except (ReviewRecordsError, OSError):
-            return "pending"
+            return "unavailable"
 
     def history(self, pr: int, channel: str, *, now: datetime | None = None) -> Sequence[dict[str, Any]]:
         key = (pr, channel)
@@ -2513,7 +2513,8 @@ class HostedRunner:
                     or metadata.get("state") != "rate_limited"
                     or metadata.get("terminal") is not True
                     or metadata.get("attributable") is not True
-                    or metadata.get("repository") != self.repo
+                    or not isinstance(metadata.get("repository"), str)
+                    or metadata["repository"].casefold() != self.repo.casefold()
                     or metadata.get("pull_request") != pr
                     or metadata.get("head_sha") != record.get("head_sha")
                     or metadata.get("trigger_id") != trigger_id
@@ -2537,12 +2538,15 @@ class HostedRunner:
                 if len(responses) != 1:
                     continue
                 response = responses[0]
+                response_at = hosted.parse_timestamp(response.get("createdAt"))
+                if response_at is None or response_at > terminal_at:
+                    continue
                 author = response.get("author")
                 login = author.get("login") if isinstance(author, Mapping) else None
                 body = response.get("body")
                 if not github.is_coderabbit_login(login) or not isinstance(body, str):
                     continue
-                reset = hosted._rate_limit(body, terminal_at)
+                reset = hosted._rate_limit(body, response_at)
             except Exception:  # noqa: BLE001 - missing closed-history proof cannot retain an execution slot
                 reset = None
             if reset is not None and reset > now and reset not in cooldowns:

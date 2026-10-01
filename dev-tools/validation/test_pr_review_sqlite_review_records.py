@@ -149,6 +149,104 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(list(connection.iterdump()), before)
 
+    def test_invalid_archived_title_only_omits_that_finding_projection(self) -> None:
+        self.bootstrap()
+        first_key = "hosted-comment:4142913648"
+        second_key = "hosted-comment:4142913649"
+        self.records.record_run(
+            run_id="invalid-title-sibling",
+            source_pr=2839,
+            channel="hosted",
+            findings=(
+                FindingObservation(source_finding_key=first_key, title="<details>"),
+                FindingObservation(source_finding_key=second_key, title="<details>"),
+            ),
+        )
+        archive = {
+            "pull_request": 2839,
+            "comments": [
+                {
+                    "id": 4142913648,
+                    "user": {"login": "coderabbitai[bot]"},
+                    "body": "_Bug_ | _Major_ | _Quick win_\n**Invalid archived title.**\nInvalid title detail.",
+                },
+                {
+                    "id": 4142913649,
+                    "user": {"login": "coderabbitai[bot]"},
+                    "body": "_Bug_ | _Minor_ | _Quick win_\n**Preserve this sibling.**\nValid sibling detail.",
+                },
+            ],
+        }
+        self.records.archive_imported_artifacts("invalid-title-sibling", {"hosted_comments": json.dumps(archive)})
+
+        original_segments = sqlite_hosted_capture._hosted_comment_finding_segments
+
+        def invalid_first_title(comment_id, body):
+            findings = original_segments(comment_id, body)
+            if comment_id == 4142913648:
+                findings[0]["title"] = "x" * 301
+            return findings
+
+        with patch.object(
+            sqlite_hosted_capture,
+            "_hosted_comment_finding_segments",
+            side_effect=invalid_first_title,
+        ):
+            history = self.records.history(2839)
+        findings = {finding["source_finding_key"]: finding for finding in history["findings"]}
+        invalid = findings[first_key]
+        self.assertNotIn("display_title", invalid)
+        self.assertEqual(invalid["display_detail"], "Invalid title detail.")
+        self.assertEqual(invalid["display_severity"], "Major")
+        sibling = findings[second_key]
+        self.assertEqual(sibling["display_title"], "Preserve this sibling.")
+        self.assertEqual(sibling["display_detail"], "Valid sibling detail.")
+        self.assertEqual(sibling["display_severity"], "Minor")
+
+    @staticmethod
+    def without_display_projection(history):
+        result = json.loads(json.dumps(history))
+        for collection in ("findings", "routes"):
+            for record in result[collection]:
+                for field in ("display_title", "display_title_is_excerpt", "display_detail", "display_severity"):
+                    record.pop(field, None)
+        for run in result["runs"]:
+            run.pop("duration_seconds", None)
+        return result
+
+    def test_history_display_projection_can_be_disabled_without_changing_canonical_history(self) -> None:
+        self.hosted_display_run()
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": self.hosted_display_archive()})
+        self.duration_import("history-display-duration", "hosted")
+
+        default_history = self.records.history(2839)
+        self.assertEqual(
+            next(finding for finding in default_history["findings"] if finding["run_id"] == "display-run")[
+                "display_title"
+            ],
+            "Check the existing workflow request identity.",
+        )
+        self.assertEqual(
+            next(run for run in default_history["runs"] if run["run_id"] == "history-display-duration")[
+                "duration_seconds"
+            ],
+            90,
+        )
+
+        with patch.object(self.records, "_add_hosted_display_titles", wraps=self.records._add_hosted_display_titles) as titles, \
+             patch.object(self.records, "_add_run_durations", wraps=self.records._add_run_durations) as durations:
+            no_display = self.records.history(2839, include_display=False)
+            batch = self.records.history_batch((2839, 2879), include_display=False)
+            titles.assert_not_called()
+            durations.assert_not_called()
+
+        self.assertEqual(self.without_display_projection(default_history), no_display)
+        self.assertEqual(self.without_display_projection(self.records.history(2879)), batch[2879])
+        self.assertNotIn("display_title", no_display["findings"][0])
+        self.assertNotIn("duration_seconds", next(
+            run for run in no_display["runs"] if run["run_id"] == "history-display-duration"
+        ))
+
     def test_native_unheaded_title_excerpt_signal_preserves_full_body(self) -> None:
         paragraph = "An existing workflow must validate the incoming request identity before accepting repeated admission. " * 5
         captured = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, paragraph)[0]

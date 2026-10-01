@@ -2624,6 +2624,11 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(pending_progress["status"], "CAP_EXHAUSTED_PENDING")
         self.assertIn("accepted findings need a published corrected head", pending_progress["details"])
 
+        pending_history[(1, "hosted")][-1]["source_resolution_status"] = "unavailable"
+        unavailable_progress = pending.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(unavailable_progress["status"], "CAP_EXHAUSTED_PENDING")
+        self.assertIn("source-resolution records are unavailable", unavailable_progress["details"])
+
     def test_fresh_taper_legacy_none_resolution_preserves_ancestry_waiver(self):
         class LegacyEvidence(Evidence):
             source_resolution_status = None
@@ -3750,8 +3755,10 @@ class ControllerTests(unittest.TestCase):
                 self.error = error
                 self.attempts = attempts or []
                 self.calls = []
+                self.include_display = None
 
-            def history(self, pr):
+            def history(self, pr, *, include_display=True):
+                self.include_display = include_display
                 return {"provider_origins": self.origins, "attempts": self.attempts}
 
             def source_resolution_status(self, run_id, **kwargs):
@@ -3796,6 +3803,7 @@ class ControllerTests(unittest.TestCase):
         )
         self.assertEqual(hosted_records.calls[0][0], "hosted-run")
         self.assertEqual(hosted_records.calls[0][1]["accepted_count"], 2)
+        self.assertFalse(hosted_records.include_display)
 
         mismatched_origin = dict(hosted_records.origins[0])
         mismatched_origin["provider_id"] = "review:9002"
@@ -3810,7 +3818,7 @@ class ControllerTests(unittest.TestCase):
         unreadable_records = RecordsReader([], error=ReviewRecordsError("source proof is unreadable"))
         cli_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=unreadable_records)
         cli_checkpoint = SimpleNamespace(run_id="run." + "a" * 32, comment_id=None, hosted_review_id=None, accepted=1)
-        self.assertEqual(cli_evidence._source_resolution_status(42, "cli", cli_checkpoint, HEAD_1), "pending")
+        self.assertEqual(cli_evidence._source_resolution_status(42, "cli", cli_checkpoint, HEAD_1), "unavailable")
         self.assertIsNone(
             LiveEvidence("owner/repo", LiveGitHub("owner/repo"))._source_resolution_status(
                 42, "cli", cli_checkpoint, HEAD_1
