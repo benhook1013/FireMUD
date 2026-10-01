@@ -4,6 +4,8 @@
 
 Superseded by [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md)
 
+This ADR preserves historical ingress-idempotency context, not an independent current identity contract. [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md) owns parent-event and frozen-handler execution identity; [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) owns the current endpoint-specific Trigger Identity fields and scheduler candidate preimage.
+
 ## Implementation Status
 
 The live `ScriptScheduleInstanceServiceImpl.TimerFiringCandidate.identity()` implementation remains narrower than the canonical scheduler preimage until the target and owner/plugin fields are carried. It currently uses resolved `playableStateScope` in the identity preimage and emits `eventSchemaVersion=v1`, `isDryRun=false`, and `triggerMode=TRIGGER_MODE_CATCH_UP`; authoritative `playableStateNamespaceId` identity and separate non-identity scope evidence are target-state. The current values remain explicit preimage inputs even while they are constant. It has no cross-producer golden-vector proof for the canonical preimage or its numeric formatting rules. See the [automation and scheduler runtime tracker](../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
@@ -14,24 +16,22 @@ Event-ingress RPCs into the Automation & Scripting Service must be idempotent un
 
 ## Decision
 
-Automation & Scripting treats event ingress as at-most-once per **Trigger Identity**. The exact endpoint-specific field matrix is owned by [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) so the ADR and runtime contract cannot evolve as competing tuples.
+The original decision treated event ingress as at-most-once per **Trigger Identity**. Current endpoint-specific identity semantics are owned by [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md); the notes below preserve context without defining a competing tuple.
 
-- Gameplay/runtime handler identity includes the applicable `tenantId`, `gameInstanceId`, authoritative `playableStateNamespaceId`, `regionId`, `regionEpoch`, `entityId`, `scriptId`, `eventType`, `eventSchemaVersion`, `scriptPatchVersion`, `scriptPinEpoch`, `scriptEventId`, and `isDryRun` fields. The server-derived `playableStateScope` is retained and exact-validated as immutable policy/routing/authorization/fence evidence, not as a uniqueness discriminator. An authoritative scope transition starts a new playable-state lifecycle and namespace; stale presented scope with unchanged authority may reuse the existing identity.
-- `isDryRun` is always an identity dimension so live and test execution cannot collide.
-- Scheduler/timer triggers additionally carry a due point and trigger mode. The canonical scheduler candidate preimage, its conditional branches, serialization, hash, and proof requirements are owned by [Table 1's Scheduler Candidate Identity Preimage](../system-architecture-scripting-normative-contract-tables.md#scheduler-candidate-identity-preimage-normative); this superseded ADR preserves no competing specification.
-- Tenant-readiness `onLoad` follows the explicit non-runtime exception in the normative table and does not invent sentinel runtime, region, or entity identity.
-- Plugin-trigger identity additionally carries plugin and binding identity where the invocation unit is plugin- or binding-scoped.
+- Presented `playableStateScope` is exact-validated evidence, not a uniqueness discriminator. Stale or mismatched scope remains fenced until authoritative reconciliation; a namespace-keyed identity may be reused only if authority proves scope unchanged. An authority-proven transition starts a new playable-state lifecycle and namespace.
+- Live/test separation, tenant-readiness `onLoad` exceptions, and plugin/binding identity follow the applicable fields and branches in the normative table and ADR 0172; this superseded ADR does not define their current schema.
+- Scheduler/timer candidate identity, including its conditional branches, serialization, hash, and proof requirements, is owned by [Table 1's Scheduler Candidate Identity Preimage](../system-architecture-scripting-normative-contract-tables.md#scheduler-candidate-identity-preimage-normative).
 
-Ordinary event-ingress callers must reuse the same full applicable Trigger Identity, including the same `scriptEventId`, when retrying a logically identical trigger. Scheduler retries instead reuse the same complete due-candidate/firing-claim identity and its deterministically derived `scriptEventId`; that derived ID is propagated into resolved handler identities but remains excluded from `TimerFiringCandidate.identity()`'s scheduler preimage.
+Retry identity and handler materialization follow the current Trigger Identity and scheduler-candidate owners linked above; the original decision's retry rule is historical context rather than a separate current specification.
 
 ## Consequences
 
-- Protos and service contracts must carry enough fields to represent the endpoint-specific Trigger Identity, including the playable-state namespace, immutable scope fence evidence, dry-run mode, and due-point or plugin dimensions where applicable.
-- Audit records (`script_event_audit`) must be keyed by Trigger Identity, not by `scriptEventId` alone.
+- Current proto and service requirements for endpoint-specific Trigger Identity and frozen handler execution are owned by [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md); this ADR's original consequence is historical context.
+- Audit records (`script_event_audit`) follow the current Trigger Identity contract, not `scriptEventId` alone.
 
 ## Implementation and Proof Obligations
 
-Implementation and proof must satisfy the canonical identity matrix and scheduler-preimage requirements in [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields), including its required vectors and exact-retry behavior. Select and report the required checks and evidence under [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or implementation-tracking documents rather than in this decision record.
+Current implementation and proof obligations are owned by [ADR 0172](./adr-0172-parent-event-and-frozen-handler-execution-identity.md) and the canonical identity matrix and scheduler-preimage requirements in [Scripting Normative Contract Tables](../system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields). Select and report checks under [Validation and Runtime Proof](../../developer-workflows/validation-and-runtime-proof.md); this superseded ADR is not an independent proof authority.
 
 ## References
 
