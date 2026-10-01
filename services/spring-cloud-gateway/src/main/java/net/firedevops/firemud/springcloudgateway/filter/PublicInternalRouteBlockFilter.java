@@ -1,5 +1,6 @@
 package net.firedevops.firemud.springcloudgateway.filter;
 
+import java.util.List;
 import java.util.Set;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpStatus;
@@ -26,9 +27,8 @@ public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
 
   @Override
   public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
-    String path = exchange.getRequest().getPath().value();
     PathContainer pathWithinApplication = exchange.getRequest().getPath().pathWithinApplication();
-    if (!targetsBlockedPath(path, pathWithinApplication)) {
+    if (!targetsBlockedPath(pathWithinApplication)) {
       return chain.filter(exchange);
     }
     exchange.getResponse().setStatusCode(HttpStatus.NOT_FOUND);
@@ -40,17 +40,22 @@ public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
     return -2;
   }
 
-  private boolean targetsBlockedPath(String path, PathContainer pathWithinApplication) {
-    String[] segments = path.split("/", -1);
-    return targetsBlockedInternalPath(path, segments)
+  private boolean targetsBlockedPath(PathContainer pathWithinApplication) {
+    return targetsBlockedInternalPath(pathWithinApplication)
         || targetsUnavailableExternalAccountPath(pathWithinApplication);
   }
 
-  private boolean targetsBlockedInternalPath(String path, String[] segments) {
-    return path.startsWith("/api/")
-        && segments.length >= 4
-        && PUBLIC_FAMILIES.contains(segments[2])
-        && BLOCKED_SERVICE_LOCAL_ROOTS.contains(segments[3]);
+  private boolean targetsBlockedInternalPath(PathContainer path) {
+    List<String> segments =
+        path.elements().stream()
+            .filter(PathContainer.PathSegment.class::isInstance)
+            .map(PathContainer.PathSegment.class::cast)
+            .map(PathContainer.PathSegment::valueToMatch)
+            .toList();
+    return segments.size() >= 3
+        && "api".equals(segments.get(0))
+        && PUBLIC_FAMILIES.contains(segments.get(1))
+        && BLOCKED_SERVICE_LOCAL_ROOTS.contains(segments.get(2));
   }
 
   private boolean targetsUnavailableExternalAccountPath(PathContainer path) {
