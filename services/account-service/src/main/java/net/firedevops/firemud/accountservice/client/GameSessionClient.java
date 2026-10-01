@@ -126,10 +126,10 @@ public class GameSessionClient
     return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 
-  private static AuthenticationException routingAuthorityUnavailable(StatusRuntimeException ex) {
+  private static RuntimeException routingAuthorityUnavailable(StatusRuntimeException ex) {
     Status.Code code = ex.getStatus().getCode();
     if (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
-      throw ex;
+      return ex;
     }
     return new AuthenticationException(
         "AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE, ex);
