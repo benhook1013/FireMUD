@@ -1080,6 +1080,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest#compositeSnapshotBlocksIssuerAndTenantAdvanceAndKeepsScopeSetsIndependent()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationIntegrationTest#exhaustedAccountCountersRollbackTheWholeCallerTransaction()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepositoryIntegrationTest#exhaustedSequenceRejectsAppendWithoutChangingEventCheckpointOrCallerSentinel()' \
             account-service

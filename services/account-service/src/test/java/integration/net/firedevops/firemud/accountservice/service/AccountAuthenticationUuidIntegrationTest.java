@@ -46,6 +46,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -106,13 +107,15 @@ class AccountAuthenticationUuidIntegrationTest {
   void cleanDatabaseAndObserveOwnerTransaction() {
     dsl.execute("TRUNCATE TABLE account_audit_outbox");
     dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
+    AccountEmailLoginChallengeRepository challengeRepositoryTarget =
+        AopTestUtils.getUltimateTargetObject(challengeRepositorySpy);
     doAnswer(
             invocation -> {
               assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
               invocation.callRealMethod();
               return null;
             })
-        .when(challengeRepositorySpy)
+        .when(challengeRepositoryTarget)
         .lockAccountChallenge(anyLong());
   }
 
@@ -242,7 +245,7 @@ class AccountAuthenticationUuidIntegrationTest {
     assertThat(emailLoginChallengeCount(persisted.getId())).isZero();
     assertThat(sessionService.isAccountSessionActive(persisted.getId(), result.bootstrapToken()))
         .isTrue();
-    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.times(1))
+    org.mockito.Mockito.verify(sessionServiceTarget(), org.mockito.Mockito.times(1))
         .storeAccountSession(
             org.mockito.ArgumentMatchers.eq(persisted.getId()),
             org.mockito.ArgumentMatchers.eq(result.bootstrapToken()),
@@ -261,7 +264,7 @@ class AccountAuthenticationUuidIntegrationTest {
         .isInstanceOf(AuthenticationException.class)
         .hasMessage("Invalid bootstrap token");
 
-    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+    org.mockito.Mockito.verify(sessionServiceTarget(), org.mockito.Mockito.never())
         .isAccountSessionActive(anyLong(), org.mockito.ArgumentMatchers.anyString());
   }
 
@@ -356,7 +359,7 @@ class AccountAuthenticationUuidIntegrationTest {
     assertThat(accountUuidFor(persisted.getId())).isEqualTo(persisted.getAccountUuid());
     assertThat(accountService.resolveAccountStorageId(persisted.getAccountUuid()))
         .isEqualTo(persisted.getId());
-    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+    org.mockito.Mockito.verify(sessionServiceTarget(), org.mockito.Mockito.never())
         .storeAccountSession(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
@@ -369,11 +372,12 @@ class AccountAuthenticationUuidIntegrationTest {
     String deliveredCode = requestEmailLoginOtpAndCaptureCode(persisted.getEmail());
     var challengeBeforeFailure =
         challengeRepositorySpy.findByAccountId(persisted.getId()).orElseThrow();
+    SessionService sessionServiceTarget = sessionServiceTarget();
     doAnswer(
             invocation -> {
               throw new IllegalStateException("simulated session storage failure");
             })
-        .when(sessionService)
+        .when(sessionServiceTarget)
         .storeAccountSession(
             org.mockito.ArgumentMatchers.anyLong(),
             org.mockito.ArgumentMatchers.anyString(),
@@ -385,7 +389,7 @@ class AccountAuthenticationUuidIntegrationTest {
         .hasMessage("simulated session storage failure");
 
     ArgumentCaptor<String> tokenCaptor = ArgumentCaptor.forClass(String.class);
-    org.mockito.Mockito.verify(sessionService)
+    org.mockito.Mockito.verify(sessionServiceTarget)
         .storeAccountSession(
             org.mockito.ArgumentMatchers.anyLong(),
             tokenCaptor.capture(),
@@ -542,5 +546,9 @@ class AccountAuthenticationUuidIntegrationTest {
     } finally {
       argon2.wipeArray(chars);
     }
+  }
+
+  private SessionService sessionServiceTarget() {
+    return AopTestUtils.getUltimateTargetObject(sessionService);
   }
 }

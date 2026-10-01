@@ -189,3 +189,8 @@ Entry format:
   - Context: an Account `fullCheck` failed at `spotbugsTest` with exit code 1 but no report artifact or finding in the normal log.
   - Observation: rerunning the affected canonical task with `-PfullCheck --info` exposed the exact unused-method finding. The obsolete numeric assertion helper was removed and the consolidated gate rerun; no analyzer suppression or disabled check was needed.
   - Expected pattern: inspect the affected task's detailed output before searching for a report that its configuration does not emit, and keep the diagnostic run separate from the final consolidated proof.
+
+- `2026-10-02`: Stub the underlying Mockito target, not a Spring repository proxy
+  - Context: exact Account PostgreSQL CI36888416843 executed all14required UUID/OTP/HTTP cases but failed one setup with `UnfinishedStubbingException`; its stack crossed the persistence-exception-translation proxy while configuring `doAnswer`.
+  - Observation: a prior green run did not establish stable spy setup. The fixture correction unwraps the ultimate Mockito target for setup and verification, while production calls still traverse the injected Spring proxy and the real owner transaction. A separately logged scheduled-cleanup warning is not proved to cause this failure.
+  - Expected pattern: use `AopTestUtils.getUltimateTargetObject` when configuring a proxied spy, preserve the actual proxy on the tested call path and retain transaction/no-mutation assertions. Require executed runner proof for the corrected setup; local compilation and Docker-skipped tests cannot establish recovery.
