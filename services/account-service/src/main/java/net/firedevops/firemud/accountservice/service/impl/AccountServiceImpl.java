@@ -1433,6 +1433,11 @@ public class AccountServiceImpl implements AccountService {
           .isEmpty();
     } catch (IllegalStateException ex) {
       return false;
+    } catch (AuthenticationException ex) {
+      if ("ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
+        return false;
+      }
+      throw ex;
     }
   }
 
@@ -1453,17 +1458,7 @@ public class AccountServiceImpl implements AccountService {
     validatePublicRealmCardinality(targets);
     return targets.stream()
         .filter(
-            realm -> {
-              try {
-                return isDiscoveryRealmAdmissible(
-                    bootstrapContext, realm, discoveryEntitlementMemo);
-              } catch (AuthenticationException ex) {
-                if ("ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
-                  return false;
-                }
-                throw ex;
-              }
-            })
+            realm -> isDiscoveryRealmAdmissible(bootstrapContext, realm, discoveryEntitlementMemo))
         .toList();
   }
 
