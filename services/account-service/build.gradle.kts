@@ -15,4 +15,6 @@ dependencies {
     implementation(libs.spring.boot.starter.mail)
     implementation(libs.argon2)
     implementation(libs.stripe.java)
+    // Integration analysis follows the real producer's annotated Account collaborators.
+    add("integrationTestImplementation", "com.github.spotbugs:spotbugs-annotations:4.9.8")
 }

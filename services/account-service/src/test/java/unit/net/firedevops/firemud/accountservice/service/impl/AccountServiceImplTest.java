@@ -11,11 +11,19 @@ import static org.mockito.Mockito.when;
 
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -50,11 +58,20 @@ import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.OperationConflictException;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -72,6 +89,8 @@ import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExi
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.accountservice.service.session.SessionService;
+import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.ReloadableJwtUtil;
@@ -94,6 +113,8 @@ class AccountServiceImplTest {
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   @Mock private AccountRepository accountRepository;
   @Mock private AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
+  @Mock private AccountAuthorityOutboxRepository accountAuthorityOutboxRepository;
+  @Mock private AccountPasswordResetOperationRepository passwordResetOperationRepository;
   @Mock private AccountAuditOutboxRepository accountAuditOutboxRepository;
   @Mock private AccountConnectScopeRepository accountConnectScopeRepository;
   @Mock private AccountJoinOperationRepository accountJoinOperationRepository;
@@ -238,6 +259,8 @@ class AccountServiceImplTest {
         new AccountServiceImpl(
             accountRepository,
             accountAuthorityGenerationRepository,
+            accountAuthorityOutboxRepository,
+            passwordResetOperationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -2283,6 +2306,8 @@ class AccountServiceImplTest {
         new AccountServiceImpl(
             accountRepository,
             accountAuthorityGenerationRepository,
+            accountAuthorityOutboxRepository,
+            passwordResetOperationRepository,
             accountAuditOutboxRepository,
             accountConnectScopeRepository,
             accountJoinOperationRepository,
@@ -5392,76 +5417,209 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void completePasswordResetConsumesTokenBeforeUpdatingPassword() {
-    Account account = new Account();
-    account.setId(1L);
-    account.setPasswordHash("old-hash");
-    net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
-        new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
-    token.setId(7L);
-    token.setAccount(account);
-    token.setToken("tok");
-    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
-    when(passwordResetTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
-    when(passwordResetTokenRepository.consumeIfUnexpired(
-            org.mockito.ArgumentMatchers.eq(token),
-            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class)))
-        .thenReturn(true);
+  void completePasswordResetCommitsTokenPasswordAuthorityEventAndReceiptInOrder() {
+    PasswordResetHarness harness =
+        preparePasswordResetCommit(
+            "reset-token-order", LocalDateTime.now().plusHours(1), null, true);
 
     service.completePasswordReset(
         new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
-            "tok", "new-password"));
+            "reset-token-order", "new-password"));
 
-    assertFalse("old-hash".equals(account.getPasswordHash()));
+    PasswordResetReceipt receipt = harness.receipt().get();
+    assertNotNull(receipt);
+    assertFalse("old-verifier".equals(harness.account().getPasswordHash()));
+    assertEquals(2L, receipt.accountAuthorityGeneration());
+    assertEquals(2L, receipt.accountSourceVersion());
+    assertEquals(8L, receipt.issuanceFence());
+    assertEquals(6L, receipt.issuanceFenceSourceVersion());
+    assertEquals(sha256Hex(harness.account().getPasswordHash()), receipt.passwordVerifierDigest());
+    assertEquals(passwordResetTokenHash("reset-token-order"), receipt.tokenHash());
+    assertFalse(
+        new String(harness.event().get().payload(), StandardCharsets.UTF_8)
+            .contains("reset-token-order"));
+
     org.mockito.InOrder order =
-        org.mockito.Mockito.inOrder(passwordResetTokenRepository, accountRepository);
+        org.mockito.Mockito.inOrder(
+            passwordResetOperationRepository,
+            passwordResetTokenRepository,
+            accountRepository,
+            accountAuthorityGenerationRepository,
+            accountAuthorityOutboxRepository);
+    order.verify(passwordResetOperationRepository).findByTokenHash(receipt.tokenHash());
+    order.verify(passwordResetTokenRepository).findByToken("reset-token-order");
+    order.verify(accountRepository).findByIdForUpdate(harness.account().getId());
+    order.verify(passwordResetOperationRepository).findByTokenHash(receipt.tokenHash());
+    order.verify(passwordResetTokenRepository).findByToken("reset-token-order");
+    order.verify(accountAuthorityGenerationRepository).read(harness.scope());
+    order.verify(accountAuthorityOutboxRepository).readCheckpoint(receipt.outboxStreamKey());
     order
         .verify(passwordResetTokenRepository)
         .consumeIfUnexpired(
-            org.mockito.ArgumentMatchers.eq(token),
-            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
-    order.verify(accountRepository).save(account);
-    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
-        .delete(token);
+            org.mockito.ArgumentMatchers.eq(harness.token()),
+            org.mockito.ArgumentMatchers.any(LocalDateTime.class));
+    order
+        .verify(accountRepository)
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.eq(harness.account()),
+            org.mockito.ArgumentMatchers.anyString());
+    order
+        .verify(accountAuthorityGenerationRepository)
+        .advance(harness.initialAuthority(), harness.initialAuthority().issuanceFence());
+    order
+        .verify(accountAuthorityOutboxRepository)
+        .append(
+            org.mockito.ArgumentMatchers.eq(receipt.outboxStreamKey()),
+            org.mockito.ArgumentMatchers.eq(receipt.requestId()),
+            org.mockito.ArgumentMatchers.any());
+    order.verify(passwordResetOperationRepository).insert(receipt);
   }
 
   @Test
-  void completePasswordResetRejectsAlreadyConsumedTokenBeforePasswordMutation() {
-    Account account = new Account();
-    account.setPasswordHash("old-hash");
-    net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
-        new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
-    token.setId(7L);
-    token.setAccount(account);
-    token.setToken("tok");
-    token.setExpiresAt(java.time.LocalDateTime.now().plusHours(1));
-    when(passwordResetTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
-    when(passwordResetTokenRepository.consumeIfUnexpired(
-            org.mockito.ArgumentMatchers.eq(token),
-            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class)))
-        .thenReturn(false);
+  void completePasswordResetRejectsMissingOrContradictorySourceBeforeMutation() {
+    ScopeState progressedWithoutHistory =
+        new ScopeState(
+            AuthorityScope.account(UUID.fromString("5d79f453-4f04-4cad-8561-cce2a2ab57bc")),
+            2L,
+            2L,
+            new IssuanceFence(UUID.fromString("5d79f453-4f04-4cad-8561-cce2a2ab57bc"), 7L, 4L));
+    preparePasswordResetCommit(
+        "reset-token-unproven", LocalDateTime.now().plusHours(1), progressedWithoutHistory, true);
 
     assertThrows(
-        IllegalArgumentException.class,
+        IllegalStateException.class,
         () ->
             service.completePasswordReset(
                 new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
-                    "tok", "new-password")));
+                    "reset-token-unproven", "new-password")));
 
-    assertEquals("old-hash", account.getPasswordHash());
-    org.mockito.Mockito.verifyNoInteractions(accountRepository);
     org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
-        .delete(token);
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountAuthorityGenerationRepository, org.mockito.Mockito.never())
+        .advance(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountAuthorityOutboxRepository, org.mockito.Mockito.never())
+        .append(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(passwordResetOperationRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
-  void completePasswordResetRejectsExpiredTokenBeforeConsumption() {
-    net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
-        new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
-    token.setId(7L);
-    token.setToken("tok");
-    token.setExpiresAt(java.time.LocalDateTime.now().minusSeconds(1));
-    when(passwordResetTokenRepository.findByToken("tok")).thenReturn(Optional.of(token));
+  void completePasswordResetRejectsAStreamEventAtThePristineSourceBaseline() {
+    PasswordResetHarness harness =
+        preparePasswordResetCommit(
+            "reset-token-contradictory-baseline", LocalDateTime.now().plusHours(1), null, true);
+    harness
+        .event()
+        .set(
+            new Event(
+                "account:auth-authority:v1:account/" + harness.scope().accountId(),
+                "unowned-prior-request",
+                1L,
+                "unowned-prior-event",
+                "sha256:" + "4".repeat(64),
+                new byte[] {1}));
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.completePasswordReset(
+                new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                    "reset-token-contradictory-baseline", "new-password")));
+
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountAuthorityGenerationRepository, org.mockito.Mockito.never())
+        .advance(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountAuthorityOutboxRepository, org.mockito.Mockito.never())
+        .append(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(passwordResetOperationRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void completePasswordResetRejectsMissingUuidProvenanceBeforeAuthorityReads() {
+    PasswordResetHarness harness =
+        preparePasswordResetCommit(
+            "reset-token-unproven-identity", LocalDateTime.now().plusHours(1), null, true);
+    harness.account().setAccountUuidProvenance(null);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.completePasswordReset(
+                new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                    "reset-token-unproven-identity", "new-password")));
+
+    verifyNoInteractions(accountAuthorityGenerationRepository, accountAuthorityOutboxRepository);
+    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
+        .consumeIfUnexpired(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void completePasswordResetExactRetryRecoversLostResponseWithoutMutation() {
+    PasswordResetRetryHarness harness =
+        preparePasswordResetRetry("reset-token-exact", "password-one");
+
+    service.completePasswordReset(
+        new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+            "reset-token-exact", "password-one"));
+
+    verifyNoInteractions(passwordResetTokenRepository);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountAuthorityGenerationRepository, org.mockito.Mockito.never())
+        .advance(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(accountAuthorityOutboxRepository, org.mockito.Mockito.never())
+        .append(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(passwordResetOperationRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any());
+    assertEquals(harness.receipt(), harness.receiptReadback().get());
+  }
+
+  @Test
+  void completePasswordResetChangedRetryConflictsWhileVerifierIsUnchanged() {
+    preparePasswordResetRetry("reset-token-changed", "password-one");
+
+    assertThrows(
+        OperationConflictException.class,
+        () ->
+            service.completePasswordReset(
+                new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                    "reset-token-changed", "different-password")));
+
+    verifyNoInteractions(passwordResetTokenRepository);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountAuthorityGenerationRepository, org.mockito.Mockito.never())
+        .advance(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any());
+    org.mockito.Mockito.verify(passwordResetOperationRepository, org.mockito.Mockito.never())
+        .insert(org.mockito.ArgumentMatchers.any());
+  }
+
+  @Test
+  void completePasswordResetExpiredReceiptCannotRecoverLostResponse() {
+    preparePasswordResetRetry(
+        "reset-token-expired-receipt", "password-one", LocalDateTime.now().minusSeconds(1), false);
 
     IllegalArgumentException exception =
         assertThrows(
@@ -5469,15 +5627,338 @@ class AccountServiceImplTest {
             () ->
                 service.completePasswordReset(
                     new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
-                        "tok", "new-password")));
+                        "reset-token-expired-receipt", "password-one")));
 
     assertEquals("Token expired", exception.getMessage());
-    org.mockito.Mockito.verify(passwordResetTokenRepository, org.mockito.Mockito.never())
-        .consumeIfUnexpired(
-            org.mockito.ArgumentMatchers.any(),
-            org.mockito.ArgumentMatchers.any(java.time.LocalDateTime.class));
-    org.mockito.Mockito.verifyNoInteractions(accountRepository);
+    verifyNoInteractions(passwordResetTokenRepository, accountAuthorityGenerationRepository);
+    org.mockito.Mockito.verify(accountAuthorityOutboxRepository, org.mockito.Mockito.never())
+        .findEvent(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong());
   }
+
+  @Test
+  void completePasswordResetSupersededVerifierIsNotReportedAsCallerConflict() {
+    PasswordResetRetryHarness harness =
+        preparePasswordResetRetry("reset-token-superseded", "password-one");
+    harness.account().setPasswordHash(hash("later-password"));
+
+    IllegalStateException exception =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                service.completePasswordReset(
+                    new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                        "reset-token-superseded", "password-one")));
+
+    assertEquals("Password-reset result was superseded", exception.getMessage());
+    verifyNoInteractions(passwordResetTokenRepository, accountAuthorityGenerationRepository);
+    org.mockito.Mockito.verify(accountRepository, org.mockito.Mockito.never())
+        .updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void completePasswordResetFailsClosedWhenImmutableEventReadbackDiffers() {
+    PasswordResetHarness harness =
+        preparePasswordResetCommit(
+            "reset-token-event-readback", LocalDateTime.now().plusHours(1), null, true);
+    harness.corruptEventReadback().set(true);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.completePasswordReset(
+                new net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest(
+                    "reset-token-event-readback", "new-password")));
+
+    org.mockito.Mockito.verify(passwordResetOperationRepository)
+        .insert(org.mockito.ArgumentMatchers.any());
+    assertNotNull(harness.receipt().get());
+  }
+
+  private PasswordResetHarness preparePasswordResetCommit(
+      String rawToken,
+      LocalDateTime tokenExpiresAt,
+      ScopeState requestedInitialAuthority,
+      boolean receiptReadbackEnabled) {
+    long accountId = 101L;
+    UUID accountUuid =
+        requestedInitialAuthority == null
+            ? UUID.fromString("723d61a5-8e11-4b8f-9e01-3ab48e9b2702")
+            : requestedInitialAuthority.scope().accountId();
+    AuthorityScope scope = AuthorityScope.account(accountUuid);
+    ScopeState initialAuthority =
+        requestedInitialAuthority == null
+            ? new ScopeState(scope, 1L, 1L, new IssuanceFence(accountUuid, 7L, 5L))
+            : requestedInitialAuthority;
+
+    Account account = new Account();
+    account.setId(accountId);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT);
+    account.setAccountUuidSourceNumericId(accountId);
+    account.setPasswordHash("old-verifier");
+
+    Account tokenAccount = new Account();
+    tokenAccount.setId(accountId);
+    net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
+        new net.firedevops.firemud.accountservice.entity.PasswordResetToken();
+    token.setId(73L);
+    token.setAccount(tokenAccount);
+    token.setToken(rawToken);
+    token.setExpiresAt(tokenExpiresAt);
+
+    String tokenHash = passwordResetTokenHash(rawToken);
+    String requestId = "account-password-reset-request-v1:" + tokenHash;
+    String streamKey = "account:auth-authority:v1:account/" + accountUuid;
+    AtomicReference<PasswordResetReceipt> receipt = new AtomicReference<>();
+    AtomicReference<Event> event = new AtomicReference<>();
+    AtomicBoolean corruptEventReadback = new AtomicBoolean(false);
+    AtomicReference<ScopeState> authority = new AtomicReference<>(initialAuthority);
+    AtomicReference<Integer> tokenLookupCount = new AtomicReference<>(0);
+
+    when(passwordResetOperationRepository.findByTokenHash(tokenHash))
+        .thenAnswer(
+            ignored ->
+                receiptReadbackEnabled ? Optional.ofNullable(receipt.get()) : Optional.empty());
+    when(passwordResetOperationRepository.findByRequestId(org.mockito.ArgumentMatchers.anyString()))
+        .thenReturn(Optional.empty());
+    when(passwordResetOperationRepository.insert(org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              PasswordResetReceipt inserted = invocation.getArgument(0);
+              receipt.set(inserted);
+              return inserted;
+            });
+    when(passwordResetTokenRepository.findByToken(rawToken))
+        .thenAnswer(
+            ignored -> {
+              int lookupNumber = tokenLookupCount.get() + 1;
+              tokenLookupCount.set(lookupNumber);
+              return lookupNumber <= 2 ? Optional.of(token) : Optional.empty();
+            });
+    when(passwordResetTokenRepository.consumeIfUnexpired(
+            org.mockito.ArgumentMatchers.eq(token),
+            org.mockito.ArgumentMatchers.any(LocalDateTime.class)))
+        .thenReturn(true);
+    when(accountRepository.findByIdForUpdate(accountId)).thenReturn(Optional.of(account));
+    when(accountRepository.updatePasswordHashForLockedAccount(
+            org.mockito.ArgumentMatchers.eq(account), org.mockito.ArgumentMatchers.anyString()))
+        .thenAnswer(
+            invocation -> {
+              account.setPasswordHash(invocation.getArgument(1));
+              return account;
+            });
+    when(accountAuthorityGenerationRepository.read(scope)).thenAnswer(ignored -> authority.get());
+    when(accountAuthorityGenerationRepository.advance(
+            org.mockito.ArgumentMatchers.any(ScopeState.class),
+            org.mockito.ArgumentMatchers.any(IssuanceFence.class)))
+        .thenAnswer(
+            invocation -> {
+              ScopeState previous = invocation.getArgument(0);
+              IssuanceFence previousFence = previous.issuanceFence();
+              ScopeState next =
+                  new ScopeState(
+                      previous.scope(),
+                      previous.generation() + 1L,
+                      previous.sourceVersion() + 1L,
+                      new IssuanceFence(
+                          previousFence.accountId(),
+                          previousFence.value() + 1L,
+                          previousFence.sourceVersion() + 1L));
+              authority.set(next);
+              return next;
+            });
+    when(accountAuthorityOutboxRepository.readCheckpoint(streamKey))
+        .thenAnswer(
+            ignored -> {
+              Event stored = event.get();
+              return stored == null
+                  ? Optional.empty()
+                  : Optional.of(
+                      new Checkpoint(
+                          stored.outboxStreamKey(),
+                          stored.outboxSequence(),
+                          stored.eventId(),
+                          stored.eventDigest()));
+            });
+    when(accountAuthorityOutboxRepository.append(
+            org.mockito.ArgumentMatchers.eq(streamKey),
+            org.mockito.ArgumentMatchers.eq(requestId),
+            org.mockito.ArgumentMatchers.any()))
+        .thenAnswer(
+            invocation -> {
+              @SuppressWarnings("unchecked")
+              LongFunction<EventEvidence> factory = invocation.getArgument(2);
+              EventEvidence evidence = factory.apply(1L);
+              Event appended =
+                  new Event(
+                      streamKey,
+                      requestId,
+                      1L,
+                      evidence.eventId(),
+                      evidence.eventDigest(),
+                      evidence.payload());
+              event.set(appended);
+              return appended;
+            });
+    when(accountAuthorityOutboxRepository.findEvent(
+            org.mockito.ArgumentMatchers.eq(streamKey), org.mockito.ArgumentMatchers.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              Event stored = event.get();
+              if (stored == null || stored.outboxSequence() != invocation.<Long>getArgument(1)) {
+                return Optional.empty();
+              }
+              if (corruptEventReadback.get()) {
+                return Optional.of(
+                    new Event(
+                        stored.outboxStreamKey(),
+                        stored.requestId(),
+                        stored.outboxSequence(),
+                        stored.eventId(),
+                        "sha256:" + "0".repeat(64),
+                        stored.payload()));
+              }
+              return Optional.of(stored);
+            });
+
+    return new PasswordResetHarness(
+        account, token, tokenHash, scope, initialAuthority, receipt, event, corruptEventReadback);
+  }
+
+  private PasswordResetRetryHarness preparePasswordResetRetry(String rawToken, String password) {
+    return preparePasswordResetRetry(rawToken, password, LocalDateTime.now().plusHours(1), true);
+  }
+
+  private PasswordResetRetryHarness preparePasswordResetRetry(
+      String rawToken,
+      String password,
+      LocalDateTime tokenExpiresAt,
+      boolean currentVerifierMatchesReceipt) {
+    long accountId = 107L;
+    UUID accountUuid = UUID.fromString("8950829f-970b-4712-8d67-fbfe1c8813f5");
+    AuthorityScope scope = AuthorityScope.account(accountUuid);
+    Account account = new Account();
+    account.setId(accountId);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT);
+    account.setAccountUuidSourceNumericId(accountId);
+    String passwordVerifier = hash(password);
+    account.setPasswordHash(
+        currentVerifierMatchesReceipt ? passwordVerifier : hash("superseding-password"));
+
+    String tokenHash = passwordResetTokenHash(rawToken);
+    String requestId = "account-password-reset-request-v1:" + tokenHash;
+    String eventId = "account-password-reset-event-v1:" + tokenHash;
+    String streamKey = "account:auth-authority:v1:account/" + accountUuid;
+    String verifierDigest = sha256Hex(passwordVerifier);
+    String requestDigest =
+        resetRequestDigest(accountUuid, tokenHash, tokenExpiresAt, verifierDigest);
+    ScopeState committedAuthority =
+        new ScopeState(scope, 2L, 2L, new IssuanceFence(accountUuid, 8L, 6L));
+    PasswordResetAuthorityEvent eventEvidence =
+        PasswordResetAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry("schemaVersion", PasswordResetAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", PasswordResetAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry("eventId", eventId),
+                Map.entry("requestId", requestId),
+                Map.entry("accountId", accountUuid.toString()),
+                Map.entry("sourceScope", "account/" + accountUuid),
+                Map.entry("outboxStreamKey", streamKey),
+                Map.entry("outboxSequence", "1"),
+                Map.entry("accountAuthorityGeneration", "2"),
+                Map.entry("sourceVersion", "2"),
+                Map.entry(
+                    "accountSecurityCutoff",
+                    Map.of(
+                        "accountAuthorityGeneration", "2",
+                        "outboxStreamKey", streamKey,
+                        "outboxSequence", "1"))));
+    Event event =
+        new Event(
+            streamKey,
+            requestId,
+            1L,
+            eventEvidence.eventId(),
+            eventEvidence.eventDigest(),
+            eventEvidence.canonicalJsonUtf8());
+    PasswordResetReceipt receipt =
+        PasswordResetReceipt.committed(
+            accountId,
+            accountUuid,
+            tokenHash,
+            requestId,
+            requestDigest,
+            tokenExpiresAt,
+            verifierDigest,
+            streamKey,
+            1L,
+            eventId,
+            eventEvidence.eventDigest(),
+            committedAuthority,
+            committedAuthority.issuanceFence());
+    AtomicReference<PasswordResetReceipt> receiptReadback = new AtomicReference<>(receipt);
+
+    when(passwordResetOperationRepository.findByTokenHash(tokenHash))
+        .thenAnswer(ignored -> Optional.ofNullable(receiptReadback.get()));
+    when(accountRepository.findByIdForUpdate(accountId)).thenReturn(Optional.of(account));
+    when(accountAuthorityGenerationRepository.read(scope)).thenReturn(committedAuthority);
+    when(accountAuthorityOutboxRepository.findEvent(streamKey, 1L)).thenReturn(Optional.of(event));
+    return new PasswordResetRetryHarness(account, receipt, receiptReadback);
+  }
+
+  private static String passwordResetTokenHash(String rawToken) {
+    return sha256Hex(rawToken);
+  }
+
+  private static String sha256Hex(String value) {
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException(exception);
+    }
+  }
+
+  private static String resetRequestDigest(
+      UUID accountUuid, String tokenHash, LocalDateTime tokenExpiresAt, String verifierDigest) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      resetFrame(digest, "account-password-reset-request/v1");
+      resetFrame(digest, "PASSWORD_RESET");
+      resetFrame(digest, accountUuid.toString());
+      resetFrame(digest, tokenHash);
+      resetFrame(digest, tokenExpiresAt.toString());
+      resetFrame(digest, verifierDigest);
+      return HexFormat.of().formatHex(digest.digest());
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException(exception);
+    }
+  }
+
+  private static void resetFrame(MessageDigest digest, String value) {
+    byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+    digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(encoded.length).array());
+    digest.update(encoded);
+  }
+
+  private record PasswordResetHarness(
+      Account account,
+      net.firedevops.firemud.accountservice.entity.PasswordResetToken token,
+      String tokenHash,
+      AuthorityScope scope,
+      ScopeState initialAuthority,
+      AtomicReference<PasswordResetReceipt> receipt,
+      AtomicReference<Event> event,
+      AtomicBoolean corruptEventReadback) {}
+
+  private record PasswordResetRetryHarness(
+      Account account,
+      PasswordResetReceipt receipt,
+      AtomicReference<PasswordResetReceipt> receiptReadback) {}
 
   @Test
   void requestPasswordResetContainsDeliveryFailureAfterSavingToken() {
