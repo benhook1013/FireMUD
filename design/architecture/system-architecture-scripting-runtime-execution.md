@@ -229,7 +229,7 @@ Target-state recovery is idempotent by stable `controlPlaneRequestId` for each o
 
 ## `scriptEventId` Lifecycle and Deduplication
 
-Trigger Identity, endpoint-specific `scriptEventId` ownership, audit uniqueness, and command-level retry identity are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service scripting contracts](./system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe). Runtime persistence carries the applicable identity on the durable pre-DSL trigger record and resulting evaluated script work item, preserving it across queue projection, claims, and handoff attempts.
+Trigger Identity, endpoint-specific `scriptEventId` ownership, audit uniqueness, and command-level retry identity are defined in the [normative contract tables](./system-architecture-scripting-normative-contract-tables.md#table-1-trigger-identity-required-fields) and [cross-service scripting contracts](./system-architecture-scripting-contracts.md#4-scripteventid-identity-and-at-most-once-dedupe). In the current implementation, one `script_work_items` row carries the applicable identity from the pre-DSL trigger through evaluation and handoff processing; separate evaluated-work-item records and descriptor replay remain target-state only.
 
 ## Runtime Deployment & Versioning
 

@@ -8,7 +8,7 @@ For the detailed tick design, see:
 - `design/architecture/system-architecture-tick-concepts-and-invariants.md`
 - `design/architecture/system-architecture-tick-failures-and-operations.md`
 
-Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence or the owning implementation tracker.
+Validation and runtime-proof selection for changes to this runbook follows the shared [Validation and Runtime Proof workflow](../developer-workflows/validation-and-runtime-proof.md); record execution results in PR/CI evidence, and update the owning implementation tracker when capability or proof status changes.
 
 Redis coordination behavior and reset flows are defined in:
 

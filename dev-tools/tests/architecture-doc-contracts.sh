@@ -2466,6 +2466,37 @@ for term in (
             f"missing full-version publication availability qualification {term!r}"
         )
 
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "record execution results in PR/CI evidence, and update the owning implementation tracker when capability or proof status changes",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    ["record execution results in PR/CI evidence or the owning implementation tracker"],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-runtime-execution.md",
+    [
+        "one `script_work_items` row carries the applicable identity from the pre-DSL trigger through evaluation and handoff processing",
+        "separate evaluated-work-item records and descriptor replay remain target-state only",
+    ],
+)
+require_contains(
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    [
+        "A stale or mismatched presented scope fails closed for reuse until authoritative evidence is reconciled and exact validation succeeds",
+        "Only reconciled matching scope with unchanged authority may reuse the existing namespace-keyed identity",
+        "an authority-proven scope transition starts a new playable-state lifecycle and namespace",
+        "[Timer Resume Rule](../system-architecture-scripting-scheduler-and-timers.md#timer-resume-rule-normative)",
+    ],
+)
+require_absent(
+    "design/architecture/decisions/adr-0091-class-specific-script-timer-clocks-and-recovery.md",
+    ["stale presented scope with unchanged authority may reuse the existing identity"],
+)
+
 print("architecture doc contracts passed")
 PY
 
