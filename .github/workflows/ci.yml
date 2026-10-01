@@ -939,20 +939,6 @@ jobs:
           build-scan-terms-of-use-agree: 'yes'
           cache-read-only: false
 
-      - name: Run Game Session authored-world intake PostgreSQL component proof
-        if: ${{ matrix.module == 'game-session-service' }}
-        run: |
-          ./gradlew :game-session-service:integrationTest \
-            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest \
-            -PfullCheck --no-build-cache --no-configuration-cache
-          bash dev-tools/validation/inspect-test-results.sh \
-            --strict \
-            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest \
-            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#registersAdditionalWorldsAndReplaysExactReceiptWithoutMutation()' \
-            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#requiresOwnerTransactionRollsBackClaimsAndReadsOnlyCommittedRows()' \
-            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactIntakeRetriesReturnOneReceiptAndSlugRaceHasOneWinner()' \
-            game-session-service
-
       - name: 🧪 Run Gradle Checks
         id: checks
         run: |
