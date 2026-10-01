@@ -6,6 +6,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 
 ## Implementation Status
 
+- Gameplay connect-token success is currently denied, including legacy successful replay, until Account can prove the complete selected-target issuance evidence. The target first-party bootstrap/`LOGIN`/`PLAY` description above is not a usable end-to-end path; see [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md) for the producer and proof gates.
 - Provider-specific external identity linking is target-state only; no provider is advertised until its server-verified authorization, global subject uniqueness, recovery, unlink, and end-to-end login proof are complete.
 - The caller-asserted external-link persistence/service scaffold remains unsupported implementation drift, but its REST route is removed and the exact legacy public-edge path is denied. No provider integration is advertised or externally available.
 - Credential-bearing gameplay `Authenticate` and its verified-email challenge authenticate global Account identity without a tenant or membership prerequisite. The resulting private delegation token is account-scoped; Game Session retains any bootstrap tenant only as local transport context, and selected-target membership, grant, and entitlement remain separate `JOIN`/`PLAY` checks.

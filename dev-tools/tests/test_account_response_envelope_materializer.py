@@ -15,11 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-SCRIPT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "deploy"
-    / "materialize-account-response-envelope-ring.py"
-)
+SCRIPT_PATH = Path(__file__).resolve().parents[1] / "deploy" / "materialize-account-response-envelope-ring.py"
 SPEC = importlib.util.spec_from_file_location("account_response_envelope_materializer", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MATERIALIZER = importlib.util.module_from_spec(SPEC)
@@ -34,9 +30,7 @@ NEXT_SOURCE_CREATED_AT = "2026-09-27T12:00:00Z"
 MAX_AGE_SECONDS = 86_400
 ENVIRONMENT_ID = "player-facing-prod"
 TARGET_NAMESPACE = "account-prod"
-MATERIALIZER_USERNAME = (
-    "system:serviceaccount:account-prod:firemud-secret-materializer"
-)
+MATERIALIZER_USERNAME = "system:serviceaccount:account-prod:firemud-secret-materializer"
 UNSET = object()
 
 
@@ -88,6 +82,7 @@ class FakeKubectl:
         self.reads = 0
         self.mutate_readback = False
         self.fail_operation: str | None = None
+        self.lose_response_after_operation: str | None = None
         self.raise_timeout = False
         self.raise_unicode_error = False
         self.identity_username = MATERIALIZER_USERNAME
@@ -103,9 +98,7 @@ class FakeKubectl:
         self.commands.append(operation)
         self.timeouts.append(kwargs.get("timeout"))
         if self.raise_timeout:
-            raise MATERIALIZER.subprocess.TimeoutExpired(
-                command, kwargs.get("timeout"), output="sensitive output"
-            )
+            raise MATERIALIZER.subprocess.TimeoutExpired(command, kwargs.get("timeout"), output="sensitive output")
         if self.raise_unicode_error:
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid test output")
         if operation == "auth":
@@ -114,9 +107,7 @@ class FakeKubectl:
                 returncode=self.identity_returncode,
                 stdout=self.identity_output
                 if self.identity_output is not None
-                else json.dumps(
-                    {"status": {"userInfo": {"username": self.identity_username}}}
-                ),
+                else json.dumps({"status": {"userInfo": {"username": self.identity_username}}}),
                 stderr="identity provider error",
             )
         self.operations.append(operation)
@@ -151,6 +142,13 @@ class FakeKubectl:
             request_object["metadata"]["uid"] = self.secret["metadata"]["uid"]
         request_object["metadata"]["resourceVersion"] = resource_version
         self.secret = request_object
+        if self.lose_response_after_operation == operation:
+            self.lose_response_after_operation = None
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="connection lost after accepted mutation",
+            )
         if self.mutate_readback:
             self.secret["data"][MATERIALIZER.SECRET_KEY] = base64.b64encode(b"tampered").decode("ascii")
         if self.readback_uid is not None:
@@ -175,9 +173,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.previous_generation: str | None = None
         self.write_source_record()
         self.fake_kubectl = FakeKubectl()
-        self.kubectl_patch = patch.object(
-            MATERIALIZER.subprocess, "run", side_effect=self.fake_kubectl
-        )
+        self.kubectl_patch = patch.object(MATERIALIZER.subprocess, "run", side_effect=self.fake_kubectl)
         self.kubectl_patch.start()
         self.addCleanup(self.kubectl_patch.stop)
 
@@ -271,7 +267,9 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
         self.assertEqual(created, self.fake_kubectl.secret)
         self.assertEqual("create", created_receipt["operation"])
-        self.assertEqual("retry", retry_receipt["operation"])
+        self.assertEqual("create", retry_receipt["operation"])
+        self.assertEqual(created_receipt.canonical_bytes, retry_receipt.canonical_bytes)
+        self.assertEqual(created_receipt.content_digest, retry_receipt.content_digest)
         self.assertEqual(
             created_receipt["source"]["generation"],
             retry_receipt["source"]["generation"],
@@ -279,6 +277,27 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(created["metadata"]["uid"], retry_receipt["secret"]["uid"])
         self.assertEqual(created["metadata"]["resourceVersion"], retry_receipt["secret"]["resourceVersion"])
         self.assertNotIn(self.source_manifest.decode("ascii"), json.dumps(retry_receipt.as_dict()))
+
+    def test_lost_create_result_retry_returns_same_receipt_without_second_write(self) -> None:
+        expected_kubectl = FakeKubectl()
+        with patch.object(MATERIALIZER.subprocess, "run", side_effect=expected_kubectl):
+            expected_receipt = self.run_materializer()
+
+        self.fake_kubectl.lose_response_after_operation = "create"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "Kubernetes operation failed"):
+            self.run_materializer()
+
+        self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
+        self.assertIsNotNone(self.fake_kubectl.secret)
+        lost_result_secret = copy.deepcopy(self.fake_kubectl.secret)
+
+        retry_receipt = self.run_materializer(now=NOW + dt.timedelta(minutes=1))
+
+        self.assertFalse(retry_receipt)
+        self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
+        self.assertEqual(lost_result_secret, self.fake_kubectl.secret)
+        self.assertEqual(expected_receipt.canonical_bytes, retry_receipt.canonical_bytes)
+        self.assertEqual(expected_receipt.content_digest, retry_receipt.content_digest)
 
     def test_exact_retry_receipt_is_stable_and_canonical_digest_changes_with_a_field(self) -> None:
         self.run_materializer()
@@ -324,9 +343,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
     @staticmethod
     def canonical_receipt(record: dict) -> bytes:
         record["immutableArtifactId"] = MATERIALIZER.canonical_evidence_digest(record)
-        return (
-            json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-        ).encode("utf-8")
+        return (json.dumps(record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
 
     def test_read_side_receipt_verifier_accepts_exact_canonical_receipt(self) -> None:
         receipt = self.run_materializer()
@@ -349,19 +366,43 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             jwt_shape,
         )
         for evidence in malformed:
-            with self.subTest(evidence=evidence[:48]), self.assertRaises(
-                MATERIALIZER.MaterializationError
-            ):
+            with self.subTest(evidence=evidence[:48]), self.assertRaises(MATERIALIZER.MaterializationError):
                 self.verify_receipt(evidence)
+
+    def test_read_side_receipt_verifier_rejects_retry_and_operation_predecessor_mismatch(self) -> None:
+        created_receipt = self.run_materializer()
+        retry_shape = created_receipt.as_dict()
+        retry_shape["operation"] = "retry"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "operation is invalid"):
+            self.verify_receipt(self.canonical_receipt(retry_shape))
+
+        wrong_create_operation = created_receipt.as_dict()
+        wrong_create_operation["operation"] = "rotate"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "operation does not match source predecessor"):
+            self.verify_receipt(self.canonical_receipt(wrong_create_operation))
+
+        self.write_source_record(
+            manifest=manifest_for(active="k2", ids=("k1", "k2")),
+            generation="custody-generation-2",
+            created_at=NEXT_SOURCE_CREATED_AT,
+            previous_generation="custody-generation-1",
+        )
+        rotated_receipt = self.run_materializer(now=NOW + dt.timedelta(hours=2))
+        wrong_rotate_operation = rotated_receipt.as_dict()
+        wrong_rotate_operation["operation"] = "create"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "operation does not match source predecessor"):
+            self.verify_receipt(
+                self.canonical_receipt(wrong_rotate_operation),
+                expected_source_generation="custody-generation-2",
+                expected_predecessor_generation="custody-generation-1",
+            )
 
     def test_read_side_receipt_verifier_rejects_tampered_digest_and_noncanonical_bytes(self) -> None:
         receipt = self.run_materializer()
         tampered = receipt.as_dict()
         tampered["secret"]["resourceVersion"] = "999"
         with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "digest does not match"):
-            self.verify_receipt(
-                json.dumps(tampered, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            )
+            self.verify_receipt(json.dumps(tampered, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
         with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "not canonical"):
             self.verify_receipt(receipt.canonical_bytes + b" ")
@@ -424,9 +465,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
                 lambda changed, value: (
                     changed.update(targetNamespace=value),
                     changed["secret"].update(namespace=value),
-                    changed["freshnessAnnotations"].update(
-                        {MATERIALIZER.ANNOTATION_TARGET_NAMESPACE: value}
-                    ),
+                    changed["freshnessAnnotations"].update({MATERIALIZER.ANNOTATION_TARGET_NAMESPACE: value}),
                 ),
             ),
             (
@@ -435,9 +474,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
                 "predecessor\ninvalid",
                 lambda changed, value: (
                     changed["source"].update(predecessorGeneration=value),
-                    changed["freshnessAnnotations"].update(
-                        {MATERIALIZER.ANNOTATION_PREVIOUS_SOURCE_GENERATION: value}
-                    ),
+                    changed["freshnessAnnotations"].update({MATERIALIZER.ANNOTATION_PREVIOUS_SOURCE_GENERATION: value}),
                 ),
             ),
         )
@@ -513,9 +550,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.fake_kubectl.attempts.clear()
         self.fake_kubectl.readback_resource_version = prior_resource_version
 
-        with self.assertRaisesRegex(
-            MATERIALIZER.MaterializationError, "resource version did not advance"
-        ):
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "resource version did not advance"):
             self.run_materializer(now=NOW + dt.timedelta(hours=2))
 
         self.assertEqual(prior_uid, self.fake_kubectl.uid)
@@ -552,14 +587,10 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
 
     def test_malformed_bound_materializer_username_is_rejected_before_kubernetes_access(self) -> None:
         self.write_source_record(
-            materializer_username=(
-                "system:serviceaccount:account-preview:firemud-secret-materializer"
-            )
+            materializer_username=("system:serviceaccount:account-preview:firemud-secret-materializer")
         )
 
-        with self.assertRaisesRegex(
-            MATERIALIZER.MaterializationError, "service-account username"
-        ):
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "service-account username"):
             self.run_materializer()
 
         self.assertEqual([], self.fake_kubectl.commands)
@@ -598,9 +629,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
                 self.fake_kubectl.identity_output = response
                 self.fake_kubectl.identity_returncode = returncode
 
-                with self.assertRaisesRegex(
-                    MATERIALIZER.MaterializationError, expected_message
-                ):
+                with self.assertRaisesRegex(MATERIALIZER.MaterializationError, expected_message):
                     self.run_materializer()
 
                 self.assertEqual(["auth"], self.fake_kubectl.commands)
@@ -701,7 +730,10 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         replacement = self.fake_kubectl.mutations[-1][1]
         self.assertEqual(previous["metadata"]["resourceVersion"], replacement["metadata"]["resourceVersion"])
         self.assertEqual({"k1", "k2"}, MATERIALIZER.parse_manifest(self.source_manifest).key_ids)
-        self.assertEqual("custody-generation-2", self.fake_kubectl.secret["metadata"]["annotations"][MATERIALIZER.ANNOTATION_SOURCE_GENERATION])
+        self.assertEqual(
+            "custody-generation-2",
+            self.fake_kubectl.secret["metadata"]["annotations"][MATERIALIZER.ANNOTATION_SOURCE_GENERATION],
+        )
         self.assertEqual("rotate", rotation_receipt["operation"])
         self.assertEqual("custody-generation-1", rotation_receipt["source"]["predecessorGeneration"])
         self.assertEqual(self.fake_kubectl.secret["metadata"]["uid"], rotation_receipt["secret"]["uid"])
@@ -713,7 +745,9 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
 
         retry_receipt = self.run_materializer(now=NOW + dt.timedelta(hours=3))
         self.assertFalse(retry_receipt)
-        self.assertEqual("retry", retry_receipt["operation"])
+        self.assertEqual("rotate", retry_receipt["operation"])
+        self.assertEqual(rotation_receipt.canonical_bytes, retry_receipt.canonical_bytes)
+        self.assertEqual(rotation_receipt.content_digest, retry_receipt.content_digest)
 
         self.assertEqual(2, len(self.fake_kubectl.mutations))
         self.assertEqual(rotated, self.fake_kubectl.secret)
@@ -770,7 +804,9 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
 
     def test_same_generation_metadata_mismatch_fails_closed(self) -> None:
         self.run_materializer()
-        self.fake_kubectl.secret["metadata"]["annotations"][MATERIALIZER.ANNOTATION_MATERIALIZED_AT] = "2026-09-27T10:00:00Z"
+        self.fake_kubectl.secret["metadata"]["annotations"][MATERIALIZER.ANNOTATION_MATERIALIZED_AT] = (
+            "2026-09-27T10:00:00Z"
+        )
 
         with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "freshness metadata"):
             self.run_materializer()
@@ -798,9 +834,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(["get", "create"], self.fake_kubectl.operations)
         self.assertNotIn("delete", self.fake_kubectl.operations)
         self.assertEqual(1, len(self.fake_kubectl.attempts))
-        attempted_manifest = base64.b64decode(
-            self.fake_kubectl.attempts[0][1]["data"][MATERIALIZER.SECRET_KEY]
-        )
+        attempted_manifest = base64.b64decode(self.fake_kubectl.attempts[0][1]["data"][MATERIALIZER.SECRET_KEY])
         self.assertEqual(self.source_manifest, attempted_manifest)
         self.assertEqual(source_record_bytes, self.source_path.read_bytes())
 
@@ -821,9 +855,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(["get", "create", "get", "get", "replace"], self.fake_kubectl.operations)
         self.assertNotIn("delete", self.fake_kubectl.operations)
         self.assertEqual(["create", "replace"], [operation for operation, _ in self.fake_kubectl.attempts])
-        attempted_manifest = base64.b64decode(
-            self.fake_kubectl.attempts[-1][1]["data"][MATERIALIZER.SECRET_KEY]
-        )
+        attempted_manifest = base64.b64decode(self.fake_kubectl.attempts[-1][1]["data"][MATERIALIZER.SECRET_KEY])
         self.assertEqual(replacement_bytes, attempted_manifest)
         self.assertEqual(replacement_bytes, self.source_manifest)
 
@@ -862,9 +894,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
     def test_source_record_rejects_duplicate_metadata_fields(self) -> None:
         encoded_manifest = base64.b64encode(self.source_manifest).decode("ascii")
         raw_record = (
-            '{"version":1,"manifestBase64":"'
-            + encoded_manifest
-            + '","sourceGeneration":"custody-generation-1",'
+            '{"version":1,"manifestBase64":"' + encoded_manifest + '","sourceGeneration":"custody-generation-1",'
             '"sourceGeneration":"custody-generation-2",'
             '"environmentId":"player-facing-prod",'
             '"targetNamespace":"account-prod",'
@@ -892,8 +922,7 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             "previousSourceGeneration": self.previous_generation,
         }
         raw_record = (
-            json.dumps(source_record, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-            + "\n"
+            json.dumps(source_record, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
         ).encode("utf-8")
         self.write_source_record(raw=raw_record)
 

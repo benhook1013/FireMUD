@@ -38,6 +38,7 @@ import org.springframework.stereotype.Component;
 public final class LoginCommandHandler {
   private static final Logger logger = LoggerFactory.getLogger(LoginCommandHandler.class);
   private static final String AUTHENTICATION_UNAVAILABLE_CODE = "UNAVAILABLE";
+  private static final String AUTH_UNAVAILABLE_CODE = "AUTH_UNAVAILABLE";
   private static final String RETRY_LATER_CODE = "RETRY_LATER";
   private static final String ABUSE_CONTROL_UNAVAILABLE_CODE = "ABUSE_CONTROL_UNAVAILABLE";
   private static final String RETRY_LATER_MESSAGE = "Too many failed attempts; try again later.";
@@ -255,21 +256,39 @@ public final class LoginCommandHandler {
       return failure("CONNECT_SCOPE_MISMATCH", "Connect scope invalid");
     }
 
-    persistSessionContext(
-        numericSessionId,
-        verifiedContext.tenantId(),
-        verifiedContext.accountId(),
-        "first-party:" + verifiedContext.accountId(),
-        null,
-        verifiedContext.gameInstanceId(),
-        verifiedContext);
-    return new LoginCommandHandlingResult(
-        CommandEnqueueResult.success(),
-        List.of(
-            PlayerOutput.message(
-                "Logged in as first-party account " + verifiedContext.accountId(),
-                "message.login.first-party-success",
-                Map.of("accountId", Long.toString(verifiedContext.accountId())))));
+    if (existingSession != null
+        && existingSession.accountId() > 0L
+        && (existingSession.accountId() != verifiedContext.accountId()
+            || existingSession.tenantId() != verifiedContext.tenantId())) {
+      clearPreviousSessionForVerifiedContext(numericSessionId, existingSession, verifiedContext);
+    }
+    return failure(AUTH_UNAVAILABLE_CODE, "Authentication service unavailable");
+  }
+
+  private void clearPreviousSessionForVerifiedContext(
+      long sessionId, SessionContext existingSession, FirstPartyConnectContext verifiedContext) {
+    if (existingSession.hasGameplayBinding()) {
+      gameplayPresenceLifecycleService.clearGameplayBinding(existingSession, "LOGIN_FAILED");
+    }
+    sessionContextService.save(
+        new SessionContext(
+            sessionId,
+            verifiedContext.tenantId(),
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            existingSession.localeTag(),
+            verifiedContext.gameInstanceId(),
+            verifiedContext.worldSlug(),
+            verifiedContext.realmSlug(),
+            verifiedContext.pointerVersion(),
+            null,
+            verifiedContext.connectScopeId(),
+            verifiedContext.connectRequestId()));
   }
 
   private void persistSessionContext(
@@ -279,18 +298,6 @@ public final class LoginCommandHandler {
       String loginName,
       String jwt,
       long bootstrapGameInstanceId) {
-    persistSessionContext(
-        sessionId, tenantId, accountId, loginName, jwt, bootstrapGameInstanceId, null);
-  }
-
-  private void persistSessionContext(
-      long sessionId,
-      long tenantId,
-      long accountId,
-      String loginName,
-      String jwt,
-      long bootstrapGameInstanceId,
-      FirstPartyConnectContext verifiedBootstrapContext) {
     if (sessionContextService == null) {
       return;
     }
@@ -321,14 +328,6 @@ public final class LoginCommandHandler {
       retainedRealmSlug = existing.realmSlug();
       retainedPointerVersion = existing.pointerVersion();
       retainedPlayableStateScope = existing.playableStateScope();
-    }
-    if (verifiedBootstrapContext != null) {
-      retainedBootstrapGameInstanceId = verifiedBootstrapContext.gameInstanceId();
-      retainedWorldSlug = verifiedBootstrapContext.worldSlug();
-      retainedRealmSlug = verifiedBootstrapContext.realmSlug();
-      retainedPointerVersion = verifiedBootstrapContext.pointerVersion();
-      retainedConnectScopeId = verifiedBootstrapContext.connectScopeId();
-      retainedConnectRequestId = verifiedBootstrapContext.connectRequestId();
     }
     // LOGIN promotes an unauthenticated shell while keeping only its server-derived bootstrap
     // context. Reauthentication under a different account clears that context with old gameplay
@@ -561,6 +560,7 @@ public final class LoginCommandHandler {
       case "ACCOUNT_LOCKED" -> "error.login.account-locked";
       case RETRY_LATER_CODE -> "error.login.retry-later";
       case ABUSE_CONTROL_UNAVAILABLE_CODE -> "error.login.abuse-control-unavailable";
+      case AUTH_UNAVAILABLE_CODE -> "error.login.unavailable";
       case AUTHENTICATION_UNAVAILABLE_CODE -> "error.login.unavailable";
       default -> null;
     };

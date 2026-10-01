@@ -60,9 +60,7 @@ REQUIRED_ANNOTATIONS = (
 )
 KEY_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,64}\Z")
 KEY_BYTES_PATTERN = re.compile(rb"[A-Za-z0-9_-]{43}\Z")
-RFC3339_UTC_PATTERN = re.compile(
-    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z"
-)
+RFC3339_UTC_PATTERN = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z\Z")
 KUBERNETES_METADATA_VALUE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 SERVICE_ACCOUNT_NAME_PATTERN = re.compile(
     r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*\Z"
@@ -205,9 +203,7 @@ def validate_environment_id(value: str) -> str:
 
 
 def validate_namespace(value: str) -> str:
-    if not isinstance(value, str) or len(value) > 63 or not re.fullmatch(
-        r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", value
-    ):
+    if not isinstance(value, str) or len(value) > 63 or not re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", value):
         raise MaterializationError("target namespace must be a Kubernetes namespace name")
     return value
 
@@ -316,9 +312,7 @@ def read_source_record(path: Path) -> SourceRecord:
         raise MaterializationError("source record targetNamespace must be a string")
     if not isinstance(record["materializerUsername"], str):
         raise MaterializationError("source record materializerUsername must be a string")
-    if record["previousSourceGeneration"] is not None and not isinstance(
-        record["previousSourceGeneration"], str
-    ):
+    if record["previousSourceGeneration"] is not None and not isinstance(record["previousSourceGeneration"], str):
         raise MaterializationError("source record previousSourceGeneration must be a string or null")
     try:
         canonical_record = (
@@ -340,9 +334,7 @@ def read_source_record(path: Path) -> SourceRecord:
     source_generation = validate_source_generation(record["sourceGeneration"])
     environment_id = validate_environment_id(record["environmentId"])
     target_namespace = validate_namespace(record["targetNamespace"])
-    materializer_username = validate_materializer_username(
-        record["materializerUsername"], target_namespace
-    )
+    materializer_username = validate_materializer_username(record["materializerUsername"], target_namespace)
     previous_source_generation = record["previousSourceGeneration"]
     if previous_source_generation is not None:
         previous_source_generation = validate_source_generation(previous_source_generation)
@@ -441,9 +433,7 @@ def _decode_secret_manifest(secret: dict[str, Any], namespace: str) -> tuple[byt
     return manifest_bytes, metadata
 
 
-def _load_existing_secret(
-    secret: dict[str, Any], namespace: str, expected_environment_id: str
-) -> ExistingSecret:
+def _load_existing_secret(secret: dict[str, Any], namespace: str, expected_environment_id: str) -> ExistingSecret:
     manifest_bytes, metadata = _decode_secret_manifest(secret, namespace)
     parsed_manifest = parse_manifest(manifest_bytes)
     annotations = metadata.get("annotations")
@@ -461,9 +451,7 @@ def _load_existing_secret(
     target_namespace = validate_namespace(annotations[ANNOTATION_TARGET_NAMESPACE])
     previous_generation_text = annotations[ANNOTATION_PREVIOUS_SOURCE_GENERATION]
     previous_generation = (
-        None
-        if previous_generation_text == ""
-        else validate_source_generation(previous_generation_text)
+        None if previous_generation_text == "" else validate_source_generation(previous_generation_text)
     )
     if environment_id != expected_environment_id or target_namespace != namespace:
         raise MaterializationError("existing Secret environment or target namespace is inconsistent")
@@ -564,9 +552,7 @@ def _read_secret(kubectl: str, namespace: str) -> dict[str, Any] | None:
     return secret
 
 
-def _bounded_expiry(
-    source_expires_at: dt.datetime, materialized_at: dt.datetime, max_age_seconds: int
-) -> dt.datetime:
+def _bounded_expiry(source_expires_at: dt.datetime, materialized_at: dt.datetime, max_age_seconds: int) -> dt.datetime:
     return min(source_expires_at, _class_age_deadline(materialized_at, max_age_seconds))
 
 
@@ -712,11 +698,7 @@ def verify_materialization_receipt(
         raise MaterializationError("materialization receipt version is unsupported")
     if record["receiptType"] != RECEIPT_TYPE:
         raise MaterializationError("materialization receipt type is not the Account ring format")
-    if not isinstance(record["operation"], str) or record["operation"] not in {
-        "create",
-        "rotate",
-        "retry",
-    }:
+    if not isinstance(record["operation"], str) or record["operation"] not in {"create", "rotate"}:
         raise MaterializationError("materialization receipt operation is invalid")
 
     source = record["source"]
@@ -750,6 +732,9 @@ def verify_materialization_receipt(
             validate_source_generation(source["predecessorGeneration"])
     except (MaterializationError, AttributeError) as exc:
         raise MaterializationError("materialization receipt source or target binding is invalid") from exc
+    expected_operation = "create" if source["predecessorGeneration"] is None else "rotate"
+    if record["operation"] != expected_operation:
+        raise MaterializationError("materialization receipt operation does not match source predecessor")
     if not isinstance(source["manifestDigest"], str) or not re.fullmatch(
         r"sha256:[0-9a-f]{64}", source["manifestDigest"]
     ):
@@ -828,23 +813,19 @@ def verify_materialization_receipt(
 def _materialization_receipt(
     *,
     changed: bool,
-    operation: str,
     source: SourceRecord,
     source_manifest_digest: str,
     authenticated_materializer_username: str,
     current: ExistingSecret,
 ) -> MaterializationReceipt:
-    if operation not in {"create", "rotate", "retry"}:
-        raise MaterializationError("materialization receipt operation is invalid")
+    operation = "create" if source.previous_source_generation is None else "rotate"
     if current.source_generation != source.source_generation:
         raise MaterializationError("materialization receipt source generation is inconsistent")
     if current.previous_source_generation != source.previous_source_generation:
         raise MaterializationError("materialization receipt predecessor is inconsistent")
     if current.environment_id != source.environment_id or current.target_namespace != source.target_namespace:
         raise MaterializationError("materialization receipt environment binding is inconsistent")
-    freshness_annotations = {
-        annotation: current.annotations[annotation] for annotation in REQUIRED_ANNOTATIONS
-    }
+    freshness_annotations = {annotation: current.annotations[annotation] for annotation in REQUIRED_ANNOTATIONS}
     record: dict[str, Any] = {
         "version": RECEIPT_VERSION,
         "receiptType": RECEIPT_TYPE,
@@ -896,9 +877,7 @@ def materialize(
         raise MaterializationError("source record environment ID does not match the expected environment")
     if source_record.target_namespace != namespace:
         raise MaterializationError("source record target namespace does not match the expected namespace")
-    authenticated_materializer_username = _verify_materializer_identity(
-        kubectl, source_record.materializer_username
-    )
+    authenticated_materializer_username = _verify_materializer_identity(kubectl, source_record.materializer_username)
     source_generation = source_record.source_generation
     source_expires_at = source_record.source_expires_at
     source_created_at = source_record.source_created_at
@@ -934,7 +913,6 @@ def materialize(
                 raise MaterializationError("same source generation has different manifest bytes")
             return _materialization_receipt(
                 changed=False,
-                operation="retry",
                 source=source_record,
                 source_manifest_digest=_sha256_digest(source_bytes),
                 authenticated_materializer_username=authenticated_materializer_username,
@@ -974,7 +952,15 @@ def materialize(
     )
     expected_annotations = dict(manifest_object["metadata"]["annotations"])
     expected_labels = dict(manifest_object["metadata"].get("labels", {}))
-    write_command = [kubectl, "create" if existing is None else "replace", "--namespace", namespace, "--filename", "-", "--output=json"]
+    write_command = [
+        kubectl,
+        "create" if existing is None else "replace",
+        "--namespace",
+        namespace,
+        "--filename",
+        "-",
+        "--output=json",
+    ]
     _run_kubectl(write_command, manifest_object)
     readback = _read_secret(kubectl, namespace)
     readback_secret = _verify_readback(
@@ -992,7 +978,6 @@ def materialize(
     )
     return _materialization_receipt(
         changed=True,
-        operation="create" if existing is None else "rotate",
         source=source_record,
         source_manifest_digest=_sha256_digest(source_bytes),
         authenticated_materializer_username=authenticated_materializer_username,

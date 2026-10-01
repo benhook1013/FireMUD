@@ -4,7 +4,7 @@ This document defines the JWT profiles, claim requirements, issued-token registr
 
 ## Implementation Status
 
-This document defines target-state token and revocation behavior. Current implementation remains drifted: the runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path; checked-in player-facing Kustomize delivery is legacy Secret-backed signing plus a public `jwt-jwks` Secret, while hosted preview Helm remains on its diagnostic public `jwt-jwks` ConfigMap path; validators still use shared-HMAC verification rather than Account JWKS; and the runtime still permits the documented classpath JWKS fallback when the configured file is absent. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.
+This document defines target-state token and revocation behavior. Current implementation remains drifted: the runtime has no complete issued-token registry or Account-owned authority-generation issuance, advancement, propagation, and validation path; checked-in player-facing Kustomize delivery is legacy Secret-backed signing plus a public `jwt-jwks` Secret, while hosted preview Helm remains on its diagnostic public `jwt-jwks` ConfigMap path; validators still use shared-HMAC verification rather than Account JWKS; and the runtime still permits the documented classpath JWKS fallback when the configured file is absent. The selected-target `gameplay-connect` profile below is target state, not current wire behavior; its complete Account producer, Gateway assertion, Game Session consumer, and negative-proof path is not implemented. No `IssueConnectToken` RPC or changed credential path may be activated before that complete producer/consumer proof passes. The first implemented authority-generation path must prove that issuance and refresh cannot cross a concurrent generation advance and that every affected route rejects stale generations; no such runtime proof is currently claimed.
 
 Each registry-backed revocable `control-ui`, `player-bootstrap`, or receiver-specific private player-delegation JWT has exactly one Account-owned Coordination Redis record: `session:auth:token:<tokenHash>`. The separate `gameplay-connect` profile is not registry-backed and uses its dedicated single-use replay contract.
 
@@ -45,7 +45,7 @@ The pre-v1 grant cutover is direct: a JWT, issued-token registry record, authori
 
 The tuple is copied without renaming or reinterpretation into every applicable registry-backed JWT/registry claim, payload, lease, binding, refresh request, rebind proof, and installation acknowledgement. `issuanceFence` is copied alongside the tuple as the Account composite authority fence captured by the issuance transaction or CAS; it is not a substitute for any tuple member.
 
-For Account's `GetTenantMembershipForRuntime` response and persisted or cross-service gameplay carriers, `membershipVersion` is the exact one-tenant map `{tenantId: version}`. The response, gameplay binding, Account lease, `rebindHandle`, rotation carrier, and exact retry evidence compare the complete key/value map, not a scalar or a partial/merged value. A receiver may extract a scalar for process-local calculations only after validating that map; it must not transmit or persist the scalar as `membershipVersion`. The map remains a separate predicate from `authorityTuple.membershipAuthorityGeneration`, which must also be compared exactly.
+`membershipVersion` is separate from `authorityTuple` and is a required map in each profile schema: when membership is non-applicable its canonical value is `{}`, never omission, `null`, a scalar, or a sentinel. For Account's `GetTenantMembershipForRuntime` response and persisted or cross-service gameplay carriers, an applicable `membershipVersion` is the exact one-tenant map `{tenantId: version}`. Across the JWT claim, registry record, Account evidence bundle, and each applicable lease, binding, rebind, rotation, installation, and retry carrier, the complete map structure and key/value pairs must remain exactly equal. A receiver may extract a scalar for process-local calculations only after validating that map; it must not transmit or persist the scalar as `membershipVersion`. The map remains an independent predicate from `authorityTuple.membershipAuthorityGeneration`, which must also be compared exactly; neither value may be inferred from or substituted for the other.
 
 For the `gameplay-connect` token and `X-Firemud-Connect-Context`, Account derives the caller-bound `authorityTuple.membershipAuthorityGeneration` and the separate `membershipVersion` map from the same authoritative membership snapshot for the exact selected tenant. They remain independent predicates and neither may be reconstructed from the other, a cached projection, or a later read. Before continuation, including reconnect/resume, Game Session must compare both values together against one fresh Account membership snapshot; if either comparison cannot be established from that snapshot, continuation fails closed.
 
@@ -297,18 +297,55 @@ When a `platformAdmin` caller uses a `tenant_regular` route or a `cross_tenant_d
 
 Services must enforce this claim contract before role/tenant authorization:
 
-For `gameplay-connect`, the complete issuance contract is the Account `IssueConnectToken` route entry plus [the canonical connect-token issuance contract](./system-architecture-authentication.md#connect-token-issuance-api), with the exact field mapping below. The presented `player-bootstrap` JWT is still registry-backed and must complete its one active-registry lookup and one Account evidence-bundle read; only the newly minted `gameplay-connect` artifact uses the no-ordinary-registry replay path. Account requires an existing caller-bound `membershipLifecycleState=ACTIVE` membership and takes the selected-route membership evidence from one authoritative snapshot: `authorityTuple.tenantAuthorityGeneration` has exactly one selected-tenant key, `authorityTuple.membershipAuthorityGeneration` has exactly one selected-tenant key for that caller membership, and the separate `membershipVersion` map has exactly one entry with the same key. `authorityTuple.privateRealmGrantVersions` is `[]` for public production or exactly one selected-realm grant entry for every non-public realm, whether ordinary private or playtest; each entry includes `playtestLifecycleId`. The `connect-token-issuance-evidence/v1` boundary binds `accountId`, `connectScopeId`, `requestId`, `requestDigest`, `selectedRouteMembershipEvidence`, the complete bounded `authorityTuple`, separate `membershipVersion`, `jti`, `replayAdmissionFence`, `runtimeEntitlementAuthorityReference`, and `admissionPointerAuthorityReference`. Account exposes a successful result only after the dedicated issuance/replay record and request outcome are `COMMITTED`; exact retries return the stored success or deterministic failure without minting another token. The dedicated record is not `session:auth:token:<tokenHash>` and does not inherit its registry-only fields: `tokenGeneration` and `issuanceFence` are absent for `gameplay-connect`, while all other profile-specific required/absent claims in this table remain authoritative.
+For `gameplay-connect`, issuance follows the Account `IssueConnectToken` authorization entry in the [authorization route matrix](./system-architecture-authz-route-matrix.md); Account's local request and persistence consequences are in [Account API Contracts](./microservices/account-service/api-contracts.md) and [Connect-Token Issuance Persistence](./microservices/account-service/runtime-and-data.md#connect-token-issuance-persistence-and-retention). The profile's exact claim shape and mapping are defined here. The presented `player-bootstrap` JWT is still registry-backed and must complete its one active-registry lookup and one Account evidence-bundle read; only the newly minted `gameplay-connect` artifact uses the no-ordinary-registry replay path. Account requires an existing caller-bound `membershipLifecycleState=ACTIVE` membership and takes the selected-route membership evidence from one authoritative snapshot: `authorityTuple.tenantAuthorityGeneration` has exactly one selected-tenant key, `authorityTuple.membershipAuthorityGeneration` has exactly one selected-tenant key for that caller membership, and the separate `membershipVersion` map has exactly one entry with the same key. `authorityTuple.privateRealmGrantVersions` is `[]` for public production or exactly one selected-realm grant entry for every non-public realm, whether ordinary private or playtest; each entry includes `playtestLifecycleId`. The `connect-token-issuance-evidence/v1` boundary binds `accountId`, `connectScopeId`, `requestId`, `requestDigest`, `selectedRouteMembershipEvidence`, the complete bounded `authorityTuple`, separate `membershipVersion`, `jti`, `replayAdmissionFence`, `runtimeEntitlementAuthorityReference`, and `admissionPointerAuthorityReference`. Account exposes a successful result only after the dedicated issuance/replay record and request outcome are `COMMITTED`; exact retries return the stored success or deterministic failure without minting another token. The dedicated record is not `session:auth:token:<tokenHash>` and does not inherit its registry-only fields: `tokenGeneration` and `issuanceFence` are absent for `gameplay-connect`, while all other profile-specific required/absent claims in this table remain authoritative.
+
+#### Account-Signed Selected-Target Gameplay-Connect Schema
+
+The following is the canonical `gameplay-connect/v1` Account-signed JWT claim set. `authorityTuple` is the complete bounded schema defined in [Canonical Authority Tuple](#canonical-authority-tuple), not a partial projection.
+
+```text
+{
+  iss,
+  aud: "gameplay-connect",
+  iat,
+  exp,
+  jti,
+  accountId,
+  tenantId,
+  realmId,
+  worldSlug,
+  realmSlug,
+  playableStateNamespaceId,
+  playableStateScope,
+  gameInstanceId,
+  pointerVersion,
+  catalogRevision,
+  connectScopeId,
+  requestId,
+  authorityTuple,
+  membershipVersion: { selectedTenantId: version },
+  replayAdmissionFence,
+  playtestLifecycleId?,
+  playtestStateGeneration?
+}
+```
+
+Account resolves and binds `tenantId`, durable `realmId`, `worldSlug`, `realmSlug`, stable `playableStateNamespaceId`, server-derived `playableStateScope`, `gameInstanceId`, `pointerVersion`, and `catalogRevision` from the exact server-issued `connectScopeId` and current authoritative catalog, policy, and admission-pointer state. The `playableStateScope` projection uses the canonical [realm catalog and admission-pointer contract](./system-architecture-multi-tenancy.md#realm-catalog-and-admission-pointer-contract); this JWT profile adds no alternate representation. None is accepted as caller-selected routing authority. For public production, `authorityTuple.privateRealmGrantVersions` is `[]` and both playtest claims are absent. For every non-public target, both `playtestLifecycleId` and positive `playtestStateGeneration` are required and match the selected target and its exact lifecycle-bound grant evidence. The selected tenant is the sole key in `authorityTuple.tenantAuthorityGeneration`, `authorityTuple.membershipAuthorityGeneration`, and the separate `membershipVersion` map; the membership generation and version come from the same fresh caller-bound Account snapshot. Applicable cutoff objects remain exact and independently required under the canonical tuple rules.
+
+The Account JWT keeps registered claim names `requestId`, `jti`, and `iat`. Gateway maps those source values, respectively, to `connectRequestId`, `connectTokenJti`, and `issuedAt` in its separate signed context; it does not create new Account claims or reinterpret their values. The source JWT `iat` and `exp`, and Gateway context `issuedAt`, `verifiedAt`, and `expiresAt`, are UTC epoch-second timestamps. The signed context uses registered `audience` and `recipient` bindings for its Gateway-to-Game Session receiver; these and `verifiedAt`, `gatewayRequestId`, and `expiresAt` are Gateway assertion fields, not Account JWT claims. Context `expiresAt` is no later than the earlier of source `exp` and `issuedAt + 30` seconds; clock skew cannot change `issuedAt` or extend that deadline. The existing discovery scope digest representation is unchanged: its `evaluatedAt` remains the canonical RFC3339 value covered by the existing `connectScopeSnapshotDigest/v1` preimage.
+
+This is a closed Account claim set: all listed claims are required except the two conditional playtest claims, and unlisted or extra claims are rejected. The compact JWT carries its stable Account `kid` in the JOSE header, not as a claim. The profile does not contain `schemaVersion`, registry `issuer`/profile/type aliases, `sub`, `nbf`, `signerGeneration`, `tokenGeneration`, `issuanceFence`, registry state or Account bundle/source/freshness evidence, rotation/lease/installation fields, or Gateway-only context fields. The complete Gateway assertion additions and receiving-service checks are defined in [Gateway Architecture](./system-architecture-gateway.md#gateway-output-rules-downstream-trusted); the Authentication document records only the local bootstrap and admission handoff.
 
 | Claim | `control-ui` JWT | `player-bootstrap` JWT | `gameplay-connect` JWT | `game-session-account-delegation` JWT | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `iss` | Required | Required | Required | Required | Must match Account Service issuer value |
-| `sub` | Required | Required | Not required | Required | Must identify the account subject where required |
-| `jti` | Required | Required | Required | Required | Unique per issued token; the gameplay-connect value is the single-use replay nonce |
+| `sub` | Required | Required | Absent | Required | Must identify the account subject where required |
+| `jti` | Required | Required | Required | Required | Unique per issued token; the gameplay-connect value is the single-use replay nonce and Gateway preserves it as `connectTokenJti` |
 | `accountId` | Required | Required | Required | Required | Must be consistent with `sub` mapping where `sub` is required |
 | `aud` | Required (`control-ui`) | Required (`player-bootstrap`) | Required (`gameplay-connect`) | Required (`account-service`) | Exact allowed values are centrally configured |
-| `iat` | Required | Required | Required | Required | UTC epoch seconds |
-| `nbf` | Required | Required | Not required | Required | Token not usable before this time when present |
-| `exp` | Required | Required | Required | Required | Token unusable after this time |
+| `iat` | Required | Required | Required | Required | UTC epoch seconds; Gateway preserves the gameplay-connect value as context `issuedAt` |
+| `nbf` | Required | Required | Absent | Required | Token not usable before this time when present |
+| `exp` | Required | Required | Required | Required | Token unusable after this time; `gameplay-connect` lifetime is at most 30 seconds from `iat` |
 | `tokenGeneration` | Required | Required | Absent (ordinary registry-only lineage field) | Required | Positive integer for issued-token-registry lineage; gameplay-connect instead uses its dedicated single-use replay contract |
 | `authorityTuple` | Required | Required | Required | Required | Complete applicable tuple. For `gameplay-connect`, the exact bounded selected-target tuple is immutable issuance evidence passed unchanged through Gateway context into the later admission lease/binding checks; it is not registry-backed or standalone gameplay authority |
 | `authorityTuple.issuerAuthGeneration` | Required | Required | Required | Required | Positive monotonic Account-owned issuer generation captured at issuance |
@@ -321,15 +358,18 @@ For `gameplay-connect`, the complete issuance contract is the Account `IssueConn
 | `authorityTuple.tenantBillingCutoff` | Present when applicable | Present when applicable | Present for the selected tenant when applicable | Present when applicable | Optional exact tenant billing cutoff captured at issuance; it remains independently rechecked by the admission contract where required |
 | `issuanceFence` | Required | Required | Absent (ordinary registry-only issuance field) | Required | Positive Account composite fence captured with the tuple |
 | `tenantId` | Not required | Not required | Required | Not required | Gameplay-connect admission scope |
+| `realmId` | Not required | Not required | Required | Not required | Account-resolved durable realm identity from the selected target |
 | `gameInstanceId` | Not required | Not required | Required | Not required | Server-resolved gameplay-connect runtime target |
 | `worldSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect world selector |
 | `realmSlug` | Not required | Not required | Required | Not required | Stable gameplay-connect realm selector |
+| `playableStateNamespaceId` | Not required | Not required | Required | Not required | Stable playable-state identity resolved by Account for the selected realm |
+| `playableStateScope` | Not required | Not required | Required | Not required | Server-derived selected-realm policy scope; not caller input |
 | `playtestLifecycleId` | Not required | Not required | Required for a non-public target; absent for public production | Not required | Must equal the selected-realm `authorityTuple.privateRealmGrantVersions` lifecycle and the admission-pointer snapshot exactly |
 | `playtestStateGeneration` | Not required | Not required | Required and positive for a non-public target; absent for public production | Not required | Exact lifecycle-reset generation from the admission-pointer snapshot; distinct from `pointerVersion` |
 | `pointerVersion` | Not required | Not required | Required | Not required | Gameplay-connect routing-freshness fence |
 | `catalogRevision` | Not required | Not required | Required | Not required | Exact gameplay-connect discovery-catalog revision bound to the selected target |
 | `connectScopeId` | Not required | Not required | Required | Not required | Opaque discovery scope used for issuance |
-| `requestId` | Not required | Not required | Required | Not required | Connect-token issuance idempotency identity |
+| `requestId` | Not required | Not required | Required | Not required | Connect-token issuance idempotency identity; Gateway preserves it as context `connectRequestId` |
 | `replayAdmissionFence` | Not required | Not required | Required | Not required | Exact shared replay-readiness fence observed at issuance; Gateway validates equality before authorization and repeats the check atomically during token consumption |
 | `globalRoles` | Optional list | Optional list | Absent | Optional list | Omission and explicit `[]` both mean no global roles; when present, the exact role list is required. `gameplay-connect` admission never authorizes from role claims |
 | `scopedRoles` | Required; `{}` when none | Empty map | Absent | Optional; generation maps align to delegated binding scope rather than this claim | Omission is rejected for `control-ui`; generation-map keys must be subsets of its tenant UUID keys and must exactly match the independent token-allowed target-tenant and caller-membership route predicates; no generation map may introduce an unclaimed tenant |

@@ -7,6 +7,7 @@ apply(from = "${rootDir}/gradle/proto-convention.gradle")
 dependencies {
     api(project(":common-platform-core"))
     implementation(libs.jjwt.api)
+    implementation("com.fasterxml.jackson.core:jackson-databind")
     implementation(libs.spring.aop)
     implementation(libs.spring.boot.starter)
     compileOnly(libs.spring.boot.starter.web)
@@ -17,4 +18,5 @@ dependencies {
     runtimeOnly(libs.jjwt.jackson)
 
     testImplementation(libs.spring.boot.starter.test)
+    testImplementation(testFixtures(project(":common-test-support")))
 }

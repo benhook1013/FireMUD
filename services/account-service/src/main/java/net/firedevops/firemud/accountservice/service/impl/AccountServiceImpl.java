@@ -1238,20 +1238,9 @@ public class AccountServiceImpl implements AccountService {
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
-        RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
-        if (!isPublicProductionRealm(currentRealm)) {
-          throw new AuthenticationException(
-              "REALM_ACCESS_DENIED",
-              "The selected non-public realm does not have an active access grant");
-        }
-        logger.info(
-            "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.worldSlug(),
-            scopeContext.realmSlug(),
-            request.requestId());
-        return replayedConnectTokenResult(replay.result());
+        throw new AuthenticationException(
+            "AUTH_UNAVAILABLE",
+            "The stored connect token lacks the complete Account-signed selected-target authority contract");
       }
       logger.info(
           "Replayed failed connect-token attempt for account {} tenant {} world {} realm {} requestId {} code {}",
@@ -1347,79 +1336,9 @@ public class AccountServiceImpl implements AccountService {
           "The selected non-public realm does not have an active access grant");
     }
 
-    String jti =
-        stableId(
-            "gameplay-connect",
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.gameInstanceId(),
-            scopeContext.realmSlug(),
-            request.requestId());
-    long issuedAt = System.currentTimeMillis();
-    long expiresAt = issuedAt + tokenProperties.getConnectTokenExpirationMs();
-    String connectToken =
-        mintToken(
-            String.valueOf(bootstrapContext.accountId()),
-            tokenProperties.getConnectTokenExpirationMs(),
-            Map.of(
-                "aud",
-                "gameplay-connect",
-                "accountId",
-                bootstrapContext.accountId(),
-                "tenantId",
-                scopeContext.tenantId(),
-                "gameInstanceId",
-                scopeContext.gameInstanceId(),
-                "pointerVersion",
-                scopeContext.pointerVersion(),
-                "realmSlug",
-                scopeContext.realmSlug(),
-                "worldSlug",
-                scopeContext.worldSlug(),
-                "connectScopeId",
-                request.connectScopeId(),
-                "requestId",
-                request.requestId(),
-                "jti",
-                jti));
-    sessionService.storeSession(
-        scopeContext.tenantId(),
-        bootstrapContext.accountId(),
-        connectToken,
-        tokenProperties.getConnectTokenExpirationMs());
-    ConnectTokenResult result =
-        new ConnectTokenResult(
-            bootstrapContext.accountId(),
-            scopeContext.tenantId(),
-            scopeContext.gameInstanceId(),
-            scopeContext.realmSlug(),
-            request.connectScopeId(),
-            connectToken,
-            jti,
-            request.requestId(),
-            Instant.ofEpochMilli(issuedAt).toString(),
-            Instant.ofEpochMilli(expiresAt).toString(),
-            false);
-    sessionService.storeConnectTokenReplay(
-        scopeContext.tenantId(),
-        bootstrapContext.accountId(),
-        request.connectScopeId(),
-        request.requestId(),
-        new net.firedevops.firemud.accountservice.service.session.SessionService.ConnectTokenReplay(
-            true, result, "", ""),
-        Math.min(
-            tokenProperties.getConnectTokenExpirationMs(),
-            remainingConnectScopeReplayTtl(scopeContext)));
-    logger.info(
-        "Issued connect token for account {} tenant {} world {} realm {} gameInstance {} requestId {} jti {}",
-        bootstrapContext.accountId(),
-        scopeContext.tenantId(),
-        scopeContext.worldSlug(),
-        scopeContext.realmSlug(),
-        scopeContext.gameInstanceId(),
-        request.requestId(),
-        jti);
-    return result;
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE",
+        "Account lacks the one-snapshot complete authority tuple, exact membership map, replay fence, and selected realm namespace/lifecycle evidence required to issue a gameplay-connect token");
   }
 
   @Override
