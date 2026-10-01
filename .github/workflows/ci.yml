@@ -991,6 +991,10 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRequiresRegisteredGatewayAndAccountSigningKeys()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsCommittedStoredFrameAndOriginalSourceAfterGatewayContextExpiryWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#storedHistoryRejectsChangedDigestSourceContextResultHashAndKey()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlatesExpiredOriginalFrameWithSeparateFreshCommittedSourceWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlationRejectsExpiredFreshContextAndReissuedContextForOriginalSource()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlationRequiresExactAccountTenantAndCompleteSelectedTarget()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlationRechecksFreshDeadlineAfterStoredFrameReadWait()' \
             account-service
 
       - name: Verify Account fresh tenant association PostgreSQL proof

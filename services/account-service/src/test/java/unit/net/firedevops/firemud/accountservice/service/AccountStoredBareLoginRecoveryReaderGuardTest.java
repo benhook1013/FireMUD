@@ -13,6 +13,7 @@ import java.util.UUID;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeRepository;
+import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeCrypto;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader;
@@ -93,6 +94,41 @@ class AccountStoredBareLoginRecoveryReaderGuardTest {
     assertEquals(
         "Stored bare LOGIN history readback requires an active owner transaction",
         failure.getMessage());
+    verifyNoCollaboratorInteractions();
+  }
+
+  @Test
+  void correlationRequiresExactPeerAndOwnerTransactionBeforeAnyCollaboratorInteraction() {
+    AccountConnectTokenIssuanceIdentity freshIdentity =
+        new AccountConnectTokenIssuanceIdentity(
+            IDENTITY.accountId(), IDENTITY.tenantId(), "fresh-connect-scope", "fresh-request");
+
+    AdminAuthorizationException peerFailure =
+        assertThrows(
+            AdminAuthorizationException.class,
+            () ->
+                withPeer(
+                    peer(WORKLOAD_NAMESPACE, "account-service"),
+                    () ->
+                        reader.readCorrelation(
+                            IDENTITY, REQUEST_DIGEST.clone(), freshIdentity, "signed-context")));
+    assertEquals(
+        "Stored bare LOGIN history readback requires the exact Game Session workload identity",
+        peerFailure.getMessage());
+    verifyNoCollaboratorInteractions();
+
+    IllegalStateException transactionFailure =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                withPeer(
+                    expectedGameSessionPeer,
+                    () ->
+                        reader.readCorrelation(
+                            IDENTITY, REQUEST_DIGEST.clone(), freshIdentity, "signed-context")));
+    assertEquals(
+        "Stored bare LOGIN history readback requires an active owner transaction",
+        transactionFailure.getMessage());
     verifyNoCollaboratorInteractions();
   }
 
