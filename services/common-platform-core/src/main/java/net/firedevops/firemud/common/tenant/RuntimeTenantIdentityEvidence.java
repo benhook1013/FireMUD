@@ -39,8 +39,7 @@ public record RuntimeTenantIdentityEvidence(
         || !StandardCharsets.UTF_8.newEncoder().canEncode(sourceGameTenantKey)) {
       throw new IllegalArgumentException("sourceGameTenantKey is outside the owner key bounds");
     }
-    if (!"NEW_GAME_ROW".equals(provenanceKind)
-        && !"RETAINED_GAME_V30".equals(provenanceKind)) {
+    if (!"NEW_GAME_ROW".equals(provenanceKind) && !"RETAINED_GAME_V30".equals(provenanceKind)) {
       throw new IllegalArgumentException("Runtime tenant provenance kind is not recognized");
     }
   }

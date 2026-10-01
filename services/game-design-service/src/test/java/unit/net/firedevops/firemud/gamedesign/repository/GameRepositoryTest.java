@@ -26,7 +26,7 @@ class GameRepositoryTest {
   private static final org.jooq.Field<String> SOURCE_TENANT_ID =
       DSL.field(DSL.name("tenant_identity_source_legacy_tenant_id"), String.class);
 
-  private static final UUID CANONICAL_TENANT_ID =
+  private static final UUID NEW_CANONICAL_TENANT_ID =
       UUID.fromString("11111111-1111-4111-8111-111111111111");
 
   @Test
@@ -36,7 +36,7 @@ class GameRepositoryTest {
           fixture.dsl,
           7L,
           "new-game-key-7",
-          CANONICAL_TENANT_ID,
+          NEW_CANONICAL_TENANT_ID,
           "NEW_GAME_ROW",
           7L,
           "new-game-key-7");
@@ -50,7 +50,7 @@ class GameRepositoryTest {
           "retained-game-key-8");
 
       Optional<GameTenantIdentity> newIdentity =
-          fixture.repository.findRuntimeTenantIdentityByCanonicalTenantId(CANONICAL_TENANT_ID);
+          fixture.repository.findRuntimeTenantIdentityByCanonicalTenantId(NEW_CANONICAL_TENANT_ID);
       Optional<GameTenantIdentity> retainedIdentity =
           fixture.repository.findRuntimeTenantIdentityByCanonicalTenantId(
               UUID.fromString("22222222-2222-4222-8222-222222222222"));
@@ -58,7 +58,7 @@ class GameRepositoryTest {
       assertThat(newIdentity)
           .contains(
               new GameTenantIdentity(
-                  CANONICAL_TENANT_ID,
+                  NEW_CANONICAL_TENANT_ID,
                   GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
                   7L,
                   "new-game-key-7"));
@@ -92,14 +92,14 @@ class GameRepositoryTest {
           rowFixture.dsl,
           7L,
           "game-key-7",
-          CANONICAL_TENANT_ID,
+          NEW_CANONICAL_TENANT_ID,
           "NEW_GAME_ROW",
           9L,
           "game-key-7");
       assertThatThrownBy(
               () ->
                   rowFixture.repository.findRuntimeTenantIdentityByCanonicalTenantId(
-                      CANONICAL_TENANT_ID))
+                      NEW_CANONICAL_TENANT_ID))
           .isInstanceOf(IllegalStateException.class);
     }
 
@@ -108,14 +108,14 @@ class GameRepositoryTest {
           keyFixture.dsl,
           7L,
           "actual-game-key-7",
-          CANONICAL_TENANT_ID,
+          NEW_CANONICAL_TENANT_ID,
           "RETAINED_GAME_V30",
           7L,
           "different-source-key");
       assertThatThrownBy(
               () ->
                   keyFixture.repository.findRuntimeTenantIdentityByCanonicalTenantId(
-                      CANONICAL_TENANT_ID))
+                      NEW_CANONICAL_TENANT_ID))
           .isInstanceOf(IllegalStateException.class);
     }
 
@@ -124,14 +124,14 @@ class GameRepositoryTest {
           kindFixture.dsl,
           7L,
           "game-key-7",
-          CANONICAL_TENANT_ID,
+          NEW_CANONICAL_TENANT_ID,
           "UNRECOGNIZED_KIND",
           7L,
           "game-key-7");
       assertThatThrownBy(
               () ->
                   kindFixture.repository.findRuntimeTenantIdentityByCanonicalTenantId(
-                      CANONICAL_TENANT_ID))
+                      NEW_CANONICAL_TENANT_ID))
           .isInstanceOf(IllegalStateException.class);
     }
   }
@@ -143,7 +143,7 @@ class GameRepositoryTest {
           fixture.dsl,
           7L,
           "first-game-key",
-          CANONICAL_TENANT_ID,
+          NEW_CANONICAL_TENANT_ID,
           "NEW_GAME_ROW",
           7L,
           "first-game-key");
@@ -151,7 +151,7 @@ class GameRepositoryTest {
           fixture.dsl,
           8L,
           "second-game-key",
-          CANONICAL_TENANT_ID,
+          NEW_CANONICAL_TENANT_ID,
           "NEW_GAME_ROW",
           8L,
           "second-game-key");
@@ -159,7 +159,7 @@ class GameRepositoryTest {
       assertThatThrownBy(
               () ->
                   fixture.repository.findRuntimeTenantIdentityByCanonicalTenantId(
-                      CANONICAL_TENANT_ID))
+                      NEW_CANONICAL_TENANT_ID))
           .isInstanceOf(org.jooq.exception.TooManyRowsException.class);
     }
   }
@@ -198,8 +198,7 @@ class GameRepositoryTest {
         .execute();
   }
 
-  private record Fixture(
-      java.sql.Connection connection, DSLContext dsl, GameRepository repository)
+  private record Fixture(java.sql.Connection connection, DSLContext dsl, GameRepository repository)
       implements AutoCloseable {
     @Override
     public void close() throws Exception {

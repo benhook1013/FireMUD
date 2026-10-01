@@ -472,8 +472,7 @@ class TenantIdentityGrpcServiceTest {
   @Test
   void runtimeIdentityRequiresExactGameSessionPeerBeforeRequestValidationOrOwnerRead() {
     assertEquals(
-        Status.Code.PERMISSION_DENIED,
-        runtimeIdentityStatus(runtimeIdentityCall("", "", null)));
+        Status.Code.PERMISSION_DENIED, runtimeIdentityStatus(runtimeIdentityCall("", "", null)));
     assertEquals(
         Status.Code.PERMISSION_DENIED,
         runtimeIdentityStatus(runtimeIdentityCall("", "", ACCOUNT_PEER)));
@@ -534,8 +533,7 @@ class TenantIdentityGrpcServiceTest {
                         .setUnknownFields(
                             UnknownFieldSet.newBuilder()
                                 .addField(
-                                    99,
-                                    UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
                                 .build())
                         .build(),
                     unknownFields));
@@ -565,10 +563,7 @@ class TenantIdentityGrpcServiceTest {
         .thenReturn(
             Optional.of(
                 new GameTenantIdentity(
-                    RUNTIME_TENANT_ID,
-                    GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
-                    19L,
-                    " ")));
+                    RUNTIME_TENANT_ID, GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW, 19L, " ")));
 
     RuntimeIdentityObserver absent =
         runtimeIdentityCall(
@@ -610,10 +605,10 @@ class TenantIdentityGrpcServiceTest {
     assertEquals(Status.Code.FAILED_PRECONDITION, runtimeIdentityStatus(contradictory));
     assertEquals(
         "Game Design tenant identity provenance is ambiguous or invalid",
-        Status.fromThrowable(ambiguous.failure).getDescription());
+        ambiguous.errorDescription);
     assertEquals(
         "Game Design tenant identity provenance is ambiguous or invalid",
-        Status.fromThrowable(contradictory.failure).getDescription());
+        contradictory.errorDescription);
   }
 
   private TestObserver call(String sourceKey, String peerUri) {
@@ -830,7 +825,7 @@ class TenantIdentityGrpcServiceTest {
       implements StreamObserver<ResolveRuntimeTenantIdentityResponse> {
     private ResolveRuntimeTenantIdentityResponse value;
     private Status.Code errorCode;
-    private Throwable failure;
+    private String errorDescription;
     private boolean completed;
 
     @Override
@@ -840,8 +835,9 @@ class TenantIdentityGrpcServiceTest {
 
     @Override
     public void onError(Throwable failure) {
-      this.failure = failure;
-      errorCode = Status.fromThrowable(failure).getCode();
+      Status status = Status.fromThrowable(failure);
+      errorCode = status.getCode();
+      errorDescription = status.getDescription();
     }
 
     @Override

@@ -96,7 +96,7 @@ public final class GameDesignRuntimeTenantIdentityClient
               response.getSourceGameRowId(),
               response.getSourceGameTenantKey(),
               response.getProvenanceKind());
-    } catch (IllegalArgumentException | NullPointerException exception) {
+    } catch (IllegalArgumentException exception) {
       throw new IllegalStateException(
           "Game Design runtime tenant identity response is invalid", exception);
     }

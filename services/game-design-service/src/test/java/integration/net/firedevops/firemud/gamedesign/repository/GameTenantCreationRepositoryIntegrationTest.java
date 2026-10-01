@@ -98,7 +98,8 @@ class GameTenantCreationRepositoryIntegrationTest {
     Fixture fixture = retainedFixture.fixture();
     String retainedTenantKey = "retained-game-tenant-9001";
     UUID retainedTenantId =
-        fixture.dsl
+        fixture
+            .dsl
             .select(CANONICAL_TENANT_ID)
             .from(GAME)
             .where(GAME_ID.eq(retainedFixture.retainedGameRowId()))
@@ -506,8 +507,7 @@ class GameTenantCreationRepositoryIntegrationTest {
     return new RetainedFixture(fixture, retainedGameRowId);
   }
 
-  private void migrate(
-      DriverManagerDataSource dataSource, String schema, MigrationVersion target) {
+  private void migrate(DriverManagerDataSource dataSource, String schema, MigrationVersion target) {
     var configuration =
         Flyway.configure()
             .dataSource(dataSource)

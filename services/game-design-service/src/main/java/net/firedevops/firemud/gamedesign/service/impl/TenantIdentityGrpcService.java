@@ -399,8 +399,7 @@ public class TenantIdentityGrpcService
     } catch (RuntimeException ex) {
       responseObserver.onError(
           Status.FAILED_PRECONDITION
-              .withDescription(
-                  "Game Design tenant identity readback is incomplete or inconsistent")
+              .withDescription("Game Design tenant identity readback is incomplete or inconsistent")
               .asRuntimeException());
       return;
     }

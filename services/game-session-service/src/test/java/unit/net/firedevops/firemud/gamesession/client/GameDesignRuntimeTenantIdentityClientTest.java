@@ -111,23 +111,15 @@ class GameDesignRuntimeTenantIdentityClientTest {
   }
 
   @Test
-  void rejectsEveryResponseFieldThatDoesNotMatchTheExactRequestOrClosedSchema()
-      throws Exception {
+  void rejectsEveryResponseFieldThatDoesNotMatchTheExactRequestOrClosedSchema() throws Exception {
     ResolveRuntimeTenantIdentityResponse valid = validResponse("NEW_GAME_ROW");
     assertRejected(valid.toBuilder().setSchemaVersion(2).build());
     assertRejected(valid.toBuilder().setTargetNamespace("other").build());
     assertRejected(
-        valid.toBuilder()
-            .setCanonicalTenantId("AB426BB3-A733-43F0-9C8E-2E379CBDF7EC")
-            .build());
+        valid.toBuilder().setCanonicalTenantId("AB426BB3-A733-43F0-9C8E-2E379CBDF7EC").build());
+    assertRejected(valid.toBuilder().setRequestId("33333333-3333-4333-8333-333333333333").build());
     assertRejected(
-        valid.toBuilder()
-            .setRequestId("33333333-3333-4333-8333-333333333333")
-            .build());
-    assertRejected(
-        valid.toBuilder()
-            .setCanonicalTenantId("33333333-3333-4333-8333-333333333333")
-            .build());
+        valid.toBuilder().setCanonicalTenantId("33333333-3333-4333-8333-333333333333").build());
     assertRejected(valid.toBuilder().setSourceGameRowId(0L).build());
     assertRejected(valid.toBuilder().setSourceGameTenantKey("").build());
     assertRejected(valid.toBuilder().setProvenanceKind("ACCOUNT_ASSOCIATION").build());
@@ -150,8 +142,7 @@ class GameDesignRuntimeTenantIdentityClientTest {
     GameDesignRuntimeTenantIdentityClient client = newClient(stub);
 
     assertThatThrownBy(
-            () ->
-                client.resolveRuntimeTenantIdentity(TENANT_ID.toString(), REQUEST_ID.toString()))
+            () -> client.resolveRuntimeTenantIdentity(TENANT_ID.toString(), REQUEST_ID.toString()))
         .isSameAs(unavailable);
 
     verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
@@ -236,8 +227,7 @@ class GameDesignRuntimeTenantIdentityClientTest {
     GameDesignRuntimeTenantIdentityClient client = newClient(stub);
 
     assertThatThrownBy(
-            () ->
-                client.resolveRuntimeTenantIdentity(TENANT_ID.toString(), REQUEST_ID.toString()))
+            () -> client.resolveRuntimeTenantIdentity(TENANT_ID.toString(), REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class);
   }
 
