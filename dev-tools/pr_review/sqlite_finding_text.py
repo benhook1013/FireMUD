@@ -105,6 +105,23 @@ def _strip_badge_prefix(line: str) -> str:
 def _hosted_issue_markdown(value: str) -> str:
     """Remove provider presentation noise while preserving issue Markdown."""
 
+    from .sqlite_hosted_capture import _markdown_fenced_ranges
+
+    # Protect ordinary samples before any HTML/metadata cleanup. Diagnostic
+    # details still discard their entire block, including protected samples.
+    protected = {}
+    marker = "\x00firemud-fence:"
+    while marker in value:
+        marker += ":"
+    for index, (start, end) in reversed(list(enumerate(_markdown_fenced_ranges(value)))):
+        preceding = value[:start].rstrip().splitlines()
+        if preceding and _is_evidence_label(_headline_text(preceding[-1])):
+            replacement = "\n"
+        else:
+            token = f"{marker}{index}\x00"
+            protected[token] = value[start:end].rstrip("\r\n")
+            replacement = token + "\n"
+        value = value[:start] + replacement + value[end:]
     value = re.sub(r"<!--.*?(?:-->|\Z)", "", value, flags=re.DOTALL)
     value = re.sub(r"<(script|style)\b[^>]*>.*?</\1>", "", value, flags=re.DOTALL | re.IGNORECASE)
     value = re.sub(
@@ -114,14 +131,6 @@ def _hosted_issue_markdown(value: str) -> str:
         value,
         flags=re.DOTALL | re.IGNORECASE,
     )
-    # A standalone executed-script label may introduce a fenced diagnostic
-    # block outside <details>. Ordinary issue code samples remain available.
-    from .sqlite_hosted_capture import _markdown_fenced_ranges
-
-    for start, end in reversed(_markdown_fenced_ranges(value)):
-        preceding = value[:start].rstrip().splitlines()
-        if preceding and _is_evidence_label(_headline_text(preceding[-1])):
-            value = value[:start] + "\n" + value[end:]
     lines = []
     for raw in value.splitlines():
         line = _strip_badge_prefix(_headline_text(html.unescape(raw.rstrip())))
@@ -129,8 +138,12 @@ def _hosted_issue_markdown(value: str) -> str:
             continue
         if line.strip() in {"---", "***", "___"}:
             continue
-        lines.append(line)
-    return re.sub(r"\n[ \t]*\n(?:[ \t]*\n)+", "\n\n", "\n".join(lines)).strip()
+        if line or not lines or lines[-1]:
+            lines.append(line)
+    value = "\n".join(lines).strip()
+    for token, sample in protected.items():
+        value = value.replace(token, sample)
+    return value
 
 
 def _first_line(value: Any) -> str | None:
@@ -158,10 +171,19 @@ def _first_line(value: Any) -> str | None:
 def _hosted_display_detail(value: str, title: str) -> str:
     """Expose readable Markdown from archived Hosted prose, never overwrite detail."""
 
+    from .sqlite_hosted_capture import _markdown_fenced_ranges
+
     value = _hosted_issue_markdown(value)
     lines = value.splitlines()
-    for index, line in enumerate(lines):
-        content = _bold_line_content(line.strip()) or re.sub(r"^#{1,6}\s*", "", line.strip())
+    fenced_ranges = _markdown_fenced_ranges(value)
+    offset = 0
+    for index, line in enumerate(value.splitlines(keepends=True)):
+        in_fence = any(start <= offset < end for start, end in fenced_ranges)
+        offset += len(line)
+        if in_fence:
+            continue
+        candidate = re.sub(r"^(?:>\s*)+", "", line.strip()).strip()
+        content = _bold_line_content(candidate) or re.sub(r"^#{1,6}\s*", "", candidate)
         if content == title:
             lines.pop(index)
             break

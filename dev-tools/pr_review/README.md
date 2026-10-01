@@ -66,7 +66,7 @@ These history and route queries, `state status`, and controller `status` are rea
 
 Historical Hosted findings with wrapper or metadata titles may include an optional `display_title`, derived from the complete SQL archive and exact immutable comment/finding key. Hosted findings may also include `display_detail`, a redacted Markdown excerpt of up to 8,000 characters that retains issue paragraphs, inline code and links while removing provider badges, diagnostic/script and AI-prompt blocks, and a repeated selected headline. Source and incoming structured routes expose the same proven display projections. The stored title/detail, identities, counts, decisions, routes, and finalization remain unchanged; missing, conflicting, or unusable evidence leaves the field absent.
 
-Provider runs may include `duration_seconds` from an exact completed attempt or an identity-validated retained checkpoint/capture; missing, invalid or conflicting duration evidence leaves it absent. Import event timestamps are never treated as elapsed review time. Reads make no provider requests or historical corrections.
+Provider runs may include `duration_seconds` from an exact completed attempt or an identity-validated retained checkpoint/capture; evaluated missing, invalid or conflicting duration evidence returns `duration_seconds: null`, which is authoritative unknown. Consumers may use legacy fallback only when the field is absent, never when it is null. Import event timestamps are never treated as elapsed review time. Reads make no provider requests or historical corrections.
 
 ```sh
 dev-tools/pr-review records history --pr <number>

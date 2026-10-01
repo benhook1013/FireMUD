@@ -3002,6 +3002,9 @@ class SqliteReviewRecords:
         for run in runs:
             if run["channel"] not in {"hosted", "cli"}:
                 continue
+            # Presence is authoritative: null blocks legacy UI fallback from
+            # resurrecting missing, invalid or conflicting timing evidence.
+            run["duration_seconds"] = None
             durations = set()
             attempts = connection.execute(
                 "SELECT duration_seconds FROM review_attempts WHERE run_id = ? AND source_pr = ? "
@@ -3179,7 +3182,10 @@ class SqliteReviewRecords:
     def _routes_for_pr(self, connection: sqlite3.Connection, pr: int) -> list[dict[str, Any]]:
         rows = connection.execute(
             "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
-            "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, routes.updated_at "
+            "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, routes.updated_at, "
+            "(SELECT o.title FROM finding_observations o JOIN review_runs r USING (run_id) "
+            "WHERE o.finding_id = routes.finding_id "
+            "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1) "
             "FROM routes JOIN findings USING (finding_id) "
             "WHERE routes.source_pr = ? OR routes.target_pr = ? ORDER BY routes.source_pr, routes.route_id",
             (pr, pr),
@@ -3237,6 +3243,7 @@ class SqliteReviewRecords:
                     "status": row[6],
                     "created_at": row[7],
                     "updated_at": row[8],
+                    "title": row[9],
                     "target_history": targets,
                     "decisions": decisions,
                     "resolutions": resolutions,

@@ -73,6 +73,15 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(runs["duration-cli"]["duration_seconds"], 120)
         self.assertEqual(runs["duration-old"]["duration_seconds"], 90)
 
+    def test_duration_conflict_null_blocks_same_attempt_fallback(self) -> None:
+        self.duration_import("duration-conflicting-attempt", "cli", checkpoint_duration=90)
+        self.records.start_attempt(attempt_id="conflicting-attempt", source_pr=2839, channel="cli")
+        self.records.finish_attempt("conflicting-attempt", state="completed", duration_seconds=120)
+        self.records.link_attempt_run("conflicting-attempt", "duration-conflicting-attempt")
+        history = self.records.history(2839)
+        self.assertIsNone(history["runs"][0]["duration_seconds"])
+        self.assertEqual(history["attempts"][0]["duration_seconds"], 120)
+
     def test_duration_projection_omits_unknown_invalid_conflicting_or_unassociated_evidence(self) -> None:
         self.duration_import("duration-unknown", "hosted", checkpoint_duration=None)
         self.duration_import("duration-invalid", "cli", capture_duration="unknown")
@@ -87,7 +96,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             before = list(connection.iterdump())
         with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
             history = self.records.history(2839)
-        self.assertTrue(all("duration_seconds" not in run for run in history["runs"]))
+        self.assertTrue(all(run["duration_seconds"] is None for run in history["runs"]))
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(list(connection.iterdump()), before)
 
@@ -211,6 +220,10 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(finding["title"], "Existing meaningful title.")
         self.assertEqual(finding["display_detail"],
                          "Keep `requestId` consistent with [the contract](https://example.test/contract).")
+        incoming = self.records.history(2879)["routes"][0]
+        self.assertEqual(incoming["title"], finding["title"])
+        self.assertEqual(incoming["title"], self.records.list_routes(target_pr=2879)[0]["title"])
+        self.assertEqual(incoming["finding_id"], finding["finding_id"])
         self.hosted_display_run("grouped-old", routed=False)
         archive = json.loads(self.hosted_display_archive())
         archive["comments"][0]["body"] = (

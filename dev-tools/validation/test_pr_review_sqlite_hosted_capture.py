@@ -179,6 +179,30 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(sqlite_provider_imports._first_line("The script executed with the wrong identity."),
                          "The script executed with the wrong identity.")
 
+    def test_hosted_detail_preserves_literal_ordinary_fenced_samples(self) -> None:
+        sample = "```xml\n  <Foo<T>>\n    <script>literal example</script>\n    <!-- literal sample -->\n\n\n  </Foo<T>>\n```"
+        body = "**Validate the sample.**\n\n" + sample + "\n\nScript executed:\n```bash\necho diagnostics\n```"
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+        self.assertEqual(finding["display_detail"], sample)
+        self.assertEqual(finding["title"], "Validate the sample.")
+
+    def test_hosted_detail_removes_prose_headline_without_changing_matching_sample(self) -> None:
+        sample = "```markdown\n**Validate target.**\n```"
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202, sample + "\n\n**Validate target.**\n\nKeep this issue explanation."
+        )[0]
+        self.assertEqual(finding["title"], "Validate target.")
+        self.assertTrue(finding["display_detail"].startswith(sample))
+        self.assertEqual(finding["display_detail"].count("**Validate target.**"), 1)
+        self.assertTrue(finding["display_detail"].endswith("Keep this issue explanation."))
+
+    def test_hosted_detail_deduplicates_quoted_headline_only(self) -> None:
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+            202, "> **Validate target.**\n\n> Keep this distinct quoted explanation."
+        )[0]
+        self.assertEqual(finding["title"], "Validate target.")
+        self.assertEqual(finding["display_detail"], "> Keep this distinct quoted explanation.")
+
     def test_wrapper_fix_keeps_multiple_fingerprinted_finding_keys(self) -> None:
         body = (
             "<details>\n</details>\nFirst actionable issue.\n"
