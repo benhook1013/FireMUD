@@ -8,62 +8,55 @@ import static org.mockito.Mockito.verifyNoInteractions;
 
 import io.grpc.Context;
 import java.security.KeyPairGenerator;
-import java.time.Clock;
-import java.time.Instant;
-import java.time.ZoneOffset;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeIdentity;
+import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceIdentity;
-import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountRepository;
-import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeCrypto;
-import net.firedevops.firemud.accountservice.security.AccountGameplayConnectSourceVerifier;
 import net.firedevops.firemud.accountservice.service.AccountCommittedConnectSourceReader;
+import net.firedevops.firemud.accountservice.service.AccountStoredBareLoginRecoveryReader;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-class AccountCommittedConnectSourceReaderGuardTest {
+class AccountStoredBareLoginRecoveryReaderGuardTest {
   private static final String WORKLOAD_NAMESPACE = "account-unit";
-  private static final AccountConnectTokenIssuanceIdentity IDENTITY =
-      new AccountConnectTokenIssuanceIdentity(101L, 202L, "connect-scope-1", "request-1");
-  private static final Clock CLOCK =
-      Clock.fixed(Instant.parse("2026-04-06T12:00:00Z"), ZoneOffset.UTC);
+  private static final AccountBareLoginExchangeIdentity IDENTITY =
+      new AccountBareLoginExchangeIdentity(
+          UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+          101L,
+          202L,
+          "connect-scope-1",
+          "exchange-request-1");
+  private static final byte[] REQUEST_DIGEST = new byte[32];
 
-  private AccountConnectTokenIssuanceRepository issuanceRepository;
-  private AccountRepository accountRepository;
-  private AccountTenantIdentityResolver tenantIdentityResolver;
+  private AccountBareLoginExchangeRepository exchangeRepository;
   private AccountJoinOperationRepository joinOperationRepository;
   private AccountEnvelopeCrypto envelopeCrypto;
-  private AccountGameplayConnectSourceVerifier sourceVerifier;
-  private AccountCommittedConnectSourceReader reader;
+  private AccountCommittedConnectSourceReader committedSourceReader;
+  private AccountStoredBareLoginRecoveryReader reader;
   private GrpcPeerIdentity expectedGameSessionPeer;
 
   @BeforeEach
   void setUp() throws Exception {
-    issuanceRepository = mock(AccountConnectTokenIssuanceRepository.class);
-    accountRepository = mock(AccountRepository.class);
-    tenantIdentityResolver = mock(AccountTenantIdentityResolver.class);
+    exchangeRepository = mock(AccountBareLoginExchangeRepository.class);
     joinOperationRepository = mock(AccountJoinOperationRepository.class);
     envelopeCrypto = mock(AccountEnvelopeCrypto.class);
-    sourceVerifier = mock(AccountGameplayConnectSourceVerifier.class);
+    committedSourceReader = mock(AccountCommittedConnectSourceReader.class);
     expectedGameSessionPeer = peer(WORKLOAD_NAMESPACE, "game-session-service");
-
     var gatewayKey = KeyPairGenerator.getInstance("Ed25519").generateKeyPair().getPublic();
     reader =
-        new AccountCommittedConnectSourceReader(
-            issuanceRepository,
-            accountRepository,
-            tenantIdentityResolver,
+        new AccountStoredBareLoginRecoveryReader(
+            exchangeRepository,
             joinOperationRepository,
             envelopeCrypto,
-            sourceVerifier,
+            committedSourceReader,
             Map.of("gateway-test", gatewayKey),
-            CLOCK,
             WORKLOAD_NAMESPACE);
   }
 
@@ -72,22 +65,18 @@ class AccountCommittedConnectSourceReaderGuardTest {
     AdminAuthorizationException failure =
         assertThrows(
             AdminAuthorizationException.class,
-            () -> withoutPeer(() -> reader.read(IDENTITY, "unparsed-gateway-context")));
+            () -> withoutPeer(() -> reader.readHistorical(IDENTITY, REQUEST_DIGEST.clone())));
 
     assertEquals(
-        "Committed Account source readback requires the exact Game Session workload identity",
+        "Stored bare LOGIN history readback requires the exact Game Session workload identity",
         failure.getMessage());
     verifyNoCollaboratorInteractions();
   }
 
   @Test
-  void wrongServicePeerIsDeniedBeforeAnyRepositoryOrCredentialInteraction() {
-    assertPeerDeniedBeforeInteractions(peer(WORKLOAD_NAMESPACE, "world-management-service"));
-  }
-
-  @Test
-  void wrongNamespaceGameSessionPeerIsDeniedBeforeAnyRepositoryOrCredentialInteraction() {
-    assertPeerDeniedBeforeInteractions(peer("other-account-unit", "game-session-service"));
+  void wrongServiceOrNamespacePeerIsDeniedBeforeAnyInteraction() {
+    assertPeerDenied(peer(WORKLOAD_NAMESPACE, "account-service"));
+    assertPeerDenied(peer("other-account-unit", "game-session-service"));
   }
 
   @Test
@@ -100,70 +89,64 @@ class AccountCommittedConnectSourceReaderGuardTest {
             () ->
                 withPeer(
                     expectedGameSessionPeer,
-                    () -> reader.read(IDENTITY, "unparsed-gateway-context")));
+                    () -> reader.readHistorical(IDENTITY, REQUEST_DIGEST.clone())));
 
     assertEquals(
-        "Committed Account source readback requires an active owner transaction",
+        "Stored bare LOGIN history readback requires an active owner transaction",
         failure.getMessage());
     verifyNoCollaboratorInteractions();
   }
 
   @Test
-  void historicalReadRequiresExactPeerAndOwnerTransactionBeforeAnyInteraction() {
-    AdminAuthorizationException missingPeer =
-        assertThrows(
-            AdminAuthorizationException.class,
-            () -> withoutPeer(() -> reader.readHistorical(IDENTITY, "unparsed-gateway-context")));
-    assertEquals(
-        "Committed Account source readback requires the exact Game Session workload identity",
-        missingPeer.getMessage());
-    verifyNoCollaboratorInteractions();
+  void correlationRequiresExactPeerAndOwnerTransactionBeforeAnyCollaboratorInteraction() {
+    AccountConnectTokenIssuanceIdentity freshIdentity =
+        new AccountConnectTokenIssuanceIdentity(
+            IDENTITY.accountId(), IDENTITY.tenantId(), "fresh-connect-scope", "fresh-request");
 
-    AdminAuthorizationException wrongPeer =
+    AdminAuthorizationException peerFailure =
         assertThrows(
             AdminAuthorizationException.class,
             () ->
                 withPeer(
-                    peer(WORKLOAD_NAMESPACE, "world-management-service"),
-                    () -> reader.readHistorical(IDENTITY, "unparsed-gateway-context")));
+                    peer(WORKLOAD_NAMESPACE, "account-service"),
+                    () ->
+                        reader.readCorrelation(
+                            IDENTITY, REQUEST_DIGEST.clone(), freshIdentity, "signed-context")));
     assertEquals(
-        "Committed Account source readback requires the exact Game Session workload identity",
-        wrongPeer.getMessage());
+        "Stored bare LOGIN history readback requires the exact Game Session workload identity",
+        peerFailure.getMessage());
     verifyNoCollaboratorInteractions();
 
-    IllegalStateException missingTransaction =
+    IllegalStateException transactionFailure =
         assertThrows(
             IllegalStateException.class,
             () ->
                 withPeer(
                     expectedGameSessionPeer,
-                    () -> reader.readHistorical(IDENTITY, "unparsed-gateway-context")));
+                    () ->
+                        reader.readCorrelation(
+                            IDENTITY, REQUEST_DIGEST.clone(), freshIdentity, "signed-context")));
     assertEquals(
-        "Committed Account source readback requires an active owner transaction",
-        missingTransaction.getMessage());
+        "Stored bare LOGIN history readback requires an active owner transaction",
+        transactionFailure.getMessage());
     verifyNoCollaboratorInteractions();
   }
 
-  private void assertPeerDeniedBeforeInteractions(GrpcPeerIdentity peer) {
+  private void assertPeerDenied(GrpcPeerIdentity peer) {
     AdminAuthorizationException failure =
         assertThrows(
             AdminAuthorizationException.class,
-            () -> withPeer(peer, () -> reader.read(IDENTITY, "unparsed-gateway-context")));
+            () -> withPeer(peer, () -> reader.readHistorical(IDENTITY, REQUEST_DIGEST.clone())));
 
     assertEquals(
-        "Committed Account source readback requires the exact Game Session workload identity",
+        "Stored bare LOGIN history readback requires the exact Game Session workload identity",
         failure.getMessage());
     verifyNoCollaboratorInteractions();
   }
 
   private void verifyNoCollaboratorInteractions() {
     verifyNoInteractions(
-        issuanceRepository,
-        accountRepository,
-        tenantIdentityResolver,
-        joinOperationRepository,
-        envelopeCrypto,
-        sourceVerifier);
+        exchangeRepository, joinOperationRepository, envelopeCrypto, committedSourceReader);
   }
 
   private static GrpcPeerIdentity peer(String namespace, String service) {

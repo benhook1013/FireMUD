@@ -15,6 +15,9 @@ service TenantIdentityService {
   // Exact immutable readback of a newly created tenant operation for Account.
   rpc ResolveFreshTenantCreation(ResolveFreshTenantCreationRequest)
       returns (ResolveFreshTenantCreationResponse);
+  // Exact owner-local read of one persisted runtime tenant identity for Game Session.
+  rpc ResolveRuntimeTenantIdentity(ResolveRuntimeTenantIdentityRequest)
+      returns (ResolveRuntimeTenantIdentityResponse);
 }
 
 message ResolveLegacyGameTenantIdentityRequest {
@@ -66,4 +69,19 @@ message ResolveFreshTenantCreationResponse {
   string source_game_tenant_key = 8;
   string provenance_kind = 9;
   string evidence_digest = 10;
+}
+
+message ResolveRuntimeTenantIdentityRequest {
+  string canonical_tenant_id = 1;
+  string request_id = 2;
+}
+
+message ResolveRuntimeTenantIdentityResponse {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  string canonical_tenant_id = 4;
+  int64 source_game_row_id = 5;
+  string source_game_tenant_key = 6;
+  string provenance_kind = 7;
 }

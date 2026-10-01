@@ -80,9 +80,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
       GatewayTestProperties.FIREMUD_GRPC_CERT_CHAIN_PATH,
       GatewayTestProperties.FIREMUD_GRPC_PRIVATE_KEY_PATH,
       GatewayTestProperties.FIREMUD_GRPC_CA_CERT_PATH,
-      "firemud.grpc.workload-namespace=account_service"
+      "firemud.grpc.workload-namespace=" + AccountJoinPostgresIntegrationTest.WORKLOAD_NAMESPACE
     })
 class AccountJoinPostgresIntegrationTest {
+  static final String WORKLOAD_NAMESPACE = "account-service-test";
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String WORLD_SLUG = "join-proof-world";
   private static final String REALM_SLUG = "production";
@@ -1104,8 +1105,8 @@ class AccountJoinPostgresIntegrationTest {
 
     var absent = readRuntimeMembershipSnapshot(fixture);
     Map<String, Object> baselineRow = membershipPairAuthorityRow(fixture);
-    assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
-    assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
+    assertThat(absent.requestAccountUuid()).isEqualTo(fixture.accountUuid().toString());
+    assertThat(absent.requestTenantUuid()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
     assertThat(absent.tenantUuid()).isEqualTo(fixture.tenantUuid().toString());
     assertThat(absent.membershipExists()).isFalse();
@@ -1285,7 +1286,7 @@ class AccountJoinPostgresIntegrationTest {
                           status -> {
                             capturedSnapshot.set(
                                 membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
-                                    fixture.accountId(), fixture.tenantId()));
+                                    fixture.accountUuid(), fixture.tenantUuid()));
                             snapshotBackendPid.set(
                                 dsl.resultQuery("SELECT pg_backend_pid()")
                                     .fetchOne(0, Integer.class));
@@ -1343,8 +1344,8 @@ class AccountJoinPostgresIntegrationTest {
 
       RuntimeMembershipSnapshotDto absent = capturedSnapshot.get();
       assertThat(absent).isNotNull();
-      assertThat(absent.requestAccountId()).isEqualTo(fixture.accountId());
-      assertThat(absent.requestTenantId()).isEqualTo(fixture.tenantId());
+      assertThat(absent.requestAccountUuid()).isEqualTo(fixture.accountUuid().toString());
+      assertThat(absent.requestTenantUuid()).isEqualTo(fixture.tenantUuid().toString());
       assertThat(absent.accountUuid()).isEqualTo(fixture.accountUuid().toString());
       assertThat(absent.tenantUuid()).isEqualTo(fixture.tenantUuid().toString());
       assertThat(absent.membershipExists()).isFalse();
@@ -1573,7 +1574,7 @@ class AccountJoinPostgresIntegrationTest {
         .execute(
             status ->
                 membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
-                    fixture.accountId(), fixture.tenantId()));
+                    fixture.accountUuid(), fixture.tenantUuid()));
   }
 
   private AccountMembershipAuthorityEventProducer.PositiveMembershipSnapshot
@@ -1839,7 +1840,7 @@ class AccountJoinPostgresIntegrationTest {
         .setOperationId(UUID.randomUUID().toString())
         .setManifestDigest("sha256:" + "b".repeat(64))
         .setManifestSignature(Base64.getEncoder().encodeToString(new byte[64]))
-        .setTargetNamespace("account_service")
+        .setTargetNamespace(WORKLOAD_NAMESPACE)
         .setSignerKeyId("game-design-owner-test")
         .setApprovedBy("owner@example.test")
         .setApprovalReference("unit-1b-postgres-fixture")

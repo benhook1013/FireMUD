@@ -19,7 +19,9 @@ import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
+import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.MigrationVersion;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.Table;
@@ -42,6 +44,8 @@ class GameTenantCreationRepositoryIntegrationTest {
   private static final org.jooq.Field<Long> GAME_ID = DSL.field(DSL.name("id"), Long.class);
   private static final org.jooq.Field<String> TENANT_ID =
       DSL.field(DSL.name("tenant_id"), String.class);
+  private static final org.jooq.Field<UUID> CANONICAL_TENANT_ID =
+      DSL.field(DSL.name("canonical_tenant_id"), UUID.class);
   private static final org.jooq.Field<UUID> OPERATION_ID =
       DSL.field(DSL.name("operation_id"), UUID.class);
   private static final org.jooq.Field<Integer> SCHEMA_VERSION =
@@ -85,6 +89,56 @@ class GameTenantCreationRepositoryIntegrationTest {
     assertThat(exactRetry).isEqualTo(first);
     assertThat(gameXmin(fixture.dsl, SOURCE_KEY)).isEqualTo(firstGameXmin);
     assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void runtimeIdentityLookupReadsOnlyExactNewAndRetainedGameDesignRows() throws Exception {
+    RetainedFixture retainedFixture = fixtureWithRetainedGame();
+    Fixture fixture = retainedFixture.fixture();
+    String retainedTenantKey = "retained-game-tenant-9001";
+    UUID retainedTenantId =
+        fixture
+            .dsl
+            .select(CANONICAL_TENANT_ID)
+            .from(GAME)
+            .where(GAME_ID.eq(retainedFixture.retainedGameRowId()))
+            .fetchOne(CANONICAL_TENANT_ID);
+    assertThat(retainedTenantId).isNotNull();
+    String retainedXmin = gameXmin(fixture.dsl, retainedTenantKey);
+
+    FreshTenantCreationEvidence freshReceipt =
+        fixture.inTransaction(
+            () ->
+                fixture.repository.createCandidate(
+                    NAMESPACE, REQUEST_ID, SOURCE_KEY, "Runtime Identity", null));
+    String freshXmin = gameXmin(fixture.dsl, SOURCE_KEY);
+
+    assertThat(
+            fixture.gameRepository.findRuntimeTenantIdentityByCanonicalTenantId(
+                freshReceipt.canonicalTenantId()))
+        .contains(
+            new GameTenantIdentity(
+                freshReceipt.canonicalTenantId(),
+                GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
+                freshReceipt.sourceGameRowId(),
+                SOURCE_KEY));
+    assertThat(
+            fixture.gameRepository.findRuntimeTenantIdentityByCanonicalTenantId(retainedTenantId))
+        .contains(
+            new GameTenantIdentity(
+                retainedTenantId,
+                GameTenantIdentity.ProvenanceKind.RETAINED_GAME_V30,
+                retainedFixture.retainedGameRowId(),
+                retainedTenantKey));
+    assertThat(
+            fixture.gameRepository.findRuntimeTenantIdentityByCanonicalTenantId(
+                UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")))
+        .isEmpty();
+
+    assertThat(gameXmin(fixture.dsl, SOURCE_KEY)).isEqualTo(freshXmin);
+    assertThat(gameXmin(fixture.dsl, retainedTenantKey)).isEqualTo(retainedXmin);
+    assertThat(fixture.dsl.fetchCount(GAME)).isEqualTo(2);
     assertThat(fixture.dsl.fetchCount(OPERATIONS)).isEqualTo(1);
   }
 
@@ -415,7 +469,57 @@ class GameTenantCreationRepositoryIntegrationTest {
         .isEqualTo(schema);
     GameRepository gameRepository = new GameRepository(dsl);
     GameTenantCreationRepository repository = new GameTenantCreationRepository(dsl, gameRepository);
-    return new Fixture(dataSource, dsl, repository, transactionTemplate);
+    return new Fixture(dataSource, dsl, gameRepository, repository, transactionTemplate);
+  }
+
+  private RetainedFixture fixtureWithRetainedGame() {
+    String schema =
+        "game_design_retained_identity_" + UUID.randomUUID().toString().replace("-", "");
+    DriverManagerDataSource dataSource = new DriverManagerDataSource();
+    dataSource.setUrl(postgres.getJdbcUrl());
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+    dataSource.setSchema(schema);
+
+    migrate(dataSource, schema, MigrationVersion.fromVersion("29"));
+    DSLContext legacyDsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    Long retainedGameRowId =
+        legacyDsl
+            .insertInto(GAME)
+            .set(TENANT_ID, "retained-game-tenant-9001")
+            .set(NAME, "Retained Game Design Row")
+            .set(DESCRIPTION, "Retained source identity fixture")
+            .returning(GAME_ID)
+            .fetchOne(GAME_ID);
+    assertThat(retainedGameRowId).isNotNull();
+
+    migrate(dataSource, schema, null);
+    DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+    TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
+    DSLContext dsl =
+        DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
+    assertThat(dsl.select(DSL.field("current_schema()", String.class)).fetchSingle().value1())
+        .isEqualTo(schema);
+    GameRepository gameRepository = new GameRepository(dsl);
+    GameTenantCreationRepository repository = new GameTenantCreationRepository(dsl, gameRepository);
+    Fixture fixture = new Fixture(dataSource, dsl, gameRepository, repository, transactionTemplate);
+    return new RetainedFixture(fixture, retainedGameRowId);
+  }
+
+  private void migrate(DriverManagerDataSource dataSource, String schema, MigrationVersion target) {
+    var configuration =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .table(FLYWAY_TABLE)
+            .placeholders(Map.of("serviceSchema", schema))
+            .locations("classpath:db/migration");
+    if (target != null) {
+      configuration.target(target);
+    }
+    configuration.load().migrate();
   }
 
   private String gameXmin(DSLContext dsl, String sourceGameTenantKey) {
@@ -474,6 +578,7 @@ class GameTenantCreationRepositoryIntegrationTest {
   private record Fixture(
       DriverManagerDataSource dataSource,
       DSLContext dsl,
+      GameRepository gameRepository,
       GameTenantCreationRepository repository,
       TransactionTemplate transactionTemplate) {
     private <T> T inTransaction(java.util.concurrent.Callable<T> work) throws Exception {
@@ -489,4 +594,6 @@ class GameTenantCreationRepositoryIntegrationTest {
           });
     }
   }
+
+  private record RetainedFixture(Fixture fixture, long retainedGameRowId) {}
 }

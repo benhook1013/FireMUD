@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
@@ -31,6 +32,8 @@ import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociatio
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameTenantIdentityResponse;
+import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityResponse;
 import org.jooq.exception.DataAccessException;
 import org.jooq.exception.TooManyRowsException;
 import org.junit.jupiter.api.Test;
@@ -44,6 +47,10 @@ class TenantIdentityGrpcServiceTest {
   private static final String WRONG_NAMESPACE_ACCOUNT_PEER =
       "spiffe://firemud/ns/other/sa/account-service";
   private static final String WRONG_PEER = "spiffe://firemud/ns/test/sa/game-session-service";
+  private static final String GAME_SESSION_PEER =
+      "spiffe://firemud/ns/test/sa/game-session-service";
+  private static final String WRONG_NAMESPACE_GAME_SESSION_PEER =
+      "spiffe://firemud/ns/other/sa/game-session-service";
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("87426bb3-a733-43f0-9c8e-2e379cbdf7ec");
   private static final UUID FRESH_CREATION_REQUEST_ID =
@@ -52,6 +59,10 @@ class TenantIdentityGrpcServiceTest {
       UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID FRESH_CANONICAL_TENANT_ID =
       UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID RUNTIME_REQUEST_ID =
+      UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final UUID RUNTIME_TENANT_ID =
+      UUID.fromString("55555555-5555-4555-8555-555555555555");
   private static final String FRESH_SOURCE_GAME_TENANT_KEY = "fresh-owner-key-91";
   private static final String FRESH_REQUEST_DIGEST =
       GameTenantCreationDigest.requestDigest(
@@ -405,6 +416,201 @@ class TenantIdentityGrpcServiceTest {
     assertNull(syntaxFailure.value);
   }
 
+  @Test
+  void exactGameSessionPeerReadsNewAndRetainedIdentityAndRetryKeepsOwnerSource() {
+    GameTenantIdentity newRowIdentity =
+        new GameTenantIdentity(
+            RUNTIME_TENANT_ID,
+            GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
+            19L,
+            "new-game-tenant-19");
+    when(repository.findRuntimeTenantIdentityByCanonicalTenantId(RUNTIME_TENANT_ID))
+        .thenReturn(Optional.of(newRowIdentity));
+
+    RuntimeIdentityObserver first =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+    RuntimeIdentityObserver retry =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+
+    assertNull(first.errorCode);
+    assertTrue(first.completed);
+    assertEquals(first.value, retry.value);
+    assertEquals(1, first.value.getSchemaVersion());
+    assertEquals("test", first.value.getTargetNamespace());
+    assertEquals(RUNTIME_REQUEST_ID.toString(), first.value.getRequestId());
+    assertEquals(RUNTIME_TENANT_ID.toString(), first.value.getCanonicalTenantId());
+    assertEquals(19L, first.value.getSourceGameRowId());
+    assertEquals("new-game-tenant-19", first.value.getSourceGameTenantKey());
+    assertEquals("NEW_GAME_ROW", first.value.getProvenanceKind());
+    verify(repository, org.mockito.Mockito.times(2))
+        .findRuntimeTenantIdentityByCanonicalTenantId(RUNTIME_TENANT_ID);
+
+    UUID retainedTenantId = UUID.fromString("66666666-6666-4666-8666-666666666666");
+    when(repository.findRuntimeTenantIdentityByCanonicalTenantId(retainedTenantId))
+        .thenReturn(
+            Optional.of(
+                new GameTenantIdentity(
+                    retainedTenantId,
+                    GameTenantIdentity.ProvenanceKind.RETAINED_GAME_V30,
+                    20L,
+                    "retained-game-tenant-20")));
+    RuntimeIdentityObserver retained =
+        runtimeIdentityCall(
+            retainedTenantId.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+    RuntimeIdentityObserver retainedRetry =
+        runtimeIdentityCall(
+            retainedTenantId.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+    assertNull(retained.errorCode);
+    assertEquals(retained.value, retainedRetry.value);
+    assertEquals("RETAINED_GAME_V30", retained.value.getProvenanceKind());
+    assertEquals(20L, retained.value.getSourceGameRowId());
+    assertEquals("retained-game-tenant-20", retained.value.getSourceGameTenantKey());
+  }
+
+  @Test
+  void runtimeIdentityRequiresExactGameSessionPeerBeforeRequestValidationOrOwnerRead() {
+    assertEquals(
+        Status.Code.PERMISSION_DENIED, runtimeIdentityStatus(runtimeIdentityCall("", "", null)));
+    assertEquals(
+        Status.Code.PERMISSION_DENIED,
+        runtimeIdentityStatus(runtimeIdentityCall("", "", ACCOUNT_PEER)));
+    assertEquals(
+        Status.Code.PERMISSION_DENIED,
+        runtimeIdentityStatus(runtimeIdentityCall("", "", WRONG_NAMESPACE_GAME_SESSION_PEER)));
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void runtimeIdentityRejectsMissingNilNoncanonicalAndUnknownRequestFieldsBeforeOwnerRead() {
+    String nil = "00000000-0000-0000-0000-000000000000";
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT,
+        runtimeIdentityStatus(
+            runtimeIdentityCall("", RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER)));
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT,
+        runtimeIdentityStatus(
+            runtimeIdentityCall(nil, RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER)));
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT,
+        runtimeIdentityStatus(
+            runtimeIdentityCall("55555555-5555-4555-8555-555555555555", nil, GAME_SESSION_PEER)));
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT,
+        runtimeIdentityStatus(
+            runtimeIdentityCall(
+                CANONICAL_TENANT_ID.toString().toUpperCase(),
+                RUNTIME_REQUEST_ID.toString(),
+                GAME_SESSION_PEER)));
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT,
+        runtimeIdentityStatus(
+            runtimeIdentityCall(
+                "55555555-5555-4555-8555-55555555555",
+                RUNTIME_REQUEST_ID.toString(),
+                GAME_SESSION_PEER)));
+    assertEquals(
+        Status.Code.INVALID_ARGUMENT,
+        runtimeIdentityStatus(
+            runtimeIdentityCall(
+                RUNTIME_TENANT_ID.toString(),
+                "44444444-4444-4444-8444-44444444444",
+                GAME_SESSION_PEER)));
+
+    RuntimeIdentityObserver unknownFields = new RuntimeIdentityObserver();
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            GrpcPeerIdentity.parseUri(GAME_SESSION_PEER).orElseThrow())
+        .run(
+            () ->
+                service.resolveRuntimeTenantIdentity(
+                    ResolveRuntimeTenantIdentityRequest.newBuilder()
+                        .setCanonicalTenantId(RUNTIME_TENANT_ID.toString())
+                        .setRequestId(RUNTIME_REQUEST_ID.toString())
+                        .setUnknownFields(
+                            UnknownFieldSet.newBuilder()
+                                .addField(
+                                    99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                                .build())
+                        .build(),
+                    unknownFields));
+    assertEquals(Status.Code.INVALID_ARGUMENT, runtimeIdentityStatus(unknownFields));
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void runtimeIdentityFailsClosedForAbsentMismatchedOrInvalidOwnerEvidence() {
+    UUID otherTenantId = UUID.fromString("77777777-7777-4777-8777-777777777777");
+    when(repository.findRuntimeTenantIdentityByCanonicalTenantId(RUNTIME_TENANT_ID))
+        .thenReturn(Optional.empty())
+        .thenReturn(
+            Optional.of(
+                new GameTenantIdentity(
+                    otherTenantId,
+                    GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
+                    19L,
+                    "new-game-tenant-19")))
+        .thenReturn(
+            Optional.of(
+                new GameTenantIdentity(
+                    RUNTIME_TENANT_ID,
+                    GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
+                    0L,
+                    "new-game-tenant-19")))
+        .thenReturn(
+            Optional.of(
+                new GameTenantIdentity(
+                    RUNTIME_TENANT_ID, GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW, 19L, " ")));
+
+    RuntimeIdentityObserver absent =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+    RuntimeIdentityObserver mismatched =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+    RuntimeIdentityObserver invalid =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+    RuntimeIdentityObserver invalidKey =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+
+    assertEquals(Status.Code.NOT_FOUND, runtimeIdentityStatus(absent));
+    assertEquals(Status.Code.FAILED_PRECONDITION, runtimeIdentityStatus(mismatched));
+    assertEquals(Status.Code.FAILED_PRECONDITION, runtimeIdentityStatus(invalid));
+    assertEquals(Status.Code.FAILED_PRECONDITION, runtimeIdentityStatus(invalidKey));
+    assertNull(absent.value);
+    assertNull(mismatched.value);
+    assertNull(invalid.value);
+    assertNull(invalidKey.value);
+  }
+
+  @Test
+  void runtimeIdentityMapsAmbiguousOrContradictoryRowsToSafePrecondition() {
+    when(repository.findRuntimeTenantIdentityByCanonicalTenantId(RUNTIME_TENANT_ID))
+        .thenThrow(new TooManyRowsException("internal duplicate detail"))
+        .thenThrow(new IllegalStateException("internal source row/key mismatch"));
+
+    RuntimeIdentityObserver ambiguous =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+    RuntimeIdentityObserver contradictory =
+        runtimeIdentityCall(
+            RUNTIME_TENANT_ID.toString(), RUNTIME_REQUEST_ID.toString(), GAME_SESSION_PEER);
+
+    assertEquals(Status.Code.FAILED_PRECONDITION, runtimeIdentityStatus(ambiguous));
+    assertEquals(Status.Code.FAILED_PRECONDITION, runtimeIdentityStatus(contradictory));
+    assertEquals(
+        "Game Design tenant identity provenance is ambiguous or invalid",
+        ambiguous.errorDescription);
+    assertEquals(
+        "Game Design tenant identity provenance is ambiguous or invalid",
+        contradictory.errorDescription);
+  }
+
   private TestObserver call(String sourceKey, String peerUri) {
     TestObserver observer = new TestObserver();
     Context context = Context.current();
@@ -456,6 +662,26 @@ class TenantIdentityGrpcServiceTest {
                 ResolveFreshTenantCreationRequest.newBuilder()
                     .setCreationRequestId(creationRequestId)
                     .setExpectedRequestDigest(expectedRequestDigest)
+                    .build(),
+                observer));
+    return observer;
+  }
+
+  private RuntimeIdentityObserver runtimeIdentityCall(
+      String canonicalTenantId, String requestId, String peerUri) {
+    RuntimeIdentityObserver observer = new RuntimeIdentityObserver();
+    Context context = Context.current();
+    if (peerUri != null) {
+      context =
+          context.withValue(
+              GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(peerUri).orElseThrow());
+    }
+    context.run(
+        () ->
+            service.resolveRuntimeTenantIdentity(
+                ResolveRuntimeTenantIdentityRequest.newBuilder()
+                    .setCanonicalTenantId(canonicalTenantId)
+                    .setRequestId(requestId)
                     .build(),
                 observer));
     return observer;
@@ -515,6 +741,11 @@ class TenantIdentityGrpcServiceTest {
   }
 
   private static Status.Code freshCreationStatus(FreshCreationObserver observer) {
+    assertNotNull(observer.errorCode);
+    return observer.errorCode;
+  }
+
+  private static Status.Code runtimeIdentityStatus(RuntimeIdentityObserver observer) {
     assertNotNull(observer.errorCode);
     return observer.errorCode;
   }
@@ -582,6 +813,31 @@ class TenantIdentityGrpcServiceTest {
     @Override
     public void onError(Throwable failure) {
       errorCode = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class RuntimeIdentityObserver
+      implements StreamObserver<ResolveRuntimeTenantIdentityResponse> {
+    private ResolveRuntimeTenantIdentityResponse value;
+    private Status.Code errorCode;
+    private String errorDescription;
+    private boolean completed;
+
+    @Override
+    public void onNext(ResolveRuntimeTenantIdentityResponse response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      Status status = Status.fromThrowable(failure);
+      errorCode = status.getCode();
+      errorDescription = status.getDescription();
     }
 
     @Override

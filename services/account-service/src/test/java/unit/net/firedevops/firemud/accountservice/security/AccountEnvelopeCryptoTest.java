@@ -18,6 +18,7 @@ import net.firedevops.firemud.accountservice.security.AccountEnvelopeCrypto;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeCryptoException;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeCryptoException.Failure;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopePurpose;
+import net.firedevops.firemud.accountservice.security.BareLoginRecoveryPayload;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -41,11 +42,16 @@ class AccountEnvelopeCryptoTest {
     byte[] exactResult = "the exact previously issued result".getBytes(StandardCharsets.UTF_8);
     AccountEnvelopeBinding loginBinding = loginBinding("login-op-1", "login-request-1");
     byte[] exactLoginResult = "the exact bare LOGIN result".getBytes(StandardCharsets.UTF_8);
+    byte[] exactLoginRecoveryPayload =
+        BareLoginRecoveryPayload.of(
+                "original-protected.original-payload.original-signature", exactLoginResult)
+            .encode();
 
     AccountEncryptedEnvelope envelope =
         writer.encrypt(AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE, binding, exactResult);
     AccountEncryptedEnvelope loginEnvelope =
-        writer.encrypt(AccountEnvelopePurpose.BARE_LOGIN_RESPONSE, loginBinding, exactLoginResult);
+        writer.encrypt(
+            AccountEnvelopePurpose.BARE_LOGIN_RESPONSE, loginBinding, exactLoginRecoveryPayload);
     AccountEnvelopeCrypto recoveryReader = new AccountEnvelopeCrypto(manifestPath);
 
     assertEquals("k1", envelope.keyId());
@@ -56,9 +62,17 @@ class AccountEnvelopeCryptoTest {
     assertEquals("k1", loginEnvelope.keyId());
     assertEquals(AccountEnvelopePurpose.BARE_LOGIN_RESPONSE, loginEnvelope.purpose());
     assertArrayEquals(
-        exactLoginResult,
+        exactLoginRecoveryPayload,
         recoveryReader.decrypt(
             loginEnvelope, AccountEnvelopePurpose.BARE_LOGIN_RESPONSE, loginBinding));
+    BareLoginRecoveryPayload recoveredLoginPayload =
+        BareLoginRecoveryPayload.decode(
+            recoveryReader.decrypt(
+                loginEnvelope, AccountEnvelopePurpose.BARE_LOGIN_RESPONSE, loginBinding));
+    assertEquals(
+        "original-protected.original-payload.original-signature",
+        recoveredLoginPayload.originalGatewayContext());
+    assertArrayEquals(exactLoginResult, recoveredLoginPayload.originalResultBytes());
     assertFailure(
         Failure.AUTHENTICATION_FAILED,
         () ->
