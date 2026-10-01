@@ -4,7 +4,7 @@ info:
   description: >-
     Current REST route mutations require a Bearer JWT accepted by the gateway's
     privileged-role predicate, which currently accepts global or tenant-scoped
-    privileged roles; global-role-only enforcement is implementation drift.
+    privileged roles; acceptance of tenant-scoped roles is implementation drift.
     The target management contract requires exact operator authentication and
     global privileged authorization on an internal dev/test-only surface.
   version: 1.0.0

@@ -36,7 +36,7 @@ Describing this as “exactly-once execution” would wrongly imply one physical
 
 ## Decision
 
-An `ACCEPTED_VOLATILE` command still in `RECEIVED` or `ENQUEUED`, with no surviving durable `tickBatchId`, effect ledger, or source/effect claim, may terminate as lost before durable staging only when an atomic owner-defined no-batch CAS/version-fenced check wins:
+An `ACCEPTED_VOLATILE` command may terminate as lost before durable staging only when an atomic owner-defined CAS/version-fenced transition on the authoritative command record wins from the eligible `RECEIVED` or `ENQUEUED` state; if concurrent staging wins, the loss transition affects zero rows. The owner must also provide positive authoritative evidence that no batch committed, no effect was materialized, and no domain application occurred; ingress status or a missing batch/effect identifier alone is insufficient. The current purge path does not prove this target boundary. See the evidence owner contracts in [Transactions](../system-architecture-transactions.md) and [Tick Failures and Operations](../system-architecture-tick-failures-and-operations.md).
 
 - `executionOutcome = LOST_BEFORE_STAGING`; and
 - `gameplayResult = NOT_APPLIED`.
