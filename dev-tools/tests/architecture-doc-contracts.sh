@@ -1846,6 +1846,23 @@ require_contains(
     ],
 )
 require_contains(
+    "design/architecture/system-architecture-scripting-control-plane-operations.md",
+    [
+        "no surviving durable batch, effect ledger, or source/effect claim",
+        "atomic owner-defined no-batch/version-fenced check wins",
+        "A matching binding and `RETRY_QUEUED` status alone do not prove `NOT_APPLIED`",
+        "inconclusive work remains nonterminal and reconciliation-required",
+    ],
+)
+require_contains(
+    "design/project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md",
+    [
+        "does not require authoritative evidence that the effect was unapplied",
+        "`RETRY_QUEUED` is enough for the current code to write `ABANDONED`/`NOT_APPLIED`",
+        "no runtime fix is claimed here",
+    ],
+)
+require_contains(
     "design/architecture/system-architecture-scripting-rollout-and-rollback.md",
     [
         "complete affected scope set from the authoritative durable PostgreSQL/runtime inventory",
