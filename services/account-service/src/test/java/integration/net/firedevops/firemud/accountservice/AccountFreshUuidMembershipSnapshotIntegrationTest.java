@@ -45,6 +45,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -226,12 +227,14 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     AccountFixture account = accountFixture();
     UUID tenantUuid = UUID.randomUUID();
     importFreshTenantAssociation(tenantUuid);
+    AccountMembershipPairAuthorityRepository pairAuthorityTarget =
+        AopTestUtils.getUltimateTargetObject(pairAuthorityRepository);
     doAnswer(
             invocation -> {
               invocation.callRealMethod();
               throw new IllegalStateException("simulated failure after pair enrollment");
             })
-        .when(pairAuthorityRepository)
+        .when(pairAuthorityTarget)
         .enrollAbsence(eq(account.accountUuid()), eq(tenantUuid), any());
 
     assertThatThrownBy(
