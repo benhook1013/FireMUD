@@ -2155,7 +2155,7 @@ for tick_commit_path in (
         tick_commit_path,
         [
             "current-epoch commit predicate: terminal (`APPLIED` or `ABANDONED`) evidence",
-            "every required participant in that tick's complete expected current-epoch participant set",
+            "every eligible ledger row in that tick's complete expected current-epoch participant set",
             "Inconclusive old-epoch rows remain non-terminal reconciliation work outside this current-epoch commit predicate",
             "may still block unsafe next-tick progression, reset-scope convergence, or reopening",
         ],
@@ -2163,10 +2163,19 @@ for tick_commit_path in (
     require_absent(
         tick_commit_path,
         [
+            "every required participant in that tick's complete expected current-epoch participant set",
             "An inconclusive old-epoch row remains non-terminal and blocks this advancement",
             "inconclusive old-epoch work remains non-terminal and prevents this boundary",
         ],
     )
+
+require_contains(
+    "design/architecture/system-architecture-ticks.md",
+    [
+        "every eligible ledger row in that tick's complete expected current-epoch participant set",
+        "Required-versus-optional classification affects command-result aggregation, not tick commit",
+    ],
+)
 
 automation_base = (root / "k8s/base/automation-scripting-service.yaml").read_text(encoding="utf-8")
 game_design_base = (root / "k8s/base/game-design-service.yaml").read_text(encoding="utf-8")
