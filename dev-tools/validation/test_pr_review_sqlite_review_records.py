@@ -257,6 +257,13 @@ class SqliteReviewRecordsTest(unittest.TestCase):
 
         self.assertEqual(str(raised.exception), "review attempt does not exist")
 
+    def test_partial_schema_without_metadata_is_incompatible_not_unbootstrapped(self) -> None:
+        self.bootstrap()
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("DROP TABLE review_records_metadata")
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, "schema is partial"):
+            self.records.attempt("partial-schema-attempt")
+
     def test_attempt_distinguishes_unbootstrapped_and_incompatible_records_schemas(self) -> None:
         with self.assertRaises(RecordsNotBootstrapped):
             self.records.attempt("attempt-on-unbootstrapped-database")

@@ -19,7 +19,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
-from pr_review import cli_runner, hosted, stack
+from pr_review import cli_runner, evidence, hosted, sqlite_provider_imports, stack
 from pr_review.cli import _parser
 from pr_review.controller import (
     HOSTED_ACTIVE_RESPONSE_REASON,
@@ -2545,6 +2545,84 @@ class ControllerTests(unittest.TestCase):
                     with self.assertRaises(ControllerError):
                         controller.resolve_hosted_target()
 
+    def test_bounded_allocation_uses_durable_resolution_for_accepted_finding_clearance(self):
+        resolved_history = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="bounded-baseline"),
+            ]
+        }
+        resolved = self.grant_bounded_allocation(
+            cap=1,
+            minimum=1,
+            evidence=resolved_history,
+        )
+        resolved_history[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="resolved-same-head",
+                accepted=1,
+                source_resolution_status="resolved",
+            )
+        )
+        progress = resolved.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(progress["status"], "CAP_AUDITED_STOP")
+
+        reconstructed_history = {
+            (1, "hosted"): [
+                self.allocation_evidence(
+                    head=HEAD_1,
+                    checkpoint="resolved-historical",
+                    accepted=1,
+                    source_resolution_status="resolved",
+                ),
+                self.allocation_evidence(head=HEAD_2, checkpoint="current-baseline"),
+                self.scope_timeline_evidence(1, "hosted", HEAD_2),
+            ]
+        }
+        reconstructed = self.make(
+            {1: pr(1, HEAD_2)},
+            reconstructed_history,
+            heads={"feature-1": HEAD_2},
+        )
+        reconstructed.set_stack([1])
+        reconstructed.git.is_ancestor = lambda _ancestor, _descendant: False
+        reopened = reconstructed.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=HEAD_2,
+            checkpoint="current-baseline",
+            min_additional_completed=1,
+            max_additional_completed=1,
+            fresh_taper=True,
+            reason="reopen bounded review after reconstructed source proof",
+        )
+        self.assertEqual(reopened["progress"]["status"], "CAP_ACTIVE")
+
+        pending_history = {
+            (1, "hosted"): [
+                self.allocation_evidence(checkpoint="bounded-baseline"),
+            ]
+        }
+        pending = self.grant_bounded_allocation(
+            cap=1,
+            minimum=1,
+            evidence=pending_history,
+        )
+        pending_history[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="pending-descendant",
+                accepted=1,
+                source_resolution_status="pending",
+            )
+        )
+        pending.github.values[1] = pr(1, HEAD_2)
+        pending.git.heads["feature-1"] = HEAD_2
+        pending.git.is_ancestor = lambda _ancestor, _descendant: True
+
+        pending_progress = pending.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(pending_progress["status"], "CAP_EXHAUSTED_PENDING")
+        self.assertIn("accepted findings need a published corrected head", pending_progress["details"])
+
     def test_fresh_taper_keeps_same_head_audit_and_active_work_holds(self):
         historical_head = "3f" * 20
         cases = (
@@ -3658,17 +3736,28 @@ class ControllerTests(unittest.TestCase):
                     "channel": "hosted",
                     "repository": "owner/repo",
                     "checkpoint_id": 7001,
+                    "checkpoint_fingerprint": "",
                     "provider_id": "review:9001",
                     "run_id": "hosted-run",
                 }
             ]
         )
         hosted_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=hosted_records)
-        hosted_checkpoint = SimpleNamespace(
-            run_id=None,
+        hosted_checkpoint = evidence.Checkpoint(
             comment_id=7001,
-            hosted_review_id=9001,
+            created_at="2026-09-30T10:00:00Z",
+            type="Hosted",
+            raw_found=2,
             accepted=2,
+            reviewed_sha=HEAD_1,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=9001,
+        )
+        hosted_records.origins[0]["checkpoint_fingerprint"] = sqlite_provider_imports._checkpoint_fingerprint(
+            hosted_checkpoint
         )
         self.assertEqual(
             hosted_evidence._source_resolution_status(42, "hosted", hosted_checkpoint, HEAD_1),
@@ -3683,6 +3772,7 @@ class ControllerTests(unittest.TestCase):
                     "source_pr": 42,
                     "channel": "hosted",
                     "checkpoint_id": 7001,
+                    "checkpoint_fingerprint": sqlite_provider_imports._checkpoint_fingerprint(hosted_checkpoint),
                     "provider_id": "9002",
                     "run_id": "wrong-provider-run",
                 }
@@ -3783,7 +3873,19 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(records.history(42)["provider_origins"], [])
         self.assertIsNone(records.history(42)["attempts"][0]["checkpoint_id"])
 
-        checkpoint = SimpleNamespace(run_id=None, comment_id=7001, hosted_review_id=9001, accepted=3)
+        checkpoint = evidence.Checkpoint(
+            comment_id=7001,
+            created_at="2026-09-30T10:00:00Z",
+            type="Hosted",
+            raw_found=3,
+            accepted=3,
+            reviewed_sha=HEAD_1,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=9001,
+        )
         evidence_before = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
         self.assertEqual(
             evidence_before._source_resolution_status(42, "hosted", checkpoint, HEAD_1), "pending"

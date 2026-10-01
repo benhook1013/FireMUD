@@ -190,6 +190,85 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             decided_at="2026-09-27T12:00:00Z",
         )
 
+    def imported_resolution_fixture(self, channel: str) -> tuple[evidence.Checkpoint, str]:
+        if channel == "cli":
+            self.cli_capture(decision_text="1\taccepted\tvalidated source finding\n")
+            checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Repair1 -->")
+        else:
+            self.hosted_capture()
+            checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+        # A real immutable comment author was omitted by the older as_json archive.
+        checkpoint = dataclasses.replace(checkpoint, author_login="checkpoint-owner")
+        report = repair_provider_checkpoints(
+            self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint],
+            actor="backfill-reviewer", common=self.common, dry_run=False,
+        )
+        return checkpoint, report["items"][0]["run_id"]
+
+    def resolution_status(self, checkpoint: evidence.Checkpoint, run_id: str, channel: str) -> str | None:
+        return self.records.source_resolution_status(
+            run_id, source_pr=PR, source_channel=channel, source_head=HEAD,
+            accepted_count=1, source_checkpoint=checkpoint, source_repository=REPO,
+        )
+
+    def resolve_imported_finding(self, run_id: str) -> None:
+        key = self.records.history(PR)["findings"][0]["source_finding_key"]
+        self.records.record_source_resolution(
+            run_id, key, source_pr=PR, resolution_id="resolution.imported",
+            fix_sha="d" * 40, actor="fix-owner", proof_note="focused regression passed",
+        )
+
+    def test_imported_cli_exact_origin_honors_unresolved_and_resolved_source(self) -> None:
+        checkpoint, imported_id = self.imported_resolution_fixture("cli")
+        self.assertNotEqual(imported_id, checkpoint.run_id)
+        self.assertEqual(self.records.history(PR)["attempts"], [])
+        capture = evidence.load_cli_capture(
+            checkpoint, repo=REPO, pr_number=PR, common=self.common, records=self.records
+        )
+        self.assertEqual(capture.decisions[1][0], "accepted")
+        self.assertEqual(self.resolution_status(checkpoint, checkpoint.run_id, "cli"), "pending")
+        self.resolve_imported_finding(imported_id)
+        self.assertEqual(self.resolution_status(checkpoint, checkpoint.run_id, "cli"), "resolved")
+        from pr_review.runtime import LiveEvidence, LiveGitHub
+        live = LiveEvidence(REPO, LiveGitHub(REPO), records=self.records)
+        self.assertEqual(live._source_resolution_status(PR, "cli", checkpoint, HEAD), "resolved")
+        self.assertEqual(self.resolution_status(dataclasses.replace(checkpoint, comment_id=11), checkpoint.run_id, "cli"), "pending")
+
+    def test_imported_source_checkpoint_binding_allows_only_semantically_neutral_edits(self) -> None:
+        checkpoint, imported_id = self.imported_resolution_fixture("hosted")
+        self.resolve_imported_finding(imported_id)
+        self.assertEqual(self.resolution_status(checkpoint, imported_id, "hosted"), "resolved")
+        edited = dataclasses.replace(checkpoint, updated_at="2026-09-28T12:00:00Z")
+        parsed, unparsed = evidence.parse_checkpoint_comments([{
+            "id": checkpoint.comment_id,
+            "created_at": checkpoint.created_at,
+            "updated_at": edited.updated_at,
+            "author": {"login": checkpoint.author_login},
+            "body": f"Hosted: 1 found / 1 accepted / 0 routed · {HEAD[:12]} · 1 files\n\n<!-- firemud-hosted-review: 700 -->\n",
+        }])
+        self.assertEqual(unparsed, 0)
+        self.assertEqual(self.resolution_status(parsed[0], imported_id, "hosted"), "resolved")
+        for change in ({"raw_found": 2}, {"hosted_review_id": 701}, {"file_count": 2}, {"duration_seconds": 20}):
+            with self.subTest(change=change):
+                self.assertEqual(self.resolution_status(dataclasses.replace(edited, **change), imported_id, "hosted"), "pending")
+        with sqlite3.connect(self.database) as connection:
+            row = connection.execute("SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'metadata'", (imported_id,)).fetchone()
+            metadata = json.loads(row[0])
+            metadata.pop("checkpoint_fields")
+            metadata["checkpoint"].pop("author_login", None)
+            old_content = json.dumps(metadata)
+            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'", (old_content, imported_id))
+        self.assertEqual(self.resolution_status(edited, imported_id, "hosted"), "resolved")
+        self.assertEqual(self.resolution_status(dataclasses.replace(edited, author_login="different-owner"), imported_id, "hosted"), "pending")
+        metadata["checkpoint"]["raw_found"] = 2
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'", (json.dumps(metadata), imported_id))
+        self.assertEqual(self.resolution_status(edited, imported_id, "hosted"), "pending")
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ? AND kind = 'metadata'", (old_content, imported_id))
+            connection.execute("UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?", ("0" * 64, imported_id))
+        self.assertEqual(self.resolution_status(edited, imported_id, "hosted"), "pending")
+
     def test_missing_old_capture_is_archived_as_gap_without_review_credit(self) -> None:
         checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Lost -->")
         preview = archive_incomplete_checkpoint(

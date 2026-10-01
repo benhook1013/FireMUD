@@ -25,7 +25,7 @@ from .cli_runner import (
     run_cli_review,
 )
 from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
-from .sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+from .sqlite_review_records import RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
 from .state import (
     ControllerStateStore,
     StateError,
@@ -1739,6 +1739,8 @@ class LiveEvidence:
             if pr not in self._records_histories:
                 try:
                     self._records_histories[pr] = self.records.history(pr)
+                except RecordsNotBootstrapped:
+                    return None
                 except (ReviewRecordsError, OSError):
                     self._records_histories[pr] = None
             history = self._records_histories[pr]
@@ -1832,7 +1834,14 @@ class LiveEvidence:
                 source_channel=channel,
                 source_head=source_head,
                 accepted_count=checkpoint.accepted,
+                **(
+                    {"source_checkpoint": checkpoint, "source_repository": self.repo}
+                    if type(checkpoint.comment_id) is int
+                    else {}
+                ),
             )
+        except RecordsNotBootstrapped:
+            return None
         except (ReviewRecordsError, OSError):
             return "pending"
 

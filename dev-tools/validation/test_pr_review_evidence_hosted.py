@@ -822,6 +822,13 @@ class GithubAndEvidenceTests(unittest.TestCase):
             self.assertEqual(repaired.decisions, {1: ("rejected", "legacy raw fallback")})
             self.assertEqual(repaired.findings[0]["message"], "raw")
 
+            with sqlite3.connect(database) as connection:
+                connection.execute("DROP TABLE review_records_metadata")
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "incompatible schema"):
+                evidence.load_cli_capture(
+                    self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records
+                )
+
     def test_native_cli_discovery_loads_sql_attempts_and_deduplicates_retained_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)

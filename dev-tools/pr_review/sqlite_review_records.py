@@ -1726,6 +1726,8 @@ class SqliteReviewRecords:
         source_channel: ReviewChannel,
         source_head: str,
         accepted_count: int,
+        source_checkpoint: Any = None,
+        source_repository: str | None = None,
     ) -> str | None:
         """Return proof status, or None for a CLI capture with no structured association."""
 
@@ -1742,6 +1744,45 @@ class SqliteReviewRecords:
         with contextlib.closing(self._connect(read_only=True)) as connection:
             connection.execute("BEGIN")
             self._require_compatible(connection)
+            if source_checkpoint is not None:
+                from .evidence import Checkpoint
+
+                if not isinstance(source_checkpoint, Checkpoint) or not isinstance(source_repository, str):
+                    raise ReviewRecordsError("source checkpoint binding requires parsed checkpoint and repository")
+                provider_ids = (
+                    (source_checkpoint.run_id, f"run:{source_checkpoint.run_id}")
+                    if source_channel == "cli"
+                    else (str(source_checkpoint.hosted_review_id), f"review:{source_checkpoint.hosted_review_id}")
+                )
+                origins = connection.execute(
+                    "SELECT repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint, run_id "
+                    "FROM provider_origins WHERE checkpoint_id = ? OR "
+                    "(source_pr = ? AND channel = ? AND provider_id IN (?, ?))",
+                    (source_checkpoint.comment_id, source_pr, source_channel, *provider_ids),
+                ).fetchall()
+                if origins:
+                    if len(origins) != 1:
+                        return "pending"
+                    origin = origins[0]
+                    if (
+                        origin[0] != source_repository.casefold()
+                        or origin[1] != source_pr
+                        or origin[2] != source_channel
+                        or origin[3] not in provider_ids
+                        or origin[4] != source_checkpoint.comment_id
+                        or not self._source_checkpoint_matches(connection, origin[6], origin[5], source_checkpoint)
+                    ):
+                        return "pending"
+                    if source_channel == "cli":
+                        if origin[6] != run_id and connection.execute(
+                            "SELECT 1 FROM review_runs WHERE run_id = ? "
+                            "UNION ALL SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? LIMIT 1",
+                            (run_id, run_id, run_id),
+                        ).fetchone() is not None:
+                            return "pending"
+                        run_id = origin[6]
+                    elif origin[6] != run_id:
+                        return "pending"
             run = connection.execute(
                 "SELECT source_pr, channel, source_head, outcome, attributable, accepted_count, finalized "
                 "FROM review_runs WHERE run_id = ?",
@@ -1818,6 +1859,50 @@ class SqliteReviewRecords:
                 except ReviewRecordsError:
                     return "pending"
             return "resolved"
+
+    @staticmethod
+    def _source_checkpoint_matches(
+        connection: sqlite3.Connection, run_id: str, fingerprint: str, checkpoint: Any
+    ) -> bool:
+        """Verify retained checkpoint identity while neutralizing only its edit timestamp."""
+
+        from .sqlite_provider_imports import _checkpoint_fingerprint
+
+        row = connection.execute(
+            "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'metadata'", (run_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            metadata = json.loads(row[0])
+            stored = metadata["checkpoint"]
+            if not isinstance(stored, dict) or metadata.get("checkpoint_fingerprint") != fingerprint:
+                return False
+            if "checkpoint_fields" in metadata:
+                recorded = type(checkpoint)(**metadata["checkpoint_fields"])
+                if recorded.as_json() != stored:
+                    return False
+            else:
+                required = ("comment_id", "created_at", "type", "raw_found", "accepted", "reviewed_sha", "file_count", "correction")
+                recorded = dataclasses.replace(
+                    checkpoint,
+                    **{key: stored[key] for key in required},
+                    updated_at=stored.get("updated_at"),
+                    run_id=stored.get("run_id"),
+                    hosted_review_id=stored.get("hosted_review_id"),
+                    duration_seconds=stored.get("duration_seconds"),
+                    duration_invalid=stored.get("duration_invalid", False),
+                    routed=stored.get("routed"),
+                    author_login=stored.get("author_login", checkpoint.author_login),
+                )
+            # Only older snapshots without the author use the immutable
+            # current GitHub author, and still have to reproduce the hash.
+            return (
+                _checkpoint_fingerprint(recorded) == fingerprint
+                and _checkpoint_fingerprint(dataclasses.replace(checkpoint, updated_at=recorded.updated_at)) == fingerprint
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def import_completed_run(
         self,
@@ -3154,6 +3239,8 @@ class SqliteReviewRecords:
         self._require_controller_compatible(connection)
         tables = self._table_names(connection)
         if _RECORDS_METADATA_TABLE not in tables:
+            if tables & _RECORDS_TABLES:
+                raise RecordsSchemaIncompatible("review-records schema is partial: metadata table is missing")
             raise RecordsNotBootstrapped("review-records schema is not bootstrapped; call bootstrap() explicitly")
         try:
             row = connection.execute(

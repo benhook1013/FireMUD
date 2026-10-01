@@ -2684,20 +2684,29 @@ class ReviewController:
                     if type(evidence_value.accepted) is not int or evidence_value.accepted < 0:
                         raise ControllerError(f"{selected.value} channel has a malformed accepted finding count")
                     if evidence_value.accepted > 0:
-                        reviewed_head = _field(value, "head", "reviewed_head")
-                        try:
-                            reviewed_head = _sha(reviewed_head, "accepted finding reviewed head")
-                            has_corrected_descendant = not require_checkpoint_ancestry or self.git.is_ancestor(
-                                reviewed_head, current.child_head
-                            )
-                        except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as exc:
-                            raise ControllerError(
-                                "could not verify corrected-head ancestry for accepted findings"
-                            ) from exc
-                        if not has_corrected_descendant or reviewed_head == current.child_head.casefold():
-                            raise ControllerError(
-                                "accepted findings need a published corrected head before review can stop"
-                            )
+                        has_source_resolution = (
+                            isinstance(value, Mapping) and "source_resolution_status" in value
+                        ) or hasattr(value, "source_resolution_status")
+                        if has_source_resolution:
+                            if self._accepted_findings_pending(value, current.child_head):
+                                raise ControllerError(
+                                    "accepted findings need a published corrected head before review can stop"
+                                )
+                        else:
+                            reviewed_head = _field(value, "head", "reviewed_head")
+                            try:
+                                reviewed_head = _sha(reviewed_head, "accepted finding reviewed head")
+                                has_corrected_descendant = not require_checkpoint_ancestry or self.git.is_ancestor(
+                                    reviewed_head, current.child_head
+                                )
+                            except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as exc:
+                                raise ControllerError(
+                                    "could not verify corrected-head ancestry for accepted findings"
+                                ) from exc
+                            if not has_corrected_descendant or reviewed_head == current.child_head.casefold():
+                                raise ControllerError(
+                                    "accepted findings need a published corrected head before review can stop"
+                                )
                 active_hosted_identity = (_field(value, "trigger_id"), _field(value, "response_id"))
                 if (
                     allow_exact_hosted_overlap
@@ -2838,7 +2847,14 @@ class ReviewController:
         if type(accepted) is not int or accepted < 0:
             raise ControllerError("latest attributable checkpoint has a malformed accepted count")
         reviewed_head = _field(latest, "head", "reviewed_head")
-        if accepted > 0 and reviewed_head.casefold() == current.child_head.casefold():
+        has_source_resolution = (
+            isinstance(latest, Mapping) and "source_resolution_status" in latest
+        ) or hasattr(latest, "source_resolution_status")
+        if (
+            accepted > 0
+            and reviewed_head.casefold() == current.child_head.casefold()
+            and (not has_source_resolution or self._accepted_findings_pending(latest, current.child_head))
+        ):
             raise ControllerError("accepted findings need a published corrected head before review can stop")
         retained = (retained_fingerprints, retained_reason) if retained_fingerprints else None
         return latest, retained, histories
