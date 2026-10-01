@@ -2174,6 +2174,49 @@ require_contains(
     [
         "every eligible ledger row in that tick's complete expected current-epoch participant set",
         "Required-versus-optional classification affects command-result aggregation, not tick commit",
+        "`entity_enqueue_seq` is allocated within the complete entity scope `(tenantId, gameInstanceId, playableStateNamespaceId, regionId, regionEpoch, entityId)`",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-scripting-examples-and-patterns.md",
+    [
+        "The current authenticated receiving RPCs fail closed with `FAILED_PRECONDITION` (`automation_admission_receiver_fence_unavailable`) before mutation",
+        "prove neither local tick-queue acceptance nor remote follow-up scheduling",
+        "the target Trigger Identity additionally requires `playableStateNamespaceId`, which current `TriggerScriptEventRequest` does not carry",
+        "The current request carries `playableStateScope` separately as exact-validated policy/routing/authorization/migration-fence evidence, not as an identity field",
+        "**Target-state audit contract:** An audit record is written to `script_event_audit` for each resolved handler Trigger Identity",
+        "Current `TriggerScriptEventRequest` has no `playableStateNamespaceId`; its `playableStateScope` remains separate evidence and cannot substitute for the target namespace identity",
+    ],
+)
+require_absent(
+    "design/architecture/system-architecture-scripting-examples-and-patterns.md",
+    [
+        "For same-scope targets, `ENQUEUED` means Game Session accepted the command into the local tick queue",
+        "for distinct target scopes, `REMOTE_SCHEDULED` means only that the remote follow-up was scheduled",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-tick-incident-runbook.md",
+    [
+        "if none is available, preserve any active broader containment, block further mutations, mark exact containment unverified, and escalate",
+        "current-live [executor fencing/drain gate](#act-stalled-tick-region)",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-gateway.md",
+    [
+        "Before normal release, old Gateway replay writers must be drained or authoritatively blocked",
+        "the complete tagged replay state and readiness/fence state must be authoritative",
+        "If any old-version writer or admission remains allowed, release additionally requires a separately proven cross-version guard",
+        "none is currently implemented or proven, so that mixed-version release path remains forbidden",
+    ],
+)
+require_contains(
+    "design/architecture/system-architecture-redis-ops-access.md",
+    [
+        "Quarantine release and Cache-reset admission remain fail-closed until the [Gateway replay-quarantine release gate](./system-architecture-gateway.md#tenant-aware-edge-connect-token-gameplay-handshake) is proven",
+        "the current untagged replay state and generic writer do not satisfy it",
+        "If old-version writers/admission cannot be excluded, release additionally requires a separately proven cross-version guard, which is not currently implemented or proven",
     ],
 )
 
