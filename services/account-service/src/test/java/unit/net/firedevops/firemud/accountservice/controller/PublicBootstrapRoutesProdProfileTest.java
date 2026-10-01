@@ -37,10 +37,11 @@ class PublicBootstrapRoutesProdProfileTest {
   @Test
   void playerBootstrapRemainsPublicInProdProfile() throws Exception {
     PlayerBootstrapRequest request = new PlayerBootstrapRequest("demo@example.com", "swordfish");
+    String accountUuid = "59a39c43-6829-48b1-8d09-99bfe533d919";
     when(accountService.issuePlayerBootstrap("demo@example.com", "swordfish"))
         .thenReturn(
             new PlayerBootstrapResult(
-                1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));
+                accountUuid, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));
 
     mockMvc
         .perform(
@@ -49,7 +50,7 @@ class PublicBootstrapRoutesProdProfileTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.accountId").value(accountUuid))
         .andExpect(jsonPath("$.data.bootstrapToken").value("boot123"));
   }
 

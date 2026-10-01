@@ -1004,6 +1004,9 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#databaseInsertAuthenticationUsesTriggerProvedUuidAndCannotRemapItsSource()' \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#unmappedUuidDeniesProfileMutationEvenWhenBodyNamesAnExistingPrivateRow()' \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#emailOtpAuthenticationIssuesPersistedUuidAndConsumesTheChallengeExactlyOnce()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#playerBootstrapEmailOtpCarriesPersistedUuidAndConsumesChallengeExactlyOnce()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#bootstrapConsumerRejectsUnmappedAccountUuidBeforeSessionLookup()' \
+            --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#bootstrapConnectScopeRejectsUnmappedAccountUuidBeforeScopeUse()' \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForControlUiAuthentication()' \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForGameplayAuthentication()' \
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#rejectedEmailOtpPersistsChallengeAttemptForOtpCompletion()' \
