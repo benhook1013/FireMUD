@@ -139,6 +139,8 @@ message VerifyEmailLoginOtpRequest {
 message GetTenantMembershipForRuntimeRequest {
   reserved 1, 2, 3;
   reserved "account_id", "tenant_id", "request_id";
+  // account_id and tenant_id are exact canonical UUIDs, never private numeric row keys.
+  // The complete selected target is checked separately; this unsigned context is not authority.
   shared.v1.PlayerExecutionContext player_context = 4;
 }
 
@@ -158,8 +160,8 @@ message GetTenantMembershipForRuntimeResponse {
   repeated RuntimeOutboxSourceEvidence outbox_source_evidence = 14;
   repeated string roles = 15;
   RuntimeMembershipBaseline membership_baseline = 17;
-  string request_account_id = 18;
-  string request_tenant_id = 19;
+  string request_account_id = 18; // Exact canonical UUID echo of player_context.account_id.
+  string request_tenant_id = 19; // Exact canonical UUID echo of player_context.tenant_id.
   string request_id = 20;
 }
 

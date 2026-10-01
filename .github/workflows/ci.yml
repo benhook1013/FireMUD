@@ -1020,6 +1020,8 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#freshUuidSnapshotEnrollsExactNonAdmittingBaselineAndRetriesWithoutSideEffects()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#freshUuidSnapshotRejectsAdvancedTenantGenerationAndRollsBackBaselineWrites()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#concurrentFreshUuidSnapshotCallsInitializeOneExactPairBaseline()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadUsesFreshUuidAssociationWithoutInventingRetainedAlias()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadRejectsUnmappedTenantUuidWithoutEnrollment()' \
             account-service
 
       - name: 🔎 Verify Game Session PostgreSQL proof case
