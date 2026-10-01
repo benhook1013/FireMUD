@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import evidence, github, hosted
-from .sqlite_finding_text import _first_line, _safe_finding_detail
+from .sqlite_finding_text import _first_line, _hosted_display_detail, _safe_finding_detail
 from .sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 
 
@@ -337,6 +337,7 @@ def _hosted_comment_finding_segments(comment_id: int, body: str) -> list[dict[st
                 "fingerprint": fingerprint or "",
                 "title": title[:300],
                 "detail": _safe_finding_detail(cleaned),
+                "display_detail": _hosted_display_detail(cleaned, title),
             }
         )
     return findings

@@ -64,6 +64,10 @@ These history and route queries, `state status`, and controller `status` are rea
 
 `records history` and `records history-batch` read completed runs, attempts, decisions, routes, and historical evidence gaps from one SQLite snapshot. Failed and rate-limited attempts are visible but never enter taper counts. Full source artifacts are kept in SQLite with recognizable credentials redacted; the ordinary history response exposes bounded metadata and findings, not the raw archive bytes.
 
+Historical Hosted findings with wrapper or metadata titles may include an optional `display_title`, derived from the complete SQL archive and exact immutable comment/finding key. Hosted findings may also include `display_detail`, a redacted Markdown excerpt of up to 8,000 characters that retains issue paragraphs, inline code and links while removing provider badges, diagnostic/script and AI-prompt blocks, and a repeated selected headline. Source and incoming structured routes expose the same proven display projections. The stored title/detail, identities, counts, decisions, routes, and finalization remain unchanged; missing, conflicting, or unusable evidence leaves the field absent.
+
+Provider runs may include `duration_seconds` from an exact completed attempt or an identity-validated retained checkpoint/capture; missing, invalid or conflicting duration evidence leaves it absent. Import event timestamps are never treated as elapsed review time. Reads make no provider requests or historical corrections.
+
 ```sh
 dev-tools/pr-review records history --pr <number>
 dev-tools/pr-review records routes

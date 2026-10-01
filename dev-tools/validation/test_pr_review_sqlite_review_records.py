@@ -10,7 +10,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import sqlite_backup, sqlite_review_records
+from pr_review import sqlite_backup, sqlite_provider_imports, sqlite_review_records
+from pr_review.evidence import Checkpoint
 from pr_review.sqlite_finding_text import _safe_finding_detail
 from pr_review.sqlite_review_records import (
     AttemptNotFound,
@@ -26,6 +27,201 @@ from pr_review.state import FindingRoute, StateError
 
 
 class SqliteReviewRecordsTest(unittest.TestCase):
+    def duration_import(self, run_id, channel, *, checkpoint_duration=90, capture_duration=None, fields=True):
+        self.bootstrap()
+        self._duration_index = getattr(self, "_duration_index", 0) + 1
+        index = self._duration_index
+        self.records.record_run(run_id=run_id, source_pr=2839, channel=channel, findings=())
+        checkpoint = Checkpoint(
+            comment_id=123 + index, created_at="2026-10-01T00:00:00Z", type="Hosted" if channel == "hosted" else "CLI",
+            raw_found=0, accepted=0, reviewed_sha="a" * 40, file_count=1, correction=False,
+            updated_at=None, run_id=f"run.Duration{index}" if channel == "cli" else None,
+            hosted_review_id=700 + index if channel == "hosted" else None, duration_seconds=checkpoint_duration,
+        )
+        fingerprint = sqlite_provider_imports._checkpoint_fingerprint(checkpoint)
+        metadata = {"repository": "owner/repo", "pull_request": 2839,
+                    "checkpoint": checkpoint.as_json(), "checkpoint_fingerprint": fingerprint}
+        if fields:
+            metadata["checkpoint_fields"] = dataclasses.asdict(checkpoint)
+        if capture_duration is not None:
+            metadata["review_duration_seconds"] = capture_duration
+        self.records.archive_imported_artifacts(run_id, {"metadata": json.dumps(metadata)})
+        self.records.link_provider_origin(
+            repository="owner/repo", source_pr=2839, channel=channel,
+            provider_id=f"review:{700 + index}" if channel == "hosted" else f"run:run.Duration{index}",
+            checkpoint_id=123 + index, checkpoint_fingerprint=fingerprint, run_id=run_id,
+        )
+
+    def test_duration_projection_uses_exact_completed_attempt(self) -> None:
+        self.bootstrap()
+        self.records.record_run(run_id="duration-native", source_pr=2839, channel="hosted", findings=())
+        self.records.start_attempt(attempt_id="native-timer", source_pr=2839, channel="hosted",
+                                   started_at="2026-10-01T00:00:00Z")
+        self.records.finish_attempt("native-timer", state="completed", duration_seconds=180,
+                                    finished_at="2026-10-01T00:03:00Z")
+        self.records.link_attempt_run("native-timer", "duration-native")
+        history = self.records.history(2839)
+        self.assertEqual(history["runs"][0]["duration_seconds"], 180)
+        self.assertEqual(history["attempts"][0]["duration_seconds"], 180)
+
+    def test_duration_projection_uses_validated_imported_checkpoint_and_capture(self) -> None:
+        self.duration_import("duration-hosted", "hosted")
+        self.duration_import("duration-cli", "cli", checkpoint_duration=None, capture_duration="120\n")
+        self.duration_import("duration-old", "hosted", fields=False)
+        runs = {run["run_id"]: run for run in self.records.history(2839)["runs"]}
+        self.assertEqual(runs["duration-hosted"]["duration_seconds"], 90)
+        self.assertEqual(runs["duration-cli"]["duration_seconds"], 120)
+        self.assertEqual(runs["duration-old"]["duration_seconds"], 90)
+
+    def test_duration_projection_omits_unknown_invalid_conflicting_or_unassociated_evidence(self) -> None:
+        self.duration_import("duration-unknown", "hosted", checkpoint_duration=None)
+        self.duration_import("duration-invalid", "cli", capture_duration="unknown")
+        self.duration_import("duration-conflict", "cli", capture_duration="120")
+        self.duration_import("duration-hash-conflict", "hosted")
+        self.duration_import("duration-origin-conflict", "hosted")
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE provider_origins SET checkpoint_fingerprint = ? WHERE run_id = ?",
+                               ("0" * 64, "duration-hash-conflict"))
+            connection.execute("UPDATE provider_origins SET source_pr = ? WHERE run_id = ?",
+                               (2879, "duration-origin-conflict"))
+            before = list(connection.iterdump())
+        with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")):
+            history = self.records.history(2839)
+        self.assertTrue(all("duration_seconds" not in run for run in history["runs"]))
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
+    def hosted_display_run(self, run_id="display-run", *, title="<details>", routed=True):
+        self.bootstrap()
+        key = "hosted-comment:4142913648"
+        self.records.import_completed_run(
+            run_id=run_id, source_pr=2839, channel="hosted",
+            findings=(FindingObservation(source_finding_key=key, title=title, detail="Old bounded detail"),),
+            source_decisions=({
+                "source_finding_key": key, "decision_id": "decision-" + run_id,
+                "decision": "routed" if routed else "accepted",
+                "target_pr": 2879 if routed else None,
+                "actor": "reviewer", "reason": "Original adjudication",
+            },),
+            reviewer="coderabbitai[bot]", scope="broad",
+        )
+        return key
+
+    @staticmethod
+    def hosted_display_archive(*, comment_id=4142913648, issue="Check the existing workflow request identity.\n\nKeep `requestId` consistent with [the contract](https://example.test/contract)."):
+        return json.dumps({"pull_request": 2839, "comments": [{
+            "id": comment_id, "user": {"login": "coderabbitai[bot]"},
+            "body": ("<details>\n<summary>Supported by static analysis</summary>\n"
+                     "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 +
+                     "```\n</details>\n" + issue),
+        }]})
+
+    def test_hosted_display_reads_full_archive_once_and_preserves_history(self) -> None:
+        self.hosted_display_run()
+        archive = self.hosted_display_archive()
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": archive})
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        with patch.object(self.records, "_write_connection", side_effect=AssertionError("read wrote")), \
+             patch.object(self.records, "_hosted_display_titles", wraps=self.records._hosted_display_titles) as parser:
+            source = self.records.history(2839)
+            self.assertEqual(parser.call_count, 1)
+            target = self.records.history(2879)
+            worklist = self.records.list_routes(target_pr=2879)
+        finding = source["findings"][0]
+        self.assertEqual(finding["title"], "<details>")
+        self.assertEqual(finding["detail"], "Old bounded detail")
+        self.assertEqual(finding["display_title"], "Check the existing workflow request identity.")
+        for route in (source["routes"][0], target["routes"][0], worklist[0]):
+            self.assertEqual(route["display_title"], finding["display_title"])
+            self.assertEqual(route["display_detail"], finding["display_detail"])
+            self.assertEqual(route["finding_id"], finding["finding_id"])
+            self.assertEqual(route["source_pr"], 2839)
+            self.assertEqual(route["target_pr"], 2879)
+        self.assertEqual(worklist[0]["title"], "<details>")
+        self.assertEqual(source["runs"][0]["counts"], {"found": 1, "accepted": 0, "routed": 1})
+        self.assertTrue(source["runs"][0]["finalized"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
+    def test_hosted_display_reads_exact_native_attempt_archive(self) -> None:
+        self.hosted_display_run()
+        self.records.start_attempt(attempt_id="native-display", source_pr=2839, channel="hosted")
+        imported = json.loads(self.hosted_display_archive())["comments"][0]
+        comment = {"databaseId": imported["id"], "author": imported["user"], "body": imported["body"]}
+        native = json.dumps({"comments": [], "review_threads": [{"comments": {"nodes": [comment]}}]})
+        self.records.finish_attempt("native-display", state="completed", artifacts={"hosted_comments": native})
+        self.records.link_attempt_run("native-display", "display-run")
+        self.assertEqual(self.records.history(2839)["findings"][0]["display_title"],
+                         "Check the existing workflow request identity.")
+
+    def test_hosted_display_omits_missing_ambiguous_or_unusable_archive(self) -> None:
+        cases = [None, "not json", "[]", self.hosted_display_archive(comment_id=9),
+                 self.hosted_display_archive(issue=""),
+                 self.hosted_display_archive(issue="<!-- cr-comment:v1:bad -->")]
+        wrong_pr = json.loads(self.hosted_display_archive())
+        wrong_pr["pull_request"] = 2879
+        cases.append(json.dumps(wrong_pr))
+        conflicting = json.loads(self.hosted_display_archive())
+        conflicting["comments"].append({**conflicting["comments"][0], "body": "Different issue."})
+        cases.append(json.dumps(conflicting))
+        for index, archive in enumerate(cases):
+            with self.subTest(index=index):
+                run_id = f"invalid-display-{index}"
+                self.hosted_display_run(run_id, routed=False)
+                if archive is not None:
+                    self.records.archive_imported_artifacts(
+                        run_id, {"hosted_comments": archive if archive != "not json" else "{}"}
+                    )
+                    if archive == "not json":
+                        # Reproduce corrupt retained evidence only in this disposable fixture.
+                        with sqlite3.connect(self.database) as connection:
+                            connection.execute("UPDATE imported_artifacts SET content = ? WHERE run_id = ?",
+                                               (archive, run_id))
+                finding = next(item for item in self.records.history(2839)["findings"] if item["run_id"] == run_id)
+                self.assertNotIn("display_title", finding)
+                self.assertEqual(finding["title"], "<details>")
+
+    def test_hosted_display_matches_each_atomic_fingerprint(self) -> None:
+        self.bootstrap()
+        fingerprints = ("a" * 24, "b" * 24)
+        keys = ["hosted-comment:4142913648:fingerprint:" + fingerprint for fingerprint in fingerprints]
+        self.records.record_run(
+            run_id="atomic-display", source_pr=2839, channel="hosted",
+            findings=tuple(FindingObservation(source_finding_key=key, title="<details>") for key in keys),
+        )
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = (
+            "<details>\n</details>\nFirst issue.\n<!-- cr-comment:v1:" + fingerprints[0] + " -->\n---\n"
+            "<details>\n</details>\nSecond issue.\n<!-- cr-comment:v1:" + fingerprints[1] + " -->"
+        )
+        self.records.archive_imported_artifacts("atomic-display", {"hosted_comments": json.dumps(archive)})
+        with patch.object(self.records, "_hosted_display_titles", wraps=self.records._hosted_display_titles) as parser:
+            history = self.records.history(2839)
+            self.assertEqual(parser.call_count, 1)
+        self.assertEqual({finding["source_finding_key"]: finding["display_title"] for finding in history["findings"]},
+                         dict(zip(keys, ("First issue.", "Second issue."))))
+        self.assertEqual(history["runs"][0]["counts"]["found"], 2)
+
+    def test_hosted_display_keeps_proper_title_and_exact_fingerprint_key(self) -> None:
+        self.hosted_display_run(title="Existing meaningful title.")
+        self.records.archive_imported_artifacts("display-run", {"hosted_comments": self.hosted_display_archive()})
+        finding = self.records.history(2839)["findings"][0]
+        self.assertNotIn("display_title", finding)
+        self.assertEqual(finding["title"], "Existing meaningful title.")
+        self.assertEqual(finding["display_detail"],
+                         "Keep `requestId` consistent with [the contract](https://example.test/contract).")
+        self.hosted_display_run("grouped-old", routed=False)
+        archive = json.loads(self.hosted_display_archive())
+        archive["comments"][0]["body"] = (
+            "First issue.\n<!-- cr-comment:v1:aaaaaaaaaaaaaaaaaaaaaaaa -->\n---\n"
+            "Second issue.\n<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->"
+        )
+        self.records.archive_imported_artifacts("grouped-old", {"hosted_comments": json.dumps(archive)})
+        finding = next(item for item in self.records.history(2839)["findings"] if item["run_id"] == "grouped-old")
+        # An old comment-grouped key cannot be relabeled with either new atom.
+        self.assertNotIn("display_title", finding)
+
     def test_new_subagent_start_bounds_coverage_before_persisting(self) -> None:
         self.bootstrap()
         self.records.start_attempt(

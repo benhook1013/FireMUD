@@ -673,12 +673,17 @@ class SqliteReviewRecords:
         }
 
     @_translate_database_errors
-    def attempt_artifacts(self, attempt_id: str) -> dict[str, str]:
+    def attempt_artifacts(
+        self, attempt_id: str, *, _connection: sqlite3.Connection | None = None
+    ) -> dict[str, str]:
         """Read private archived evidence for exact recovery, outside ordinary history."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         self._require_regular_database()
-        with contextlib.closing(self._connect(read_only=True)) as connection:
+        with (
+            contextlib.closing(self._connect(read_only=True))
+            if _connection is None else contextlib.nullcontext(_connection)
+        ) as connection:
             self._require_compatible(connection)
             rows = connection.execute(
                 "SELECT kind, content FROM review_artifacts WHERE attempt_id = ?",
@@ -2814,6 +2819,8 @@ class SqliteReviewRecords:
                         (pr,),
                     )
                 ]
+                self._add_hosted_display_titles(connection, observations, routes)
+                self._add_run_durations(connection, runs)
                 return {
                     "pr": pr,
                     "runs": runs,
@@ -2964,6 +2971,7 @@ class SqliteReviewRecords:
                     routes = [route for route in routes if route["source_pr"] == source_pr]
                 if unassigned:
                     routes = [route for route in routes if route["target_pr"] is None]
+                self._add_hosted_display_titles(connection, (), routes)
                 return sorted(
                     routes,
                     key=lambda route: (route["target_pr"] or 0, route["source_pr"], route["route_id"]),
@@ -2985,6 +2993,188 @@ class SqliteReviewRecords:
             target_pr=target_pr,
             include_legacy_routes=include_legacy_routes,
         )
+
+    def _add_run_durations(self, connection: sqlite3.Connection, runs: Sequence[dict[str, Any]]) -> None:
+        """Expose recorded provider elapsed time, never infer runtime from import timestamps."""
+
+        from .evidence import Checkpoint
+
+        for run in runs:
+            if run["channel"] not in {"hosted", "cli"}:
+                continue
+            durations = set()
+            attempts = connection.execute(
+                "SELECT duration_seconds FROM review_attempts WHERE run_id = ? AND source_pr = ? "
+                "AND channel = ? AND state = 'completed'",
+                (run["run_id"], run["source_pr"], run["channel"]),
+            ).fetchall()
+            if len(attempts) > 1:
+                continue
+            if attempts and attempts[0][0] is not None:
+                duration = attempts[0][0]
+                if type(duration) is not int or duration < 0:
+                    continue
+                durations.add(duration)
+            row = connection.execute(
+                "SELECT i.content, o.repository, o.source_pr, o.channel, o.provider_id, "
+                "o.checkpoint_id, o.checkpoint_fingerprint FROM imported_artifacts i "
+                "JOIN provider_origins o USING (run_id) WHERE i.run_id = ? AND i.kind = 'metadata'",
+                (run["run_id"],),
+            ).fetchone()
+            if row is not None:
+                try:
+                    metadata = json.loads(row[0])
+                    fields = (
+                        dict(metadata["checkpoint_fields"]) if "checkpoint_fields" in metadata else {
+                            key: value for key, value in metadata["checkpoint"].items()
+                            if key in {field.name for field in dataclasses.fields(Checkpoint)}
+                        }
+                    )
+                    for key in ("updated_at", "run_id", "hosted_review_id"):
+                        fields.setdefault(key, None)
+                    checkpoint = Checkpoint(**fields)
+                    provider_id = (
+                        f"run:{checkpoint.run_id}" if run["channel"] == "cli"
+                        else f"review:{checkpoint.hosted_review_id}"
+                    )
+                    if row[4].startswith("trigger:") and run["channel"] == "hosted":
+                        provider_id = f"trigger:{metadata.get('trigger_id')}"
+                    if (
+                        metadata.get("repository") != row[1]
+                        or metadata.get("pull_request") != run["source_pr"]
+                        or row[2:4] != (run["source_pr"], run["channel"])
+                        or checkpoint.type.casefold() != run["channel"]
+                        or checkpoint.comment_id != row[5]
+                        or provider_id != row[4]
+                        or not self._source_checkpoint_matches(connection, run["run_id"], row[6], checkpoint)
+                        or checkpoint.duration_invalid
+                    ):
+                        continue
+                    if checkpoint.duration_seconds is not None:
+                        duration = checkpoint.duration_seconds
+                        if type(duration) is not int or duration < 0:
+                            continue
+                        durations.add(duration)
+                    capture_duration = metadata.get("review_duration_seconds") if run["channel"] == "cli" else None
+                    if capture_duration is not None:
+                        if not isinstance(capture_duration, str) or not re.fullmatch(r"0|[1-9][0-9]*", capture_duration.strip()):
+                            continue
+                        durations.add(int(capture_duration.strip()))
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+            if len(durations) == 1:
+                run["duration_seconds"] = durations.pop()
+
+    def _add_hosted_display_titles(
+        self,
+        connection: sqlite3.Connection,
+        observations: Sequence[dict[str, Any]],
+        routes: Sequence[dict[str, Any]],
+    ) -> None:
+        """Enrich malformed Hosted titles without changing any historical projection."""
+
+        from .sqlite_finding_text import _unusable_hosted_title
+
+        cache: dict[tuple[str, int], dict[str, dict[str, str]]] = {}
+        for record in (*observations, *routes):
+            if record.get("source_channel") != "hosted" or record.get("origin") == "legacy_controller":
+                continue
+            if "run_id" in record:
+                run_id, title = record["run_id"], record["title"]
+            else:
+                # The route's source finding, not its receiving PR, owns the
+                # archive. Match the same latest observation used by list_routes.
+                row = connection.execute(
+                    "SELECT o.run_id, o.title FROM finding_observations o "
+                    "JOIN review_runs r USING (run_id) JOIN findings f USING (finding_id) "
+                    "WHERE o.finding_id = ? AND o.source_pr = ? AND o.source_channel = 'hosted' "
+                    "AND f.source_finding_key = ? "
+                    "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1",
+                    (record["finding_id"], record["source_pr"], record["source_finding_key"]),
+                ).fetchone()
+                if row is None:
+                    continue
+                run_id, title = row
+            cache_key = (run_id, record["source_pr"])
+            if cache_key not in cache:
+                cache[cache_key] = self._hosted_display_titles(connection, run_id, record["source_pr"])
+            presentation = cache[cache_key].get(record["source_finding_key"])
+            if presentation:
+                if _unusable_hosted_title(title) and presentation.get("display_title"):
+                    record["display_title"] = presentation["display_title"]
+                if presentation.get("display_detail"):
+                    record["display_detail"] = presentation["display_detail"]
+
+    def _hosted_display_titles(
+        self, connection: sqlite3.Connection, run_id: str, source_pr: int
+    ) -> dict[str, dict[str, str]]:
+        """Use complete retained comments and canonical finding keys; omit uncertain evidence."""
+
+        from . import github
+        from .sqlite_hosted_capture import HostedCaptureError, _hosted_comment_finding_segments
+
+        run = connection.execute(
+            "SELECT source_pr, channel FROM review_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if run != (source_pr, "hosted"):
+            return {}
+        archives = [row[0] for row in connection.execute(
+            "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'hosted_comments'", (run_id,)
+        )]
+        for attempt_id, in connection.execute(
+            "SELECT attempt_id FROM review_attempts WHERE run_id = ? AND source_pr = ? "
+            "AND channel = 'hosted' AND state = 'completed'", (run_id, source_pr)
+        ):
+            content = self.attempt_artifacts(attempt_id, _connection=connection).get("hosted_comments")
+            if content is not None:
+                archives.append(content)
+        bodies: dict[int, str] = {}
+        try:
+            for content in archives:
+                archive = json.loads(content)
+                if not isinstance(archive, dict) or archive.get("pull_request", source_pr) != source_pr:
+                    return {}
+                comments = archive.get("comments", [])
+                threads = archive.get("review_threads", [])
+                if not isinstance(comments, list) or not isinstance(threads, list):
+                    return {}
+                for thread in threads:
+                    if not isinstance(thread, dict):
+                        return {}
+                    nodes = thread.get("comments", {}).get("nodes", [])
+                    if not isinstance(nodes, list):
+                        return {}
+                    comments = [*comments, *nodes[:1]]
+                for comment in comments:
+                    if not isinstance(comment, dict):
+                        return {}
+                    author = comment.get("author", comment.get("user"))
+                    if not isinstance(author, dict) or not github.is_coderabbit_login(author.get("login")):
+                        continue
+                    if comment.get("in_reply_to_id") is not None:
+                        continue
+                    comment_id = github.immutable_database_id(comment)
+                    body = comment.get("body")
+                    if comment_id is None or not isinstance(body, str):
+                        return {}
+                    if comment_id in bodies and bodies[comment_id] != body:
+                        return {}
+                    bodies[comment_id] = body
+            titles = {}
+            for comment_id, body in bodies.items():
+                for finding in _hosted_comment_finding_segments(comment_id, body):
+                    title = finding["title"]
+                    if title.startswith(f"CodeRabbit review comment {comment_id}"):
+                        continue
+                    # Enforce the same bounded/secret-free title contract as writes.
+                    FindingObservation(source_finding_key=finding["key"], title=title)
+                    titles[finding["key"]] = {
+                        "display_title": title,
+                        "display_detail": finding["display_detail"],
+                    }
+            return titles
+        except (json.JSONDecodeError, TypeError, AttributeError, HostedCaptureError, ReviewRecordsError):
+            return {}
 
     def _routes_for_pr(self, connection: sqlite3.Connection, pr: int) -> list[dict[str, Any]]:
         rows = connection.execute(

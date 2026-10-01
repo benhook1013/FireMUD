@@ -423,6 +423,31 @@ class SqliteProviderImportsTest(unittest.TestCase):
                 scope="broad",
             )
 
+    def test_hosted_reimport_preserves_original_wrapper_projection(self) -> None:
+        body = (
+            "<details>\n<summary>Supported by static analysis</summary>\n"
+            "Script executed:\n```bash\necho analysis\n```\n</details>\n"
+            "Compare the incoming request with the existing workflow identity."
+        )
+        self.hosted_capture(finding_body=body)
+        arguments = {
+            "repo": REPO, "pr_number": PR,
+            "checkpoint": self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->"),
+            "actor": "reviewer", "common": self.common, "scope": "broad",
+        }
+        with patch("pr_review.sqlite_hosted_capture._first_line", return_value="<details>"):
+            first = pr_review.sqlite_provider_imports.import_hosted_checkpoint(self.records, **arguments)
+        self.records.archive_imported_artifacts(first["run_id"], first["archive_artifacts"])
+        before = self.records.history(PR)
+        replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(self.records, **arguments)
+        self.records.archive_imported_artifacts(replay["run_id"], replay["archive_artifacts"])
+        after = self.records.history(PR)
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(before, after)
+        self.assertEqual(after["findings"][0]["title"], "<details>")
+        self.assertEqual(after["findings"][0]["display_title"],
+                         "Compare the incoming request with the existing workflow identity.")
+
     def test_hosted_import_prefers_bold_actionable_headline_over_badge(self) -> None:
         self.hosted_capture(
             finding_body=(

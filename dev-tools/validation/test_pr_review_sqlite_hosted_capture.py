@@ -120,6 +120,80 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         records.bootstrap()
         return records
 
+    def test_headline_ignores_analysis_wrappers_and_scripts(self) -> None:
+        issue = ("The `AlreadyStarted` path does not compare the incoming "
+                 "`PreparedWorldInstanceRequest` with the existing workflow's request identity.")
+        body = (
+            "_Data Integrity & Integration_ | _Major_ | _Quick win_\n"
+            "<details>\n<summary>Supported by static analysis</summary>\n"
+            "Script executed:\n```bash\n" + "echo diagnostic\n" * 100 +
+            "```\nRepository: owner/repo\nLength of output: 37011\n---\n</details>\n" + issue
+        )
+        self.assertEqual(sqlite_provider_imports._first_line(body), issue)
+        findings = sqlite_hosted_capture._hosted_comment_finding_segments(4142913648, body)
+        self.assertEqual(findings[0]["title"], issue)
+        self.assertEqual(findings[0]["key"], "hosted-comment:4142913648")
+        self.assertNotIn(issue, findings[0]["detail"])
+        self.assertEqual(findings[0]["display_detail"], "")
+        self.assertEqual(sqlite_provider_imports._first_line(body + "\n**Check the request identity.**"),
+                         "Check the request identity.")
+
+    def test_headline_preserves_issue_code_and_omits_wrapper_only_content(self) -> None:
+        for body, title in (
+            ("<p><strong>Check `x < y` before returning `<T>`.</strong></p>",
+             "Check `x < y` before returning `<T>`."),
+            ("> **[P1] Bug**\n> **Validate the current target.**", "Validate the current target."),
+            (("<details>\n<summary>Supported by static analysis</summary>\n"
+              "Script executed:\n```bash\necho diagnostic\n```\n</details>"), None),
+            ("**[P1] Bug**\n---\n<script>alert('bad')</script>", None),
+            ("```python\n**Misleading headline**\n```", None),
+            ("<details>\n<summary>**Actual issue headline.**</summary>\n"
+             + "The issue explanation.\n</details>", "Actual issue headline."),
+            ("**\n__\n##\n>\n---", None),
+            ("_Functional Correctness_ | _Minor_ | _Quick win_ Keep the issue sentence.",
+             "Keep the issue sentence."),
+            ("**[P1] Bug** Keep the issue sentence.", "Keep the issue sentence."),
+            ("<details>\n<summary>Committable suggestion</summary>\n"
+             + "**Apply this patch**\n```diff\n+ fix\n```\n</details>", None),
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(sqlite_provider_imports._first_line(body), title)
+        fallback = sqlite_hosted_capture._hosted_comment_finding_segments(202, "<details>\n</details>")
+        self.assertEqual(fallback[0]["title"], "CodeRabbit review comment 202")
+
+    def test_hosted_display_detail_keeps_issue_markdown_and_removes_provider_noise(self) -> None:
+        body = (
+            "_Data Integrity & Integration_ | _Major_ | _Quick win_\n\n"
+            "**Compare the workflow request identity.**\n\n"
+            "<details>\n<summary>Supported by static analysis</summary>\n"
+            "Script executed:\n```bash\n" + "echo diagnostics\n" * 100 + "```\n</details>\n"
+            "The incoming `requestId` must match [the contract](https://example.test/contract).\n\n"
+            "<p>Return an error when `x < y`.</p>\n\n"
+            "<details><summary>Prompt for AI Agents</summary>Rewrite the whole file.</details>"
+        )
+        finding = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)[0]
+        self.assertEqual(finding["display_detail"],
+                         "The incoming `requestId` must match [the contract](https://example.test/contract).\n\n"
+                         "Return an error when `x < y`.")
+        self.assertIn("Supported by static analysis", finding["detail"])
+        self.assertEqual(sqlite_provider_imports._first_line("The script executed with the wrong identity."),
+                         "The script executed with the wrong identity.")
+
+    def test_wrapper_fix_keeps_multiple_fingerprinted_finding_keys(self) -> None:
+        body = (
+            "<details>\n</details>\nFirst actionable issue.\n"
+            "<!-- cr-comment:v1:aaaaaaaaaaaaaaaaaaaaaaaa -->\n---\n"
+            "**[P1] Bug**\n**Second actionable issue.**\n"
+            "<!-- cr-comment:v1:bbbbbbbbbbbbbbbbbbbbbbbb -->"
+        )
+        findings = sqlite_hosted_capture._hosted_comment_finding_segments(202, body)
+        self.assertEqual([item["title"] for item in findings],
+                         ["First actionable issue.", "Second actionable issue."])
+        self.assertEqual([item["key"] for item in findings], [
+            "hosted-comment:202:fingerprint:aaaaaaaaaaaaaaaaaaaaaaaa",
+            "hosted-comment:202:fingerprint:bbbbbbbbbbbbbbbbbbbbbbbb",
+        ])
+
     def test_checkpoint_id_matches_hosted_type_case_insensitively_and_exact_review_id(self) -> None:
         checkpoints = [
             SimpleNamespace(type="hOsTeD", hosted_review_id=102, comment_id=801),
