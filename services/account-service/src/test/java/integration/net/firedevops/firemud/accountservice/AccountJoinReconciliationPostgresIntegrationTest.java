@@ -22,6 +22,8 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
 import net.firedevops.firemud.accountservice.service.AccountJoinReconciliationService;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer;
@@ -81,6 +83,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
   @Autowired private AccountJoinReconciliationService reconciliationService;
+  @Autowired private AccountJoinOperationRepository joinOperationRepository;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameSessionClient gameSessionClient;
@@ -98,13 +101,13 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     // This is a synthetic ambiguous row assembled from a genuine committed JOIN. The current
     // atomic terminal transaction cannot naturally commit membership/audit while leaving the
     // operation PENDING; this fixture tests the exact readback branch without inventing evidence.
-    makeOperationPendingWithRetainedEvidence(fixture);
+    makeOperationPendingWithRetainedEvidence(fixture, 2);
     Instant scopeExpiry = expireScopeBeforeReconciliationButAfterEvaluation(fixture);
 
     Instant now = scopeExpiry.plusSeconds(1);
     reconciliationService.reconcileDueOperations(now);
 
-    assertOperation(fixture, "COMMITTED", "JOINED", 0, null);
+    assertOperation(fixture, "COMMITTED", "JOINED", 2, null);
     assertThat(
             dsl.resultQuery(
                     "SELECT COUNT(*) FROM account_join_operations WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED' AND membership_id = ? AND outcome_membership_version = 1 AND outcome_membership_authority_generation = 1",
@@ -128,7 +131,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
     dsl.execute(
         "DELETE FROM account_connect_scope_records WHERE scope_token_hash = ?",
         AccountJoinDigest.tokenHash(absentScope.connectScopeId()));
-    assertUnresolved(absentScope, "JOIN_SCOPE_EVIDENCE_ABSENT");
+    assertUnresolvedAtThreshold(absentScope, "JOIN_SCOPE_EVIDENCE_ABSENT");
     assertThat(countMemberships(absentScope)).isEqualTo(1L);
     assertThat(countJoinOutbox(absentScope)).isEqualTo(1L);
 
@@ -137,8 +140,10 @@ class AccountJoinReconciliationPostgresIntegrationTest {
         "DELETE FROM account_tenant_membership WHERE account_id = ? AND tenant_id = ?",
         expiredWithoutMembership.accountId(),
         expiredWithoutMembership.tenantId());
-    expireScopeBeforeReconciliationButAfterEvaluation(expiredWithoutMembership);
-    assertUnresolved(expiredWithoutMembership, "MEMBERSHIP_EVIDENCE_ABSENT");
+    Instant scopeExpiry =
+        expireScopeBeforeReconciliationButAfterEvaluation(expiredWithoutMembership);
+    assertUnresolvedAtThreshold(
+        expiredWithoutMembership, "MEMBERSHIP_EVIDENCE_ABSENT", scopeExpiry.plusSeconds(1));
     assertThat(countMemberships(expiredWithoutMembership)).isZero();
     assertThat(countJoinOutbox(expiredWithoutMembership)).isEqualTo(1L);
   }
@@ -196,7 +201,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   }
 
   @Test
-  void naturallyAbandonedPendingIntentStaysVisibleAndStopsAtConfiguredAttemptLimit() {
+  void naturallyAbandonedPendingIntentRemainsDueAfterConfiguredDiagnosticThreshold() {
     JoinFixture fixture = fixture("active");
     when(gameSessionClient.getAdmissionPointer(fixture.tenantId(), WORLD_SLUG, REALM_SLUG))
         .thenThrow(new IllegalStateException("simulated unavailable admission authority"));
@@ -221,8 +226,99 @@ class AccountJoinReconciliationPostgresIntegrationTest {
 
     reconciliationService.reconcileDueOperations(firstAttemptAt.plusSeconds(5));
     assertOperation(fixture, "PENDING", null, 2, "JOIN_OPERATION_POLICY_UNPROVEN");
+    reconciliationService.reconcileDueOperations(firstAttemptAt.plusSeconds(7));
+    assertOperation(fixture, "PENDING", null, 2, "JOIN_OPERATION_POLICY_UNPROVEN");
     assertThat(countMemberships(fixture)).isZero();
     assertThat(countJoinOutbox(fixture)).isZero();
+  }
+
+  @Test
+  void aboveThresholdAttemptCountIsPreservedWithoutOverflowAndKeepsScheduling() {
+    JoinFixture fixture = fixture("active");
+    when(gameSessionClient.getAdmissionPointer(fixture.tenantId(), WORLD_SLUG, REALM_SLUG))
+        .thenThrow(new IllegalStateException("simulated unavailable admission authority"));
+    join(fixture);
+    setReconciliationAttempts(fixture, Integer.MAX_VALUE);
+
+    Instant now = Instant.now().plusSeconds(2);
+    reconciliationService.reconcileDueOperations(now);
+    assertOperation(fixture, "PENDING", null, Integer.MAX_VALUE, "JOIN_OPERATION_POLICY_UNPROVEN");
+    reconciliationService.reconcileDueOperations(now.plusSeconds(2));
+    assertOperation(fixture, "PENDING", null, Integer.MAX_VALUE, "JOIN_OPERATION_POLICY_UNPROVEN");
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countJoinOutbox(fixture)).isZero();
+  }
+
+  @Test
+  void staleDueTimestampFencesLostUpdateAfterCounterSaturatesAtThreshold() {
+    JoinFixture fixture = fixture("active");
+    when(gameSessionClient.getAdmissionPointer(fixture.tenantId(), WORLD_SLUG, REALM_SLUG))
+        .thenThrow(new IllegalStateException("simulated unavailable admission authority"));
+    accountService.joinPublicProductionFromGameSession(
+        fixture.caller(),
+        new JoinPublicProductionRequest(fixture.connectScopeId(), fixture.requestId()));
+    setReconciliationAttempts(fixture, 2);
+    JoinOperation observed = joinOperationRepository.find(fixture.requestId()).orElseThrow();
+    Instant firstAttemptAt = Instant.now().plusSeconds(2);
+    Instant firstNextAttemptAt = firstAttemptAt.plusMillis(1_000);
+
+    boolean firstUpdated =
+        joinOperationRepository.recordReconciliationAttempt(
+            fixture.requestId(),
+            observed.reconciliationAttemptCount(),
+            2,
+            observed.nextReconciliationAttemptAt(),
+            firstAttemptAt,
+            "FIRST_THRESHOLD_ATTEMPT",
+            firstNextAttemptAt);
+    assertThat(firstUpdated).isTrue();
+
+    boolean staleUpdated =
+        joinOperationRepository.recordReconciliationAttempt(
+            fixture.requestId(),
+            observed.reconciliationAttemptCount(),
+            2,
+            observed.nextReconciliationAttemptAt(),
+            firstNextAttemptAt,
+            "STALE_RECONCILIATION_CANDIDATE",
+            firstNextAttemptAt.plusMillis(1_000));
+
+    assertThat(staleUpdated).isFalse();
+    assertOperation(fixture, "PENDING", null, 2, "FIRST_THRESHOLD_ATTEMPT");
+    assertThat(countMemberships(fixture)).isZero();
+    assertThat(countJoinOutbox(fixture)).isZero();
+  }
+
+  @Test
+  void twoWorkersRecoverThresholdPendingEvidenceWithoutDuplicatingMembershipOrAudit()
+      throws Exception {
+    JoinFixture fixture = committedEvidencePendingFixture();
+    setReconciliationAttempts(fixture, 2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Instant now = Instant.now().plusSeconds(1);
+      Future<?> first =
+          executor.submit(
+              () -> {
+                await(start);
+                reconciliationService.reconcileDueOperations(now);
+              });
+      Future<?> second =
+          executor.submit(
+              () -> {
+                await(start);
+                reconciliationService.reconcileDueOperations(now);
+              });
+      start.countDown();
+      first.get(30, TimeUnit.SECONDS);
+      second.get(30, TimeUnit.SECONDS);
+
+      assertOperation(fixture, "COMMITTED", "JOINED", 2, null);
+      assertMembershipAndAuditOnce(fixture, originalMembershipId(fixture));
+    } finally {
+      executor.shutdownNow();
+    }
   }
 
   private JoinFixture committedEvidencePendingFixture() {
@@ -235,13 +331,29 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   }
 
   private void makeOperationPendingWithRetainedEvidence(JoinFixture fixture) {
+    makeOperationPendingWithRetainedEvidence(fixture, 0);
+  }
+
+  private void makeOperationPendingWithRetainedEvidence(JoinFixture fixture, int attempts) {
     int updated =
         dsl.execute(
-            "UPDATE account_join_operations SET status = 'PENDING', outcome = NULL, membership_id = NULL, outcome_membership_version = NULL, outcome_membership_authority_generation = NULL, reconciliation_attempt_count = 0, last_reconciliation_attempt_at = NULL, last_reconciliation_attempt_reason = NULL, next_reconciliation_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second', updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED'",
+            "UPDATE account_join_operations SET status = 'PENDING', outcome = NULL, membership_id = NULL, outcome_membership_version = NULL, outcome_membership_authority_generation = NULL, reconciliation_attempt_count = ?, last_reconciliation_attempt_at = CASE WHEN ? = 0 THEN NULL ELSE CURRENT_TIMESTAMP - INTERVAL '2 seconds' END, last_reconciliation_attempt_reason = CASE WHEN ? = 0 THEN NULL ELSE 'PRIOR_RECONCILIATION_ATTEMPT' END, next_reconciliation_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second', updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED'",
+            attempts,
+            attempts,
+            attempts,
             fixture.requestId());
     assertThat(updated).isEqualTo(1);
     assertThat(countMemberships(fixture)).isEqualTo(1L);
     assertThat(countJoinOutbox(fixture)).isEqualTo(1L);
+  }
+
+  private void setReconciliationAttempts(JoinFixture fixture, int attempts) {
+    int updated =
+        dsl.execute(
+            "UPDATE account_join_operations SET reconciliation_attempt_count = ?, last_reconciliation_attempt_at = CURRENT_TIMESTAMP - INTERVAL '2 seconds', last_reconciliation_attempt_reason = 'PRIOR_RECONCILIATION_ATTEMPT', next_reconciliation_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second', updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND status = 'PENDING'",
+            attempts,
+            fixture.requestId());
+    assertThat(updated).isEqualTo(1);
   }
 
   private Instant expireScopeBeforeReconciliationButAfterEvaluation(JoinFixture fixture) {
@@ -261,6 +373,19 @@ class AccountJoinReconciliationPostgresIntegrationTest {
 
     reconciliationService.reconcileDueOperations(now);
     assertOperation(fixture, "PENDING", null, 1, reason);
+  }
+
+  private void assertUnresolvedAtThreshold(JoinFixture fixture, String reason) {
+    assertUnresolvedAtThreshold(fixture, reason, Instant.now().plusSeconds(2));
+  }
+
+  private void assertUnresolvedAtThreshold(JoinFixture fixture, String reason, Instant now) {
+    setReconciliationAttempts(fixture, 2);
+    reconciliationService.reconcileDueOperations(now);
+    assertOperation(fixture, "PENDING", null, 2, reason);
+
+    reconciliationService.reconcileDueOperations(now.plusMillis(1_500));
+    assertOperation(fixture, "PENDING", null, 2, reason);
   }
 
   private void assertOperation(
