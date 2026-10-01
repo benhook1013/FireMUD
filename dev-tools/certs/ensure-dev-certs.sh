@@ -112,6 +112,10 @@ ensure_compose_mtls_certs() {
   fi
 
   if ((validate_workloads)); then
+    if [[ -L "$workloads_dir" ]]; then
+      echo "Compose mTLS workloads path must be a real directory." >&2
+      return 1
+    fi
     if [[ "$(stat -Lc '%u %a %F' "$workloads_dir")" != "$owner_id 755 directory" ]]; then
       echo "Compose mTLS workload fixture must be an owner-owned (0755) directory." >&2
       return 1
