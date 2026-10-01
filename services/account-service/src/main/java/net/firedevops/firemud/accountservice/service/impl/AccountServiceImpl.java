@@ -61,7 +61,6 @@ import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
-import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
@@ -1430,47 +1429,17 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "account.realm_access_grant_upsert")
   public RealmAccessGrantResult grantRealmAccess(RealmAccessGrantRequest request) {
-    Account account = requireAccount(request.accountId());
-    Instant now = Instant.now();
-    AccountRealmAccessGrant grant =
-        accountRealmAccessGrantRepository
-            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-                request.accountId(), request.tenantId(), request.worldSlug(), request.realmSlug())
-            .orElseGet(
-                () -> {
-                  AccountRealmAccessGrant created = new AccountRealmAccessGrant();
-                  created.setAccount(account);
-                  created.setTenantId(request.tenantId());
-                  created.setWorldSlug(request.worldSlug());
-                  created.setRealmSlug(request.realmSlug());
-                  created.setGrantVersion(0L);
-                  created.setCreatedAt(now);
-                  return created;
-                });
-    grant.setGrantVersion(grant.getGrantVersion() + 1L);
-    grant.setGrantedBy(request.grantedBy());
-    grant.setGrantReason(request.grantReason());
-    grant.setUpdatedAt(now);
-    accountRealmAccessGrantRepository.save(grant);
-    return new RealmAccessGrantResult(
-        request.accountId(),
-        request.tenantId(),
-        request.worldSlug(),
-        request.realmSlug(),
-        true,
-        grant.getGrantVersion(),
-        now.toString());
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE", "Lifecycle-qualified realm-grant mutations are unavailable");
   }
 
   @Override
-  @Transactional
   @Timed(value = "account.realm_access_grant_revoke")
   public void revokeRealmAccess(Long accountId, Long tenantId, String worldSlug, String realmSlug) {
-    accountRealmAccessGrantRepository.deleteByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-        accountId, tenantId, worldSlug, realmSlug);
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE", "Lifecycle-qualified realm-grant mutations are unavailable");
   }
 
   @Override

@@ -4970,27 +4970,39 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void grantRealmAccessUpsertsRuntimeGrant() {
-    Account account = new Account();
-    account.setId(11L);
-    account.setUsername("demo");
-    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
-    when(accountRealmAccessGrantRepository.findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-            11L, 7L, "demo", "preview"))
-        .thenReturn(Optional.empty());
-    when(accountRealmAccessGrantRepository.save(
-            org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+  void grantRealmAccessFailsClosedForRepeatedAndChangedLegacyRequests() {
+    RealmAccessGrantRequest originalRequest =
+        new RealmAccessGrantRequest(
+            11L, 7L, "demo", "preview", "operator", "preview access", "req-grant-1");
+    RealmAccessGrantRequest changedRequest =
+        new RealmAccessGrantRequest(
+            11L, 7L, "demo", "preview", "different operator", "changed reason", "req-grant-1");
 
-    var result =
-        service.grantRealmAccess(
-            new RealmAccessGrantRequest(
-                11L, 7L, "demo", "preview", "operator", "preview access", "req-grant-1"));
+    for (RealmAccessGrantRequest request :
+        java.util.List.of(originalRequest, originalRequest, changedRequest)) {
+      AuthenticationException exception =
+          assertThrows(AuthenticationException.class, () -> service.grantRealmAccess(request));
+      assertEquals("AUTH_UNAVAILABLE", exception.getCode());
+      assertEquals(
+          "Lifecycle-qualified realm-grant mutations are unavailable", exception.getMessage());
+    }
 
-    assertTrue(result.granted());
-    assertEquals(1L, result.grantVersion());
-    org.mockito.Mockito.verify(accountRealmAccessGrantRepository)
-        .save(org.mockito.ArgumentMatchers.any(AccountRealmAccessGrant.class));
+    verifyNoInteractions(accountRepository, accountRealmAccessGrantRepository);
+  }
+
+  @Test
+  void revokeRealmAccessFailsClosedForRepeatedAndChangedLegacyRequests() {
+    for (long accountId : java.util.List.of(11L, 11L, 12L)) {
+      AuthenticationException exception =
+          assertThrows(
+              AuthenticationException.class,
+              () -> service.revokeRealmAccess(accountId, 7L, "demo", "preview"));
+      assertEquals("AUTH_UNAVAILABLE", exception.getCode());
+      assertEquals(
+          "Lifecycle-qualified realm-grant mutations are unavailable", exception.getMessage());
+    }
+
+    verifyNoInteractions(accountRepository, accountRealmAccessGrantRepository);
   }
 
   @Test

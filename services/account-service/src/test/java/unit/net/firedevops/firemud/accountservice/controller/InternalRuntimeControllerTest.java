@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
@@ -89,5 +90,90 @@ class InternalRuntimeControllerTest {
         .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
 
     verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void validPrivilegedGrantMutationsFailClosedBeforeDispatch() throws Exception {
+    for (String role : java.util.List.of("platformAdmin", "moderator")) {
+      String token = jwtTokenWithGlobalRole(role);
+
+      mockMvc
+          .perform(
+              post("/internal/runtime/realm-access-grants")
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(validGrantRequestBody()))
+          .andExpect(status().isServiceUnavailable())
+          .andExpect(jsonPath("$.error.code").value("AUTH_UNAVAILABLE"))
+          .andExpect(
+              jsonPath("$.error.message")
+                  .value("Lifecycle-qualified realm-grant mutations are unavailable"));
+
+      mockMvc
+          .perform(
+              delete("/internal/runtime/realm-access-grants")
+                  .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                  .param("accountId", "11")
+                  .param("tenantId", "7")
+                  .param("worldSlug", "demo")
+                  .param("realmSlug", "preview"))
+          .andExpect(status().isServiceUnavailable())
+          .andExpect(jsonPath("$.error.code").value("AUTH_UNAVAILABLE"))
+          .andExpect(
+              jsonPath("$.error.message")
+                  .value("Lifecycle-qualified realm-grant mutations are unavailable"));
+    }
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void missingOrNonprivilegedAuthenticationStillDeniesGrantMutations() throws Exception {
+    mockMvc
+        .perform(
+            post("/internal/runtime/realm-access-grants")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(validGrantRequestBody()))
+        .andExpect(status().isUnauthorized());
+
+    mockMvc
+        .perform(
+            delete("/internal/runtime/realm-access-grants")
+                .param("accountId", "11")
+                .param("tenantId", "7")
+                .param("worldSlug", "demo")
+                .param("realmSlug", "preview"))
+        .andExpect(status().isUnauthorized());
+
+    String playerToken = jwtTokenWithGlobalRole("player");
+    mockMvc
+        .perform(
+            post("/internal/runtime/realm-access-grants")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + playerToken)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(validGrantRequestBody()))
+        .andExpect(status().isForbidden());
+
+    mockMvc
+        .perform(
+            delete("/internal/runtime/realm-access-grants")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + jwtTokenWithGlobalRole("player"))
+                .param("accountId", "11")
+                .param("tenantId", "7")
+                .param("worldSlug", "demo")
+                .param("realmSlug", "preview"))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
+  }
+
+  private String jwtTokenWithGlobalRole(String role) {
+    return jwtUtil.generateToken("user", java.util.Map.of("globalRoles", java.util.List.of(role)));
+  }
+
+  private String validGrantRequestBody() throws Exception {
+    return objectMapper.writeValueAsString(
+        new RealmAccessGrantRequest(
+            11L, 7L, "demo", "preview", "operator", "preview access", "request-1"));
   }
 }
