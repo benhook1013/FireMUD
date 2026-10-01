@@ -66,6 +66,24 @@ public class EnvironmentIdentityPlanner {
       publicationSourceSecrets.put(role, sourceName);
       publicationSecrets.put(role, "firemud-grpc-" + workload);
     }
+    for (Map.Entry<String, String> workloadIdentity :
+        List.of(
+            Map.entry(
+                HostedIdentityContract.GRPC_ACCOUNT_ROLE,
+                HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD),
+            Map.entry(
+                HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
+                HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD),
+            Map.entry(
+                HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+                HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD))) {
+      String role = workloadIdentity.getKey();
+      String workload = workloadIdentity.getValue();
+      String certificateAndSourceName = materialPrefix + "-grpc-" + workload;
+      publicationCertificates.put(role, certificateAndSourceName);
+      publicationSourceSecrets.put(role, certificateAndSourceName);
+      publicationSecrets.put(role, "firemud-grpc-" + workload);
+    }
     return new EnvironmentIdentityPlan(
         name,
         properties.getControlNamespace(),

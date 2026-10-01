@@ -48,6 +48,9 @@ workloads=(
   entity-management-service
   game-logic-service
   automation-scripting-service
+  account-service
+  game-session-service
+  social-groups-service
 )
 
 secret_exists() {
@@ -254,7 +257,7 @@ fi
 if ((shared_snapshot_status == 1)); then
   for workload in "${workloads[@]}"; do
     if secret_exists "firemud-grpc-${workload}"; then
-      echo "shared gRPC TLS Secret is missing while a cert-manager publication Secret exists; refusing fresh replacement" >&2
+      echo "shared gRPC TLS Secret is missing while a distinct workload Secret exists; refusing fresh replacement" >&2
       exit 1
     fi
   done
@@ -277,8 +280,8 @@ if ((shared_snapshot_status == 0)); then
     "${shared_rotation_resources[*]}" || exit 1
   assert_key_matches_certificate "$shared_cert" "$shared_key"
 else
-  # The legacy shared bundle is still required by the six non-publication
-  # workloads. Generate it once, then preserve its leaf on every later run.
+  # The legacy shared bundle is still required by remaining shared-leaf workloads.
+  # Generate it once, then preserve its leaf on every later run.
   "$legacy_generator" "$cert_dir"
   for required_file in ca.crt client.crt client.key ca.key; do
     [[ -s "$cert_dir/$required_file" ]] || {
@@ -351,7 +354,7 @@ for workload in "${workloads[@]}"; do
     "Secret/${namespace}/${secret_name}"
   )
   assert_certificate_unexpired "$workload_cert" \
-    "cert-manager publication certificate in Secret ${namespace}/${secret_name}" \
+    "cert-manager workload certificate in Secret ${namespace}/${secret_name}" \
     "${workload_rotation_resources[*]}" || exit 1
   if ! ca_basic_constraints="$(openssl x509 -in "$workload_ca" -noout -ext basicConstraints 2>/dev/null)"; then
     echo "cert-manager CA projection basic constraints could not be read: ${namespace}/${secret_name}" >&2
@@ -365,12 +368,12 @@ for workload in "${workloads[@]}"; do
     "cert-manager CA projection in Secret ${namespace}/${secret_name}" \
     "${workload_rotation_resources[*]}" || exit 1
   openssl verify -CAfile "$workload_ca" "$workload_cert" >/dev/null || {
-    echo "cert-manager publication certificate does not chain to its projected CA: ${namespace}/${secret_name}" >&2
+    echo "cert-manager workload certificate does not chain to its projected CA: ${namespace}/${secret_name}" >&2
     exit 1
   }
   current_issuer_fingerprint="$(openssl x509 -in "$workload_ca" -outform der | openssl sha256)"
   if [[ -n "$issuer_fingerprint" && "$issuer_fingerprint" != "$current_issuer_fingerprint" ]]; then
-    echo "cert-manager publication Secrets do not share one CA projection" >&2
+    echo "cert-manager workload Secrets do not share one CA projection" >&2
     exit 1
   fi
   issuer_fingerprint="$current_issuer_fingerprint"
@@ -378,11 +381,11 @@ for workload in "${workloads[@]}"; do
 
   fingerprint="$(openssl x509 -in "$workload_cert" -outform der | openssl sha256)"
   [[ "$fingerprint" != "$shared_fingerprint" ]] || {
-    echo "publication workload certificate must not reuse the shared gRPC leaf: $secret_name" >&2
+    echo "workload certificate must not reuse the shared gRPC leaf: $secret_name" >&2
     exit 1
   }
   [[ -z "${fingerprints[$fingerprint]+present}" ]] || {
-    echo "publication workload certificates must have distinct leaf identities: $secret_name" >&2
+    echo "workload certificates must have distinct leaf identities: $secret_name" >&2
     exit 1
   }
   fingerprints["$fingerprint"]="$workload"
@@ -404,4 +407,4 @@ for workload in "${workloads[@]}"; do
   kubectl -n "$namespace" delete secret "${namespace}-grpc-${workload}" --ignore-not-found >/dev/null
 done
 
-echo "cert-manager gRPC TLS material is ready in namespace ${namespace}: shared legacy bundle plus ${#fingerprints[@]} distinct publication leaves"
+echo "cert-manager gRPC TLS material is ready in namespace ${namespace}: shared legacy bundle plus ${#fingerprints[@]} distinct workload leaves"

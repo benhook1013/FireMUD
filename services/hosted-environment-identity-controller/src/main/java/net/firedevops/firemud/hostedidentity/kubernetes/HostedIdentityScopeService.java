@@ -178,6 +178,12 @@ public class HostedIdentityScopeService {
       names.add(plan.grpcPublicationSourceSecretName(workload));
       names.add(plan.grpcPublicationSourceSecretName(workload) + "-previous");
     }
+    names.add(plan.grpcAccountSourceSecretName());
+    names.add(plan.grpcAccountSourceSecretName() + "-previous");
+    names.add(plan.grpcGameSessionSourceSecretName());
+    names.add(plan.grpcGameSessionSourceSecretName() + "-previous");
+    names.add(plan.grpcSocialGroupsSourceSecretName());
+    names.add(plan.grpcSocialGroupsSourceSecretName() + "-previous");
     return List.copyOf(names);
   }
 
@@ -216,6 +222,9 @@ public class HostedIdentityScopeService {
   static List<String> requiredDeploymentNames(EnvironmentIdentityPlan plan) {
     LinkedHashSet<String> names = new LinkedHashSet<>(plan.grpcConsumers());
     names.addAll(HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS);
+    names.add(HostedIdentityContract.GRPC_ACCOUNT_WORKLOAD);
+    names.add(HostedIdentityContract.GRPC_GAME_SESSION_WORKLOAD);
+    names.add(HostedIdentityContract.GRPC_SOCIAL_GROUPS_WORKLOAD);
     names.addAll(DeploymentRolloutService.BRIDGE_DEPLOYMENTS);
     return List.copyOf(names);
   }
@@ -232,6 +241,9 @@ public class HostedIdentityScopeService {
         HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
             .map(plan::grpcPublicationCertificateName)
             .toList());
+    names.add(plan.grpcAccountCertificateName());
+    names.add(plan.grpcGameSessionCertificateName());
+    names.add(plan.grpcSocialGroupsCertificateName());
     return List.copyOf(names);
   }
 
@@ -248,6 +260,9 @@ public class HostedIdentityScopeService {
         HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
             .map(plan::grpcPublicationSecretName)
             .toList());
+    names.add(plan.grpcAccountSecretName());
+    names.add(plan.grpcGameSessionSecretName());
+    names.add(plan.grpcSocialGroupsSecretName());
     return List.copyOf(names);
   }
 

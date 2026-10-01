@@ -996,12 +996,25 @@ spec:
       containers:
         - name: account-service
           image: ghcr.io/benhook1013/account-service:latest
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
           envFrom:
             - secretRef:
                 name: postgres-credentials
             - configMapRef:
                 name: firemud-config
           volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
             - name: jwt-signing-keys
               mountPath: /var/run/secrets/firemud/jwt
               readOnly: true
@@ -1009,12 +1022,66 @@ spec:
               mountPath: /var/run/secrets/firemud/jwks
               readOnly: true
       volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-account-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
         - name: jwt-signing-keys
           secret:
             secretName: jwt-signing-keys
         - name: jwt-jwks
           secret:
             secretName: jwt-jwks
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: game-session-service
+spec:
+  template:
+    spec:
+      containers:
+        - name: game-session-service
+          image: ghcr.io/benhook1013/game-session-service:latest
+          env:
+            - name: FIREMUD_GRPC_CERT_CHAIN_PATH
+              value: /tls/tls.crt
+            - name: FIREMUD_GRPC_PRIVATE_KEY_PATH
+              value: /tls/tls.key
+            - name: FIREMUD_GRPC_CA_CERT_PATH
+              value: /grpc-trust/ca.crt
+          volumeMounts:
+            - name: grpc-tls
+              mountPath: /tls
+              readOnly: true
+            - name: grpc-trust
+              mountPath: /grpc-trust
+              readOnly: true
+      volumes:
+        - name: grpc-tls
+          secret:
+            secretName: firemud-grpc-game-session-service
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: grpc-trust
+          secret:
+            secretName: firemud-grpc-tls
+            items:
+              - key: ca.crt
+                path: ca.crt
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1213,6 +1280,7 @@ spec:
 YAML
 
 python3 - <<'PY' "$RENDERED_MANIFEST"
+import copy
 import pathlib
 import sys
 
@@ -1226,6 +1294,18 @@ documents = [
 ]
 for document in documents:
     document.setdefault("metadata", {})["namespace"] = "firemud"
+game_design = next(
+    document
+    for document in documents
+    if document.get("kind") == "Deployment"
+    and document.get("metadata", {}).get("name") == "game-design-service"
+)
+social_groups = copy.deepcopy(game_design)
+social_groups["metadata"]["name"] = "social-groups-service"
+social_spec = social_groups["spec"]["template"]["spec"]
+social_spec["containers"][0]["name"] = "social-groups-service"
+social_spec["volumes"][0]["secret"]["secretName"] = "firemud-grpc-social-groups-service"
+documents.append(social_groups)
 path.write_text(yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8")
 PY
 
@@ -9889,30 +9969,44 @@ publication_documents = [
             }
         },
     }
-    for workload in module.PUBLICATION_GRPC_WORKLOADS
+    for workload in module.GRPC_WORKLOAD_SECRET_CONSUMERS
 ]
+if module.PUBLICATION_GRPC_WORKLOADS != (
+    "game-design-service",
+    "world-management-service",
+    "entity-management-service",
+    "game-logic-service",
+    "automation-scripting-service",
+):
+    raise SystemExit("Account and Game Session changed the five publication-only workload set")
+if module.SHARED_TRUST_GRPC_WORKLOADS != (
+    *module.PUBLICATION_GRPC_WORKLOADS,
+    "social-groups-service",
+    *module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS,
+):
+    raise SystemExit("all eight distinct workloads must use the shared CA-only trust projection")
 publication_requirements = module.publication_workload_secret_requirements(
     publication_expected, publication_documents
 )
-expected_publication_names = {
+expected_workload_secret_names = {
     f"firemud-grpc-{workload}"
-    for workload in module.PUBLICATION_GRPC_WORKLOADS
+    for workload in module.GRPC_WORKLOAD_SECRET_CONSUMERS
 }
 if {name for name, _, _ in publication_requirements} != (
-    expected_publication_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
+    expected_workload_secret_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):
     raise SystemExit(
-        "publication Secret requirements do not follow the five leaf bindings and shared trust binding"
+        "workload Secret requirements do not follow the eight leaf bindings and shared trust binding"
     )
 publication_keys = {name: keys for name, _, keys in publication_requirements}
 if any(namespace != "firemud" for _, namespace, _ in publication_requirements):
-    raise SystemExit("publication Secret requirements did not use the expected-binding namespace")
+    raise SystemExit("workload Secret requirements did not use the expected-binding namespace")
 if any(
-    publication_keys[name] != {"tls.crt", "tls.key", "ca.crt"}
-    for name in expected_publication_names
+    publication_keys[name] != module.GRPC_WORKLOAD_LEAF_SECRET_KEYS
+    for name in expected_workload_secret_names
 ) or publication_keys[module.PUBLICATION_GRPC_TRUST_SECRET_NAME] != {"ca.crt"}:
     raise SystemExit(
-        "source publication Secret requirements omitted certificate-manager CA material"
+        "source workload Secret requirements omitted certificate-manager CA material"
     )
 
 def publication_static_issues(documents):
@@ -9932,6 +10026,106 @@ def expect_publication_static_failure(description, documents, expected_fragment=
     ):
         raise SystemExit(
             f"publication preflight rejected {description} for the wrong reason: {issues}"
+        )
+
+
+social_groups_index = module.SHARED_TRUST_GRPC_WORKLOADS.index("social-groups-service")
+missing_social_groups_documents = copy.deepcopy(publication_documents)
+missing_social_groups_documents.pop(social_groups_index)
+expect_publication_static_failure(
+    "a missing Social Groups workload identity",
+    missing_social_groups_documents,
+    "Expected exactly one rendered Deployment for gRPC workload social-groups-service",
+)
+wrong_social_groups_leaf_documents = copy.deepcopy(publication_documents)
+wrong_social_groups_leaf_documents[social_groups_index]["spec"]["template"]["spec"]["volumes"][0][
+    "secret"
+]["secretName"] = "firemud-grpc-game-session-service"
+expect_publication_static_failure(
+    "a reused Social Groups leaf Secret",
+    wrong_social_groups_leaf_documents,
+    "grpc-tls Secret must be firemud-grpc-social-groups-service",
+)
+missing_social_groups_trust_documents = copy.deepcopy(publication_documents)
+missing_social_groups_trust_documents[social_groups_index]["spec"]["template"]["spec"][
+    "volumes"
+].pop()
+expect_publication_static_failure(
+    "a missing Social Groups shared trust projection",
+    missing_social_groups_trust_documents,
+    "Expected exactly one grpc-trust volume",
+)
+
+
+for workload in module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS:
+    workload_index = module.SHARED_TRUST_GRPC_WORKLOADS.index(workload)
+    wrong_leaf_documents = copy.deepcopy(publication_documents)
+    wrong_leaf_documents[workload_index]["spec"]["template"]["spec"]["volumes"][0][
+        "secret"
+    ]["secretName"] = "wrong-workload-leaf"
+    expect_publication_static_failure(
+        f"a wrong {workload} leaf Secret reference",
+        wrong_leaf_documents,
+        f"grpc-tls Secret must be firemud-grpc-{workload}",
+    )
+
+    old_leaf_trust_documents = copy.deepcopy(publication_documents)
+    old_leaf_trust_spec = old_leaf_trust_documents[workload_index]["spec"]["template"][
+        "spec"
+    ]
+    old_leaf_trust_spec["volumes"] = [
+        volume for volume in old_leaf_trust_spec["volumes"] if volume["name"] != "grpc-trust"
+    ]
+    old_leaf_trust_spec["containers"][0]["volumeMounts"] = [
+        mount
+        for mount in old_leaf_trust_spec["containers"][0]["volumeMounts"]
+        if mount["name"] != "grpc-trust"
+    ]
+    old_leaf_trust_spec["volumes"][0]["secret"].pop("items")
+    next(
+        entry
+        for entry in old_leaf_trust_spec["containers"][0]["env"]
+        if entry["name"] == "FIREMUD_GRPC_CA_CERT_PATH"
+    )["value"] = "/tls/ca.crt"
+    expect_publication_static_failure(
+        f"the obsolete {workload} leaf-CA-only trust layout",
+        old_leaf_trust_documents,
+        "Expected exactly one grpc-trust volume",
+    )
+
+    wrong_shared_trust_documents = copy.deepcopy(publication_documents)
+    wrong_shared_trust_spec = wrong_shared_trust_documents[workload_index]["spec"][
+        "template"
+    ]["spec"]
+    wrong_shared_trust = next(
+        volume
+        for volume in wrong_shared_trust_spec["volumes"]
+        if volume["name"] == "grpc-trust"
+    )
+    wrong_shared_trust["secret"]["secretName"] = f"firemud-grpc-{workload}"
+    expect_publication_static_failure(
+        f"a wrong {workload} shared trust Secret",
+        wrong_shared_trust_documents,
+        "requires the shared CA-only Secret firemud-grpc-tls",
+    )
+
+    for shared_private_key in ("client.key", "client.crt"):
+        private_shared_material_documents = copy.deepcopy(publication_documents)
+        private_shared_spec = private_shared_material_documents[workload_index]["spec"][
+            "template"
+        ]["spec"]
+        private_shared_trust = next(
+            volume
+            for volume in private_shared_spec["volumes"]
+            if volume["name"] == "grpc-trust"
+        )
+        private_shared_trust["secret"]["items"].append(
+            {"key": shared_private_key, "path": shared_private_key}
+        )
+        expect_publication_static_failure(
+            f"a {workload} shared trust projection containing {shared_private_key}",
+            private_shared_material_documents,
+            "requires the shared CA-only Secret firemud-grpc-tls",
         )
 
 
@@ -10171,8 +10365,8 @@ default_mode_publication_documents[0]["spec"]["template"]["spec"]["volumes"][0][
 default_mode_requirements = module.publication_workload_secret_requirements(
     publication_expected, default_mode_publication_documents
 )
-if len(default_mode_requirements) != len(module.PUBLICATION_GRPC_WORKLOADS) + 1:
-    raise SystemExit("publication grpc-tls Secret defaultMode was not accepted")
+if len(default_mode_requirements) != len(module.GRPC_WORKLOAD_SECRET_CONSUMERS) + 1:
+    raise SystemExit("workload grpc-tls Secret defaultMode was not accepted")
 
 for forbidden_secret_key in ("optional", "unexpected"):
     forbidden_secret_documents = copy.deepcopy(publication_documents)
@@ -10305,7 +10499,7 @@ if not any(
         publication_expected, missing_workload_documents
     )
 ):
-    raise SystemExit("missing publication workload did not fail closed")
+    raise SystemExit("missing gRPC workload did not fail closed")
 
 ambiguous_workload_documents = publication_documents + [
     copy.deepcopy(publication_documents[0])
@@ -10376,7 +10570,7 @@ if not any(
         publication_expected, namespace_mismatch_documents
     )
 ):
-    raise SystemExit("publication workload namespace mismatch did not fail closed")
+    raise SystemExit("gRPC workload namespace mismatch did not fail closed")
 
 publication_success_fixture = {
     name: keys for name, _, keys in publication_requirements
@@ -10399,13 +10593,13 @@ with patch.object(
     if module.publication_workload_secret_issues(
         publication_expected, publication_documents
     ):
-        raise SystemExit("complete publication Secret fixture failed preflight")
+        raise SystemExit("complete eight-workload Secret fixture failed preflight")
 if {name for name, _, _ in queried_publication_secrets} != (
-    expected_publication_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
+    expected_workload_secret_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):
-    raise SystemExit("preflight did not query precisely the mounted publication Secrets")
+    raise SystemExit("preflight did not query precisely the mounted workload Secrets")
 if any(namespace != "firemud" for _, namespace, _ in queried_publication_secrets):
-    raise SystemExit("preflight queried a publication Secret in the wrong namespace")
+    raise SystemExit("preflight queried a workload Secret in the wrong namespace")
 
 missing_publication_name = publication_requirements[0][0]
 with patch.object(
@@ -10458,6 +10652,58 @@ if len(missing_ca_issues) != 1 or "missing keys: ca.crt" not in missing_ca_issue
     raise SystemExit(
         f"publication Secret missing ca.crt did not fail closed: {missing_ca_issues}"
     )
+
+for workload in module.ACCOUNT_GAME_SESSION_GRPC_WORKLOADS:
+    target_secret_name = f"firemud-grpc-{workload}"
+    with patch.object(
+        module,
+        "secret_keys_lookup_failure",
+        side_effect=lambda name, namespace, required, target=target_secret_name: (
+            (
+                f"Missing required Secret in cluster: {namespace}/{name}",
+                True,
+                False,
+            )
+            if name == target
+            else (None, False, False)
+        ),
+    ):
+        missing_role_secret_issues = module.publication_workload_secret_issues(
+            publication_expected, publication_documents
+        )
+    if (
+        len(missing_role_secret_issues) != 1
+        or target_secret_name not in missing_role_secret_issues[0]
+        or "Missing required Secret" not in missing_role_secret_issues[0]
+    ):
+        raise SystemExit(
+            f"missing {workload} leaf Secret did not fail closed: {missing_role_secret_issues}"
+        )
+
+    with patch.object(
+        module,
+        "secret_keys_lookup_failure",
+        side_effect=lambda name, namespace, required, target=target_secret_name: (
+            (
+                f"Required Secret {namespace}/{name} is missing keys: ca.crt",
+                True,
+                False,
+            )
+            if name == target
+            else (None, False, False)
+        ),
+    ):
+        incomplete_role_secret_issues = module.publication_workload_secret_issues(
+            publication_expected, publication_documents
+        )
+    if (
+        len(incomplete_role_secret_issues) != 1
+        or target_secret_name not in incomplete_role_secret_issues[0]
+        or "missing keys: ca.crt" not in incomplete_role_secret_issues[0]
+    ):
+        raise SystemExit(
+            f"incomplete {workload} leaf Secret did not fail closed: {incomplete_role_secret_issues}"
+        )
 
 namespace = "pr-42"
 release = "pr-42"
