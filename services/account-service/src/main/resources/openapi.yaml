@@ -457,6 +457,8 @@ paths:
           description: Invalid or expired bootstrap token
         '403':
           description: Gameplay admission denied for this authenticated account or selected realm
+        '409':
+          description: Admission routing evidence is invalid or stale; rediscover realms and obtain a fresh connectScopeId before retrying
         '503':
           $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/connect-token:
@@ -489,6 +491,8 @@ paths:
           description: Invalid or expired bootstrap token
         '403':
           description: Gameplay admission denied for this authenticated account or selected realm
+        '409':
+          description: Admission routing evidence is invalid or stale; rediscover realms and obtain a fresh connectScopeId before retrying
         '503':
           $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/request-password-reset:

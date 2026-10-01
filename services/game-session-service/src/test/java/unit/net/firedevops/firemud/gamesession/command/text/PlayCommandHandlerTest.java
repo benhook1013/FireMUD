@@ -506,7 +506,7 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playRejectsAmbiguousPersistedCharacterNamesBeforeBinding() {
+  void playWithAmbiguousCharacterNameReturnsSelectionGuidanceBeforeBinding() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -529,13 +529,12 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+    assertDemoCharacterSelectionRequired(result);
     verifyNoGameplayBindingSideEffects();
   }
 
   @Test
-  void playRejectsMissingPersistedCharacterBeforeBinding() {
+  void playWithEmptyCharacterRosterReturnsSelectionGuidanceBeforeBinding() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -546,13 +545,12 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+    assertDemoCharacterSelectionRequired(result);
     verifyNoGameplayBindingSideEffects();
   }
 
   @Test
-  void playWithoutCharacterSelectorRejectsMultiplePersistedCharactersBeforeBinding() {
+  void playWithoutCharacterSelectorReturnsSelectionGuidanceForMultipleCharacters() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -575,8 +573,22 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
-    assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+    assertDemoCharacterSelectionRequired(result);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
+  void playWithUnmatchedCharacterSelectorReturnsGuidanceBeforeBinding() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(TextCommandType.PLAY, List.of("demo", "missing"), "PLAY demo missing"));
+
+    assertDemoCharacterSelectionRequired(result);
     verifyNoGameplayBindingSideEffects();
   }
 
@@ -1005,7 +1017,7 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
     Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
     Mockito.verify(entityManagementClient, never())
-        .findCharacterByName(Mockito.any(), Mockito.any(), Mockito.anyString());
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
   }
 
@@ -1850,6 +1862,25 @@ class PlayCommandHandlerTest {
         .publishSpawnEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
     Mockito.verify(sessionAuthenticationService, never())
         .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
+  }
+
+  private void assertDemoCharacterSelectionRequired(PlayCommandHandlingResult result) {
+    String expectedMessage =
+        "Selection required. Use PLAY demo <character> or browse CHARS demo first.";
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(result.commandResult().errorMessage()).isEqualTo(expectedMessage);
+
+    ErrorOutput error = (ErrorOutput) result.outputs().getFirst().payload();
+    assertThat(error.code()).isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(error.message()).isEqualTo(expectedMessage);
+    assertThat(error.messageKey()).isEqualTo("error.play.character-selection-required");
+    assertThat(error.arguments())
+        .containsEntry("worldSlug", "demo")
+        .containsEntry("realmSlug", "production")
+        .containsEntry("playUsage", "PLAY demo <character>")
+        .containsEntry("charsUsage", "CHARS demo");
   }
 
   private static GameplayCommand command(String commandId, String commandName, String commandText) {

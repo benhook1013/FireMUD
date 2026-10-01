@@ -341,9 +341,7 @@ public final class LoginCommandHandler {
     if (projectedExisting != null && projectedExisting.accountId() != accountId) {
       gameplayPresenceLifecycleService.clearGameplayBinding(
           projectedExisting, "LOGIN_ACCOUNT_CHANGED");
-    } else if (projectedExisting != null
-        && projectedExisting.tenantId() != tenantId
-        && projectedExisting.hasGameplayBinding()) {
+    } else if (projectedExisting != null && projectedExisting.tenantId() != tenantId) {
       gameplayPresenceLifecycleService.clearGameplayBinding(
           projectedExisting, "LOGIN_TENANT_CHANGED");
     }

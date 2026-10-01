@@ -21,6 +21,8 @@ public class AuthenticationExceptionHandler {
           "PUBLIC_PRODUCTION_ADMISSION_DENIED",
           "JOIN_REQUIRED",
           "TENANT_BILLING_BLOCKED");
+  private static final java.util.Set<String> CONFLICT_CODES =
+      java.util.Set.of("ADMISSION_POINTER_UNAVAILABLE", "CONNECT_SCOPE_MISMATCH");
 
   @ExceptionHandler(AuthenticationException.class)
   public ResponseEntity<ApiResponse<ErrorDetail>> handleAuthenticationException(
@@ -31,7 +33,9 @@ public class AuthenticationExceptionHandler {
             ? HttpStatus.SERVICE_UNAVAILABLE
             : FORBIDDEN_CODES.contains(ex.getCode())
                 ? HttpStatus.FORBIDDEN
-                : HttpStatus.UNAUTHORIZED;
+                : CONFLICT_CODES.contains(ex.getCode())
+                    ? HttpStatus.CONFLICT
+                    : HttpStatus.UNAUTHORIZED;
     return new ResponseEntity<>(ApiResponse.error(detail), status);
   }
 }

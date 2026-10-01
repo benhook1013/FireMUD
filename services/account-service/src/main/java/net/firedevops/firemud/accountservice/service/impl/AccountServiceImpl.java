@@ -1433,11 +1433,6 @@ public class AccountServiceImpl implements AccountService {
           .isEmpty();
     } catch (IllegalStateException ex) {
       return false;
-    } catch (AuthenticationException ex) {
-      if ("ENTITLEMENT_UNAVAILABLE".equals(ex.getCode())) {
-        return false;
-      }
-      throw ex;
     }
   }
 

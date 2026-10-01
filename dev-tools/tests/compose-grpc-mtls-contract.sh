@@ -36,6 +36,25 @@ workloads_dir="$fixture_root/workloads"
 [[ ! -e "$workloads_dir/ca.key" ]]
 [[ -z "$(find "$workloads_dir" -type f -name ca.key -print -quit)" ]]
 
+symlink_run_id="${run_id}-symlink"
+symlink_project_name="firemud-smoke-$symlink_run_id"
+symlink_project_key="$(printf '%s' "$symlink_project_name" | sha256sum | awk '{print $1}')"
+symlink_fixture_root="$ownership_dir/$symlink_project_key.grpc-mtls"
+outside_workloads="$TEST_ROOT/outside-workloads"
+mkdir -m 700 -- "$symlink_fixture_root"
+mkdir -m 755 -- "$outside_workloads"
+ln -s "$outside_workloads" "$symlink_fixture_root/workloads"
+if FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
+  FIREMUD_SMOKE_RUN_ID="$symlink_run_id" \
+  COMPOSE_PROJECT_NAME="$symlink_project_name" \
+  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$symlink_fixture_root" \
+  >"$TEST_ROOT/symlink-output" 2>&1; then
+  echo "Compose mTLS certificate generation accepted a symlinked workloads path." >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS workloads path must be a real directory.' "$TEST_ROOT/symlink-output"
+
 public_key_digest() {
   local cert_or_key="$1" kind="$2"
   if [[ "$kind" == certificate ]]; then
