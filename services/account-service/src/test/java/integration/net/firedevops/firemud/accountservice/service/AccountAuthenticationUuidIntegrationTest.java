@@ -472,7 +472,7 @@ class AccountAuthenticationUuidIntegrationTest {
   @Test
   void persistedProfileGetUpdateAndExportCarryTheCanonicalAccountUuid() {
     String suffix = UUID.randomUUID().toString();
-    String username = "profile-carrier-" + suffix;
+    String username = "profile-uuid-" + suffix;
     var created =
         accountService.createAccount(
             new CreateAccountRequest(username, username + "@example.com", PASSWORD));
@@ -556,8 +556,8 @@ class AccountAuthenticationUuidIntegrationTest {
   @Test
   void profileUpdateRejectsSourceUuidMismatchWithoutSavingOrNotifying() {
     String suffix = UUID.randomUUID().toString();
-    String firstUsername = "profile-source-first-" + suffix;
-    String secondUsername = "profile-source-second-" + suffix;
+    String firstUsername = "source-a-" + suffix;
+    String secondUsername = "source-b-" + suffix;
     var first =
         accountService.createAccount(
             new CreateAccountRequest(firstUsername, firstUsername + "@example.com", PASSWORD));

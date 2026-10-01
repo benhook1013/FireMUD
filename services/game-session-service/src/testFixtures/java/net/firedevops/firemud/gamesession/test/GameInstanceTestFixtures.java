@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.test;
 
 import java.util.Optional;
+import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 public final class GameInstanceTestFixtures {
@@ -46,7 +47,7 @@ public final class GameInstanceTestFixtures {
                 700L,
                 "genrev:test:" + gameTemplateId,
                 null,
-                ownerAccountUuid,
+                UUID.fromString(ownerAccountUuid),
                 "ACTIVE"))
         .orElseThrow(() -> new IllegalStateException("Game instance insert did not return an id"));
   }
