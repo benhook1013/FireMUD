@@ -2653,7 +2653,16 @@ class PlayCommandHandlerTest {
   void playRequiresExplicitAvailableMembershipAuthorityBeforePublicOutcomes(
       String lifecycle, String availability) {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            123L,
+            "demo",
+            1L,
+            "R-1",
+            "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
@@ -2663,13 +2672,13 @@ class PlayCommandHandlerTest {
                   switch (lifecycle) {
                     case "ACTIVE" ->
                         net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .active(123L, 22L, "1");
+                            .active("f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "1");
                     case "MISSING" ->
                         net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .missing(123L, 22L);
+                            .missing("f2ed193b-12c1-4c96-bcad-c162229af440", 22L);
                     case "INACTIVE" ->
                         net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .inactive(123L, 22L, "3");
+                            .inactive("f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "3");
                     default ->
                         throw new IllegalArgumentException("Unexpected lifecycle: " + lifecycle);
                   };
@@ -2716,9 +2725,9 @@ class PlayCommandHandlerTest {
               var membership =
                   "MISSING".equals(lifecycle)
                       ? net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                          .missing(123L, 22L)
+                          .missing("f2ed193b-12c1-4c96-bcad-c162229af440", 22L)
                       : net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                          .inactive(123L, 22L, "3");
+                          .inactive("f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "3");
               var builder = freshMembership(membership).toBuilder();
               if (!"ABSENT".equals(availability)) {
                 builder.setAuthorityAvailability(availability);
