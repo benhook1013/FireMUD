@@ -547,11 +547,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     private boolean workloadIdentityEvidenceComplete() {
       return HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
               .map(HostedIdentityContract::grpcPublicationRole)
-              .allMatch(
-                  role -> {
-                    CertificateMaterialService.RoleMaterial material = materialsByRole.get(role);
-                    return material != null && material.ready();
-                  })
+              .allMatch(this::roleReady)
           && roleReady(HostedIdentityContract.GRPC_ACCOUNT_ROLE)
           && roleReady(HostedIdentityContract.GRPC_GAME_SESSION_ROLE)
           && roleReady(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
