@@ -5294,12 +5294,28 @@ class ReviewController:
     ) -> None:
         """Serialize admission with human decisions, releasing before execution."""
 
+        observed_allocation = self._state().allocations.get(f"{pr}:{channel}")
+        cap_history = None
+        if (observed_allocation is not None and observed_allocation.stop_basis is None
+                and observed_allocation.max_additional_completed is not None):
+            # The adapter owns provider exclusion here; refresh outside the short mutation lock.
+            refresh = getattr(self._evidence_provider, "admission_history", None)
+            cap_history = list(refresh(pr, channel)) if callable(refresh) else _history(
+                self._evidence_provider, pr, policy.Channel(channel)
+            )
+
         def admit(state: ReviewState) -> ReviewState:
             allocation = state.allocations.get(f"{pr}:{channel}")
             if pr not in state.ordered_prs or (allocation is not None and allocation.stop_basis is not None):
                 raise ControllerError(f"{channel} review discovery is stopped for PR #{pr}")
             if selection_inputs is not None and self._selection_inputs(state, pr, channel) != selection_inputs:
                 raise _SelectionChanged("review selection changed before admission")
+            if allocation != observed_allocation:
+                raise _SelectionChanged("review allocation changed before admission")
+            if cap_history is not None:
+                snapshot = self._bounded_allocation_evidence(allocation, cap_history)
+                if snapshot["error"] is not None or len(snapshot["results"]) >= allocation.max_additional_completed:
+                    raise _SelectionChanged("review cap evidence changed before admission")
             reserve()
             return state
 

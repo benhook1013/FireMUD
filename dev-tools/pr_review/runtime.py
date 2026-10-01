@@ -144,6 +144,14 @@ class LiveEvidence:
 
         self._payload(pr)
 
+    def admission_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
+        """Refresh one capped channel after execution exclusion, before state mutation."""
+
+        self._payloads.pop(pr, None)
+        self._histories.pop((pr, channel), None)
+        self._records_histories.pop(pr, None)
+        return self.history(pr, channel)
+
     @staticmethod
     def _request_lock_is_held(path: Path) -> bool:
         """Check an existing request lock without creating or changing a file."""

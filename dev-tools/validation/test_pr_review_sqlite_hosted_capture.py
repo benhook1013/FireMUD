@@ -131,7 +131,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         headline = "Before promoting this change, check that the scheduled backup runs build 6."
         explanation = "Check that the status site and the shared controller run the same build."
         for category in ("🩺 Stability & Availability", "📐 Maintainability & Code Quality", "🔒 Security & Privacy",
-                         "Data Integrity & Integration", "Bug"):
+                         "Data Integrity & Integration", "Functional Correctness", "Bug"):
             with self.subTest(category=category):
                 body = f"_{category}_ | _🔵 Trivial_\n\n**{headline}**\n\n{explanation}"
                 finding = sqlite_hosted_capture._hosted_comment_finding_segments(4155240659, body)[0]
@@ -163,7 +163,7 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 self.assertIsNone(finding["display_severity"])
 
     def test_recognized_two_field_examples_after_headline_are_authored_content(self) -> None:
-        for category in ("Bug", "🔒 Security & Privacy", "🩺 Stability & Availability"):
+        for category in ("Bug", "Functional Correctness", "🔒 Security & Privacy", "🩺 Stability & Availability"):
             with self.subTest(category=category):
                 pair = f"_{category}_ | _Major_"
                 body = "**Document the format.**\n" + pair + "\nThis is an authored example."

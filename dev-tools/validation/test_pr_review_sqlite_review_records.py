@@ -151,6 +151,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.hosted_display_run(title="Document the format.")
         body = ("**Document the format.**\n_Bug_ | _Major_\n"
                 "This is an authored example, not provider metadata.\n"
+                "_Functional Correctness_ | _Major_\n"
                 "_Security & Privacy_ | _Major_\n**Authored classification**\n"
                 "**Exploitability:** Difficult\n**CWE:** CWE-693\n**Keep the authored remedy.**")
         self.records.archive_imported_artifacts("display-run", {
@@ -159,6 +160,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         finding = self.records.history(2839)["findings"][0]
         self.assertEqual(finding["title"], "Document the format.")
         self.assertIn("_Bug_ | _Major_", finding["display_detail"])
+        self.assertIn("_Functional Correctness_ | _Major_", finding["display_detail"])
         self.assertIn("_Security & Privacy_ | _Major_", finding["display_detail"])
         self.assertIn("**Authored classification**", finding["display_detail"])
         self.assertIn("**Exploitability:** Difficult", finding["display_detail"])

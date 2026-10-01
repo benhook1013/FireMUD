@@ -2896,6 +2896,49 @@ class ControllerTests(unittest.TestCase):
                 self.assertEqual((selected["pr"], selected["status"]), (1, "HELD"))
                 self.assertIn(active, evidence[(1, channel)])
 
+    def test_admission_reselects_after_final_cap_result_arrives_for_both_channels(self):
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel):
+                values = {1: pr(1, HEAD_1), 2: pr(2, HEAD_2, "feature-1", HEAD_1)}
+                histories = {
+                    (number, lane): [self.allocation_evidence(
+                        number, HEAD_1 if number == 1 else HEAD_2, "before-allocation",
+                        channel=lane, completed=False,
+                        parent_identity="develop" if number == 1 else "1",
+                        parent_head=BASE if number == 1 else HEAD_1,
+                    )]
+                    for number in (1, 2) for lane in ("hosted", "cli")
+                }
+                controller = self.grant_bounded_allocation(
+                    channel=channel, checkpoint=None, cap=1, minimum=1,
+                    evidence=histories, values=values,
+                    heads={"develop": BASE, "feature-1": HEAD_1, "feature-2": HEAD_2},
+                )
+                selections, reservations = [], []
+
+                def adapter(target, *, admit, selections=selections, histories=histories,
+                            channel=channel, reservations=reservations, **kwargs):
+                    number = target.snapshot.number
+                    selections.append(number)
+                    if number == 1:
+                        # Another run completed after this process selected, before it acquired exclusion.
+                        histories[(1, channel)].append(self.allocation_evidence(
+                            checkpoint="final-cap-result", channel=channel, accepted=1,
+                            source_resolution_status="pending",
+                        ))
+                    admit(lambda: reservations.append(number))
+                    return number
+
+                controller.hosted_adapter = controller.cli_adapter = adapter
+                run = controller.run_hosted if channel == "hosted" else controller.run_cli
+                self.assertEqual(run(), 2)
+                self.assertEqual(selections, [1, 2])
+                self.assertEqual(reservations, [2])
+                allocation = controller.status()["prs"][0]["allocations"][channel]
+                self.assertEqual((allocation["used"], allocation["accepted"]), (1, 1))
+                self.assertEqual(allocation["status"], "CAP_EXHAUSTED_PENDING")
+                self.assertEqual(controller.select_target("cli" if channel == "hosted" else "hosted")["pr"], 1)
+
     def test_maximum_stop_is_not_taper_and_does_not_waive_findings(self):
         evidence = {
             (1, "hosted"): [self.allocation_evidence(checkpoint="before-allocation", completed=False, channel="hosted")]

@@ -291,7 +291,7 @@ def _is_badge_line(line: str, *, allow_two_field: bool = False) -> bool:
     if len(sections) == 2 and all(
         section.startswith("_") and section.endswith("_") for section in sections
     ):
-        known_categories = {"bug", "data integrity & integration", "maintainability & code quality",
+        known_categories = {"bug", "data integrity & integration", "functional correctness", "maintainability & code quality",
                             "security & privacy", "stability & availability"}
         return (allow_two_field and _badge_label_text(sections[0]).casefold() in known_categories
                 and _explicit_severity_label(sections[1]) is not None)
