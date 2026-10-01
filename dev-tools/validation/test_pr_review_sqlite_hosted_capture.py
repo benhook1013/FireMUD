@@ -203,6 +203,35 @@ class SqliteHostedCaptureTest(unittest.TestCase):
         self.assertEqual(finding["title"], "Validate target.")
         self.assertEqual(finding["display_detail"], "> Keep this distinct quoted explanation.")
 
+    def test_hosted_metadata_prefixes_do_not_hide_substantive_issue_prose(self) -> None:
+        for issue in (
+            "Repository: lookup uses the wrong tenant",
+            "Analysis results: the route check accepts the wrong target.",
+            "Script output: the missing identity is silently ignored.",
+            "Committable suggestion does not validate the changed request.",
+            "Script executed: the wrong tenant context reaches the worker.",
+            "Supported by static analysis but the reported identifier is incorrect.",
+            "Length of output: the counter is updated before validation.",
+        ):
+            with self.subTest(issue=issue):
+                finding = sqlite_hosted_capture._hosted_comment_finding_segments(
+                    202, "**Validate the target.**\n\n" + issue
+                )[0]
+                self.assertEqual(finding["display_detail"], issue)
+                self.assertEqual(sqlite_provider_imports._first_line(issue), issue)
+
+    def test_hosted_exact_provider_labels_and_metadata_still_stay_out_of_issue(self) -> None:
+        for label in (
+            "Supported by static analysis", "Script executed:", "Analysis results:",
+            "Script output:", "Committable suggestion", "Prompt for AI Agents",
+            "Repository: owner/repo", "Length of output: 37011", "**Script output:**",
+        ):
+            with self.subTest(label=label):
+                body = label + "\n\nThe route check accepts the wrong tenant."
+                self.assertEqual(sqlite_provider_imports._first_line(body),
+                                 "The route check accepts the wrong tenant.")
+                self.assertIsNone(sqlite_provider_imports._first_line(label))
+
     def test_wrapper_fix_keeps_multiple_fingerprinted_finding_keys(self) -> None:
         body = (
             "<details>\n</details>\nFirst actionable issue.\n"

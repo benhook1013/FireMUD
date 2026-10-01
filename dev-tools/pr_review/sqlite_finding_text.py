@@ -66,14 +66,17 @@ def _safe_finding_detail(value: Any) -> str:
 
 _HTML_TAG = re.compile(r"</?[a-zA-Z][a-zA-Z0-9]*(?:\s+[^<>]*)?\s*/?>")
 _EVIDENCE_LABEL = re.compile(
-    r"^(?:supported by static analysis\b|script executed\s*:|analysis results?\s*:|"
-    r"committable suggestion\b|script output\s*:|repository\s*:|length of output\s*:|"
-    r"prompt for ai agents\b|ai (?:agent )?prompt\b)", re.IGNORECASE
+    r"^(?:(?:supported by static analysis|script executed|analysis results?|"
+    r"committable suggestion|script output|prompt for ai agents|ai (?:agent )?prompt)\s*:?|"
+    r"repository\s*:\s*`?[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+`?|"
+    r"length of output\s*:\s*[0-9]+)\s*$", re.IGNORECASE
 )
 
 
 def _is_evidence_label(value: str) -> bool:
-    return bool(_EVIDENCE_LABEL.search(re.sub(r"^[^a-zA-Z0-9]+", "", value)))
+    candidate = _bold_line_content(value.strip()) or value.strip().strip("_*")
+    candidate = re.sub(r"^[^a-zA-Z0-9]+", "", candidate)
+    return bool(_EVIDENCE_LABEL.fullmatch(candidate))
 
 
 def _headline_text(line: str) -> str:
