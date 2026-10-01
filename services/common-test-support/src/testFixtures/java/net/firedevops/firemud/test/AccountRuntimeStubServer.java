@@ -260,6 +260,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setRequestAccountId(accountSelector)
             .setRequestTenantId(tenantSelector)
             .setRequestId(requestId)
+            .setAuthorityAvailability("AVAILABLE")
             .setMembershipExists(exists)
             .setMembershipLifecycleState(lifecycle)
             .setGameplayAdmissionAllowed(admitted)

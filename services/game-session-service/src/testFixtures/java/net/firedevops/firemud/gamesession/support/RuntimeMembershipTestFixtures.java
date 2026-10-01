@@ -146,6 +146,7 @@ public final class RuntimeMembershipTestFixtures {
             .setTenantId(tenantUuid)
             .setRequestAccountId(Long.toString(accountId))
             .setRequestTenantId(Long.toString(tenantId))
+            .setAuthorityAvailability("AVAILABLE")
             .setMembershipExists(exists)
             .setMembershipLifecycleState(lifecycle)
             .setGameplayAdmissionAllowed(admitted)

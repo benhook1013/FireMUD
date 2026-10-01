@@ -45,6 +45,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
@@ -2206,6 +2207,116 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, Mockito.never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, Mockito.never()).save(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "ACTIVE,ABSENT",
+    "ACTIVE,UNKNOWN",
+    "ACTIVE,UNAVAILABLE",
+    "MISSING,ABSENT",
+    "MISSING,UNKNOWN",
+    "MISSING,UNAVAILABLE",
+    "INACTIVE,ABSENT",
+    "INACTIVE,UNKNOWN",
+    "INACTIVE,UNAVAILABLE"
+  })
+  void playRequiresExplicitAvailableMembershipAuthorityBeforePublicOutcomes(
+      String lifecycle, String availability) {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var membership =
+                  switch (lifecycle) {
+                    case "ACTIVE" ->
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .active(123L, 22L, "1");
+                    case "MISSING" ->
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .missing(123L, 22L);
+                    case "INACTIVE" ->
+                        net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                            .inactive(123L, 22L, "3");
+                    default ->
+                        throw new IllegalArgumentException("Unexpected lifecycle: " + lifecycle);
+                  };
+              var builder = freshMembership(membership).toBuilder();
+              if (!"ABSENT".equals(availability)) {
+                builder.setAuthorityAvailability(availability);
+              } else {
+                builder.clearAuthorityAvailability();
+              }
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(builder.build(), invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "MISSING,ABSENT",
+    "MISSING,UNKNOWN",
+    "MISSING,UNAVAILABLE",
+    "INACTIVE,ABSENT",
+    "INACTIVE,UNKNOWN",
+    "INACTIVE,UNAVAILABLE"
+  })
+  void playRequiresExplicitAvailableMembershipAuthorityBeforeNonPublicOutcome(
+      String lifecycle, String availability) {
+    SessionContext context = unboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var membership =
+                  "MISSING".equals(lifecycle)
+                      ? net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .missing(123L, 22L)
+                      : net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .inactive(123L, 22L, "3");
+              var builder = freshMembership(membership).toBuilder();
+              if (!"ABSENT".equals(availability)) {
+                builder.setAuthorityAvailability(availability);
+              } else {
+                builder.clearAuthorityAvailability();
+              }
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(builder.build(), invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
   }
 
   @Test

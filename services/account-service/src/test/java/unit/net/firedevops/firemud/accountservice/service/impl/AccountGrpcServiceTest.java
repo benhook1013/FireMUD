@@ -1904,6 +1904,7 @@ class AccountGrpcServiceTest {
     assertEquals(ACCOUNT_UUID, response.getRequestAccountId());
     assertEquals(TENANT_UUID, response.getRequestTenantId());
     assertEquals("membership-read-1", response.getRequestId());
+    assertEquals("AVAILABLE", response.getAuthorityAvailability());
     assertTrue(response.getMembershipExists());
     assertTrue(response.getGameplayAdmissionAllowed());
     assertEquals("ACTIVE", response.getMembershipLifecycleState());
@@ -1953,6 +1954,7 @@ class AccountGrpcServiceTest {
 
     assertTrue(response.getMembershipExists());
     assertFalse(response.getGameplayAdmissionAllowed());
+    assertEquals("AVAILABLE", response.getAuthorityAvailability());
     assertEquals("INACTIVE", response.getMembershipLifecycleState());
     assertEquals(List.of("player"), response.getRolesList());
     assertEquals(Map.of(TENANT_UUID, "3"), response.getMembershipVersionMap());
@@ -2129,6 +2131,7 @@ class AccountGrpcServiceTest {
     assertEquals(ACCOUNT_UUID, response.getAccountId());
     assertEquals(TENANT_UUID, response.getTenantId());
     assertEquals("membership-read-1", response.getRequestId());
+    assertEquals("AVAILABLE", response.getAuthorityAvailability());
     assertFalse(response.getMembershipExists());
     assertFalse(response.getGameplayAdmissionAllowed());
     assertEquals("MISSING", response.getMembershipLifecycleState());
