@@ -212,3 +212,9 @@ Entry format:
   - Context: an architecture-contract run passed its test cases but then read a truncated final command after the same shell script was edited while its process was still running. A complete rerun against the finished script passed.
   - Observation: a shell process may continue reading its script after earlier commands finish; editing that script during execution can invalidate the run independently of the corrected contract.
   - Expected pattern: finish script edits before starting its validation, or discard the affected run as proof and rerun the complete named check after edits settle. Do not diagnose the resulting partial command as a missing repository tool without checking the input race.
+
+- `2026-10-02`: Isolate embedded HTTP test configuration from MVC slice discovery
+  - Context: the focused removed-route HTTP test passed, but the combined Account suite later produced 40 unexpected 404 failures. Test output showed unrelated MVC slices discovering that test's nested `@SpringBootConfiguration` instead of the real Account application.
+  - Observation: an explicitly selected embedded test application can still contaminate neighboring Spring test discovery when it is globally discoverable. Its isolated passing result does not prove test-suite coexistence.
+  - Expected pattern: use isolated test configuration with explicit application selection, preserve the real HTTP route proof, and run the affected service suite when introducing an embedded application alongside MVC slices.
+  - Outcome: an explicit context using `@Configuration` and `@TestComponent` isolates the embedded application; all 284 source-branch Account tests passed with zero skips, failures, or errors. `@TestConfiguration` alone loaded the real application's unrelated gRPC clients and was not sufficient here. The earlier failed combined run remains non-completion evidence.

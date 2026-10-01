@@ -14,19 +14,22 @@ import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.test.WithFiremudHttpAuthTestProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestComponent;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.TestPropertySource;
 
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     classes = RemovedExternalAccountRouteHttpTest.TestApplication.class)
+@ContextConfiguration(classes = RemovedExternalAccountRouteHttpTest.TestApplication.class)
 @WithFiremudHttpAuthTestProperties
 @TestPropertySource(
     properties = {
@@ -83,7 +86,8 @@ class RemovedExternalAccountRouteHttpTest {
     return request.build();
   }
 
-  @SpringBootConfiguration
+  @Configuration(proxyBeanMethods = false)
+  @TestComponent
   @EnableAutoConfiguration
   @Import(AccountController.class)
   static class TestApplication {
