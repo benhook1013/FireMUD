@@ -248,18 +248,18 @@ class VersionServiceImplTest {
     verify(versionRepository, times(2)).save(any(Version.class));
     InOrder publicationOrder = inOrder(versionRepository, publishAttemptService, scriptingClient);
     publicationOrder.verify(versionRepository).save(any(Version.class));
-    publicationOrder.verify(publishAttemptService).createScriptPatchAttempt(
-        any(VersionDto.class),
-        org.mockito.ArgumentMatchers.eq(
-            "publish-script-patch:tenant-1:publish-request:" + PUBLISH_REQUEST_ID),
-        org.mockito.ArgumentMatchers.eq(3L),
-        org.mockito.ArgumentMatchers.eq(binding.requestDigest()));
+    publicationOrder
+        .verify(publishAttemptService)
+        .createScriptPatchAttempt(
+            any(VersionDto.class),
+            org.mockito.ArgumentMatchers.eq(
+                "publish-script-patch:tenant-1:publish-request:" + PUBLISH_REQUEST_ID),
+            org.mockito.ArgumentMatchers.eq(3L),
+            org.mockito.ArgumentMatchers.eq(binding.requestDigest()));
     publicationOrder
         .verify(scriptingClient)
         .notifyScriptVersionUpdate("tenant-1", 3L, "patch-2", java.util.List.of());
-    publicationOrder
-        .verify(versionRepository)
-        .findByTenantIdAndIdForUpdate("tenant-1", 11L);
+    publicationOrder.verify(versionRepository).findByTenantIdAndIdForUpdate("tenant-1", 11L);
     publicationOrder
         .verify(publishAttemptService)
         .recordScriptPatchParticipantDigests(
