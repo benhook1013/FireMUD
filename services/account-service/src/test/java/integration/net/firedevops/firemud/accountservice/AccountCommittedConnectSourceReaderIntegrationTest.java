@@ -34,6 +34,7 @@ import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeIdentity;
+import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeOperation;
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginResponseEnvelope;
 import net.firedevops.firemud.accountservice.repository.AccountCommittedConnectSource;
@@ -44,6 +45,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepo
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
+import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
 import net.firedevops.firemud.accountservice.security.AccountEncryptedEnvelope;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeBinding;
@@ -64,6 +66,8 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
 import net.firedevops.firemud.common.security.GatewayConnectContextSignature;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
+import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationResponse;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
@@ -137,6 +141,67 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                     .put("extra", BigInteger.ONE))
         .isInstanceOf(UnsupportedOperationException.class);
     assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(before);
+  }
+
+  @Test
+  void readsFreshUuidCommittedSourceAndStoredHistoricalFrameWithoutMutation() throws Exception {
+    PreparedAccount prepared = newPreparedAccount();
+    SourceFixture source = newFreshSource(prepared, SourceTarget.NORMAL);
+    assertThat(source.identity().tenantId()).isEqualTo(prepared.freshTenantUuid());
+    FreshTenantCreationEvidence imported =
+        inTransaction(
+            prepared.db().transaction(),
+            () ->
+                prepared
+                    .freshTenantIdentityRepository()
+                    .read(prepared.freshTenantUuid())
+                    .orElseThrow());
+    assertThat(imported.canonicalTenantId()).isEqualTo(source.identity().tenantId());
+    assertThat(imported.targetNamespace()).isEqualTo(WORKLOAD_NAMESPACE);
+    assertThat(
+            prepared
+                .db()
+                .dsl()
+                .resultQuery(
+                    "SELECT source_account_legacy_tenant_id "
+                        + "FROM account_canonical_tenant_identity_claims "
+                        + "WHERE canonical_tenant_id = ? AND identity_kind = 'FRESH_GAME_DESIGN'",
+                    imported.canonicalTenantId())
+                .fetchOne(0, Long.class))
+        .isNull();
+
+    Snapshot sourceBefore = sourceSnapshot(prepared, source.identity());
+    OriginalSourceEvidence current =
+        withPeer(
+            peer(WORKLOAD_NAMESPACE, "game-session-service"),
+            () ->
+                inTransaction(
+                    prepared.db().transaction(),
+                    () -> prepared.reader().read(source.identity(), source.gatewayEnvelope())));
+    assertThat(current.originalSourceClaims().get("tenantId"))
+        .isEqualTo(prepared.freshTenantUuid().toString());
+
+    byte[] originalResult = "fresh-tenant-opaque-result".getBytes(StandardCharsets.UTF_8);
+    StoredBareLoginFixture stored =
+        storeBareLoginFrame(prepared, source, source.gatewayEnvelope(), originalResult, null);
+    BareLoginSnapshot exchangeBefore = bareLoginSnapshot(prepared, stored.operationId());
+    prepared.clock().advance(Duration.ofSeconds(21));
+    HistoricalStoredBareLoginEvidence historical =
+        withPeer(
+            peer(WORKLOAD_NAMESPACE, "game-session-service"),
+            () ->
+                inTransaction(
+                    prepared.db().transaction(),
+                    () ->
+                        storedReader(prepared)
+                            .readHistorical(stored.identity(), stored.requestDigest())));
+
+    assertThat(historical.tenantId()).isEqualTo(prepared.freshTenantUuid());
+    assertThat(historical.sourceConnectOperationId())
+        .isEqualTo(stored.identity().sourceConnectOperationId());
+    assertThat(historical.originalResultHash()).containsExactly(sha256(originalResult));
+    assertThat(sourceSnapshot(prepared, source.identity())).isEqualTo(sourceBefore);
+    assertThat(bareLoginSnapshot(prepared, stored.operationId())).isEqualTo(exchangeBefore);
   }
 
   @Test
@@ -500,7 +565,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     AccountConnectTokenIssuanceIdentity wrongTenant =
         new AccountConnectTokenIssuanceIdentity(
             original.identity().accountId(),
-            original.identity().tenantId() + 1,
+            UUID.randomUUID(),
             "fresh-scope-tenant",
             "fresh-request-tenant");
     assertCorrelationIdentityRejected(prepared, reader, stored, wrongTenant);
@@ -916,13 +981,73 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                     .issuanceRepository()
                     .readCommittedResponseEnvelope(source.identity())
                     .orElseThrow());
+    assertThat(stored.responseEnvelope().binding().tenantId())
+        .isEqualTo(source.identity().tenantId().toString());
+    AccountEnvelopeBinding wrongConnectTenantBinding =
+        withTenantId(stored.responseEnvelope().binding(), UUID.randomUUID().toString());
+    assertThatThrownBy(
+            () ->
+                prepared
+                    .db()
+                    .envelopeCrypto()
+                    .decrypt(
+                        stored.responseEnvelope().envelope(),
+                        AccountEnvelopePurpose.CONNECT_TOKEN_RESPONSE,
+                        wrongConnectTenantBinding))
+        .isInstanceOf(AccountEnvelopeCryptoException.class)
+        .extracting(exception -> ((AccountEnvelopeCryptoException) exception).failure())
+        .isEqualTo(Failure.AUTHENTICATION_FAILED);
+
+    StoredBareLoginFixture storedBareLogin =
+        storeBareLoginFrame(
+            prepared,
+            source,
+            source.gatewayEnvelope(),
+            "uuid-bound-bare-login-frame".getBytes(StandardCharsets.UTF_8),
+            null);
+    AccountBareLoginResponseEnvelope bareEnvelope =
+        inTransaction(
+            prepared.db().transaction(),
+            () -> {
+              AccountBareLoginExchangeOperation operation =
+                  prepared
+                      .db()
+                      .bareLoginExchangeRepository()
+                      .find(storedBareLogin.identity(), storedBareLogin.requestDigest())
+                      .orElseThrow();
+              AccountEnvelopeBinding binding =
+                  bareLoginBinding(operation, storedBareLogin.identity());
+              return prepared
+                  .db()
+                  .bareLoginExchangeRepository()
+                  .readResponseEnvelope(
+                      storedBareLogin.identity(), storedBareLogin.requestDigest(), binding)
+                  .orElseThrow();
+            });
+    assertThat(bareEnvelope.binding().tenantId())
+        .isEqualTo(source.identity().tenantId().toString());
+    AccountEnvelopeBinding wrongBareLoginTenantBinding =
+        withTenantId(bareEnvelope.binding(), UUID.randomUUID().toString());
+    assertThatThrownBy(
+            () ->
+                prepared
+                    .db()
+                    .envelopeCrypto()
+                    .decrypt(
+                        bareEnvelope.envelope(),
+                        AccountEnvelopePurpose.BARE_LOGIN_RESPONSE,
+                        wrongBareLoginTenantBinding))
+        .isInstanceOf(AccountEnvelopeCryptoException.class)
+        .extracting(exception -> ((AccountEnvelopeCryptoException) exception).failure())
+        .isEqualTo(Failure.AUTHENTICATION_FAILED);
+
     AccountEnvelopeBinding otherPurposeBinding =
         new AccountEnvelopeBinding(
             AccountEnvelopeBinding.OperationKind.BARE_LOGIN_EXCHANGE,
             UUID.randomUUID().toString(),
             "other-request",
             Long.toString(source.identity().accountId()),
-            Long.toString(source.identity().tenantId()),
+            source.identity().tenantId().toString(),
             source.identity().connectScopeId(),
             UUID.randomUUID().toString(),
             digest("other-request"),
@@ -1225,6 +1350,12 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         () ->
             associations.importApproved(
                 LEGACY_TENANT_ID, approvedAssociation(retainedEvidenceDigest, tenantUuid)));
+    UUID freshTenantUuid = UUID.randomUUID();
+    FreshTenantIdentityAssociationRepository freshTenantIdentityRepository =
+        new FreshTenantIdentityAssociationRepository(dsl, WORKLOAD_NAMESPACE);
+    FreshTenantCreationEvidence freshTenantEvidence = freshTenantEvidence(freshTenantUuid);
+    inTransaction(
+        transaction, () -> freshTenantIdentityRepository.importVerified(freshTenantEvidence));
 
     byte[] bareLoginKey = new byte[32];
     byte[] connectTokenKey = new byte[32];
@@ -1265,6 +1396,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
             issuanceRepository,
             accountRepository,
             tenantResolver,
+            freshTenantIdentityRepository,
             joinRepository,
             envelopeCrypto,
             verifier,
@@ -1280,6 +1412,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         LEGACY_TENANT_ID,
         accountUuid,
         tenantUuid,
+        freshTenantUuid,
         accountKeyPair,
         unknownAccountKeyPair,
         gatewayKeyPair,
@@ -1288,6 +1421,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         gatewayKeys,
         accountRepository,
         tenantResolver,
+        freshTenantIdentityRepository,
         joinRepository,
         reader,
         clock);
@@ -1332,6 +1466,18 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         target);
   }
 
+  private SourceFixture newFreshSource(PreparedAccount prepared, SourceTarget target)
+      throws Exception {
+    return newSource(
+        prepared,
+        SourceState.COMMITTED,
+        SourceOptions.NORMAL,
+        "source-request-" + UUID.randomUUID(),
+        "source-scope-" + UUID.randomUUID(),
+        target,
+        prepared.freshTenantUuid());
+  }
+
   private SourceFixture newSource(
       PreparedAccount prepared,
       SourceState state,
@@ -1340,12 +1486,22 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       String connectScopeId,
       SourceTarget target)
       throws Exception {
-    long sourceTenantId =
-        options.unmappedTenant() ? prepared.tenantId() + 1000L : prepared.tenantId();
     UUID sourceTenantUuid = options.unmappedTenant() ? UUID.randomUUID() : prepared.tenantUuid();
+    return newSource(prepared, state, options, requestId, connectScopeId, target, sourceTenantUuid);
+  }
+
+  private SourceFixture newSource(
+      PreparedAccount prepared,
+      SourceState state,
+      SourceOptions options,
+      String requestId,
+      String connectScopeId,
+      SourceTarget target,
+      UUID sourceTenantUuid)
+      throws Exception {
     AccountConnectTokenIssuanceIdentity identity =
         new AccountConnectTokenIssuanceIdentity(
-            prepared.accountId(), sourceTenantId, connectScopeId, requestId);
+            prepared.accountId(), sourceTenantUuid, connectScopeId, requestId);
     String tokenIdentity = "source-jti-" + UUID.randomUUID();
     Map<String, Object> sourceClaims =
         sourceClaims(
@@ -1402,7 +1558,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                     claim.operation().operationId().toString(),
                     identity.requestId(),
                     Long.toString(identity.accountId()),
-                    Long.toString(identity.tenantId()),
+                    identity.tenantId().toString(),
                     identity.connectScopeId(),
                     null,
                     requestDigest,
@@ -1538,7 +1694,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
                         claim.operation().operationId().toString(),
                         identity.requestId(),
                         Long.toString(identity.accountId()),
-                        Long.toString(identity.tenantId()),
+                        identity.tenantId().toString(),
                         identity.connectScopeId(),
                         identity.sourceConnectOperationId().toString(),
                         requestDigest,
@@ -1601,6 +1757,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         prepared.db().issuanceRepository(),
         prepared.accountRepository(),
         prepared.tenantResolver(),
+        prepared.freshTenantIdentityRepository(),
         prepared.joinRepository(),
         crypto,
         prepared.verifier(),
@@ -1721,6 +1878,75 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
         .setOperationEntryCount(1)
         .setManifestSchemaVersion(1)
         .build();
+  }
+
+  private static FreshTenantCreationEvidence freshTenantEvidence(UUID tenantUuid) {
+    UUID creationRequestId = UUID.randomUUID();
+    UUID operationId = UUID.randomUUID();
+    long sourceGameRowId = 9001L;
+    String sourceGameTenantKey = UUID.randomUUID().toString();
+    String requestDigest =
+        GameTenantCreationDigest.requestDigest(
+            WORKLOAD_NAMESPACE,
+            creationRequestId,
+            sourceGameTenantKey,
+            "Fresh source reader test tenant",
+            null);
+    String evidenceDigest =
+        GameTenantCreationDigest.evidenceDigest(
+            WORKLOAD_NAMESPACE,
+            creationRequestId,
+            operationId,
+            requestDigest,
+            tenantUuid,
+            sourceGameRowId,
+            sourceGameTenantKey,
+            "NEW_GAME_ROW");
+    return new FreshTenantCreationEvidence(
+        1,
+        WORKLOAD_NAMESPACE,
+        creationRequestId,
+        operationId,
+        requestDigest,
+        tenantUuid,
+        sourceGameRowId,
+        sourceGameTenantKey,
+        "NEW_GAME_ROW",
+        evidenceDigest);
+  }
+
+  private static AccountEnvelopeBinding bareLoginBinding(
+      AccountBareLoginExchangeOperation operation, AccountBareLoginExchangeIdentity identity) {
+    return new AccountEnvelopeBinding(
+        AccountEnvelopeBinding.OperationKind.BARE_LOGIN_EXCHANGE,
+        operation.operationId().toString(),
+        identity.requestId(),
+        Long.toString(identity.accountId()),
+        identity.tenantId().toString(),
+        identity.connectScopeId(),
+        identity.sourceConnectOperationId().toString(),
+        operation.requestDigest(),
+        operation.contextEvidenceDigest(),
+        operation.authorityTupleDigest(),
+        operation.issuanceFenceDigest(),
+        operation.postconditionDigest());
+  }
+
+  private static AccountEnvelopeBinding withTenantId(
+      AccountEnvelopeBinding binding, String tenantId) {
+    return new AccountEnvelopeBinding(
+        binding.operationKind(),
+        binding.operationId(),
+        binding.requestId(),
+        binding.accountId(),
+        tenantId,
+        binding.connectScopeId(),
+        binding.sourceConnectOperationId(),
+        binding.requestDigest(),
+        binding.contextEvidenceDigest(),
+        binding.authorityTupleDigest(),
+        binding.issuanceFenceDigest(),
+        binding.postconditionDigest());
   }
 
   private static long insertRetainedRows(DSLContext dsl, long tenantId, String username) {
@@ -2167,6 +2393,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       long tenantId,
       UUID accountUuid,
       UUID tenantUuid,
+      UUID freshTenantUuid,
       KeyPair accountKeyPair,
       KeyPair unknownAccountKeyPair,
       KeyPair gatewayKeyPair,
@@ -2175,6 +2402,7 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
       Map<String, java.security.PublicKey> gatewayKeys,
       AccountRepository accountRepository,
       AccountTenantIdentityResolver tenantResolver,
+      FreshTenantIdentityAssociationRepository freshTenantIdentityRepository,
       AccountJoinOperationRepository joinRepository,
       AccountCommittedConnectSourceReader reader,
       TestClock clock) {}

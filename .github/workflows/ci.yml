@@ -984,6 +984,7 @@ jobs:
             --strict \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExactCommittedOriginalSourceAndLostResultWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsFreshUuidCommittedSourceAndStoredHistoricalFrameWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#doesNotReturnWhenAccountFenceWaitOutlivesTheUnchangedGatewayDeadline()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExpiredCommittedSourceOnlyThroughHistoricalEvidenceWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRejectsRequestTargetHashAndTokenIdentityMismatches()' \
@@ -1017,6 +1018,18 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#createCandidateExactRetryReturnsCommittedReceiptWithoutSecondGameWrite()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#concurrentDuplicateCreationRequestsConvergeOnOneUuidAndReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#runtimeIdentityLookupReadsOnlyExactNewAndRetainedGameDesignRows()' \
+            game-design-service
+
+      - name: Verify Game Design authored-world source PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#registersAndReadsExactFreshAndRetainedV29ToV30Sources()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#failedOwnerCommitRollsBackBothTenantSelectorAndWorldSource()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactRegistrationRetriesReturnOnePersistedReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#concurrentDifferentTenantsCannotClaimTheSameTenantSlug()' \
             game-design-service
 
       - name: Verify Account fresh UUID pair and snapshot PostgreSQL proof

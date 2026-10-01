@@ -25,7 +25,11 @@ import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityResponse;
 import net.firedevops.firemud.gamedesign.v1.TenantIdentityServiceGrpc;
@@ -39,6 +43,186 @@ class GameDesignRuntimeTenantIdentityClientTest {
   private static final UUID REQUEST_ID = UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final String SOURCE_KEY = "game-design-tenant-91";
   private static final long SOURCE_ROW_ID = 91L;
+  private static final UUID SOURCE_OPERATION_ID =
+      UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID REGISTRATION_REQUEST_ID =
+      UUID.fromString("44444444-4444-4444-8444-444444444444");
+
+  @Test
+  void authoredSourceReadBindsCompleteReceiptAndSeparateReadIdentity() throws Exception {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    when(stub.resolveAuthoredWorldSource(any())).thenReturn(authoredResponse());
+    GameDesignRuntimeTenantIdentityClient client = newClient(stub);
+    AuthoredWorldSourceEvidence first =
+        client.resolveAuthoredWorldSource(
+            TENANT_ID.toString(),
+            SOURCE_OPERATION_ID.toString(),
+            "world-one",
+            REQUEST_ID.toString());
+    AuthoredWorldSourceEvidence retry =
+        client.resolveAuthoredWorldSource(
+            TENANT_ID.toString(),
+            SOURCE_OPERATION_ID.toString(),
+            "world-one",
+            REQUEST_ID.toString());
+    assertThat(first).isEqualTo(retry);
+    assertThat(first.registrationRequestId()).isEqualTo(REGISTRATION_REQUEST_ID);
+    assertThat(first.tenantSlug()).isEqualTo("tenant-one");
+    assertThat(first.worldDisplayName()).isEqualTo("Wörld");
+    ArgumentCaptor<ResolveAuthoredWorldSourceRequest> captor =
+        ArgumentCaptor.forClass(ResolveAuthoredWorldSourceRequest.class);
+    verify(stub, times(2)).resolveAuthoredWorldSource(captor.capture());
+    assertThat(captor.getAllValues())
+        .allSatisfy(
+            request -> {
+              assertThat(request.getRequestId()).isEqualTo(REQUEST_ID.toString());
+              assertThat(request.getOperationId()).isEqualTo(SOURCE_OPERATION_ID.toString());
+              assertThat(request.getCanonicalTenantId()).isEqualTo(TENANT_ID.toString());
+              assertThat(request.getWorldSlug()).isEqualTo("world-one");
+            });
+    verify(stub, never()).resolveRuntimeTenantIdentity(any());
+    verify(stub, never()).resolveFreshTenantCreation(any());
+    verify(stub, never()).resolveLegacyAccountTenantAssociation(any());
+  }
+
+  @Test
+  void authoredSourceRejectsChangedEchoUnknownFieldsAndEveryChangedReceiptField() throws Exception {
+    ResolveAuthoredWorldSourceResponse valid = authoredResponse();
+    for (ResolveAuthoredWorldSourceResponse response :
+        List.of(
+            valid.toBuilder().setSchemaVersion(2).build(),
+            valid.toBuilder().setTargetNamespace("other").build(),
+            valid.toBuilder().setRequestId(REGISTRATION_REQUEST_ID.toString()).build(),
+            valid.toBuilder().setRegistrationRequestId(REQUEST_ID.toString()).build(),
+            valid.toBuilder().setOperationId(REQUEST_ID.toString()).build(),
+            valid.toBuilder().setRequestDigest("sha256:" + "0".repeat(64)).build(),
+            valid.toBuilder().setCanonicalTenantId(REQUEST_ID.toString()).build(),
+            valid.toBuilder().setTenantSlug("tenant-other").build(),
+            valid.toBuilder().setWorldSlug("world-other").build(),
+            valid.toBuilder().setWorldDisplayName("World").build(),
+            valid.toBuilder().setSourceGameRowId(92L).build(),
+            valid.toBuilder().setSourceGameTenantKey("changed").build(),
+            valid.toBuilder().setProvenanceKind("RETAINED_GAME_V30").build(),
+            valid.toBuilder().setEvidenceDigest("sha256:" + "0".repeat(64)).build(),
+            valid.toBuilder()
+                .setUnknownFields(
+                    UnknownFieldSet.newBuilder()
+                        .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                        .build())
+                .build())) {
+      TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+      when(stub.resolveAuthoredWorldSource(any())).thenReturn(response);
+      GameDesignRuntimeTenantIdentityClient client = newClient(stub);
+      assertThatThrownBy(
+              () ->
+                  client.resolveAuthoredWorldSource(
+                      TENANT_ID.toString(),
+                      SOURCE_OPERATION_ID.toString(),
+                      "world-one",
+                      REQUEST_ID.toString()))
+          .isInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  @Test
+  void authoredSourceRejectsCoherentReceiptsForAnotherNamespaceTenantOperationOrWorld()
+      throws Exception {
+    for (ResolveAuthoredWorldSourceResponse response :
+        List.of(
+            authoredResponse("other", TENANT_ID, SOURCE_OPERATION_ID, "world-one"),
+            authoredResponse(NAMESPACE, REQUEST_ID, SOURCE_OPERATION_ID, "world-one"),
+            authoredResponse(NAMESPACE, TENANT_ID, REQUEST_ID, "world-one"),
+            authoredResponse(NAMESPACE, TENANT_ID, SOURCE_OPERATION_ID, "other-world"))) {
+      TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+      when(stub.resolveAuthoredWorldSource(any())).thenReturn(response);
+      GameDesignRuntimeTenantIdentityClient client = newClient(stub);
+      assertThatThrownBy(
+              () ->
+                  client.resolveAuthoredWorldSource(
+                      TENANT_ID.toString(),
+                      SOURCE_OPERATION_ID.toString(),
+                      "world-one",
+                      REQUEST_ID.toString()))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("does not match the exact request");
+    }
+  }
+
+  @Test
+  void authoredSourceValidatesRequestBeforeStubAndPreservesUnavailableStatus() throws Exception {
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    GameDesignRuntimeTenantIdentityClient client = newClient(stub);
+    assertThatThrownBy(
+            () ->
+                client.resolveAuthoredWorldSource(
+                    "91", SOURCE_OPERATION_ID.toString(), "world-one", REQUEST_ID.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                client.resolveAuthoredWorldSource(
+                    TENANT_ID.toString(), "3-3-3-3-3", "world-one", REQUEST_ID.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(
+            () ->
+                client.resolveAuthoredWorldSource(
+                    TENANT_ID.toString(),
+                    SOURCE_OPERATION_ID.toString(),
+                    "World",
+                    REQUEST_ID.toString()))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(stub);
+    StatusRuntimeException unavailable =
+        Status.UNAVAILABLE.withDescription("owner unavailable").asRuntimeException();
+    when(stub.resolveAuthoredWorldSource(any())).thenThrow(unavailable);
+    assertThatThrownBy(
+            () ->
+                client.resolveAuthoredWorldSource(
+                    TENANT_ID.toString(),
+                    SOURCE_OPERATION_ID.toString(),
+                    "world-one",
+                    REQUEST_ID.toString()))
+        .isSameAs(unavailable);
+  }
+
+  private static ResolveAuthoredWorldSourceResponse authoredResponse() {
+    return authoredResponse(NAMESPACE, TENANT_ID, SOURCE_OPERATION_ID, "world-one");
+  }
+
+  private static ResolveAuthoredWorldSourceResponse authoredResponse(
+      String namespace, UUID tenantId, UUID operationId, String worldSlug) {
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            namespace, REGISTRATION_REQUEST_ID, tenantId, "tenant-one", worldSlug, "Wörld");
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            namespace,
+            REGISTRATION_REQUEST_ID,
+            operationId,
+            requestDigest,
+            tenantId,
+            "tenant-one",
+            worldSlug,
+            "Wörld",
+            SOURCE_ROW_ID,
+            SOURCE_KEY,
+            "NEW_GAME_ROW");
+    return ResolveAuthoredWorldSourceResponse.newBuilder()
+        .setSchemaVersion(1)
+        .setTargetNamespace(namespace)
+        .setRequestId(REQUEST_ID.toString())
+        .setRegistrationRequestId(REGISTRATION_REQUEST_ID.toString())
+        .setOperationId(operationId.toString())
+        .setRequestDigest(requestDigest)
+        .setCanonicalTenantId(tenantId.toString())
+        .setTenantSlug("tenant-one")
+        .setWorldSlug(worldSlug)
+        .setWorldDisplayName("Wörld")
+        .setSourceGameRowId(SOURCE_ROW_ID)
+        .setSourceGameTenantKey(SOURCE_KEY)
+        .setProvenanceKind("NEW_GAME_ROW")
+        .setEvidenceDigest(evidenceDigest)
+        .build();
+  }
 
   @Test
   void exactOwnerResponseIsTypedAndStableOnRetryForBothProvenanceKinds() throws Exception {

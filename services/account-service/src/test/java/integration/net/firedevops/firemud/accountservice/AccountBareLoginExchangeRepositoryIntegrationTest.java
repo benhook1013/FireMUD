@@ -585,7 +585,7 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
                             UUID.randomUUID(),
                             committedIdentity.sourceConnectOperationId(),
                             committedIdentity.accountId(),
-                            committedIdentity.tenantId() + 1,
+                            UUID.randomUUID(),
                             committedIdentity.connectScopeId(),
                             "wrong-tenant-" + UUID.randomUUID(),
                             digest(71))))
@@ -758,7 +758,7 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
       TestContext context, long accountId, String connectScopeId, boolean commitSource) {
     AccountConnectTokenIssuanceIdentity sourceIdentity =
         new AccountConnectTokenIssuanceIdentity(
-            accountId, 77L, connectScopeId, "connect-request-" + UUID.randomUUID());
+            accountId, UUID.randomUUID(), connectScopeId, "connect-request-" + UUID.randomUUID());
     byte[] sourceDigest = digest(commitSource ? 60 : 61);
     var sourceClaim =
         inTransaction(
@@ -771,7 +771,7 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
               sourceClaim.operation().operationId().toString(),
               sourceIdentity.requestId(),
               Long.toString(sourceIdentity.accountId()),
-              Long.toString(sourceIdentity.tenantId()),
+              sourceIdentity.tenantId().toString(),
               sourceIdentity.connectScopeId(),
               null,
               sourceDigest,
@@ -841,7 +841,7 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
       UUID operationId,
       UUID sourceOperationId,
       long accountId,
-      long tenantId,
+      UUID tenantId,
       String connectScopeId,
       String requestId,
       byte[] requestDigest) {
@@ -881,7 +881,7 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
         operationId.toString(),
         identity.requestId(),
         Long.toString(identity.accountId()),
-        Long.toString(identity.tenantId()),
+        identity.tenantId().toString(),
         identity.connectScopeId(),
         identity.sourceConnectOperationId().toString(),
         requestDigest,

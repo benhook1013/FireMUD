@@ -2,17 +2,19 @@ package net.firedevops.firemud.accountservice.repository;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
+import java.util.UUID;
 
 /** Exact caller-supplied identity for one durable connect-token issuance attempt. */
 public record AccountConnectTokenIssuanceIdentity(
-    long accountId, long tenantId, String connectScopeId, String requestId) {
+    long accountId, UUID tenantId, String connectScopeId, String requestId) {
 
   public static final int MAX_CONNECT_SCOPE_ID_UTF8_BYTES = 2048;
   public static final int MAX_REQUEST_ID_LENGTH = 128;
 
   public AccountConnectTokenIssuanceIdentity {
-    if (accountId <= 0 || tenantId <= 0) {
-      throw new IllegalArgumentException("Connect-token account and tenant IDs must be positive");
+    if (accountId <= 0 || tenantId == null || tenantId.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(
+          "Connect-token account ID and non-nil canonical tenant UUID are required");
     }
     connectScopeId = requireText(connectScopeId, "connectScopeId");
     requestId = requireText(requestId, "requestId");

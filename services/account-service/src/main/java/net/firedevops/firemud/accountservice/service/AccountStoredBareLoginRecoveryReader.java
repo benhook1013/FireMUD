@@ -110,7 +110,7 @@ public final class AccountStoredBareLoginRecoveryReader {
     requireGameSessionPeer();
     requireOwnerTransaction();
     if (originalIdentity.accountId() != freshIdentity.accountId()
-        || originalIdentity.tenantId() != freshIdentity.tenantId()) {
+        || !originalIdentity.tenantId().equals(freshIdentity.tenantId())) {
       throw new IllegalArgumentException(
           "Original and fresh source identities must belong to the same Account and tenant");
     }
@@ -168,7 +168,7 @@ public final class AccountStoredBareLoginRecoveryReader {
           || !"SUCCESS".equals(operation.outcomeCode())
           || !operation.sourceConnectOperationId().equals(identity.sourceConnectOperationId())
           || operation.accountId() != identity.accountId()
-          || operation.tenantId() != identity.tenantId()
+          || !operation.tenantId().equals(identity.tenantId())
           || !operation
               .connectScopeHash()
               .equals(AccountJoinDigest.tokenHash(identity.connectScopeId()))
@@ -273,7 +273,7 @@ public final class AccountStoredBareLoginRecoveryReader {
         operation.operationId().toString(),
         identity.requestId(),
         Long.toString(identity.accountId()),
-        Long.toString(identity.tenantId()),
+        identity.tenantId().toString(),
         identity.connectScopeId(),
         identity.sourceConnectOperationId().toString(),
         operation.requestDigest(),
@@ -426,7 +426,7 @@ public final class AccountStoredBareLoginRecoveryReader {
       UUID exchangeOperationId,
       UUID sourceConnectOperationId,
       long accountId,
-      long tenantId,
+      UUID tenantId,
       String requestId,
       String connectScopeHash,
       int requestDigestVersion,
@@ -442,7 +442,10 @@ public final class AccountStoredBareLoginRecoveryReader {
     public HistoricalStoredBareLoginEvidence {
       Objects.requireNonNull(exchangeOperationId, "exchangeOperationId");
       Objects.requireNonNull(sourceConnectOperationId, "sourceConnectOperationId");
-      if (accountId <= 0 || tenantId <= 0 || requestDigestVersion != 1) {
+      if (accountId <= 0
+          || tenantId == null
+          || tenantId.equals(new UUID(0L, 0L))
+          || requestDigestVersion != 1) {
         throw new IllegalArgumentException("Stored bare LOGIN provenance identity is invalid");
       }
       Objects.requireNonNull(requestId, "requestId");

@@ -104,7 +104,7 @@ public final class GameTenantCreationDigest {
     return value != null && value.matches("sha256:[0-9a-f]{64}");
   }
 
-  private static String digest(String... segments) {
+  static String digest(String... segments) {
     ByteArrayOutputStream preimage = new ByteArrayOutputStream();
     for (String segment : segments) {
       byte[] bytes = encodeUtf8(segment);

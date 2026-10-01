@@ -750,7 +750,7 @@ class AccountConnectTokenIssuanceRepositoryIntegrationTest {
   private AccountConnectTokenIssuanceIdentity newIdentity(long accountId) {
     return new AccountConnectTokenIssuanceIdentity(
         accountId,
-        77L,
+        UUID.randomUUID(),
         "opaque-connect-scope-" + UUID.randomUUID(),
         "request-" + UUID.randomUUID());
   }
@@ -762,7 +762,7 @@ class AccountConnectTokenIssuanceRepositoryIntegrationTest {
         operationId.toString(),
         identity.requestId(),
         Long.toString(identity.accountId()),
-        Long.toString(identity.tenantId()),
+        identity.tenantId().toString(),
         identity.connectScopeId(),
         null,
         requestDigest,

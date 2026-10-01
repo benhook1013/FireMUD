@@ -7,13 +7,18 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
@@ -36,16 +41,19 @@ public class TenantIdentityGrpcService
   private final GameRepository gameRepository;
   private final TenantAssociationMigrationService associationService;
   private final GameTenantCreationRepository creationRepository;
+  private final GameAuthoredWorldSourceRepository authoredWorldRepository;
   private final String workloadNamespace;
 
   public TenantIdentityGrpcService(
       GameRepository gameRepository,
       TenantAssociationMigrationService associationService,
       GameTenantCreationRepository creationRepository,
+      GameAuthoredWorldSourceRepository authoredWorldRepository,
       @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
     this.gameRepository = gameRepository;
     this.associationService = associationService;
     this.creationRepository = creationRepository;
+    this.authoredWorldRepository = authoredWorldRepository;
     this.workloadNamespace = workloadNamespace;
   }
 
@@ -413,6 +421,101 @@ public class TenantIdentityGrpcService
             .setSourceGameRowId(evidence.sourceGameRowId())
             .setSourceGameTenantKey(evidence.sourceGameTenantKey())
             .setProvenanceKind(evidence.provenanceKind())
+            .build());
+    responseObserver.onCompleted();
+  }
+
+  @Override
+  public void resolveAuthoredWorldSource(
+      ResolveAuthoredWorldSourceRequest request,
+      StreamObserver<ResolveAuthoredWorldSourceResponse> responseObserver) {
+    if (!isGameSessionPeer()) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Verified Game Session workload identity is required")
+              .asRuntimeException());
+      return;
+    }
+    UUID requestId = parseCanonicalNonNilUuid(request.getRequestId());
+    UUID operationId = parseCanonicalNonNilUuid(request.getOperationId());
+    UUID tenantId = parseCanonicalNonNilUuid(request.getCanonicalTenantId());
+    try {
+      if (requestId == null
+          || operationId == null
+          || tenantId == null
+          || !request.getUnknownFields().asMap().isEmpty()) {
+        throw new IllegalArgumentException("Canonical exact source request is required");
+      }
+      AuthoredWorldSourceDigest.validateReadSelector(
+          workloadNamespace, tenantId, request.getWorldSlug());
+    } catch (IllegalArgumentException ex) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Canonical exact source request is required")
+              .asRuntimeException());
+      return;
+    }
+
+    Optional<AuthoredWorldSourceEvidence> resolved;
+    try {
+      resolved =
+          authoredWorldRepository.read(
+              operationId, tenantId, request.getWorldSlug(), workloadNamespace);
+    } catch (IllegalArgumentException | IllegalStateException | TooManyRowsException ex) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Authored-world source evidence is inconsistent")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessResourceFailureException ex) {
+      responseObserver.onError(
+          Status.UNAVAILABLE
+              .withDescription("Authored-world source is temporarily unavailable")
+              .asRuntimeException());
+      return;
+    } catch (DataAccessException ex) {
+      Status.Code code =
+          hasConnectionFailureSqlState(ex) ? Status.Code.UNAVAILABLE : Status.Code.INTERNAL;
+      responseObserver.onError(
+          Status.fromCode(code)
+              .withDescription("Authored-world source could not be read")
+              .asRuntimeException());
+      return;
+    }
+    if (resolved.isEmpty()) {
+      responseObserver.onError(
+          Status.NOT_FOUND
+              .withDescription("No authored-world source for the exact operation and scope")
+              .asRuntimeException());
+      return;
+    }
+    AuthoredWorldSourceEvidence evidence = resolved.orElseThrow();
+    if (!workloadNamespace.equals(evidence.targetNamespace())
+        || !operationId.equals(evidence.operationId())
+        || !tenantId.equals(evidence.canonicalTenantId())
+        || !request.getWorldSlug().equals(evidence.worldSlug())) {
+      responseObserver.onError(
+          Status.FAILED_PRECONDITION
+              .withDescription("Authored-world source readback does not match the request")
+              .asRuntimeException());
+      return;
+    }
+    responseObserver.onNext(
+        ResolveAuthoredWorldSourceResponse.newBuilder()
+            .setSchemaVersion(evidence.schemaVersion())
+            .setTargetNamespace(evidence.targetNamespace())
+            .setRequestId(requestId.toString())
+            .setRegistrationRequestId(evidence.registrationRequestId().toString())
+            .setOperationId(evidence.operationId().toString())
+            .setRequestDigest(evidence.requestDigest())
+            .setCanonicalTenantId(evidence.canonicalTenantId().toString())
+            .setTenantSlug(evidence.tenantSlug())
+            .setWorldSlug(evidence.worldSlug())
+            .setWorldDisplayName(evidence.worldDisplayName())
+            .setSourceGameRowId(evidence.sourceGameRowId())
+            .setSourceGameTenantKey(evidence.sourceGameTenantKey())
+            .setProvenanceKind(evidence.provenanceKind())
+            .setEvidenceDigest(evidence.evidenceDigest())
             .build());
     responseObserver.onCompleted();
   }

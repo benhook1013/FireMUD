@@ -16,6 +16,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountCommittedConnectSource;
@@ -25,6 +26,7 @@ import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepo
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
+import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeCrypto;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopePurpose;
 import net.firedevops.firemud.accountservice.security.AccountGameplayConnectSourceVerifier;
@@ -34,6 +36,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GatewayConnectContext;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
 import net.firedevops.firemud.common.security.HistoricalGatewayConnectEvidence;
+import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -47,17 +50,20 @@ public final class AccountCommittedConnectSourceReader {
   private final AccountConnectTokenIssuanceRepository issuanceRepository;
   private final AccountRepository accountRepository;
   private final AccountTenantIdentityResolver tenantIdentityResolver;
+  private final FreshTenantIdentityAssociationRepository freshTenantIdentityRepository;
   private final AccountJoinOperationRepository joinOperationRepository;
   private final AccountEnvelopeCrypto envelopeCrypto;
   private final AccountGameplayConnectSourceVerifier sourceVerifier;
   private final Map<String, PublicKey> gatewayVerificationKeys;
   private final Clock clock;
+  private final String workloadNamespace;
   private final String expectedGameSessionPeerUri;
 
   public AccountCommittedConnectSourceReader(
       AccountConnectTokenIssuanceRepository issuanceRepository,
       AccountRepository accountRepository,
       AccountTenantIdentityResolver tenantIdentityResolver,
+      FreshTenantIdentityAssociationRepository freshTenantIdentityRepository,
       AccountJoinOperationRepository joinOperationRepository,
       AccountEnvelopeCrypto envelopeCrypto,
       AccountGameplayConnectSourceVerifier sourceVerifier,
@@ -68,6 +74,8 @@ public final class AccountCommittedConnectSourceReader {
     this.accountRepository = Objects.requireNonNull(accountRepository, "accountRepository");
     this.tenantIdentityResolver =
         Objects.requireNonNull(tenantIdentityResolver, "tenantIdentityResolver");
+    this.freshTenantIdentityRepository =
+        Objects.requireNonNull(freshTenantIdentityRepository, "freshTenantIdentityRepository");
     this.joinOperationRepository =
         Objects.requireNonNull(joinOperationRepository, "joinOperationRepository");
     this.envelopeCrypto = Objects.requireNonNull(envelopeCrypto, "envelopeCrypto");
@@ -80,6 +88,7 @@ public final class AccountCommittedConnectSourceReader {
     if (workloadNamespace == null || workloadNamespace.isBlank()) {
       throw new IllegalArgumentException("Account workload namespace is required");
     }
+    this.workloadNamespace = workloadNamespace;
     this.expectedGameSessionPeerUri =
         GrpcPeerIdentity.parseUri(
                 "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service")
@@ -91,7 +100,7 @@ public final class AccountCommittedConnectSourceReader {
 
   /**
    * Reads and verifies one original committed source in the caller's owner transaction. The exact
-   * Game Session peer, Gateway assertion, account fence, retained tenant association, source
+   * Game Session peer, Gateway assertion, account fence, canonical tenant association, source
    * envelope, Account JWT signature/profile, and complete source/context correspondence are all
    * checked before returning immutable evidence.
    */
@@ -109,7 +118,8 @@ public final class AccountCommittedConnectSourceReader {
 
     // The same Account row fence serializes this identity/provenance read with JOIN and other
     // fenced Account work. The retained tenant association resolver separately verifies its
-    // approved row and exact current source-evidence digest in this owner transaction.
+    // exact fresh source claim or approved retained row and current source-evidence digest in this
+    // owner transaction.
     joinOperationRepository.lockAccount(identity.accountId());
     Account account =
         accountRepository
@@ -118,12 +128,8 @@ public final class AccountCommittedConnectSourceReader {
     UUID accountUuid = requireAccountIdentity(account, identity.accountId());
     requireContextValue(initialContext, "accountId", accountUuid.toString());
 
-    ApprovedAssociation tenantAssociation = tenantIdentityResolver.resolve(identity.tenantId());
-    if (tenantAssociation.legacyTenantId() != identity.tenantId()) {
-      throw new IllegalStateException("Account source tenant identity is mismatched");
-    }
-    requireContextValue(
-        initialContext, "tenantId", tenantAssociation.canonicalTenantId().toString());
+    UUID canonicalTenantId = requireTenantIdentity(identity.tenantId());
+    requireContextValue(initialContext, "tenantId", canonicalTenantId.toString());
 
     AccountCommittedConnectSource committedSource =
         issuanceRepository
@@ -197,9 +203,9 @@ public final class AccountCommittedConnectSourceReader {
             signedOriginalGatewayAssertion, gatewayVerificationKeys);
     requireContextRequestIdentity(identity, historicalGatewayEvidence);
 
-    // Keep the same Account row fence, canonical UUID provenance, and retained tenant resolver as
-    // strict-current source readback. The historical assertion changes neither the source identity
-    // nor the transaction/data-access boundary.
+    // Keep the same Account row fence, canonical UUID provenance, and fresh-or-retained tenant
+    // resolver as strict-current source readback. The historical assertion changes neither the
+    // source identity nor the transaction/data-access boundary.
     joinOperationRepository.lockAccount(identity.accountId());
     Account account =
         accountRepository
@@ -208,12 +214,8 @@ public final class AccountCommittedConnectSourceReader {
     UUID accountUuid = requireAccountIdentity(account, identity.accountId());
     requireContextValue(historicalGatewayEvidence, "accountId", accountUuid.toString());
 
-    ApprovedAssociation tenantAssociation = tenantIdentityResolver.resolve(identity.tenantId());
-    if (tenantAssociation.legacyTenantId() != identity.tenantId()) {
-      throw new IllegalStateException("Account source tenant identity is mismatched");
-    }
-    requireContextValue(
-        historicalGatewayEvidence, "tenantId", tenantAssociation.canonicalTenantId().toString());
+    UUID canonicalTenantId = requireTenantIdentity(identity.tenantId());
+    requireContextValue(historicalGatewayEvidence, "tenantId", canonicalTenantId.toString());
 
     AccountCommittedConnectSource committedSource =
         issuanceRepository
@@ -264,6 +266,26 @@ public final class AccountCommittedConnectSourceReader {
     }
   }
 
+  private UUID requireTenantIdentity(UUID canonicalTenantId) {
+    Optional<FreshTenantCreationEvidence> fresh =
+        freshTenantIdentityRepository.read(canonicalTenantId);
+    if (fresh.isPresent()) {
+      FreshTenantCreationEvidence evidence = fresh.orElseThrow();
+      if (!canonicalTenantId.equals(evidence.canonicalTenantId())
+          || !workloadNamespace.equals(evidence.targetNamespace())) {
+        throw new IllegalStateException("Fresh Account tenant identity evidence is mismatched");
+      }
+      return evidence.canonicalTenantId();
+    }
+
+    ApprovedAssociation retained = tenantIdentityResolver.resolve(canonicalTenantId);
+    if (!canonicalTenantId.equals(retained.canonicalTenantId())
+        || !workloadNamespace.equals(retained.targetNamespace())) {
+      throw new IllegalStateException("Retained Account tenant identity evidence is mismatched");
+    }
+    return retained.canonicalTenantId();
+  }
+
   private static void requireContextRequestIdentity(
       AccountConnectTokenIssuanceIdentity identity, GatewayConnectContext context) {
     if (!identity.connectScopeId().equals(context.text("connectScopeId"))
@@ -299,7 +321,7 @@ public final class AccountCommittedConnectSourceReader {
       GatewayConnectContext context, String field, String expectedValue) {
     if (!expectedValue.equals(context.text(field))) {
       throw new IllegalArgumentException(
-          "Gateway context does not match the retained Account " + field);
+          "Gateway context does not match the Account " + field + " identity");
     }
   }
 
@@ -307,7 +329,7 @@ public final class AccountCommittedConnectSourceReader {
       HistoricalGatewayConnectEvidence historicalContext, String field, String expectedValue) {
     if (!expectedValue.equals(historicalContext.text(field))) {
       throw new IllegalArgumentException(
-          "Gateway context does not match the retained Account " + field);
+          "Gateway context does not match the Account " + field + " identity");
     }
   }
 

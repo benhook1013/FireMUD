@@ -20,12 +20,17 @@ import java.util.Base64;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
+import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
+import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveFreshTenantCreationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyAccountTenantAssociationRequest;
@@ -73,8 +78,147 @@ class TenantIdentityGrpcServiceTest {
       mock(TenantAssociationMigrationService.class);
   private final GameTenantCreationRepository creationRepository =
       mock(GameTenantCreationRepository.class);
+  private final GameAuthoredWorldSourceRepository authoredWorldRepository =
+      mock(GameAuthoredWorldSourceRepository.class);
   private final TenantIdentityGrpcService service =
-      new TenantIdentityGrpcService(repository, associationService, creationRepository, "test");
+      new TenantIdentityGrpcService(
+          repository, associationService, creationRepository, authoredWorldRepository, "test");
+
+  @Test
+  void authoredSourceReadRequiresExactGameSessionPeerBeforeOwnerAccess() {
+    for (String peer :
+        new String[] {
+          null, ACCOUNT_PEER, ACCOUNT_MIGRATOR_PEER, WRONG_NAMESPACE_GAME_SESSION_PEER
+        }) {
+      AuthoredSourceObserver observer = authoredSourceCall(authoredSourceRequest(), peer);
+      assertEquals(Status.Code.PERMISSION_DENIED, observer.errorCode);
+      assertNull(observer.value);
+      assertFalse(observer.completed);
+    }
+    verifyNoInteractions(authoredWorldRepository);
+  }
+
+  @Test
+  void authoredSourceRejectsMalformedTupleAndUnknownFieldsBeforeRead() {
+    ResolveAuthoredWorldSourceRequest exact = authoredSourceRequest();
+    for (ResolveAuthoredWorldSourceRequest request :
+        new ResolveAuthoredWorldSourceRequest[] {
+          exact.toBuilder().setOperationId("19").build(),
+          exact.toBuilder().setCanonicalTenantId("00000000-0000-0000-0000-000000000000").build(),
+          exact.toBuilder().setRequestId("1-1-1-1-1").build(),
+          exact.toBuilder().setWorldSlug(" World").build(),
+          exact.toBuilder().setWorldSlug("w".repeat(121)).build(),
+          exact.toBuilder()
+              .setUnknownFields(
+                  UnknownFieldSet.newBuilder()
+                      .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                      .build())
+              .build()
+        }) {
+      AuthoredSourceObserver observer = authoredSourceCall(request, GAME_SESSION_PEER);
+      assertEquals(Status.Code.INVALID_ARGUMENT, observer.errorCode);
+      assertNull(observer.value);
+    }
+    verifyNoInteractions(authoredWorldRepository);
+  }
+
+  @Test
+  void authoredSourceEchoesDistinctReadIdentityAndCompleteImmutableReceipt() {
+    AuthoredWorldSourceEvidence evidence = authoredSourceEvidence("test");
+    when(authoredWorldRepository.read(FRESH_OPERATION_ID, RUNTIME_TENANT_ID, "world-one", "test"))
+        .thenReturn(Optional.of(evidence));
+    AuthoredSourceObserver first = authoredSourceCall(authoredSourceRequest(), GAME_SESSION_PEER);
+    AuthoredSourceObserver retry = authoredSourceCall(authoredSourceRequest(), GAME_SESSION_PEER);
+    assertNull(first.errorCode);
+    assertTrue(first.completed);
+    assertEquals(first.value, retry.value);
+    assertEquals(RUNTIME_REQUEST_ID.toString(), first.value.getRequestId());
+    assertEquals(FRESH_CREATION_REQUEST_ID.toString(), first.value.getRegistrationRequestId());
+    assertEquals(evidence.evidenceDigest(), first.value.getEvidenceDigest());
+    assertEquals("tenant-one", first.value.getTenantSlug());
+    assertEquals("world-one", first.value.getWorldSlug());
+    assertEquals("Wörld", first.value.getWorldDisplayName());
+    assertEquals(19L, first.value.getSourceGameRowId());
+    verifyNoInteractions(repository, associationService, creationRepository);
+  }
+
+  @Test
+  void authoredSourceReadDoesNotReturnAbsentChangedOrUnavailableEvidence() {
+    when(authoredWorldRepository.read(FRESH_OPERATION_ID, RUNTIME_TENANT_ID, "world-one", "test"))
+        .thenReturn(Optional.empty())
+        .thenReturn(Optional.of(authoredSourceEvidence("other")))
+        .thenThrow(new IllegalStateException("contradictory source"))
+        .thenThrow(new DataAccessException("db", new SQLException("offline", "08006")));
+    for (Status.Code expected :
+        new Status.Code[] {
+          Status.Code.NOT_FOUND, Status.Code.FAILED_PRECONDITION,
+          Status.Code.FAILED_PRECONDITION, Status.Code.UNAVAILABLE
+        }) {
+      AuthoredSourceObserver observer =
+          authoredSourceCall(authoredSourceRequest(), GAME_SESSION_PEER);
+      assertEquals(expected, observer.errorCode);
+      assertNull(observer.value);
+      assertFalse(observer.completed);
+    }
+  }
+
+  private static ResolveAuthoredWorldSourceRequest authoredSourceRequest() {
+    return ResolveAuthoredWorldSourceRequest.newBuilder()
+        .setRequestId(RUNTIME_REQUEST_ID.toString())
+        .setOperationId(FRESH_OPERATION_ID.toString())
+        .setCanonicalTenantId(RUNTIME_TENANT_ID.toString())
+        .setWorldSlug("world-one")
+        .build();
+  }
+
+  private static AuthoredWorldSourceEvidence authoredSourceEvidence(String namespace) {
+    String requestDigest =
+        AuthoredWorldSourceDigest.requestDigest(
+            namespace,
+            FRESH_CREATION_REQUEST_ID,
+            RUNTIME_TENANT_ID,
+            "tenant-one",
+            "world-one",
+            "Wörld");
+    String evidenceDigest =
+        AuthoredWorldSourceDigest.evidenceDigest(
+            namespace,
+            FRESH_CREATION_REQUEST_ID,
+            FRESH_OPERATION_ID,
+            requestDigest,
+            RUNTIME_TENANT_ID,
+            "tenant-one",
+            "world-one",
+            "Wörld",
+            19L,
+            "source-key",
+            "NEW_GAME_ROW");
+    return new AuthoredWorldSourceEvidence(
+        1,
+        namespace,
+        FRESH_CREATION_REQUEST_ID,
+        FRESH_OPERATION_ID,
+        requestDigest,
+        RUNTIME_TENANT_ID,
+        "tenant-one",
+        "world-one",
+        "Wörld",
+        19L,
+        "source-key",
+        "NEW_GAME_ROW",
+        evidenceDigest);
+  }
+
+  private AuthoredSourceObserver authoredSourceCall(
+      ResolveAuthoredWorldSourceRequest request, String peer) {
+    AuthoredSourceObserver observer = new AuthoredSourceObserver();
+    Context.current()
+        .withValue(
+            GrpcPeerIdentity.CONTEXT_KEY,
+            peer == null ? null : GrpcPeerIdentity.parseUri(peer).orElseThrow())
+        .run(() -> service.resolveAuthoredWorldSource(request, observer));
+    return observer;
+  }
 
   @Test
   void approvedAccountAssociationReadBindsExactOwnerAndManifestEvidence() {
@@ -807,6 +951,28 @@ class TenantIdentityGrpcServiceTest {
 
     @Override
     public void onNext(ResolveFreshTenantCreationResponse response) {
+      value = response;
+    }
+
+    @Override
+    public void onError(Throwable failure) {
+      errorCode = Status.fromThrowable(failure).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class AuthoredSourceObserver
+      implements StreamObserver<ResolveAuthoredWorldSourceResponse> {
+    private ResolveAuthoredWorldSourceResponse value;
+    private Status.Code errorCode;
+    private boolean completed;
+
+    @Override
+    public void onNext(ResolveAuthoredWorldSourceResponse response) {
       value = response;
     }
 

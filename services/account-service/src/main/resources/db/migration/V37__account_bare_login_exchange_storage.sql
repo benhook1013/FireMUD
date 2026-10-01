@@ -6,7 +6,7 @@ CREATE TABLE account_bare_login_exchange_operations (
     source_connect_operation_id UUID NOT NULL
         REFERENCES account_connect_token_issuance_operations(operation_id) ON DELETE RESTRICT,
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
-    tenant_id BIGINT NOT NULL,
+    tenant_id UUID NOT NULL,
     connect_scope_hash VARCHAR(71) NOT NULL,
     request_id VARCHAR(128) NOT NULL,
     request_digest_version INTEGER NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE account_bare_login_exchange_operations (
         UNIQUE (account_id, tenant_id, connect_scope_hash, request_id),
     CONSTRAINT account_bare_login_exchange_identity_check
         CHECK (account_id > 0
-            AND tenant_id > 0
+            AND tenant_id <> '00000000-0000-0000-0000-000000000000'::UUID
             AND length(btrim(request_id)) BETWEEN 1 AND 128
             AND length(connect_scope_hash) = 71
             AND connect_scope_hash ~ '^sha256:[0-9a-f]{64}$'
@@ -63,7 +63,7 @@ CREATE TABLE account_bare_login_response_envelopes (
     source_connect_operation_id UUID NOT NULL
         REFERENCES account_connect_token_issuance_operations(operation_id) ON DELETE RESTRICT,
     account_id BIGINT NOT NULL,
-    tenant_id BIGINT NOT NULL,
+    tenant_id UUID NOT NULL,
     connect_scope_hash VARCHAR(71) NOT NULL,
     request_id VARCHAR(128) NOT NULL,
     request_digest_version INTEGER NOT NULL,
@@ -86,7 +86,7 @@ CREATE TABLE account_bare_login_response_envelopes (
         CHECK (operation_kind = 'BARE_LOGIN_EXCHANGE'
             AND source_connect_operation_id IS NOT NULL
             AND account_id > 0
-            AND tenant_id > 0
+            AND tenant_id <> '00000000-0000-0000-0000-000000000000'::UUID
             AND length(connect_scope_hash) = 71
             AND connect_scope_hash ~ '^sha256:[0-9a-f]{64}$'
             AND length(btrim(request_id)) BETWEEN 1 AND 128

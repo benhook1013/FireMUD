@@ -11,7 +11,7 @@ public record AccountBareLoginExchangeOperation(
     UUID operationId,
     UUID sourceConnectOperationId,
     long accountId,
-    long tenantId,
+    UUID tenantId,
     String connectScopeHash,
     String requestId,
     int requestDigestVersion,
@@ -48,7 +48,8 @@ public record AccountBareLoginExchangeOperation(
     if (operationId == null
         || sourceConnectOperationId == null
         || accountId <= 0
-        || tenantId <= 0
+        || tenantId == null
+        || tenantId.equals(new UUID(0L, 0L))
         || connectScopeHash == null
         || !SCOPE_HASH_PATTERN.matcher(connectScopeHash).matches()
         || requestId == null
@@ -128,7 +129,7 @@ public record AccountBareLoginExchangeOperation(
       return false;
     }
     return accountId == that.accountId
-        && tenantId == that.tenantId
+        && tenantId.equals(that.tenantId)
         && requestDigestVersion == that.requestDigestVersion
         && operationId.equals(that.operationId)
         && sourceConnectOperationId.equals(that.sourceConnectOperationId)

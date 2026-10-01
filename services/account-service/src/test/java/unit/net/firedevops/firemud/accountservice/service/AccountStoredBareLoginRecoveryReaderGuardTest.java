@@ -30,7 +30,7 @@ class AccountStoredBareLoginRecoveryReaderGuardTest {
       new AccountBareLoginExchangeIdentity(
           UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
           101L,
-          202L,
+          UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
           "connect-scope-1",
           "exchange-request-1");
   private static final byte[] REQUEST_DIGEST = new byte[32];
@@ -71,6 +71,19 @@ class AccountStoredBareLoginRecoveryReaderGuardTest {
         "Stored bare LOGIN history readback requires the exact Game Session workload identity",
         failure.getMessage());
     verifyNoCollaboratorInteractions();
+  }
+
+  @Test
+  void bareLoginIdentityRequiresNonNilCanonicalTenantUuid() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            new AccountBareLoginExchangeIdentity(
+                IDENTITY.sourceConnectOperationId(),
+                IDENTITY.accountId(),
+                new UUID(0L, 0L),
+                "scope",
+                "request"));
   }
 
   @Test
