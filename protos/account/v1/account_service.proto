@@ -164,6 +164,7 @@ message GetTenantMembershipForRuntimeResponse {
   string request_account_id = 18; // Exact canonical UUID echo of player_context.account_id.
   string request_tenant_id = 19; // Exact canonical UUID echo of player_context.tenant_id.
   string request_id = 20;
+  string authority_availability = 21;
 }
 
 message RuntimeMembershipBaseline {

@@ -993,6 +993,7 @@ jobs:
         run: |
           ./gradlew :account-service:integrationTest \
             --tests net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest \
+            --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly \
             --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope \
             --tests net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope \
             -PfullCheck --no-build-cache --no-configuration-cache
@@ -1014,6 +1015,7 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.service.AccountAuthenticationUuidIntegrationTest#nonAuthenticationSessionFailureRollsBackOtpConsumption()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly()' \
             account-service
 
       - name: Run Game Session command Account UUID storage PostgreSQL component proof

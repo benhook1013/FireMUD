@@ -12,16 +12,14 @@ import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotRequest;
 import net.firedevops.firemud.worldmanagement.v1.GetRoomSnapshotResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldManagementServiceGrpc;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.TestSocketUtils;
 
 class WorldManagementStubServerTest {
 
   @Test
   void returnsRoomSnapshotForRequestedRoomInstanceId() throws Exception {
-    int port = TestSocketUtils.findAvailableTcpPort();
-    try (WorldManagementStubServer server = new WorldManagementStubServer(port)) {
+    try (WorldManagementStubServer server = new WorldManagementStubServer(0)) {
       ManagedChannel channel =
-          ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub =
             WorldManagementServiceGrpc.newBlockingStub(channel);
@@ -60,10 +58,9 @@ class WorldManagementStubServerTest {
 
   @Test
   void returnsRoomSnapshotInTheRequestedRuntimeScope() throws Exception {
-    int port = TestSocketUtils.findAvailableTcpPort();
-    try (WorldManagementStubServer server = new WorldManagementStubServer(port)) {
+    try (WorldManagementStubServer server = new WorldManagementStubServer(0)) {
       ManagedChannel channel =
-          ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub =
             WorldManagementServiceGrpc.newBlockingStub(channel);
@@ -92,10 +89,9 @@ class WorldManagementStubServerTest {
 
   @Test
   void unknownRoomInstanceIdReturnsNotFound() throws Exception {
-    int port = TestSocketUtils.findAvailableTcpPort();
-    try (WorldManagementStubServer server = new WorldManagementStubServer(port)) {
+    try (WorldManagementStubServer server = new WorldManagementStubServer(0)) {
       ManagedChannel channel =
-          ManagedChannelBuilder.forAddress("localhost", port).usePlaintext().build();
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
       try {
         WorldManagementServiceGrpc.WorldManagementServiceBlockingStub stub =
             WorldManagementServiceGrpc.newBlockingStub(channel);

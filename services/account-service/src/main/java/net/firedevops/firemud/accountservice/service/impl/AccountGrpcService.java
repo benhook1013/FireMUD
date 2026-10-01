@@ -481,6 +481,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
             .setRequestAccountId(playerContext.getAccountId())
             .setRequestTenantId(playerContext.getTenantId())
             .setRequestId(playerContext.getRequestId())
+            .setAuthorityAvailability("AVAILABLE")
             .setGameplayAdmissionAllowed(snapshot.gameplayAdmissionAllowed())
             .setMembershipExists(snapshot.membershipExists())
             .setMembershipLifecycleState(baseline.membershipLifecycleState())
