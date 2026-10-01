@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -51,7 +52,7 @@ class GameInstanceTestFixturesTest {
             700L,
             "genrev:test:7",
             null,
-            GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID,
+            UUID.fromString(GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID),
             "ACTIVE");
   }
 }
