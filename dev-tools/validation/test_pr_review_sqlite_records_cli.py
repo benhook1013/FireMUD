@@ -20,6 +20,29 @@ from pr_review.state import FindingRoute, ReviewState, StateStore, SummaryFindin
 
 
 class ReviewRecordsCliTest(unittest.TestCase):
+    def test_records_source_resolve_requires_a_full_commit_sha(self) -> None:
+        prefix = [
+            "records",
+            "source",
+            "resolve",
+            "--source-pr",
+            "2885",
+            "--run-id",
+            "run.source-resolution-cli",
+            "--finding-key",
+            "accepted-key",
+            "--resolution-id",
+            "source-resolution-cli-proof",
+            "--fix-sha",
+        ]
+        parsed = cli._parser().parse_args([*prefix, "a" * 40, "--actor", "owner", "--proof-note", "verified"])
+        self.assertEqual(parsed.fix_sha, "a" * 40)
+        for invalid_sha in ("a" * 12, "g" * 40, "a" * 39):
+            with self.subTest(invalid_sha=invalid_sha), self.assertRaises(SystemExit):
+                cli._parser().parse_args(
+                    [*prefix, invalid_sha, "--actor", "owner", "--proof-note", "verified"]
+                )
+
     def test_subagent_start_rejects_oversized_coverage_before_recording(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         for length, expected in ((200, 0), (201, 2)):

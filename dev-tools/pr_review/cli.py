@@ -221,7 +221,7 @@ def _parser() -> argparse.ArgumentParser:
     source_resolve.add_argument("--run-id", required=True)
     source_resolve.add_argument("--finding-key", required=True)
     source_resolve.add_argument("--resolution-id", required=True)
-    source_resolve.add_argument("--fix-sha", required=True)
+    source_resolve.add_argument("--fix-sha", required=True, type=_exact_sha)
     source_resolve.add_argument("--actor", required=True)
     source_resolve.add_argument("--proof-note", required=True)
     source_resolve.add_argument("--resolved-at")

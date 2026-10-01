@@ -72,6 +72,8 @@ class _SelectionChanged(ControllerError):
 
 GIT_TIMEOUT_SECONDS = 30
 MAX_BASE_RESELECTIONS = 2
+HOSTED_ADMISSION_RETRY_BASE_SECONDS = 0.05
+HOSTED_ADMISSION_RETRY_MAX_SECONDS = 0.2
 LEGACY_UNCHECKPOINTED = re.compile(r"^trigger-uncheckpointed:[1-9][0-9]*$")
 DRAFT_PR_NOTICE = "Draft PR — mark ready for review if preparation is complete."
 
@@ -5314,6 +5316,7 @@ class ReviewController:
             except HostedAdmissionBusy:
                 if attempt == MAX_BASE_RESELECTIONS:
                     raise
+                time.sleep(min(HOSTED_ADMISSION_RETRY_BASE_SECONDS * (attempt + 1), HOSTED_ADMISSION_RETRY_MAX_SECONDS))
                 selected = self._target(policy.Channel.HOSTED, expected_pr)
                 self._ensure_runnable(selected)
         raise AssertionError("bounded Hosted reselection loop exhausted unexpectedly")

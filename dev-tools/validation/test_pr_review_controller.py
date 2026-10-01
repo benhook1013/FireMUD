@@ -6306,12 +6306,14 @@ class ControllerTests(unittest.TestCase):
                     return original_target(channel, expected_pr)
 
                 controller._target = release_cli_preflight_and_reselect
-                result = controller.run_hosted(expected_pr=1)
+                with patch("pr_review.controller.time.sleep") as sleep:
+                    result = controller.run_hosted(expected_pr=1)
 
         self.assertEqual(attempted_heads, [HEAD_1, HEAD_2])
         self.assertEqual(reservations, [(1, HEAD_2)])
         self.assertEqual(posts, [(1, HEAD_2)])
         self.assertEqual(result, {"status": "posted", "pr": 1, "head": HEAD_2})
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.05])
 
     def test_hosted_admission_contention_is_bounded_and_remains_admission_error(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})
@@ -6326,10 +6328,14 @@ class ControllerTests(unittest.TestCase):
 
         controller.hosted_adapter = adapter
 
-        with self.assertRaisesRegex(HostedAdmissionBusy, "admission lock is busy.*does not establish"):
+        with (
+            patch("pr_review.controller.time.sleep") as sleep,
+            self.assertRaisesRegex(HostedAdmissionBusy, "admission lock is busy.*does not establish"),
+        ):
             controller.run_hosted(expected_pr=1)
 
         self.assertEqual(len(attempts), 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [0.05, 0.1])
 
     def test_hosted_admission_retries_only_typed_lock_contention(self):
         controller = self.make({1: pr(1, HEAD_1)}, heads={"develop": BASE, "feature-1": HEAD_1})

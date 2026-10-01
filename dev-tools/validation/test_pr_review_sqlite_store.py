@@ -12,7 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from pr_review.sqlite_review_records import SqliteReviewRecords
-from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import (
     FindingRoute,
     Judgment,
@@ -188,9 +188,9 @@ class SqliteStateStoreTest(unittest.TestCase):
             connection.execute("UPDATE controller_metadata SET min_writer_build = 5 WHERE singleton = 1")
         SqliteReviewRecords(database).bootstrap()
 
-        self.assertEqual(current.status()["min_writer_build"], 6)
+        self.assertEqual(current.status()["min_writer_build"], WRITER_BUILD)
         old_writer = SqliteStateStore(database, writer_build=5)
-        with self.assertRaisesRegex(StateError, "requires writer build 6"):
+        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
             old_writer.update(lambda state: state)
 
     def test_legacy_import_round_trips_all_validated_state_semantics(self) -> None:
