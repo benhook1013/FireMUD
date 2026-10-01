@@ -10,6 +10,7 @@ import org.jooq.Record;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Stores the durable Account-owned authority state for one verified Account/tenant pair.
@@ -47,6 +48,7 @@ public class AccountMembershipPairAuthorityRepository {
   @Transactional(propagation = Propagation.MANDATORY)
   public PairAuthority enrollAbsence(
       UUID accountUuid, UUID tenantUuid, VerifiedTenantProvenance provenance) {
+    requireOwnerTransaction();
     requireScope(accountUuid, tenantUuid);
     Objects.requireNonNull(provenance, "verified tenant provenance is required");
 
@@ -75,7 +77,7 @@ public class AccountMembershipPairAuthorityRepository {
 
     Optional<PairAuthority> readback = readForUpdate(accountUuid, tenantUuid);
     if (readback.isEmpty()) {
-      if (readByLegacyScopeForUpdate(accountUuid, provenance.legacyTenantId()).isPresent()) {
+      if (hasRetainedLegacyScopeCollision(accountUuid, provenance)) {
         throw new IllegalStateException(
             "Verified Account tenant association conflicts with an existing pair authority");
       }
@@ -106,6 +108,7 @@ public class AccountMembershipPairAuthorityRepository {
       UUID tenantUuid,
       VerifiedTenantProvenance provenance,
       ProvenPositiveCheckpoint checkpoint) {
+    requireOwnerTransaction();
     requireScope(accountUuid, tenantUuid);
     Objects.requireNonNull(provenance, "verified tenant provenance is required");
     Objects.requireNonNull(checkpoint, "verified positive membership checkpoint is required");
@@ -154,7 +157,7 @@ public class AccountMembershipPairAuthorityRepository {
 
     Optional<PairAuthority> readback = readForUpdate(accountUuid, tenantUuid);
     if (readback.isEmpty()) {
-      if (readByLegacyScopeForUpdate(accountUuid, provenance.legacyTenantId()).isPresent()) {
+      if (hasRetainedLegacyScopeCollision(accountUuid, provenance)) {
         throw new IllegalStateException(
             "Verified Account tenant association conflicts with an existing pair authority");
       }
@@ -174,6 +177,7 @@ public class AccountMembershipPairAuthorityRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<PairAuthority> readForUpdate(UUID accountUuid, UUID tenantUuid) {
+    requireOwnerTransaction();
     requireScope(accountUuid, tenantUuid);
     Record row =
         dsl.fetchOne(
@@ -198,6 +202,7 @@ public class AccountMembershipPairAuthorityRepository {
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public PairAuthority commitTransition(PairAuthority expected, PairTransition transition) {
+    requireOwnerTransaction();
     Objects.requireNonNull(expected, "expected pair authority is required");
     Objects.requireNonNull(transition, "pair authority transition is required");
     long nextVersion = increment(expected.membershipVersion(), "membership version");
@@ -229,7 +234,8 @@ public class AccountMembershipPairAuthorityRepository {
                 + " SET membership_exists = ?, membership_version = ?, "
                 + "membership_authority_generation = ?, last_event_sequence = ?, "
                 + "last_event_id = ?, last_event_digest = ?, last_transition_invalidated = ? "
-                + "WHERE account_uuid = ? AND tenant_uuid = ? AND legacy_tenant_id = ? "
+                + "WHERE account_uuid = ? AND tenant_uuid = ? "
+                + "AND legacy_tenant_id IS NOT DISTINCT FROM ? "
                 + "AND tenant_provenance_kind = ? AND tenant_source_operation_id = ? "
                 + "AND tenant_provenance_digest = ? AND membership_exists = ? "
                 + "AND membership_version = ? AND membership_authority_generation = ? "
@@ -286,7 +292,7 @@ public class AccountMembershipPairAuthorityRepository {
   }
 
   private Optional<PairAuthority> readByLegacyScopeForUpdate(
-      UUID accountUuid, long legacyTenantId) {
+      UUID accountUuid, Long legacyTenantId) {
     Record row =
         dsl.fetchOne(
             "SELECT "
@@ -298,6 +304,12 @@ public class AccountMembershipPairAuthorityRepository {
             accountUuid,
             legacyTenantId);
     return Optional.ofNullable(row).map(this::mapRow);
+  }
+
+  private boolean hasRetainedLegacyScopeCollision(
+      UUID accountUuid, VerifiedTenantProvenance provenance) {
+    return provenance.kind() == TenantProvenanceKind.APPROVED_RETAINED
+        && readByLegacyScopeForUpdate(accountUuid, provenance.legacyTenantId()).isPresent();
   }
 
   private PairAuthority mapRow(Record row) {
@@ -338,6 +350,13 @@ public class AccountMembershipPairAuthorityRepository {
     }
   }
 
+  private void requireOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Account membership pair authority access requires an active owner transaction");
+    }
+  }
+
   private long increment(long value, String label) {
     try {
       return Math.addExact(value, 1L);
@@ -359,10 +378,19 @@ public class AccountMembershipPairAuthorityRepository {
 
   /** Immutable verified tenant-association facts supplied by the caller. */
   public record VerifiedTenantProvenance(
-      long legacyTenantId, TenantProvenanceKind kind, UUID sourceOperationId, String digest) {
+      Long legacyTenantId, TenantProvenanceKind kind, UUID sourceOperationId, String digest) {
     public VerifiedTenantProvenance {
-      if (legacyTenantId <= 0L || kind == null || sourceOperationId == null) {
+      if (kind == null || sourceOperationId == null) {
         throw new IllegalArgumentException("Verified Account tenant provenance is incomplete");
+      }
+      if (kind == TenantProvenanceKind.APPROVED_RETAINED
+          && (legacyTenantId == null || legacyTenantId <= 0L)) {
+        throw new IllegalArgumentException(
+            "Approved retained tenant provenance requires a positive legacy tenant ID");
+      }
+      if (kind == TenantProvenanceKind.FRESH_GAME_DESIGN && legacyTenantId != null) {
+        throw new IllegalArgumentException(
+            "Fresh Game Design tenant provenance must not carry a legacy tenant ID");
       }
       requireDigest(digest, "Tenant provenance digest");
     }
