@@ -30,12 +30,12 @@ import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.jooq.DSLContext;
-import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -153,7 +153,7 @@ class AccountAuthenticationUuidIntegrationTest {
                     "UPDATE accounts SET account_uuid = ? WHERE id = ?",
                     attemptedReplacement,
                     accountId))
-        .isInstanceOf(DataAccessException.class)
+        .isInstanceOf(DataIntegrityViolationException.class)
         .hasStackTraceContaining("Account identity cannot be reassigned");
 
     assertThat(accountUuidFor(accountId)).isEqualTo(accountUuid);
