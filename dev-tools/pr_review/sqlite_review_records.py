@@ -1078,7 +1078,7 @@ class SqliteReviewRecords:
         ).fetchone()
         run = connection.execute(
             "SELECT source_pr, channel, source_head, outcome, attributable, started_at, finished_at, "
-            "found_count, accepted_count, routed_count, finalized FROM review_runs WHERE run_id = ?",
+            "found_count, accepted_count, routed_count, finalized, import_payload_json FROM review_runs WHERE run_id = ?",
             (attempt_id,),
         ).fetchone()
         origin = connection.execute(
@@ -1126,6 +1126,16 @@ class SqliteReviewRecords:
         if run[3] != "completed" or not run[4] or run[2] != attempt[2]:
             raise ReviewRecordsError("CLI SQL source run is not completed, attributable, and linked to its head")
 
+        try:
+            original_findings = json.loads(run[11])["findings"]
+            if not isinstance(original_findings, list) or not all(isinstance(item, dict) for item in original_findings):
+                raise ValueError("invalid original findings")
+            original_by_key = {item["source_finding_key"]: item for item in original_findings}
+            if len(original_by_key) != run[7] or len(original_findings) != run[7]:
+                raise ValueError("invalid original finding count")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ReviewRecordsError("CLI SQL immutable source projection is incomplete") from exc
+
         rows = connection.execute(
             "SELECT f.source_finding_key, o.disposition, d.decision, d.reason, c.decision, c.reason, o.title, o.detail, "
             "(SELECT COUNT(*) FROM decisions d2 WHERE d2.run_id = o.run_id "
@@ -1168,7 +1178,13 @@ class SqliteReviewRecords:
                 raise ReviewRecordsError("CLI source decisions conflict with stored finding dispositions")
             else:
                 decisions[index] = (effective_decision, effective_reason)
-            observations.append({"index": index, "source_finding_key": key, "disposition": disposition, "title": title, "detail": detail})
+            original = original_by_key.get(key)
+            if original is None or original.get("title") != title or original.get("detail") != detail:
+                raise ReviewRecordsError("CLI SQL finding conflicts with its immutable source projection")
+            observations.append({
+                "index": index, "source_finding_key": key, "disposition": disposition,
+                "title": title, "detail": detail, "detail_recorded": detail != "",
+            })
         if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(
             range(1, run[7] + 1)
         ):

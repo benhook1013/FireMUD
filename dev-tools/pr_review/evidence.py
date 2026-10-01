@@ -760,6 +760,10 @@ def _cli_capture_from_sql(
     for index, finding in enumerate(findings, 1):
         observation = by_index.get(index)
         instructions = finding.get("codegenInstructions")
+        # Prior native writers recorded titles only, before current title
+        # normalization and detail capture. Preserve their retained semantics.
+        if observation is not None and observation.get("detail_recorded") is False:
+            continue
         if observation is None or (
             (compare_titles and observation.get("title") != _cli_finding_title(instructions, f"CodeRabbit CLI finding {index}"))
             or observation.get("detail") != _safe_finding_detail(_cli_detail(instructions))

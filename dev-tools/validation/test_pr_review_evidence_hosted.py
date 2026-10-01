@@ -20,7 +20,7 @@ from pr_review import cli as cli_module
 from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
 from pr_review.sqlite_finding_text import _safe_finding_detail
-from pr_review.sqlite_provider_imports import _cli_detail, _cli_finding_title
+from pr_review.sqlite_provider_imports import _cli_detail, _cli_finding_title, _cli_headline
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
 
@@ -624,6 +624,7 @@ class GithubAndEvidenceTests(unittest.TestCase):
         finalized: bool = True,
         decide: bool = True,
         instructions: tuple[str, ...] = ("The complete SQL finding remains available.",),
+        legacy_projection: bool = False,
     ) -> SqliteReviewRecords:
         database = common / "controller.sqlite3"
         SqliteStateStore(database).update(lambda state: state)
@@ -681,8 +682,11 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 "findings": tuple(
                     FindingObservation(
                         source_finding_key=f"cli-run:{run_id}:finding:{index}",
-                        title=_cli_finding_title(text, f"CodeRabbit CLI finding {index}"),
-                        detail=_safe_finding_detail(_cli_detail(text)),
+                        title=(
+                            _cli_headline(text) or f"CodeRabbit CLI finding {index}"
+                            if legacy_projection else _cli_finding_title(text, f"CodeRabbit CLI finding {index}")
+                        ),
+                        detail="" if legacy_projection else _safe_finding_detail(_cli_detail(text)),
                     ) for index, text in enumerate(instructions, 1)
                 ),
                 "source_head": candidate_sha,
@@ -780,6 +784,30 @@ class GithubAndEvidenceTests(unittest.TestCase):
                 connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
             with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
                 evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_prior_native_title_only_projection_remains_readable_without_capture_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(
+                common, instructions=("Check  old  input before use.",), legacy_projection=True,
+            )
+            capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+            self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
+            self.assertEqual(capture.findings[0]["codegenInstructions"], "Check  old  input before use.")
+            self.assertEqual(capture.decisions[1][0], "accepted")
+            self.assertEqual(records.source_resolution_status(
+                "run.Native", source_pr=PR, source_channel="cli", source_head=HEAD, accepted_count=1,
+            ), "resolved")
+
+    def test_deleted_modern_detail_cannot_downgrade_to_prior_native_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute("UPDATE finding_observations SET detail = '' WHERE run_id = 'run.Native'")
+            with self.assertRaises(evidence.CaptureInvalid) as raised:
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+            self.assertIn("immutable source projection", str(raised.exception.__cause__))
 
     def test_native_cli_sql_checkpoint_refuses_explicit_identity_and_count_mismatches(self):
         cases = (
