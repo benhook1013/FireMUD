@@ -87,6 +87,7 @@ public class DeploymentRolloutService {
           .put(HostedIdentityContract.GRPC_REVISION_ANNOTATION, grpcRevision);
     }
     if (!grpcWorkloadIdentityRevisions.isEmpty()) {
+      // This combined leaf and shared-trust revision supersedes the plain trust revision above.
       for (String workload : HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS) {
         String role = HostedIdentityContract.grpcPublicationRole(workload);
         String revision = grpcWorkloadIdentityRevisions.get(role);

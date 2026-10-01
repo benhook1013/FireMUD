@@ -10593,7 +10593,7 @@ with patch.object(
     if module.publication_workload_secret_issues(
         publication_expected, publication_documents
     ):
-        raise SystemExit("complete seven-workload Secret fixture failed preflight")
+        raise SystemExit("complete eight-workload Secret fixture failed preflight")
 if {name for name, _, _ in queried_publication_secrets} != (
     expected_workload_secret_names | {module.PUBLICATION_GRPC_TRUST_SECRET_NAME}
 ):
