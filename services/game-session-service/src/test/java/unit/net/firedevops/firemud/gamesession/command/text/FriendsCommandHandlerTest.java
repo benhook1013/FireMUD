@@ -335,7 +335,8 @@ class FriendsCommandHandlerTest {
     FriendsCommandHandler handler =
         newHandler(
             socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
-    for (String filter : java.util.List.of("OFFLINE", "PRIVATE", "UNSPECIFIED_SCOPE")) {
+    for (String filter :
+        java.util.List.of("OFFLINE", "PUBLIC", "FRIENDS_ONLY", "PRIVATE", "UNSPECIFIED_SCOPE")) {
       TextCommandInterpretationResult result =
           handler.handle(
               new TextCommand(
@@ -1311,7 +1312,7 @@ class FriendsCommandHandlerTest {
         .singleElement()
         .extracting(PlayerOutput::text)
         .isEqualTo(
-            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]");
+            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|SHARED|ISOLATED]");
     Mockito.verifyNoInteractions(socialGroupsClient);
   }
 
@@ -1333,7 +1334,7 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs().getFirst().text())
         .isEqualTo(
-            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]")
+            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|SHARED|ISOLATED]")
         .doesNotContain("HIDDEN_STAFF");
     Mockito.verifyNoInteractions(socialGroupsClient);
   }
@@ -1357,7 +1358,7 @@ class FriendsCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
     assertThat(result.outputs().getFirst().text())
         .isEqualTo(
-            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]")
+            "ERROR INVALID_ARGUMENT FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|SHARED|ISOLATED]")
         .doesNotContain("UNSPECIFIED_VISIBILITY");
     Mockito.verifyNoInteractions(socialGroupsClient);
   }
