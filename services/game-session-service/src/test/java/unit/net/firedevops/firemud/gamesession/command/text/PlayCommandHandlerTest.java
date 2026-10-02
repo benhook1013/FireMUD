@@ -2892,7 +2892,8 @@ class PlayCommandHandlerTest {
     Mockito.verify(scriptEventPublisher, never())
         .publishSpawnEvent(Mockito.any(), Mockito.any(), Mockito.any());
     Mockito.verify(accountClient, never())
-        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
 
     when(sessionContextService.findBySessionId(1L)).thenReturn(Optional.of(savedContext));
     when(sessionContextService.findByTenantAndSessionId(22L, 1L))
@@ -2920,7 +2921,7 @@ class PlayCommandHandlerTest {
                 .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build());
     when(accountClient.joinPublicProductionMembership(
-            Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class)))
         .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler worldsCommandHandler =
         new WorldsCommandHandler(
@@ -2944,7 +2945,10 @@ class PlayCommandHandlerTest {
     ArgumentCaptor<String> requestIdCaptor = ArgumentCaptor.forClass(String.class);
     Mockito.verify(accountClient)
         .joinPublicProductionMembership(
-            playerContextCaptor.capture(), scopeIdCaptor.capture(), requestIdCaptor.capture());
+            playerContextCaptor.capture(),
+            scopeIdCaptor.capture(),
+            requestIdCaptor.capture(),
+            Mockito.any(Instant.class));
     assertThat(scopeIdCaptor.getValue()).isEqualTo(exactJoinScopeId);
     assertThat(playerContextCaptor.getValue().getAccountId()).isEqualTo("123");
     assertThat(playerContextCaptor.getValue().getSessionId()).isEqualTo("1");

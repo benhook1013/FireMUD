@@ -518,7 +518,8 @@ class SessionResumptionFlowTest {
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .anyMatch(presence -> presence.sessionId() == 1L));
     Mockito.verify(accountClient, Mockito.never())
-        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
