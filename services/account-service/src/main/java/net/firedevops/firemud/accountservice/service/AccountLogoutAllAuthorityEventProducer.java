@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -39,7 +40,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final String EVENT_ID_PREFIX = "account-logout-all-event-v1:";
   private static final int DIGEST_VERSION = 1;
-  private static final String OPERATION_KIND = "LOGOUT_ALL";
+  private static final String OPERATION_KIND = "ACCOUNT_LOGOUT_ALL";
   private static final HexFormat HEX = HexFormat.of();
 
   private final AccountRepository accountRepository;
@@ -78,18 +79,21 @@ public final class AccountLogoutAllAuthorityEventProducer {
   /**
    * Commits one account-wide cutoff or recovers that request's exact original lifecycle result.
    *
-   * <p>The request digest and presented token hash are opaque lowercase SHA-256 hex bindings; this
-   * method never derives either from a raw credential or treats them as proof of authorization. The
-   * supplied Account association and scope state are compared against locked persisted state.
+   * <p>The request digest is recomputed from the exact closed operation tuple and compared with the
+   * supplied lowercase SHA-256 binding. The token profile and digest correlate the receipt; neither
+   * is proof of caller authorization. The supplied Account association and scope state are compared
+   * against locked persisted state.
    */
   public LogoutAllResult commit(
       UUID requestId,
       int requestDigestVersion,
       String requestDigest,
+      String tokenProfile,
       String presentedTokenHash,
       Account verifiedAccountAssociation,
       ScopeState expectedAccountState) {
-    validateRequest(requestId, requestDigestVersion, requestDigest, presentedTokenHash);
+    validateRequest(
+        requestId, requestDigestVersion, requestDigest, tokenProfile, presentedTokenHash);
     validateExpectedInputs(verifiedAccountAssociation, expectedAccountState);
     requireNoAmbientTransaction();
 
@@ -100,6 +104,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
                     requestId,
                     requestDigestVersion,
                     requestDigest,
+                    tokenProfile,
                     presentedTokenHash,
                     verifiedAccountAssociation,
                     expectedAccountState));
@@ -112,6 +117,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
             requestId,
             requestDigestVersion,
             requestDigest,
+            tokenProfile,
             presentedTokenHash,
             verifiedAccountAssociation);
     if (!transactionResult.equals(committedResult)) {
@@ -125,6 +131,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
       UUID requestId,
       int requestDigestVersion,
       String requestDigest,
+      String tokenProfile,
       String presentedTokenHash,
       Account requestedAccount,
       ScopeState expectedAccountState) {
@@ -139,7 +146,13 @@ public final class AccountLogoutAllAuthorityEventProducer {
     if (priorRequest.isPresent()) {
       LogoutAllReceipt receipt = priorRequest.orElseThrow();
       requireExactRetryBinding(
-          receipt, requestId, requestDigestVersion, requestDigest, presentedTokenHash, account);
+          receipt,
+          requestId,
+          requestDigestVersion,
+          requestDigest,
+          tokenProfile,
+          presentedTokenHash,
+          account);
       if (priorToken.isEmpty() || !receipt.equals(priorToken.orElseThrow())) {
         throw new IllegalStateException("Logout-all token receipt index readback is inconsistent");
       }
@@ -152,6 +165,13 @@ public final class AccountLogoutAllAuthorityEventProducer {
 
     if (requestDigestVersion != DIGEST_VERSION) {
       throw new IllegalArgumentException("Logout-all request digest version must be 1");
+    }
+    String canonicalDigest =
+        AccountLogoutRequestDigest.accountLogoutAll(
+            account.getAccountUuid(), tokenProfile, presentedTokenHash);
+    if (!constantTimeTextEquals(canonicalDigest, requestDigest)) {
+      throw new IllegalArgumentException(
+          "Logout-all request digest does not match its canonical caller bindings");
     }
     ScopeState current =
         generationRepository.read(AuthorityScope.account(account.getAccountUuid()));
@@ -208,6 +228,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
             account.getAccountUuid(),
             requestDigest,
             presentedTokenHash,
+            tokenProfile,
             streamKey,
             appended.outboxSequence(),
             event.eventId(),
@@ -242,7 +263,13 @@ public final class AccountLogoutAllAuthorityEventProducer {
       throw new IllegalStateException("Logout-all current source checkpoint readback differs");
     }
     requireReceiptReadback(
-        receipt, requestId, requestDigestVersion, requestDigest, presentedTokenHash, account);
+        receipt,
+        requestId,
+        requestDigestVersion,
+        requestDigest,
+        tokenProfile,
+        presentedTokenHash,
+        account);
     return receipt;
   }
 
@@ -274,6 +301,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
       UUID requestId,
       int requestDigestVersion,
       String requestDigest,
+      String tokenProfile,
       String presentedTokenHash,
       Account requestedAccount) {
     requireNoAmbientTransaction();
@@ -293,6 +321,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
                   requestId,
                   requestDigestVersion,
                   requestDigest,
+                  tokenProfile,
                   presentedTokenHash,
                   account);
               return recoverReceipt(account, committed);
@@ -308,6 +337,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
       UUID requestId,
       int requestDigestVersion,
       String requestDigest,
+      String tokenProfile,
       String presentedTokenHash,
       Account account) {
     LogoutAllReceipt byRequest =
@@ -317,7 +347,13 @@ public final class AccountLogoutAllAuthorityEventProducer {
     Optional<LogoutAllReceipt> byToken =
         operationRepository.findByPresentedTokenHash(presentedTokenHash);
     requireExactRetryBinding(
-        byRequest, requestId, requestDigestVersion, requestDigest, presentedTokenHash, account);
+        byRequest,
+        requestId,
+        requestDigestVersion,
+        requestDigest,
+        tokenProfile,
+        presentedTokenHash,
+        account);
     if (!expected.equals(byRequest)
         || byToken.isEmpty()
         || !expected.equals(byToken.orElseThrow())) {
@@ -331,12 +367,14 @@ public final class AccountLogoutAllAuthorityEventProducer {
       UUID requestId,
       int requestDigestVersion,
       String requestDigest,
+      String tokenProfile,
       String presentedTokenHash,
       Account account) {
     if (!receipt.requestId().equals(requestId)
         || !OPERATION_KIND.equals(receipt.operationKind())
         || receipt.requestDigestVersion() != requestDigestVersion
         || !constantTimeTextEquals(receipt.requestDigest(), requestDigest)
+        || !receipt.tokenProfile().equals(tokenProfile)
         || !constantTimeTextEquals(receipt.presentedTokenHash(), presentedTokenHash)
         || receipt.accountId() != account.getId()
         || !receipt.accountUuid().equals(account.getAccountUuid())) {
@@ -456,15 +494,20 @@ public final class AccountLogoutAllAuthorityEventProducer {
   }
 
   private void validateRequest(
-      UUID requestId, int requestDigestVersion, String requestDigest, String presentedTokenHash) {
+      UUID requestId,
+      int requestDigestVersion,
+      String requestDigest,
+      String tokenProfile,
+      String presentedTokenHash) {
     if (requestId == null || new UUID(0L, 0L).equals(requestId)) {
       throw new IllegalArgumentException("A canonical non-nil logout-all request UUID is required");
     }
+    AccountLogoutRequestDigest.validateTokenProfile(tokenProfile);
     if (requestDigestVersion <= 0) {
       throw new IllegalArgumentException("Logout-all request digest version must be positive");
     }
     decodeDigest(requestDigest, "request digest");
-    decodeDigest(presentedTokenHash, "presented token hash");
+    AccountLogoutRequestDigest.validateTokenHash(presentedTokenHash);
   }
 
   private void validateExpectedInputs(Account account, ScopeState expectedState) {

@@ -29,6 +29,7 @@ import net.firedevops.firemud.accountservice.AccountServiceApplication;
 import net.firedevops.firemud.accountservice.client.EntityManagementClient;
 import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -192,8 +193,11 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
       UUID issuerRequestId = UUID.randomUUID();
       UUID tenantRequestId = UUID.randomUUID();
       UUID logoutRequestId = UUID.randomUUID();
-      String requestDigest = "a".repeat(64);
       String presentedTokenHash = "b".repeat(64);
+      String tokenProfile = "control-ui";
+      String requestDigest =
+          AccountLogoutRequestDigest.accountLogoutAll(
+              joined.accountUuid(), tokenProfile, presentedTokenHash);
       AccountIssuerAuthorityEventProducer issuerProducer = issuerProducer();
       AccountTenantAuthorityEventProducer tenantProducer = tenantProducer();
       AccountLogoutAllAuthorityEventProducer logoutProducer = logoutProducer();
@@ -207,6 +211,7 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
                   logoutRequestId,
                   1,
                   requestDigest,
+                  tokenProfile,
                   presentedTokenHash,
                   account,
                   preLogoutAccountState))
@@ -309,6 +314,7 @@ class AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest {
                   logoutRequestId,
                   1,
                   requestDigest,
+                  tokenProfile,
                   presentedTokenHash,
                   account,
                   preLogoutAccountState))

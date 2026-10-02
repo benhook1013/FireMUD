@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
@@ -55,6 +56,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final String EVENT_ID_PREFIX = "account-logout-all-event-v1:";
   private static final long MAX_COUNTER = Long.MAX_VALUE;
+  private static final String TOKEN_PROFILE = "control-ui";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -64,8 +66,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     Fixture fixture = newFixture();
     Seed seed = seedAccount(fixture);
     UUID requestId = UUID.randomUUID();
-    String requestDigest = digest("request:" + requestId);
     String tokenHash = digest("presented-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
 
     LogoutAllResult result =
         commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
@@ -95,7 +97,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     assertThat(receipt.requestDigestVersion()).isEqualTo(1);
     assertThat(receipt.requestDigest()).isEqualTo(requestDigest);
     assertThat(receipt.presentedTokenHash()).isEqualTo(tokenHash);
-    assertThat(receipt.operationKind()).isEqualTo("LOGOUT_ALL");
+    assertThat(receipt.tokenProfile()).isEqualTo(TOKEN_PROFILE);
+    assertThat(receipt.operationKind()).isEqualTo("ACCOUNT_LOGOUT_ALL");
     assertThat(receipt.lifecycleResult()).isEqualTo("LOGOUT_ALL_COMMITTED");
     assertThat(receipt.accountAuthorityGeneration()).isEqualTo(2L);
     assertThat(receipt.accountSourceVersion()).isEqualTo(2L);
@@ -138,19 +141,20 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     Fixture fixture = newFixture();
     Seed seed = seedAccount(fixture);
     UUID firstRequest = UUID.randomUUID();
-    String firstDigest = digest("request:" + firstRequest);
     String firstTokenHash = digest("presented-token:" + firstRequest);
+    String firstDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, firstTokenHash);
     LogoutAllResult firstResult =
         commit(fixture, seed, firstRequest, firstDigest, firstTokenHash, seed.initialState());
     LogoutAllReceipt firstReceipt = logoutReceipt(fixture, firstRequest);
 
     UUID laterRequest = UUID.randomUUID();
+    String laterTokenHash = digest("presented-token:" + laterRequest);
     commit(
         fixture,
         seed,
         laterRequest,
-        digest("request:" + laterRequest),
-        digest("presented-token:" + laterRequest),
+        logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, laterTokenHash),
+        laterTokenHash,
         authority(fixture, seed));
     StoredState afterLaterAdvance = snapshot(fixture, seed);
 
@@ -167,10 +171,15 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     Fixture fixture = newFixture();
     Seed seed = seedAccount(fixture);
     UUID requestId = UUID.randomUUID();
-    String requestDigest = digest("request:" + requestId);
     String tokenHash = digest("presented-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
     commit(fixture, seed, requestId, requestDigest, tokenHash, seed.initialState());
     StoredState committed = snapshot(fixture, seed);
+    LogoutAllReceipt committedReceipt = logoutReceipt(fixture, requestId);
+    var committedEvent =
+        transaction(
+            fixture.transaction(),
+            () -> fixture.outbox().findEvent(streamKey(seed.accountUuid()), 1L).orElseThrow());
 
     assertThatThrownBy(
             () ->
@@ -184,6 +193,18 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
         .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
     assertThatThrownBy(
             () ->
+                producer(fixture)
+                    .commit(
+                        requestId,
+                        2,
+                        requestDigest,
+                        TOKEN_PROFILE,
+                        tokenHash,
+                        account(fixture, seed),
+                        seed.initialState()))
+        .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
+    assertThatThrownBy(
+            () ->
                 commit(
                     fixture,
                     seed,
@@ -194,14 +215,14 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
         .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
     assertThatThrownBy(
             () ->
-                producer(fixture)
-                    .commit(
-                        requestId,
-                        2,
-                        requestDigest,
-                        tokenHash,
-                        account(fixture, seed),
-                        seed.initialState()))
+                commit(
+                    fixture,
+                    seed,
+                    requestId,
+                    logoutAllDigest(seed.accountUuid(), "player-bootstrap", tokenHash),
+                    "player-bootstrap",
+                    tokenHash,
+                    seed.initialState()))
         .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
     assertThatThrownBy(
             () ->
@@ -213,8 +234,27 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
                     tokenHash,
                     seed.initialState()))
         .isInstanceOf(AccountLogoutAllAuthorityEventProducer.OperationConflictException.class);
+    UUID unboundRequestId = UUID.randomUUID();
+    String unboundTokenHash = digest("unbound-token:" + unboundRequestId);
+    assertThatThrownBy(
+            () ->
+                commit(
+                    fixture,
+                    seed,
+                    unboundRequestId,
+                    digest("unbound-request-digest"),
+                    unboundTokenHash,
+                    authority(fixture, seed)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("canonical caller bindings");
 
     assertThat(snapshot(fixture, seed)).isEqualTo(committed);
+    assertThat(logoutReceipt(fixture, requestId)).isEqualTo(committedReceipt);
+    assertThat(
+            transaction(
+                fixture.transaction(),
+                () -> fixture.outbox().findEvent(streamKey(seed.accountUuid()), 1L).orElseThrow()))
+        .isEqualTo(committedEvent);
   }
 
   @Test
@@ -222,8 +262,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     Fixture fixture = newFixture();
     Seed seed = seedAccount(fixture);
     UUID requestId = UUID.randomUUID();
-    String requestDigest = digest("request:" + requestId);
     String tokenHash = digest("presented-token:" + requestId);
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
     CountDownLatch ready = new CountDownLatch(2);
     CountDownLatch start = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
@@ -266,14 +306,16 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
                 + "ADD CONSTRAINT reject_logout_all_event "
                 + "CHECK (event_id NOT LIKE 'account-logout-all-event-v1:%')");
 
+    UUID rollbackRequest = UUID.randomUUID();
+    String rollbackTokenHash = digest("rollback-token");
     assertThatThrownBy(
             () ->
                 commit(
                     fixture,
                     seed,
-                    UUID.randomUUID(),
-                    digest("rollback-request"),
-                    digest("rollback-token"),
+                    rollbackRequest,
+                    logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, rollbackTokenHash),
+                    rollbackTokenHash,
                     seed.initialState()))
         .isInstanceOf(RuntimeException.class);
 
@@ -289,14 +331,16 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     ScopeState maximum = authority(fixture, seed);
     StoredState before = snapshot(fixture, seed);
 
+    UUID overflowRequest = UUID.randomUUID();
+    String overflowTokenHash = digest("overflow-token");
     assertThatThrownBy(
             () ->
                 commit(
                     fixture,
                     seed,
-                    UUID.randomUUID(),
-                    digest("overflow-request"),
-                    digest("overflow-token"),
+                    overflowRequest,
+                    logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, overflowTokenHash),
+                    overflowTokenHash,
                     maximum))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("exhausted");
@@ -311,13 +355,14 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     reset(fixture, seed, "reset-before-logout");
     PasswordResetReceipt resetReceipt = passwordResetReceipt(fixture, seed);
     UUID requestId = UUID.randomUUID();
+    String tokenHash = digest("presented-token:" + requestId);
 
     commit(
         fixture,
         seed,
         requestId,
-        digest("request:" + requestId),
-        digest("presented-token:" + requestId),
+        logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash),
+        tokenHash,
         authority(fixture, seed));
     LogoutAllReceipt logoutReceipt = logoutReceipt(fixture, requestId);
 
@@ -335,13 +380,14 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     Fixture fixture = newFixture();
     Seed seed = seedAccount(fixture);
     UUID requestId = UUID.randomUUID();
+    String tokenHash = digest("presented-token:" + requestId);
 
     commit(
         fixture,
         seed,
         requestId,
-        digest("request:" + requestId),
-        digest("presented-token:" + requestId),
+        logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash),
+        tokenHash,
         seed.initialState());
     LogoutAllReceipt logoutReceipt = logoutReceipt(fixture, requestId);
     reset(fixture, seed, "reset-after-logout");
@@ -468,8 +514,20 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
       String requestDigest,
       String tokenHash,
       ScopeState expected) {
+    return commit(fixture, seed, requestId, requestDigest, TOKEN_PROFILE, tokenHash, expected);
+  }
+
+  private LogoutAllResult commit(
+      Fixture fixture,
+      Seed seed,
+      UUID requestId,
+      String requestDigest,
+      String tokenProfile,
+      String tokenHash,
+      ScopeState expected) {
     return producer(fixture)
-        .commit(requestId, 1, requestDigest, tokenHash, account(fixture, seed), expected);
+        .commit(
+            requestId, 1, requestDigest, tokenProfile, tokenHash, account(fixture, seed), expected);
   }
 
   private AccountLogoutAllAuthorityEventProducer producer(Fixture fixture) {
@@ -532,8 +590,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
 
   private void seedLatestLogoutReceiptAtMaximumCounter(Fixture fixture, Seed seed) {
     UUID priorRequestId = UUID.randomUUID();
-    String requestDigest = digest("prior-max-request");
     String tokenHash = digest("prior-max-token");
+    String requestDigest = logoutAllDigest(seed.accountUuid(), TOKEN_PROFILE, tokenHash);
     String streamKey = streamKey(seed.accountUuid());
     String eventId = EVENT_ID_PREFIX + priorRequestId;
     transaction(
@@ -581,6 +639,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
                       seed.accountUuid(),
                       requestDigest,
                       tokenHash,
+                      TOKEN_PROFILE,
                       streamKey,
                       appended.outboxSequence(),
                       eventId,
@@ -648,6 +707,10 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     } catch (NoSuchAlgorithmException exception) {
       throw new IllegalStateException("SHA-256 is unavailable", exception);
     }
+  }
+
+  private String logoutAllDigest(UUID accountUuid, String tokenProfile, String tokenHash) {
+    return AccountLogoutRequestDigest.accountLogoutAll(accountUuid, tokenProfile, tokenHash);
   }
 
   private void await(CountDownLatch latch) {

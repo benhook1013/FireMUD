@@ -8,6 +8,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
@@ -37,7 +38,7 @@ public final class AccountAuthoritySourceEventReadback {
   private static final String PASSWORD_RESET_REQUEST_DOMAIN = "account-password-reset-request/v1";
   private static final String LOGOUT_ALL_EVENT_ID_PREFIX = "account-logout-all-event-v1:";
   private static final String PASSWORD_RESET_OPERATION_KIND = "PASSWORD_RESET";
-  private static final String LOGOUT_ALL_OPERATION_KIND = "LOGOUT_ALL";
+  private static final String LOGOUT_ALL_OPERATION_KIND = "ACCOUNT_LOGOUT_ALL";
   private static final String LOGOUT_ALL_RESULT = "LOGOUT_ALL_COMMITTED";
 
   private final AccountAuthorityOutboxRepository outboxRepository;
@@ -227,6 +228,13 @@ public final class AccountAuthoritySourceEventReadback {
             .equals(verified.accountAuthorityGeneration())
         || !Long.toString(receipt.accountSourceVersion()).equals(verified.sourceVersion())) {
       throw new IllegalStateException("Latest Account logout-all receipt does not match its event");
+    }
+    String expectedRequestDigest =
+        AccountLogoutRequestDigest.accountLogoutAll(
+            receipt.accountUuid(), receipt.tokenProfile(), receipt.presentedTokenHash());
+    if (!constantTimeTextEquals(expectedRequestDigest, receipt.requestDigest())) {
+      throw new IllegalStateException(
+          "Account logout-all receipt request digest does not match its immutable caller bindings");
     }
     requireReceiptNotAhead(
         receipt.accountAuthorityGeneration(),

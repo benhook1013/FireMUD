@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -21,6 +22,10 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 class AccountLogoutAllAuthorityEventProducerTest {
   private static final UUID ACCOUNT_UUID = UUID.fromString("7439d275-a8bd-4ad2-8993-3c9d30e86472");
+  private static final String TOKEN_PROFILE = "control-ui";
+  private static final String TOKEN_HASH = "b".repeat(64);
+  private static final String REQUEST_DIGEST =
+      AccountLogoutRequestDigest.accountLogoutAll(ACCOUNT_UUID, TOKEN_PROFILE, TOKEN_HASH);
 
   @Test
   void rejectsMalformedRequestEvidenceBeforeDatabaseOrTransactionInteraction() {
@@ -37,27 +42,63 @@ class AccountLogoutAllAuthorityEventProducerTest {
     assertThatThrownBy(
             () ->
                 producer.commit(
-                    new UUID(0L, 0L), 1, "a".repeat(64), "b".repeat(64), account, expected))
+                    new UUID(0L, 0L),
+                    1,
+                    REQUEST_DIGEST,
+                    TOKEN_PROFILE,
+                    TOKEN_HASH,
+                    account,
+                    expected))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("non-nil");
     assertThatThrownBy(
             () ->
                 producer.commit(
-                    UUID.randomUUID(), 0, "a".repeat(64), "b".repeat(64), account, expected))
+                    UUID.randomUUID(),
+                    0,
+                    REQUEST_DIGEST,
+                    TOKEN_PROFILE,
+                    TOKEN_HASH,
+                    account,
+                    expected))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("positive");
     assertThatThrownBy(
             () ->
                 producer.commit(
-                    UUID.randomUUID(), 1, "A".repeat(64), "b".repeat(64), account, expected))
+                    UUID.randomUUID(),
+                    1,
+                    "A".repeat(64),
+                    TOKEN_PROFILE,
+                    TOKEN_HASH,
+                    account,
+                    expected))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("lowercase SHA-256");
     assertThatThrownBy(
             () ->
                 producer.commit(
-                    UUID.randomUUID(), 1, "a".repeat(64), "b".repeat(63), account, expected))
+                    UUID.randomUUID(),
+                    1,
+                    REQUEST_DIGEST,
+                    TOKEN_PROFILE,
+                    "b".repeat(63),
+                    account,
+                    expected))
         .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("presented token hash");
+        .hasMessageContaining("token hash");
+    assertThatThrownBy(
+            () ->
+                producer.commit(
+                    UUID.randomUUID(),
+                    1,
+                    REQUEST_DIGEST,
+                    "private-player-delegation",
+                    TOKEN_HASH,
+                    account,
+                    expected))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("token profile");
 
     collaborators.verifyUnused();
   }
@@ -80,7 +121,13 @@ class AccountLogoutAllAuthorityEventProducerTest {
       assertThatThrownBy(
               () ->
                   producer.commit(
-                      UUID.randomUUID(), 1, "a".repeat(64), "b".repeat(64), account, expected))
+                      UUID.randomUUID(),
+                      1,
+                      REQUEST_DIGEST,
+                      TOKEN_PROFILE,
+                      TOKEN_HASH,
+                      account,
+                      expected))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("without an ambient transaction");
       collaborators.verifyUnused();
@@ -104,7 +151,13 @@ class AccountLogoutAllAuthorityEventProducerTest {
     assertThatThrownBy(
             () ->
                 producer.commit(
-                    UUID.randomUUID(), 1, "a".repeat(64), "b".repeat(64), account, wrongScope))
+                    UUID.randomUUID(),
+                    1,
+                    REQUEST_DIGEST,
+                    TOKEN_PROFILE,
+                    TOKEN_HASH,
+                    account,
+                    wrongScope))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Expected Account authority scope");
 

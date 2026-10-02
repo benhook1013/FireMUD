@@ -3,10 +3,11 @@ CREATE TABLE account_logout_all_operation_receipts (
     request_id UUID NOT NULL,
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
     account_uuid UUID NOT NULL,
-    operation_kind VARCHAR(32) NOT NULL DEFAULT 'LOGOUT_ALL',
+    operation_kind VARCHAR(32) NOT NULL DEFAULT 'ACCOUNT_LOGOUT_ALL',
     request_digest_version INTEGER NOT NULL,
     request_digest BYTEA NOT NULL,
     presented_token_hash BYTEA NOT NULL,
+    token_profile VARCHAR(32) NOT NULL,
     outbox_stream_key VARCHAR(2048) NOT NULL,
     outbox_sequence BIGINT NOT NULL,
     event_id VARCHAR(128) NOT NULL,
@@ -20,10 +21,11 @@ CREATE TABLE account_logout_all_operation_receipts (
     CONSTRAINT account_logout_all_operation_identity_check
         CHECK (request_id <> '00000000-0000-0000-0000-000000000000'::UUID
             AND account_uuid <> '00000000-0000-0000-0000-000000000000'::UUID
-            AND operation_kind = 'LOGOUT_ALL'
+            AND operation_kind = 'ACCOUNT_LOGOUT_ALL'
             AND request_digest_version = 1
             AND octet_length(request_digest) = 32
             AND octet_length(presented_token_hash) = 32
+            AND token_profile IN ('control-ui', 'player-bootstrap')
             AND lifecycle_result = 'LOGOUT_ALL_COMMITTED'),
     CONSTRAINT account_logout_all_operation_checkpoint_check
         CHECK (outbox_stream_key = 'account:auth-authority:v1:account/' || account_uuid::TEXT

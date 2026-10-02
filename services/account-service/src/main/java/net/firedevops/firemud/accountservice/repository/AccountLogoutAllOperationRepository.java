@@ -5,6 +5,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import org.jooq.DSLContext;
@@ -25,7 +26,7 @@ public class AccountLogoutAllOperationRepository {
   private static final String LIFECYCLE_RESULT = "LOGOUT_ALL_COMMITTED";
   private static final String SELECT_COLUMNS =
       "request_id, account_id, account_uuid, operation_kind, request_digest_version, "
-          + "request_digest, presented_token_hash, outbox_stream_key, outbox_sequence, "
+          + "request_digest, presented_token_hash, token_profile, outbox_stream_key, outbox_sequence, "
           + "event_id, event_digest, account_authority_generation, account_source_version, "
           + "issuance_fence, issuance_fence_source_version, lifecycle_result";
   private static final HexFormat HEX = HexFormat.of();
@@ -71,16 +72,17 @@ public class AccountLogoutAllOperationRepository {
             "INSERT INTO "
                 + TABLE
                 + " (request_id, account_id, account_uuid, operation_kind, "
-                + "request_digest_version, request_digest, presented_token_hash, "
+                + "request_digest_version, request_digest, presented_token_hash, token_profile, "
                 + "outbox_stream_key, outbox_sequence, event_id, event_digest, "
                 + "account_authority_generation, account_source_version, issuance_fence, "
                 + "issuance_fence_source_version, lifecycle_result) "
-                + "VALUES (?, ?, ?, 'LOGOUT_ALL', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LOGOUT_ALL_COMMITTED')",
+                + "VALUES (?, ?, ?, 'ACCOUNT_LOGOUT_ALL', 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'LOGOUT_ALL_COMMITTED')",
             receipt.requestId(),
             receipt.accountId(),
             receipt.accountUuid(),
             decodeDigest(receipt.requestDigest(), "request digest"),
             decodeDigest(receipt.presentedTokenHash(), "presented token hash"),
+            receipt.tokenProfile(),
             receipt.outboxStreamKey(),
             receipt.outboxSequence(),
             receipt.eventId(),
@@ -104,6 +106,7 @@ public class AccountLogoutAllOperationRepository {
         requiredPositive(row.get("request_digest_version", Integer.class), "digest version"),
         encodeDigest(row.get("request_digest", byte[].class), "request digest"),
         encodeDigest(row.get("presented_token_hash", byte[].class), "presented token hash"),
+        requireText(row.get("token_profile", String.class), "token profile"),
         requireText(row.get("outbox_stream_key", String.class), "outbox stream key"),
         requiredPositive(row.get("outbox_sequence", Long.class), "outbox sequence"),
         requireText(row.get("event_id", String.class), "event ID"),
@@ -122,10 +125,14 @@ public class AccountLogoutAllOperationRepository {
     requireRequestId(receipt.requestId());
     decodeDigest(receipt.requestDigest(), "request digest");
     decodeDigest(receipt.presentedTokenHash(), "presented token hash");
+    AccountLogoutRequestDigest.validateTokenProfile(receipt.tokenProfile());
     if (receipt.accountId() <= 0L
         || receipt.accountUuid() == null
         || isNil(receipt.accountUuid())
         || receipt.requestDigestVersion() != 1
+        || !AccountLogoutRequestDigest.accountLogoutAll(
+                receipt.accountUuid(), receipt.tokenProfile(), receipt.presentedTokenHash())
+            .equals(receipt.requestDigest())
         || receipt.outboxSequence() <= 0L
         || receipt.accountAuthorityGeneration() <= 0L
         || receipt.accountSourceVersion() <= 0L
@@ -139,7 +146,7 @@ public class AccountLogoutAllOperationRepository {
       throw new IllegalArgumentException("Logout-all operation receipt is malformed");
     }
     requireBoundedText(receipt.operationKind(), "operation kind", 32);
-    if (!"LOGOUT_ALL".equals(receipt.operationKind())) {
+    if (!"ACCOUNT_LOGOUT_ALL".equals(receipt.operationKind())) {
       throw new IllegalArgumentException("Logout-all operation kind is invalid");
     }
   }
@@ -227,6 +234,7 @@ public class AccountLogoutAllOperationRepository {
       int requestDigestVersion,
       String requestDigest,
       String presentedTokenHash,
+      String tokenProfile,
       String outboxStreamKey,
       long outboxSequence,
       String eventId,
@@ -240,10 +248,14 @@ public class AccountLogoutAllOperationRepository {
       requireRequestId(requestId);
       decodeDigest(requestDigest, "request digest");
       decodeDigest(presentedTokenHash, "presented token hash");
+      AccountLogoutRequestDigest.validateTokenProfile(tokenProfile);
       if (accountId <= 0L
           || accountUuid == null
           || isNil(accountUuid)
           || requestDigestVersion != 1
+          || !AccountLogoutRequestDigest.accountLogoutAll(
+                  accountUuid, tokenProfile, presentedTokenHash)
+              .equals(requestDigest)
           || outboxSequence <= 0L
           || accountAuthorityGeneration <= 0L
           || accountSourceVersion <= 0L
@@ -257,7 +269,7 @@ public class AccountLogoutAllOperationRepository {
         throw new IllegalArgumentException("Logout-all operation receipt is malformed");
       }
       requireBoundedText(operationKind, "operation kind", 32);
-      if (!"LOGOUT_ALL".equals(operationKind)) {
+      if (!"ACCOUNT_LOGOUT_ALL".equals(operationKind)) {
         throw new IllegalArgumentException("Logout-all operation kind is invalid");
       }
     }
@@ -268,6 +280,7 @@ public class AccountLogoutAllOperationRepository {
         UUID accountUuid,
         String requestDigest,
         String presentedTokenHash,
+        String tokenProfile,
         String outboxStreamKey,
         long outboxSequence,
         String eventId,
@@ -285,10 +298,11 @@ public class AccountLogoutAllOperationRepository {
           requestId,
           accountId,
           accountUuid,
-          "LOGOUT_ALL",
+          "ACCOUNT_LOGOUT_ALL",
           1,
           requestDigest,
           presentedTokenHash,
+          tokenProfile,
           outboxStreamKey,
           outboxSequence,
           eventId,
