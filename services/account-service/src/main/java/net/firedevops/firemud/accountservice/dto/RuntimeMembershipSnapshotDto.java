@@ -4,11 +4,14 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator;
+import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
 
 /** Same-fence Account snapshot candidate for the denied runtime membership RPC. */
 public record RuntimeMembershipSnapshotDto(
@@ -104,52 +107,48 @@ public record RuntimeMembershipSnapshotDto(
       List<OutboxCheckpointEntry> outboxCheckpoints,
       List<OutboxSourceEvidence> outboxSourceEvidence,
       MembershipEvent sourceEvent) {
-    if (!membershipExists) {
-      if (sourceEvent != null || !outboxSourceEvidence.isEmpty()) {
-        throw new IllegalArgumentException(
-            "Sequence-zero membership snapshot cannot carry an event source");
-      }
-      return null;
+    Optional<MembershipEvent> validated =
+        RuntimeMembershipAuthorityEvidenceValidator.validate(
+            new Snapshot(
+                AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+                accountUuid,
+                tenantUuid,
+                membershipExists,
+                membershipBaseline.membershipLifecycleState(),
+                gameplayAdmissionAllowed,
+                membershipBaseline.membershipVersion(),
+                membershipBaseline.membershipAuthorityGeneration(),
+                roles,
+                authorityTuple,
+                issuanceFence,
+                outboxCheckpoints.stream()
+                    .map(
+                        checkpoint ->
+                            new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(
+                                checkpoint.outboxStreamKey(), checkpoint.outboxSequence()))
+                    .toList(),
+                outboxSourceEvidence.stream()
+                    .map(
+                        source ->
+                            new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+                                source.outboxStreamKey(),
+                                source.outboxSequence(),
+                                source.eventId(),
+                                source.eventDigest(),
+                                source.canonicalEventJson()))
+                    .toList()));
+    if (sourceEvent == null && validated.isPresent()) {
+      throw new IllegalArgumentException("Runtime membership source event is missing");
     }
-
-    if (sourceEvent == null || outboxSourceEvidence.size() != 1) {
+    if (sourceEvent != null
+        && validated
+            .map(MembershipEvent::canonicalJson)
+            .filter(sourceEvent.canonicalJson()::equals)
+            .isEmpty()) {
       throw new IllegalArgumentException(
-          "Positive membership snapshot requires its exact source event");
+          "Runtime membership source event differs from its exact source evidence");
     }
-    OutboxSourceEvidence source = outboxSourceEvidence.getFirst();
-    MembershipEvent verified = MembershipAuthorityEventV1Codec.verify(source.canonicalEventJson());
-    if (!verified.canonicalJson().equals(source.canonicalEventJson())
-        || !sourceEvent.canonicalJson().equals(source.canonicalEventJson())
-        || !verified.eventId().equals(source.eventId())
-        || !verified.eventDigest().equals(source.eventDigest())
-        || !verified.outboxStreamKey().equals(source.outboxStreamKey())
-        || !verified.outboxSequence().equals(source.outboxSequence())
-        || !verified.accountId().equals(accountUuid)
-        || !verified.tenantId().equals(tenantUuid)
-        || !verified
-            .membershipLifecycleState()
-            .equals(membershipBaseline.membershipLifecycleState())
-        || !verified.membershipVersion().equals(membershipBaseline.membershipVersion())
-        || !verified
-            .membershipAuthorityGeneration()
-            .equals(membershipBaseline.membershipAuthorityGeneration())
-        || !verified.authorityTuple().equals(authorityTuple)
-        || !verified.issuanceFence().equals(issuanceFence)
-        || !verified.roles().equals(roles)
-        || verified.gameplayAdmissionAllowed() != gameplayAdmissionAllowed) {
-      throw new IllegalArgumentException(
-          "Positive membership source event differs from its exact Account snapshot");
-    }
-    List<OutboxCheckpointEntry> matchingCheckpoints =
-        outboxCheckpoints.stream()
-            .filter(item -> item.outboxStreamKey().equals(verified.outboxStreamKey()))
-            .toList();
-    if (matchingCheckpoints.size() != 1
-        || !matchingCheckpoints.getFirst().outboxSequence().equals(verified.outboxSequence())) {
-      throw new IllegalArgumentException(
-          "Positive membership source event differs from its outbox checkpoint");
-    }
-    return verified;
+    return validated.orElse(null);
   }
 
   private static String requireCanonicalUuid(String value, String field) {

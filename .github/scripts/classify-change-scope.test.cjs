@@ -261,6 +261,27 @@ test("shared modules force every Gradle module, including common-temporal", () =
   assert.deepEqual(result.bootableModules, ALL_SERVICES.concat("hosted-environment-identity-controller"));
 });
 
+test("common Redis contracts use shared-library validation without becoming bootable", () => {
+  const result = classifyChangeScope([
+    "services/common-redis-contracts/src/main/java/example/RedisContract.java",
+  ]);
+
+  assert.equal(result.runAll, true);
+  assert.deepEqual(result.affectedModules, ALL_MODULES);
+  assert.equal(result.affectedModules.includes("common-redis-contracts"), true);
+  assert.equal(result.bootableModules.includes("common-redis-contracts"), false);
+});
+
+test("root Gradle build and settings changes include common Redis contract validation", () => {
+  for (const path of ["build.gradle.kts", "settings.gradle.kts"]) {
+    const result = classifyChangeScope([path]);
+
+    assert.equal(result.runAll, true, path);
+    assert.equal(result.affectedModules.includes("common-redis-contracts"), true, path);
+    assert.equal(result.bootableModules.includes("common-redis-contracts"), false, path);
+  }
+});
+
 test("controller and load-testing changes receive their own module checks", () => {
   const controllerResult = classifyChangeScope([
     "services/hosted-environment-identity-controller/src/main/java/example/Controller.java",

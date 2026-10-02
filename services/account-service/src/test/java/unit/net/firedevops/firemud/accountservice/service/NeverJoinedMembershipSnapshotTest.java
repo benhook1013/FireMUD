@@ -7,13 +7,16 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AccountSecurityCutoff;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.PrivateRealmGrantVersion;
+import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec;
 import org.junit.jupiter.api.Test;
 
 class NeverJoinedMembershipSnapshotTest {
@@ -57,6 +60,107 @@ class NeverJoinedMembershipSnapshotTest {
     assertThat(snapshot.outboxCheckpoints())
         .allMatch(checkpoint -> checkpoint.outboxSequence().equals("0"));
     assertThat(snapshot.outboxSourceEvidence()).isEmpty();
+  }
+
+  @Test
+  void neverJoinedMembershipMayKeepZeroMembershipCheckpointWithAdvancedUpstreamSources() {
+    String issuerStream =
+        "account:auth-authority:v1:issuer/" + AccountServiceImpl.ACCOUNT_JWT_ISSUER;
+    String tenantStream = "account:auth-authority:v1:tenant/" + TENANT_ID;
+    var issuerEvent =
+        IssuerGenerationAuthorityEventV1Codec.seal(
+            Map.of(
+                "schemaVersion",
+                IssuerGenerationAuthorityEventV1Codec.SCHEMA_VERSION,
+                "eventType",
+                IssuerGenerationAuthorityEventV1Codec.EVENT_TYPE,
+                "eventId",
+                "issuer-event-1",
+                "requestId",
+                "issuer-request-1",
+                "issuerId",
+                AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+                "sourceScope",
+                "issuer/" + AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+                "outboxStreamKey",
+                issuerStream,
+                "outboxSequence",
+                "1",
+                "issuerAuthGeneration",
+                "2",
+                "sourceVersion",
+                "2"));
+    UUID tenantRequest = UUID.fromString("018f8f0a-3c8d-7b35-ad26-7b0c9d8e6f4a");
+    var tenantEvent =
+        TenantGenerationAuthorityEventV1Codec.seal(
+            Map.of(
+                "schemaVersion",
+                TenantGenerationAuthorityEventV1Codec.SCHEMA_VERSION,
+                "eventType",
+                TenantGenerationAuthorityEventV1Codec.EVENT_TYPE,
+                "eventId",
+                TenantGenerationAuthorityEventV1Codec.EVENT_ID_PREFIX + tenantRequest,
+                "requestId",
+                tenantRequest.toString(),
+                "tenantId",
+                TENANT_ID,
+                "sourceScope",
+                "tenant/" + TENANT_ID,
+                "outboxStreamKey",
+                tenantStream,
+                "outboxSequence",
+                "1",
+                "tenantAuthorityGeneration",
+                "2",
+                "sourceVersion",
+                "2"));
+    AuthorityTuple currentTuple =
+        new AuthorityTuple(
+            "2",
+            "1",
+            Map.of(TENANT_ID, "2"),
+            Map.of(TENANT_ID, "1"),
+            List.of(),
+            Optional.empty(),
+            Optional.empty());
+    List<OutboxCheckpointEntry> checkpoints =
+        List.of(
+            new OutboxCheckpointEntry("account:auth-authority:v1:account/" + ACCOUNT_ID, "0"),
+            new OutboxCheckpointEntry(issuerStream, "1"),
+            new OutboxCheckpointEntry(STREAM_KEY, "0"),
+            new OutboxCheckpointEntry(tenantStream, "1"));
+    List<OutboxSourceEvidence> evidence =
+        List.of(
+            new OutboxSourceEvidence(
+                issuerStream,
+                "1",
+                issuerEvent.eventId(),
+                issuerEvent.eventDigest(),
+                issuerEvent.canonicalJson()),
+            new OutboxSourceEvidence(
+                tenantStream,
+                "1",
+                tenantEvent.eventId(),
+                tenantEvent.eventDigest(),
+                tenantEvent.canonicalJson()));
+
+    var snapshot =
+        new AccountMembershipAuthorityEventProducer.NeverJoinedMembershipSnapshot(
+            ACCOUNT_ID,
+            TENANT_ID,
+            Map.of(TENANT_ID, "1"),
+            "1",
+            currentTuple,
+            "7",
+            Instant.parse("2026-09-27T00:00:00Z"),
+            STREAM_KEY,
+            checkpoints,
+            evidence);
+
+    assertThat(snapshot.membershipExists()).isFalse();
+    assertThat(snapshot.gameplayAdmissionAllowed()).isFalse();
+    assertThat(snapshot.outboxCheckpoints()).isEqualTo(checkpoints);
+    assertThat(snapshot.outboxSourceEvidence()).isEqualTo(evidence);
   }
 
   @Test

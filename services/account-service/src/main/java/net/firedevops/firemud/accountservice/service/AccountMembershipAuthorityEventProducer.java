@@ -27,6 +27,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairAuthority;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.PairTransition;
@@ -34,6 +35,7 @@ import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAut
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -43,9 +45,15 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository.ApprovedAssociation;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
+import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.MembershipEvent;
+import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator;
+import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
+import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -70,6 +78,7 @@ public class AccountMembershipAuthorityEventProducer {
   private final FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository;
   private final AccountAuthorityGenerationRepository authorityGenerationRepository;
   private final AccountAuthorityOutboxRepository authorityOutboxRepository;
+  private final AccountAuthoritySourceEventReadback accountAuthoritySourceEventReadback;
   private final AccountMembershipTransitionReceiptRepository transitionReceiptRepository;
   private final AccountTenantMembershipRepository membershipRepository;
   private final AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository;
@@ -82,6 +91,8 @@ public class AccountMembershipAuthorityEventProducer {
       FreshTenantIdentityAssociationRepository freshTenantIdentityAssociationRepository,
       AccountAuthorityGenerationRepository authorityGenerationRepository,
       AccountAuthorityOutboxRepository authorityOutboxRepository,
+      AccountPasswordResetOperationRepository passwordResetOperationRepository,
+      AccountLogoutAllOperationRepository logoutAllOperationRepository,
       AccountMembershipTransitionReceiptRepository transitionReceiptRepository,
       AccountTenantMembershipRepository membershipRepository,
       AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository) {
@@ -92,6 +103,11 @@ public class AccountMembershipAuthorityEventProducer {
     this.freshTenantIdentityAssociationRepository = freshTenantIdentityAssociationRepository;
     this.authorityGenerationRepository = authorityGenerationRepository;
     this.authorityOutboxRepository = authorityOutboxRepository;
+    this.accountAuthoritySourceEventReadback =
+        new AccountAuthoritySourceEventReadback(
+            authorityOutboxRepository,
+            passwordResetOperationRepository,
+            logoutAllOperationRepository);
     this.transitionReceiptRepository = transitionReceiptRepository;
     this.membershipRepository = membershipRepository;
     this.roleSnapshotRepository = roleSnapshotRepository;
@@ -187,8 +203,9 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Current Account membership differs from its V31 authority generation");
     }
-    List<OutboxCheckpointEntry> upstreamCheckpoints =
-        readBaselineUpstreamCheckpoints(identity, authoritySnapshot);
+    CurrentSourceEvidence currentSources =
+        readCurrentUpstreamSourceEvidence(
+            identity.accountUuid(), identity.tenantUuid(), authoritySnapshot);
 
     String streamKey = membershipStreamKey(identity);
     Checkpoint checkpoint =
@@ -227,11 +244,16 @@ public class AccountMembershipAuthorityEventProducer {
         "MEMBERSHIP_REACTIVATED".equals(transitionReceipt.transitionType()),
         authoritySnapshot);
 
-    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(upstreamCheckpoints);
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(currentSources.checkpoints());
     checkpoints.add(
         new OutboxCheckpointEntry(
             checkpoint.outboxStreamKey(), Long.toString(checkpoint.outboxSequence())));
+    List<OutboxSourceEvidence> sourceEvidence = new ArrayList<>(currentSources.sourceEvidence());
+    sourceEvidence.add(sourceEvidence(checkpoint, event));
     checkpoints = orderedCheckpoints(checkpoints);
+    sourceEvidence = orderedSourceEvidence(sourceEvidence);
+    AuthorityTuple currentTuple =
+        currentAuthorityTuple(identity.tenantUuid(), authoritySnapshot, currentSources);
     return new PositiveMembershipSnapshot(
         true,
         verified.accountId(),
@@ -241,11 +263,11 @@ public class AccountMembershipAuthorityEventProducer {
         membershipVersionMap(verified, identity),
         verified.membershipAuthorityGeneration(),
         verified.roles(),
-        verified.authorityTuple(),
-        verified.issuanceFence(),
+        currentTuple,
+        decimal(authoritySnapshot.issuanceFence().value()),
         Instant.now(),
         checkpoints,
-        List.of(sourceEvidence(checkpoint, event)),
+        sourceEvidence,
         transitionReceipt,
         verified);
   }
@@ -391,8 +413,9 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Current inactive membership differs from its V31 authority generation");
     }
-    List<OutboxCheckpointEntry> upstreamCheckpoints =
-        readBaselineUpstreamCheckpoints(identity, authoritySnapshot);
+    CurrentSourceEvidence currentSources =
+        readCurrentUpstreamSourceEvidence(
+            identity.accountUuid(), identity.tenantUuid(), authoritySnapshot);
     String streamKey = membershipStreamKey(identity);
     Checkpoint checkpoint =
         authorityOutboxRepository
@@ -447,9 +470,11 @@ public class AccountMembershipAuthorityEventProducer {
           "Current inactive membership differs from its durable pair authority");
     }
 
-    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(upstreamCheckpoints);
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(currentSources.checkpoints());
     checkpoints.add(
         new OutboxCheckpointEntry(streamKey, Long.toString(checkpoint.outboxSequence())));
+    List<OutboxSourceEvidence> sourceEvidence = new ArrayList<>(currentSources.sourceEvidence());
+    sourceEvidence.add(sourceEvidence(checkpoint, event));
     return new RuntimeMembershipSnapshotDto(
         identity.accountUuid().toString(),
         identity.tenantUuid().toString(),
@@ -462,11 +487,11 @@ public class AccountMembershipAuthorityEventProducer {
             membershipVersionMap(verified, identity),
             verified.membershipAuthorityGeneration()),
         exactRoles,
-        verified.authorityTuple(),
-        verified.issuanceFence(),
+        currentAuthorityTuple(identity.tenantUuid(), authoritySnapshot, currentSources),
+        decimal(authoritySnapshot.issuanceFence().value()),
         Instant.now(),
         orderedCheckpoints(checkpoints),
-        List.of(sourceEvidence(checkpoint, event)),
+        orderedSourceEvidence(sourceEvidence),
         verified);
   }
 
@@ -795,7 +820,7 @@ public class AccountMembershipAuthorityEventProducer {
     // membership initializer takes its Account/tenant locks. The Account entity row remains the
     // outer owner fence, and the full composite snapshot is reread below after enrollment.
     CompositeSnapshot upstream = lockUpstreamAuthorityScopes(accountUuid, tenantUuid);
-    requireFreshUpstreamSequenceZeroBaseline(accountUuid, tenantUuid, upstream);
+    readCurrentUpstreamSourceEvidence(accountUuid, tenantUuid, upstream);
 
     String membershipStreamKey = membershipStreamKey(accountUuid, tenantUuid);
     Optional<PairAuthority> existingPair =
@@ -834,8 +859,8 @@ public class AccountMembershipAuthorityEventProducer {
     CompositeSnapshot authority = readSnapshot(accountUuid, tenantUuid);
     ScopeState member = only(authority.memberships(), "membership");
     requireMatchingFence(authority, member, accountUuid);
-    List<OutboxCheckpointEntry> upstreamCheckpoints =
-        readBaselineUpstreamCheckpoints(accountUuid, tenantUuid, authority);
+    CurrentSourceEvidence currentSources =
+        readCurrentUpstreamSourceEvidence(accountUuid, tenantUuid, authority);
     String streamKey = membershipStreamKey(accountUuid, tenantUuid);
     OutboxCheckpointEntry membershipCheckpoint =
         requireSequenceZeroCheckpoint(streamKey, member, "membership");
@@ -847,48 +872,21 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Never-joined Account membership differs from its positive pair baseline");
     }
-    AuthorityTuple tuple =
-        new AuthorityTuple(
-            decimal(authority.issuer().generation()),
-            decimal(authority.account().generation()),
-            Map.of(
-                tenantUuid.toString(), decimal(only(authority.tenants(), "tenant").generation())),
-            Map.of(tenantUuid.toString(), decimal(member.generation())),
-            List.of(),
-            Optional.empty(),
-            Optional.empty());
-    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(upstreamCheckpoints);
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(currentSources.checkpoints());
     checkpoints.add(membershipCheckpoint);
     checkpoints = orderedCheckpoints(checkpoints);
+    AuthorityTuple currentTuple = currentAuthorityTuple(tenantUuid, authority, currentSources);
     return new NeverJoinedMembershipSnapshot(
         accountUuid.toString(),
         tenantUuid.toString(),
         Map.of(tenantUuid.toString(), decimal(pair.membershipVersion())),
         decimal(pair.membershipAuthorityGeneration()),
-        tuple,
+        currentTuple,
         decimal(authority.issuanceFence().value()),
         Instant.now(),
         streamKey,
         checkpoints,
-        List.of());
-  }
-
-  private void requireFreshUpstreamSequenceZeroBaseline(
-      UUID accountUuid, UUID tenantUuid, CompositeSnapshot snapshot) {
-    ScopeState tenant = only(snapshot.tenants(), "tenant");
-    if (!AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER)
-            .equals(snapshot.issuer().scope())
-        || !AuthorityScope.account(accountUuid).equals(snapshot.account().scope())
-        || !AuthorityScope.tenant(tenantUuid).equals(tenant.scope())
-        || !snapshot.memberships().isEmpty()
-        || !accountUuid.equals(snapshot.issuanceFence().accountId())
-        || !snapshot.issuanceFence().equals(snapshot.account().issuanceFence())) {
-      throw new IllegalStateException(
-          "Fresh Account authority snapshot does not cover its exact issuer/account/tenant scopes");
-    }
-    requireSequenceZeroCheckpoint(accountStreamKey(accountUuid), snapshot.account(), "account");
-    requireSequenceZeroCheckpoint(issuerStreamKey(), snapshot.issuer(), "issuer");
-    requireSequenceZeroCheckpoint(tenantStreamKey(tenantUuid), tenant, "tenant");
+        orderedSourceEvidence(currentSources.sourceEvidence()));
   }
 
   private CompositeSnapshot lockUpstreamAuthorityScopes(UUID accountUuid, UUID tenantUuid) {
@@ -1369,9 +1367,6 @@ public class AccountMembershipAuthorityEventProducer {
     } else {
       requireActiveMembership(membership);
     }
-    ScopeState issuer = snapshot.issuer();
-    ScopeState account = snapshot.account();
-    ScopeState tenant = only(snapshot.tenants(), "tenant");
     ScopeState member = only(snapshot.memberships(), "membership");
     requireMatchingFence(snapshot, member, identity.accountUuid());
     if (membership.getMembershipAuthorityGeneration() != member.generation()) {
@@ -1386,7 +1381,11 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException(
           "Membership lifecycle transition must invalidate caller authority");
     }
-    readBaselineUpstreamCheckpoints(identity, snapshot);
+    CurrentSourceEvidence currentSources =
+        readCurrentUpstreamSourceEvidence(identity.accountUuid(), identity.tenantUuid(), snapshot);
+    ScopeState issuer = snapshot.issuer();
+    ScopeState account = snapshot.account();
+    ScopeState tenant = only(snapshot.tenants(), "tenant");
     RoleSnapshot roles = requireRoleSnapshot(identity, membership, inactiveMembership);
     String streamKey = membershipStreamKey(identity);
     String expectedEventId = eventIdForRequest(requestId);
@@ -1409,6 +1408,7 @@ public class AccountMembershipAuthorityEventProducer {
                           tenant,
                           member,
                           snapshot.issuanceFence().value(),
+                          currentSources.accountSecurityCutoff(),
                           membership,
                           roles.roles(),
                           callerBoundAuthorityInvalidated));
@@ -1504,23 +1504,9 @@ public class AccountMembershipAuthorityEventProducer {
       throw new IllegalStateException("Current Account membership checkpoint identity differs");
     }
     MembershipEvent verified = verifyStoredEvent(event, identity, event.requestId());
-    ScopeState issuer = snapshot.issuer();
-    ScopeState account = snapshot.account();
-    ScopeState tenant = only(snapshot.tenants(), "tenant");
     ScopeState member = only(snapshot.memberships(), "membership");
     requireMatchingFence(snapshot, member, identity.accountUuid());
-    var tuple = verified.authorityTuple();
-    if (!Long.toString(issuer.generation()).equals(tuple.issuerAuthGeneration())
-        || !Long.toString(account.generation()).equals(tuple.accountAuthorityGeneration())
-        || !Map.of(identity.tenantUuid().toString(), Long.toString(tenant.generation()))
-            .equals(tuple.tenantAuthorityGeneration())
-        || !Map.of(identity.tenantUuid().toString(), Long.toString(member.generation()))
-            .equals(tuple.membershipAuthorityGeneration())
-        || !tuple.privateRealmGrantVersions().isEmpty()
-        || tuple.accountSecurityCutoff().isPresent()
-        || tuple.tenantBillingCutoff().isPresent()
-        || !Long.toString(snapshot.issuanceFence().value()).equals(verified.issuanceFence())
-        || member.generation() != membershipAuthorityGeneration
+    if (member.generation() != membershipAuthorityGeneration
         || !lifecycleState.equals(verified.membershipLifecycleState())
         || !Map.of(identity.tenantUuid().toString(), Long.toString(membershipVersion))
             .equals(verified.membershipVersion())
@@ -1530,7 +1516,44 @@ public class AccountMembershipAuthorityEventProducer {
         || gameplayAdmissionAllowed != verified.gameplayAdmissionAllowed()
         || callerBoundAuthorityInvalidated != verified.callerBoundAuthorityInvalidated()) {
       throw new IllegalStateException(
-          "Current Account membership differs from its canonical V33 event and V31 tuple");
+          "Current Account membership differs from its canonical V33 event");
+    }
+
+    CurrentSourceEvidence currentSources =
+        readCurrentUpstreamSourceEvidence(identity.accountUuid(), identity.tenantUuid(), snapshot);
+    List<OutboxCheckpointEntry> checkpoints = new ArrayList<>(currentSources.checkpoints());
+    checkpoints.add(
+        new OutboxCheckpointEntry(streamKey, Long.toString(checkpoint.outboxSequence())));
+    List<OutboxSourceEvidence> sourceEvidence = new ArrayList<>(currentSources.sourceEvidence());
+    sourceEvidence.add(sourceEvidence(checkpoint, event));
+    Optional<MembershipEvent> carrierEvent;
+    try {
+      carrierEvent =
+          RuntimeMembershipAuthorityEvidenceValidator.validate(
+              validatorSnapshot(
+                  identity.accountUuid().toString(),
+                  identity.tenantUuid().toString(),
+                  true,
+                  lifecycleState,
+                  gameplayAdmissionAllowed,
+                  Map.of(identity.tenantUuid().toString(), Long.toString(membershipVersion)),
+                  Long.toString(membershipAuthorityGeneration),
+                  exactRoles,
+                  currentAuthorityTuple(identity.tenantUuid(), snapshot, currentSources),
+                  decimal(snapshot.issuanceFence().value()),
+                  orderedCheckpoints(checkpoints),
+                  orderedSourceEvidence(sourceEvidence)));
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException(
+          "Current Account membership source evidence does not bind to its recipient snapshot",
+          exception);
+    }
+    if (carrierEvent.isEmpty()
+        || !carrierEvent.orElseThrow().canonicalJson().equals(verified.canonicalJson())
+        || (expectedRequestId != null && !expectedRequestId.equals(verified.requestId()))
+        || callerBoundAuthorityInvalidated != verified.callerBoundAuthorityInvalidated()) {
+      throw new IllegalStateException(
+          "Current Account membership source event differs from its recipient snapshot");
     }
     return checkpoint;
   }
@@ -1553,6 +1576,7 @@ public class AccountMembershipAuthorityEventProducer {
       ScopeState tenant,
       ScopeState membershipState,
       long issuanceFence,
+      Optional<MembershipAuthorityEventV1Codec.AccountSecurityCutoff> accountSecurityCutoff,
       AccountTenantMembership membership,
       List<String> roles,
       boolean callerBoundAuthorityInvalidated) {
@@ -1566,6 +1590,14 @@ public class AccountMembershipAuthorityEventProducer {
         "membershipAuthorityGeneration",
         Map.of(identity.tenantUuid().toString(), decimal(membershipState.generation())));
     authorityTuple.put("privateRealmGrantVersions", List.of());
+    accountSecurityCutoff.ifPresent(
+        cutoff ->
+            authorityTuple.put(
+                "accountSecurityCutoff",
+                Map.of(
+                    "accountAuthorityGeneration", cutoff.accountAuthorityGeneration(),
+                    "outboxStreamKey", cutoff.outboxStreamKey(),
+                    "outboxSequence", cutoff.outboxSequence())));
 
     Map<String, Object> event = new LinkedHashMap<>();
     event.put("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
@@ -1657,30 +1689,246 @@ public class AccountMembershipAuthorityEventProducer {
     return Integer.compare(leftBytes.length, rightBytes.length);
   }
 
-  private List<OutboxCheckpointEntry> readBaselineUpstreamCheckpoints(
-      Identity identity, CompositeSnapshot snapshot) {
-    return readBaselineUpstreamCheckpoints(identity.accountUuid(), identity.tenantUuid(), snapshot);
-  }
-
-  private List<OutboxCheckpointEntry> readBaselineUpstreamCheckpoints(
+  private CurrentSourceEvidence readCurrentUpstreamSourceEvidence(
       UUID accountUuid, UUID tenantUuid, CompositeSnapshot snapshot) {
     ScopeState tenant = only(snapshot.tenants(), "tenant");
     if (!AuthorityScope.issuer(AccountServiceImpl.ACCOUNT_JWT_ISSUER)
             .equals(snapshot.issuer().scope())
         || !AuthorityScope.account(accountUuid).equals(snapshot.account().scope())
         || !AuthorityScope.tenant(tenantUuid).equals(tenant.scope())
-        || !AuthorityScope.membership(accountUuid, tenantUuid)
-            .equals(only(snapshot.memberships(), "membership").scope())) {
+        || !accountUuid.equals(snapshot.issuanceFence().accountId())
+        || !snapshot.issuanceFence().equals(snapshot.account().issuanceFence())
+        || (snapshot.memberships().size() == 1
+            && !AuthorityScope.membership(accountUuid, tenantUuid)
+                .equals(snapshot.memberships().getFirst().scope()))
+        || snapshot.memberships().size() > 1) {
       throw new IllegalStateException(
-          "Account authority snapshot does not cover the exact issuer/account/tenant scopes");
+          "Account authority snapshot does not cover its exact issuer/account/tenant scopes");
     }
 
-    return orderedCheckpoints(
-        List.of(
-            requireSequenceZeroCheckpoint(
-                accountStreamKey(accountUuid), snapshot.account(), "account"),
-            requireSequenceZeroCheckpoint(issuerStreamKey(), snapshot.issuer(), "issuer"),
-            requireSequenceZeroCheckpoint(tenantStreamKey(tenantUuid), tenant, "tenant")));
+    Account account =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalStateException("Current Account source owner is absent"));
+    requirePersistedAccountIdentity(account, accountUuid);
+
+    String accountStream = accountStreamKey(accountUuid);
+    AccountAuthoritySourceEventReadback.LatestSourceSnapshot accountReadback =
+        accountAuthoritySourceEventReadback.requireCurrentLatest(account, snapshot.account());
+    CurrentSourceProof accountProof =
+        readCurrentScopeSourceProof(
+            accountStream,
+            snapshot.account(),
+            event -> verifyCurrentAccountSourceEvent(event, accountUuid, snapshot.account()));
+    if (!accountProof
+            .checkpoint()
+            .outboxSequence()
+            .equals(Long.toString(accountReadback.outboxSequence()))
+        || accountReadback.latestEvent().isPresent() != (accountReadback.outboxSequence() > 0L)) {
+      throw new IllegalStateException("Account source readback differs from its exact checkpoint");
+    }
+    if (accountReadback.latestEvent().isPresent()
+        && !accountProof
+            .sourceEvidence()
+            .orElseThrow()
+            .canonicalEventJson()
+            .equals(
+                new String(
+                    accountReadback.latestEvent().orElseThrow().payload(),
+                    StandardCharsets.UTF_8))) {
+      throw new IllegalStateException("Account source readback event differs from its checkpoint");
+    }
+
+    CurrentSourceProof issuerProof =
+        readCurrentScopeSourceProof(
+            issuerStreamKey(),
+            snapshot.issuer(),
+            event -> verifyCurrentIssuerSourceEvent(event, snapshot.issuer()));
+    CurrentSourceProof tenantProof =
+        readCurrentScopeSourceProof(
+            tenantStreamKey(tenantUuid),
+            tenant,
+            event -> verifyCurrentTenantSourceEvent(event, tenantUuid, tenant));
+
+    List<OutboxCheckpointEntry> checkpoints =
+        orderedCheckpoints(
+            List.of(accountProof.checkpoint(), issuerProof.checkpoint(), tenantProof.checkpoint()));
+    List<OutboxSourceEvidence> sourceEvidence = new ArrayList<>();
+    accountProof.sourceEvidence().ifPresent(sourceEvidence::add);
+    issuerProof.sourceEvidence().ifPresent(sourceEvidence::add);
+    tenantProof.sourceEvidence().ifPresent(sourceEvidence::add);
+    return new CurrentSourceEvidence(
+        checkpoints, orderedSourceEvidence(sourceEvidence), currentAccountCutoff(accountProof));
+  }
+
+  private CurrentSourceProof readCurrentScopeSourceProof(
+      String streamKey, ScopeState scope, java.util.function.Consumer<Event> eventVerifier) {
+    Optional<Checkpoint> checkpoint = authorityOutboxRepository.readCheckpoint(streamKey);
+    if (checkpoint.isEmpty()) {
+      if (scope.generation() != 1L || scope.sourceVersion() != 1L) {
+        throw new IllegalStateException(
+            "Account " + scope.scope().kind().name().toLowerCase() + " source history is missing");
+      }
+      return new CurrentSourceProof(new OutboxCheckpointEntry(streamKey, "0"), Optional.empty());
+    }
+
+    Checkpoint exactCheckpoint = checkpoint.orElseThrow();
+    Event event =
+        authorityOutboxRepository
+            .findEvent(streamKey, exactCheckpoint.outboxSequence())
+            .orElseThrow(
+                () -> new IllegalStateException("Current Account source event is missing"));
+    if (!checkpointMatches(exactCheckpoint, event)) {
+      throw new IllegalStateException("Current Account source checkpoint differs from its event");
+    }
+    eventVerifier.accept(event);
+    return new CurrentSourceProof(
+        new OutboxCheckpointEntry(streamKey, Long.toString(exactCheckpoint.outboxSequence())),
+        Optional.of(sourceEvidence(exactCheckpoint, event)));
+  }
+
+  private void verifyCurrentAccountSourceEvent(Event stored, UUID accountUuid, ScopeState current) {
+    String canonicalJson = new String(stored.payload(), StandardCharsets.UTF_8);
+    try {
+      var reset = PasswordResetAuthorityEventV1Codec.verify(canonicalJson);
+      requireCurrentStoredEvent(
+          stored,
+          reset.eventId(),
+          reset.requestId(),
+          reset.eventDigest(),
+          reset.canonicalJsonUtf8(),
+          reset.outboxStreamKey(),
+          reset.outboxSequence());
+      if (!accountUuid.toString().equals(reset.accountId())
+          || !decimal(current.generation()).equals(reset.accountAuthorityGeneration())
+          || !decimal(current.sourceVersion()).equals(reset.sourceVersion())) {
+        throw new IllegalStateException("Current Account source event differs from its generation");
+      }
+      return;
+    } catch (IllegalArgumentException resetSchemaMismatch) {
+      var logout = AccountLogoutAllAuthorityEventV1Codec.verify(canonicalJson);
+      requireCurrentStoredEvent(
+          stored,
+          logout.eventId(),
+          logout.requestId(),
+          logout.eventDigest(),
+          logout.canonicalJsonUtf8(),
+          logout.outboxStreamKey(),
+          logout.outboxSequence());
+      if (!accountUuid.toString().equals(logout.accountId())
+          || !decimal(current.generation()).equals(logout.accountAuthorityGeneration())
+          || !decimal(current.sourceVersion()).equals(logout.sourceVersion())) {
+        throw new IllegalStateException("Current Account source event differs from its generation");
+      }
+    }
+  }
+
+  private void verifyCurrentIssuerSourceEvent(Event stored, ScopeState current) {
+    String canonicalJson = new String(stored.payload(), StandardCharsets.UTF_8);
+    var event = IssuerGenerationAuthorityEventV1Codec.verify(canonicalJson);
+    requireCurrentStoredEvent(
+        stored,
+        event.eventId(),
+        event.requestId(),
+        event.eventDigest(),
+        event.canonicalJsonUtf8(),
+        event.outboxStreamKey(),
+        event.outboxSequence());
+    if (!AccountServiceImpl.ACCOUNT_JWT_ISSUER.equals(event.issuerId())
+        || !decimal(current.generation()).equals(event.issuerAuthGeneration())
+        || !decimal(current.sourceVersion()).equals(event.sourceVersion())) {
+      throw new IllegalStateException("Current issuer source event differs from its generation");
+    }
+  }
+
+  private void verifyCurrentTenantSourceEvent(Event stored, UUID tenantUuid, ScopeState current) {
+    String canonicalJson = new String(stored.payload(), StandardCharsets.UTF_8);
+    var event = TenantGenerationAuthorityEventV1Codec.verify(canonicalJson);
+    requireCurrentStoredEvent(
+        stored,
+        event.eventId(),
+        event.requestId(),
+        event.eventDigest(),
+        event.canonicalJsonUtf8(),
+        event.outboxStreamKey(),
+        event.outboxSequence());
+    if (!tenantUuid.toString().equals(event.tenantId())
+        || !decimal(current.generation()).equals(event.tenantAuthorityGeneration())
+        || !decimal(current.sourceVersion()).equals(event.sourceVersion())) {
+      throw new IllegalStateException("Current tenant source event differs from its generation");
+    }
+  }
+
+  private void requireCurrentStoredEvent(
+      Event stored,
+      String eventId,
+      String requestId,
+      String digest,
+      byte[] canonicalBytes,
+      String streamKey,
+      String sequence) {
+    if (!streamKey.equals(stored.outboxStreamKey())
+        || !requestId.equals(stored.requestId())
+        || !eventId.equals(stored.eventId())
+        || !digest.equals(stored.eventDigest())
+        || !Long.toString(stored.outboxSequence()).equals(sequence)
+        || !Arrays.equals(stored.payload(), canonicalBytes)) {
+      throw new IllegalStateException(
+          "Current Account source event columns differ from its payload");
+    }
+  }
+
+  private Optional<MembershipAuthorityEventV1Codec.AccountSecurityCutoff> currentAccountCutoff(
+      CurrentSourceProof accountProof) {
+    if (accountProof.checkpoint().outboxSequence().equals("0")) {
+      return Optional.empty();
+    }
+    String json = accountProof.sourceEvidence().orElseThrow().canonicalEventJson();
+    try {
+      var reset = PasswordResetAuthorityEventV1Codec.verify(json);
+      var cutoff = reset.accountSecurityCutoff();
+      return Optional.of(
+          new MembershipAuthorityEventV1Codec.AccountSecurityCutoff(
+              cutoff.accountAuthorityGeneration(),
+              cutoff.outboxStreamKey(),
+              cutoff.outboxSequence()));
+    } catch (IllegalArgumentException resetSchemaMismatch) {
+      var logout = AccountLogoutAllAuthorityEventV1Codec.verify(json);
+      var cutoff = logout.accountSecurityCutoff();
+      return Optional.of(
+          new MembershipAuthorityEventV1Codec.AccountSecurityCutoff(
+              cutoff.accountAuthorityGeneration(),
+              cutoff.outboxStreamKey(),
+              cutoff.outboxSequence()));
+    }
+  }
+
+  private AuthorityTuple currentAuthorityTuple(
+      UUID tenantUuid, CompositeSnapshot snapshot, CurrentSourceEvidence currentSources) {
+    ScopeState member = only(snapshot.memberships(), "membership");
+    return new AuthorityTuple(
+        decimal(snapshot.issuer().generation()),
+        decimal(snapshot.account().generation()),
+        Map.of(tenantUuid.toString(), decimal(only(snapshot.tenants(), "tenant").generation())),
+        Map.of(tenantUuid.toString(), decimal(member.generation())),
+        List.of(),
+        currentSources.accountSecurityCutoff(),
+        Optional.empty());
+  }
+
+  private List<OutboxSourceEvidence> orderedSourceEvidence(
+      List<OutboxSourceEvidence> sourceEvidence) {
+    ArrayList<OutboxSourceEvidence> ordered = new ArrayList<>(sourceEvidence);
+    ordered.sort(
+        Comparator.comparing(
+            OutboxSourceEvidence::outboxStreamKey,
+            AccountMembershipAuthorityEventProducer::compareUnsignedUtf8));
+    for (int index = 1; index < ordered.size(); index++) {
+      if (ordered.get(index - 1).outboxStreamKey().equals(ordered.get(index).outboxStreamKey())) {
+        throw new IllegalArgumentException("Account authority source streams must be unique");
+      }
+    }
+    return List.copyOf(ordered);
   }
 
   private OutboxCheckpointEntry requireSequenceZeroCheckpoint(
@@ -1946,6 +2194,49 @@ public class AccountMembershipAuthorityEventProducer {
     }
   }
 
+  private static Snapshot validatorSnapshot(
+      String accountId,
+      String tenantId,
+      boolean membershipExists,
+      String membershipLifecycleState,
+      boolean gameplayAdmissionAllowed,
+      Map<String, String> membershipVersion,
+      String membershipAuthorityGeneration,
+      List<String> roles,
+      AuthorityTuple authorityTuple,
+      String issuanceFence,
+      List<OutboxCheckpointEntry> checkpoints,
+      List<OutboxSourceEvidence> sourceEvidence) {
+    return new Snapshot(
+        AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+        accountId,
+        tenantId,
+        membershipExists,
+        membershipLifecycleState,
+        gameplayAdmissionAllowed,
+        membershipVersion,
+        membershipAuthorityGeneration,
+        roles,
+        authorityTuple,
+        issuanceFence,
+        checkpoints.stream()
+            .map(
+                checkpoint ->
+                    new RuntimeMembershipAuthorityEvidenceValidator.Checkpoint(
+                        checkpoint.outboxStreamKey(), checkpoint.outboxSequence()))
+            .toList(),
+        sourceEvidence.stream()
+            .map(
+                source ->
+                    new RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence(
+                        source.outboxStreamKey(),
+                        source.outboxSequence(),
+                        source.eventId(),
+                        source.eventDigest(),
+                        source.canonicalEventJson()))
+            .toList());
+  }
+
   /** Positive durable authority values committed before the first membership transition. */
   public record NewMembershipBaseline(long membershipVersion, long membershipAuthorityGeneration) {
     public NewMembershipBaseline {
@@ -1984,21 +2275,14 @@ public class AccountMembershipAuthorityEventProducer {
         throw new IllegalArgumentException("source event ID is required");
       }
       Objects.requireNonNull(eventDigest, "source event digest is required");
+      Objects.requireNonNull(canonicalEventJson, "canonical source event JSON is required");
       if (!outboxStreamKey.startsWith(MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX)
           || !isPositiveCanonicalDecimal(outboxSequence)
-          || !eventDigest.matches("sha256:[0-9a-f]{64}")) {
+          || !eventDigest.matches("sha256:[0-9a-f]{64}")
+          || !canonicalEventJson.startsWith("{")
+          || !canonicalEventJson.endsWith("}")) {
         throw new IllegalArgumentException(
             "Account authority source event evidence is not canonical");
-      }
-      Objects.requireNonNull(canonicalEventJson, "canonical source event JSON is required");
-      MembershipEvent event = MembershipAuthorityEventV1Codec.verify(canonicalEventJson);
-      if (!event.canonicalJson().equals(canonicalEventJson)
-          || !event.eventId().equals(eventId)
-          || !event.eventDigest().equals(eventDigest)
-          || !event.outboxStreamKey().equals(outboxStreamKey)
-          || !event.outboxSequence().equals(outboxSequence)) {
-        throw new IllegalArgumentException(
-            "Account authority source event JSON differs from its exact identity");
       }
     }
   }
@@ -2037,18 +2321,11 @@ public class AccountMembershipAuthorityEventProducer {
       outboxCheckpoints = requireOrderedCheckpointSet(outboxCheckpoints);
       outboxSourceEvidence = List.copyOf(outboxSourceEvidence);
 
-      if (!"1".equals(authorityTuple.issuerAuthGeneration())
-          || !"1".equals(authorityTuple.accountAuthorityGeneration())
-          || authorityTuple.tenantAuthorityGeneration().size() != 1
-          || authorityTuple.membershipAuthorityGeneration().size() != 1
-          || !authorityTuple.tenantAuthorityGeneration().containsKey(tenantId)
-          || !authorityTuple.membershipAuthorityGeneration().containsKey(tenantId)
-          || !"1".equals(authorityTuple.tenantAuthorityGeneration().get(tenantId))
+      if (!"1".equals(membershipAuthorityGeneration)
           || !membershipAuthorityGeneration.equals(
               authorityTuple.membershipAuthorityGeneration().get(tenantId))
           || !"1".equals(membershipVersion.get(tenantId))
           || !authorityTuple.privateRealmGrantVersions().isEmpty()
-          || authorityTuple.accountSecurityCutoff().isPresent()
           || authorityTuple.tenantBillingCutoff().isPresent()) {
         throw new IllegalArgumentException(
             "Never-joined Account authority tuple is incomplete or mismatched");
@@ -2064,16 +2341,32 @@ public class AccountMembershipAuthorityEventProducer {
         throw new IllegalArgumentException(
             "Never-joined Account membership stream key is not canonical");
       }
-      List<OutboxCheckpointEntry> expectedCheckpoints =
-          requireOrderedCheckpointSet(
-              List.of(
-                  new OutboxCheckpointEntry(accountStreamKey(accountId), "0"),
-                  new OutboxCheckpointEntry(canonicalIssuerStreamKey(), "0"),
-                  new OutboxCheckpointEntry(outboxStreamKey, "0"),
-                  new OutboxCheckpointEntry(tenantStreamKey(tenantId), "0")));
-      if (!expectedCheckpoints.equals(outboxCheckpoints) || !outboxSourceEvidence.isEmpty()) {
+      List<OutboxCheckpointEntry> membershipCheckpoints =
+          outboxCheckpoints.stream()
+              .filter(checkpoint -> checkpoint.outboxStreamKey().equals(expectedStreamKey))
+              .toList();
+      if (membershipCheckpoints.size() != 1
+          || !"0".equals(membershipCheckpoints.getFirst().outboxSequence())) {
         throw new IllegalArgumentException(
-            "Never-joined Account snapshot must contain only four sequence-zero checkpoints");
+            "Never-joined Account snapshot must retain a sequence-zero membership checkpoint");
+      }
+      if (RuntimeMembershipAuthorityEvidenceValidator.validate(
+              validatorSnapshot(
+                  accountId,
+                  tenantId,
+                  false,
+                  "MISSING",
+                  false,
+                  membershipVersion,
+                  membershipAuthorityGeneration,
+                  List.of(),
+                  authorityTuple,
+                  issuanceFence,
+                  outboxCheckpoints,
+                  outboxSourceEvidence))
+          .isPresent()) {
+        throw new IllegalArgumentException(
+            "Never-joined Account snapshot cannot contain a membership event");
       }
     }
 
@@ -2125,6 +2418,7 @@ public class AccountMembershipAuthorityEventProducer {
       membershipAuthorityGeneration =
           requirePositiveCanonicalDecimal(
               membershipAuthorityGeneration, "membership authority generation");
+      String membershipStreamKey = membershipStreamKey(accountId, tenantId);
       roles = List.copyOf(roles);
       Objects.requireNonNull(authorityTuple, "complete authority tuple is required");
       issuanceFence = requirePositiveCanonicalDecimal(issuanceFence, "Account issuance fence");
@@ -2133,28 +2427,6 @@ public class AccountMembershipAuthorityEventProducer {
       outboxSourceEvidence = List.copyOf(outboxSourceEvidence);
       Objects.requireNonNull(transitionReceipt, "membership transition receipt is required");
       Objects.requireNonNull(authorityEvent, "canonical membership authority event is required");
-
-      String membershipStreamKey = membershipStreamKey(accountId, tenantId);
-      String membershipSequence = authorityEvent.outboxSequence();
-      if (!isPositiveCanonicalDecimal(membershipSequence)) {
-        throw new IllegalArgumentException(
-            "Positive Account membership event sequence must be canonical and positive");
-      }
-      List<OutboxCheckpointEntry> expectedCheckpoints =
-          requireOrderedCheckpointSet(
-              List.of(
-                  new OutboxCheckpointEntry(accountStreamKey(accountId), "0"),
-                  new OutboxCheckpointEntry(canonicalIssuerStreamKey(), "0"),
-                  new OutboxCheckpointEntry(membershipStreamKey, membershipSequence),
-                  new OutboxCheckpointEntry(tenantStreamKey(tenantId), "0")));
-      List<OutboxSourceEvidence> expectedSourceEvidence =
-          List.of(
-              new OutboxSourceEvidence(
-                  membershipStreamKey,
-                  membershipSequence,
-                  authorityEvent.eventId(),
-                  authorityEvent.eventDigest(),
-                  authorityEvent.canonicalJson()));
 
       if (!membershipExists
           || !"ACTIVE".equals(membershipLifecycleState)
@@ -2167,23 +2439,36 @@ public class AccountMembershipAuthorityEventProducer {
           || !membershipAuthorityGeneration.equals(authorityEvent.membershipAuthorityGeneration())
           || !roles.equals(authorityEvent.roles())
           || gameplayAdmissionAllowed != authorityEvent.gameplayAdmissionAllowed()
-          || !authorityTuple.equals(authorityEvent.authorityTuple())
-          || !issuanceFence.equals(authorityEvent.issuanceFence())
-          || !"1".equals(authorityTuple.issuerAuthGeneration())
-          || !"1".equals(authorityTuple.accountAuthorityGeneration())
-          || !Map.of(tenantId, "1").equals(authorityTuple.tenantAuthorityGeneration())
           || !Map.of(tenantId, membershipAuthorityGeneration)
               .equals(authorityTuple.membershipAuthorityGeneration())
-          || !membershipAuthorityGeneration.equals(
-              authorityTuple.membershipAuthorityGeneration().get(tenantId))
           || !authorityTuple.privateRealmGrantVersions().isEmpty()
-          || authorityTuple.accountSecurityCutoff().isPresent()
           || authorityTuple.tenantBillingCutoff().isPresent()
-          || !expectedCheckpoints.equals(outboxCheckpoints)
-          || !expectedSourceEvidence.equals(outboxSourceEvidence)
           || !transitionReceipt.requestId().equals(authorityEvent.requestId())) {
         throw new IllegalArgumentException(
             "Positive Account membership snapshot evidence is internally inconsistent");
+      }
+      MembershipEvent verified =
+          RuntimeMembershipAuthorityEvidenceValidator.validate(
+                  validatorSnapshot(
+                      accountId,
+                      tenantId,
+                      true,
+                      membershipLifecycleState,
+                      gameplayAdmissionAllowed,
+                      membershipVersion,
+                      membershipAuthorityGeneration,
+                      roles,
+                      authorityTuple,
+                      issuanceFence,
+                      outboxCheckpoints,
+                      outboxSourceEvidence))
+              .orElseThrow(
+                  () ->
+                      new IllegalArgumentException(
+                          "Positive Account snapshot is missing its membership event"));
+      if (!verified.canonicalJson().equals(authorityEvent.canonicalJson())) {
+        throw new IllegalArgumentException(
+            "Positive Account membership source differs from its exact event bytes");
       }
     }
   }
@@ -2261,18 +2546,34 @@ public class AccountMembershipAuthorityEventProducer {
         + AccountServiceImpl.ACCOUNT_JWT_ISSUER;
   }
 
-  private static String accountStreamKey(String accountId) {
-    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "account/" + accountId;
-  }
-
-  private static String tenantStreamKey(String tenantId) {
-    return MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + tenantId;
-  }
-
   private record Identity(
       long accountId,
       long legacyTenantId,
       UUID accountUuid,
       UUID tenantUuid,
       ApprovedAssociation association) {}
+
+  private record CurrentSourceProof(
+      OutboxCheckpointEntry checkpoint, Optional<OutboxSourceEvidence> sourceEvidence) {
+    private CurrentSourceProof {
+      Objects.requireNonNull(checkpoint, "current source checkpoint is required");
+      sourceEvidence =
+          Objects.requireNonNull(sourceEvidence, "current source evidence is required");
+      if ("0".equals(checkpoint.outboxSequence()) != sourceEvidence.isEmpty()) {
+        throw new IllegalArgumentException("Current source checkpoint and event evidence differ");
+      }
+    }
+  }
+
+  private record CurrentSourceEvidence(
+      List<OutboxCheckpointEntry> checkpoints,
+      List<OutboxSourceEvidence> sourceEvidence,
+      Optional<MembershipAuthorityEventV1Codec.AccountSecurityCutoff> accountSecurityCutoff) {
+    private CurrentSourceEvidence {
+      checkpoints = List.copyOf(checkpoints);
+      sourceEvidence = List.copyOf(sourceEvidence);
+      accountSecurityCutoff =
+          Objects.requireNonNull(accountSecurityCutoff, "current Account cutoff is required");
+    }
+  }
 }

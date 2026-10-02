@@ -470,8 +470,7 @@ class AccountFreshUuidMembershipSnapshotIntegrationTest {
     assertThatThrownBy(
             () -> readFreshNeverJoinedMembershipSnapshot(account.accountUuid(), tenantUuid))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining(
-            "tenant authority generation cannot prove its sequence-zero baseline");
+        .hasMessageContaining("tenant source history is missing");
     assertThat(authorityGeneration("TENANT", null, tenantUuid)).isEqualTo(2L);
     assertThat(countMembershipPairAuthorities(account.accountUuid(), tenantUuid)).isZero();
     assertThat(countMembershipAuthorityGenerations(account.accountUuid(), tenantUuid)).isZero();

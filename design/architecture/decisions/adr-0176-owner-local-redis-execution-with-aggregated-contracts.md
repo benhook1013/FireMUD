@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-This decision is not implemented. The shared Redis-contract foundation, owner-local descriptor contributions, repository aggregation, ownership enforcement, and descriptor-driven proof remain gaps.
+This decision is partially implemented. The narrow `common-redis-contracts` module provides immutable descriptors, explicit prefix ownership and invocation validation for role, principal, script identity/digest, key/argument arity and cluster slots. It has no executable owner scripts or automatic runtime wiring. Complete repository aggregation, existing-script/prefix coverage, ownership enforcement, descriptor-driven generic CI, rollout/coexistence evidence and deployed role/ACL proof remain gaps; a selected registered invocation does not establish those global guarantees. Current proof status remains in the [Shared Runtime tracker](../../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status).
 
 ## Decision Record
 

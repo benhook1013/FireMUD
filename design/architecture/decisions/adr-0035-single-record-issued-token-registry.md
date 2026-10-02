@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Basic JWT/JWKS and account/tenant token-state foundations exist, but the accepted single-record contract is not implemented end to end. Current issuance still writes scope-duplicated account/tenant keys, downstream validators do not consistently enforce `session:auth:token:<tokenHash>`, and complete authority-generation checks, token-profile count/encoded-byte/total-size bounds with pre-signing and pre-registration rejection proof, per-token `/auth/logout`, `/auth/logout-all`, durable operation evidence, retry classification, cleanup, and revocation proof remain incomplete.
+The single-record registry, complete immutable authorization bundle and ordinary-token issuance/revocation contract are not implemented end to end. Unwired source receipts and focused component proof do not authorize credentials or enable logout routes; current runtime still uses legacy session keys. Current capability, executed proof and activation limits are owned by [Player Access and Session](../../project-management/implementation-tracking/player-access-and-session.md#current-status).
 
 ## Decision Record
 

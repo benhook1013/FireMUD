@@ -229,3 +229,36 @@ Entry format:
 - `2026-10-02`: Keep helper file targets and validation inside the pinned assignment
   - Context: a helper assigned to the isolated Unit 1B worktree accidentally created an empty `DO_NOT_USE.java` in the default checkout, reported it, and removed its own disposable file; the orchestrator confirmed it was absent. Another helper ran an unrequested diff check despite a validation-none assignment. No user change or useful implementation was lost, and neither action supplied credited validation.
   - Expected pattern: verify the worktree identity before edits, use absolute patch targets, and treat validation-none as a closed boundary rather than permission for substitute checks. Report scope mistakes immediately and distinguish recovery from canonical proof; a successful helper handoff does not substitute for orchestrator inspection and validation.
+
+- `2026-10-02`: Distinguish caught service warnings from the exception that fails gameplay proof
+  - Context: the first CI36967764374 sentinel summary highlighted Game Design DNS failure as the WebSocket PLAY cause. The fixture helper followed the complete trace and found that warning was caught with defaults; the actual socket-closing exception was a null character-list response because the mock still selected a numeric Account ID after LOGIN returned the canonical UUID.
+  - Outcome: the fixture correction preserves production guards, uses the exact UUID selector and configures the existing fake service endpoint; exact CI36970584573 subsequently executed all sixteen WebSocket cases cleanly. The initial diagnosis was corrected in the private evidence and public checkpoint before claiming proof.
+  - Expected pattern: identify the fatal test/assertion path and distinguish caught warnings and secondary teardown failures. A prominent stack trace or a green component suite alone does not establish the root cause of broader gameplay failure. Likewise, select the exact matrix job before attributing conditional proof steps: a CI36969757041 sentinel inspected the non-Account job and reported skipped proof, while root's exact Account-job readback showed strict verification failed and XML upload succeeded.
+
+- `2026-10-02`: Bound PostgreSQL fixture identifiers before appending the full random nonce
+  - Context: all eight new logout-all PostgreSQL cases in CI36969757041 failed during Flyway setup because the descriptive schema prefix plus a full UUID exceeded PostgreSQL's 63-byte identifier limit. The physically truncated schema did not match the requested name, producing duplicate-schema creation errors before the operation assertions.
+  - Outcome: the fixture now uses the ASCII `logout_src` prefix and preserves its complete 128-bit nonce, keeping names at 43 bytes. Corrected database execution remains required; compiling or discovering the class locally did not expose this runtime setup error.
+  - Expected pattern: use a short ASCII prefix with a full unique nonce, verify the complete identifier length, and retain the same declared schema in JDBC/Flyway/readback. Do not fix this by weakening migration, isolation or transaction proof.
+
+- `2026-10-02`: Verify negative preservation scope as well as transferred split paths
+  - Context: while mechanically transferring the Redis projection from #2933 to its existing child, a helper patch briefly deleted the parent-owned PostgreSQL/socket-mTLS test outside the transfer allowlist. The helper reported the scope error and immediately restored that file byte-for-byte from the pinned commit with a patch; the resulting working diff leaves it unchanged.
+  - Expected pattern: explicitly check every parent-owned retained blob and the complete cumulative child tree, not just the moved path count. A reviewed transfer map does not make a generated deletion list safe by itself. Keep published history intact and verify no-loss before publication.
+
+- `2026-10-02`: Distinguish structural collaboration exhaustion from model capacity
+  - Context: dispatching the Account current-recipient helper failed with `agent thread limit reached` while two useful bounded workers and one CI sentinel were active. This was a structural slot error, not evidence that Luna was unavailable.
+  - Outcome: following the slot-recovery skill, the orchestrator closed out a completed split helper with a return-only continuation, checked agent state and retried the same fresh Luna xhigh assignment once. It succeeded without interrupting useful work or changing model/tier. The harness's precise reclamation timing remains unknown; the retry success does not prove that the close-out message alone released the slot.
+  - Expected pattern: preserve active work, distinguish the exact failure class and use a bounded structural recovery attempt. Do not substitute models or relabel a reused helper as a fresh independent review.
+
+- `2026-10-02`: Isolate delegated command text from prose punctuation
+  - Context: two focused Account/Game Session helper invocations treated a trailing prose period as a Gradle task named `.` and failed before the intended tasks ran. Corrected invocations without that argument succeeded; the failed invocations supplied no test proof.
+  - Expected pattern: put exact allowed commands on standalone fenced or explicitly delimited lines, with no sentence punctuation attached. Read back the actual invocation and task outcome before attributing validation; an intended command is not an executed gate.
+
+- `2026-10-02`: Check migrated constraints before manufacturing a missing-history failure
+  - Context: an Account outbox investigation initially treated a missing stream head with retained events as a possible runtime gap. Reading V33's immediate foreign key, immutable-event guards and unconditional head-delete rejection disproved that state under the intact schema.
+  - Outcome: the unnecessary local query and unit changes were removed before publication. Focused PostgreSQL tests instead exercise rejected deletion with unchanged evidence and exact-stream isolation without synthesizing authority; local Docker absence still requires executed runner proof.
+  - Expected pattern: inspect the complete owning migration before accepting a repository-level failure premise. Do not disable constraints or invent corrupted fixtures to justify a runtime repair; distinguish actual invariant proof from recovery for a separately specified corruption model.
+
+- `2026-10-03`: Script convenience APIs can widen a deliberately narrow Redis grant
+  - Context: the projection helpers' Spring Redis script convenience path can fall back from `EVALSHA` to raw `EVAL`. Giving the isolated fixture both commands masked the difference from the canonical owner-helper `SCRIPT LOAD`/`EVALSHA` grant.
+  - Outcome: the Account and issuer candidates use verified registered bytes, check the identity returned by `SCRIPT LOAD`, and invoke `EVALSHA` directly without fallback or a blind retry. Isolated Redis proof denies raw `EVAL`; local database/Redis skips still require executed runner evidence.
+  - Expected pattern: inspect convenience-API recovery behavior against the exact command grant, and test the forbidden command as well as the positive registered-helper path. Do not widen ACLs just to accommodate an implicit fallback.
