@@ -59,6 +59,21 @@ class HelpCommandHandlerTest {
     assertTrue(result.outputs().get(0).text().contains("JOIN <world>"));
     assertTrue(result.outputs().get(0).text().contains("public-production membership"));
     assertTrue(result.outputs().get(0).text().contains("Use REALMS <world> first"));
+    assertFalse(result.outputs().get(0).text().contains("CHARS"));
+  }
+
+  @Test
+  void characterSelectionHelpDoesNotAdvertiseUnavailableBrowsing() {
+    for (String topic : List.of("join", "realms", "chars")) {
+      TextCommandInterpretationResult result =
+          handler.handle(new TextCommand(TextCommandType.HELP, List.of(topic), "HELP " + topic));
+
+      assertTrue(result.commandResult().accepted());
+      assertTrue(
+          result.outputs().get(0).text().contains("Character browsing is currently unavailable"));
+      assertFalse(result.outputs().get(0).text().contains("List visible characters"));
+      assertTrue(result.outputs().get(0).text().contains("known character"));
+    }
   }
 
   @Test

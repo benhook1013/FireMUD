@@ -1534,7 +1534,17 @@ class PlayCommandHandlerTest {
     assertThat(result.commandResult().errorCode()).isEqualTo("PLAY_SELECTION_REQUIRED");
     assertThat(result.commandResult().errorMessage())
         .isEqualTo(
-            "Selection required. Use PLAY sandbox preview <character> or browse CHARS sandbox preview first.");
+            "Selection required. Use PLAY sandbox preview <character> with a known character; character browsing is currently unavailable.");
+    assertThat(result.commandResult().errorMessage()).doesNotContain("CHARS");
+    TextPlayerOutputRenderer renderer = new TextPlayerOutputRenderer(new PresentationProperties());
+    assertThat(renderer.render(result.outputs().getFirst(), "fr"))
+        .isEqualTo(
+            "ERROR PLAY_SELECTION_REQUIRED Sélection requise. Utilisez PLAY sandbox preview <character> avec un personnage connu ; la consultation des personnages n’est pas disponible actuellement.");
+    String fallback = renderer.render(result.outputs().getFirst(), "de");
+    assertThat(fallback)
+        .isEqualTo(
+            "ERROR PLAY_SELECTION_REQUIRED Selection required. Use PLAY sandbox preview <character> with a known character; character browsing is currently unavailable.");
+    assertThat(fallback).doesNotContain("CHARS");
   }
 
   @Test

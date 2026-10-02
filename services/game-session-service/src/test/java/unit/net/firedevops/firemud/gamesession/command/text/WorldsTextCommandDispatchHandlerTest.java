@@ -613,11 +613,17 @@ class WorldsTextCommandDispatchHandlerTest {
 
     assertThat(renderer.renderAll(command, result.commandResult(), result.outputs(), "fr"))
         .isEqualTo(expectedFrench);
-    assertThat(renderer.renderAll(command, result.commandResult(), result.outputs(), "de"))
+    String fallback = renderer.renderAll(command, result.commandResult(), result.outputs(), "de");
+    assertThat(fallback)
         .isEqualTo(
             success
                 ? "OK JOIN " + expectedEnglish
                 : "ERROR " + expectedCode + " " + expectedEnglish);
+    if (success) {
+      assertThat(expectedEnglish).doesNotContain("CHARS");
+      assertThat(expectedFrench).doesNotContain("CHARS");
+      assertThat(fallback).doesNotContain("CHARS");
+    }
   }
 
   private static Stream<Arguments> joinPresentationCases() {
@@ -686,8 +692,8 @@ class WorldsTextCommandDispatchHandlerTest {
             "",
             true,
             null,
-            "Membership is ready. Continue with CHARS and PLAY.",
-            "OK JOIN L’adhésion est prête. Continuez avec CHARS et PLAY."));
+            "Membership is ready. Continue with PLAY <world> [realm] <character> using a known character; character browsing is currently unavailable.",
+            "OK JOIN L’adhésion est prête. Continuez avec PLAY <world> [realm] <character> avec un personnage connu ; la consultation des personnages n’est pas disponible actuellement."));
   }
 
   private TextCommandInterpretationResult dispatchJoinOutcome(String outcomeCode, boolean success) {

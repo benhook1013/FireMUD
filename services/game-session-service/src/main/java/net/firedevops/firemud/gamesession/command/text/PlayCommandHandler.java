@@ -383,15 +383,7 @@ public class PlayCommandHandler {
               "PLAY_SELECTION_REQUIRED",
               characterSelectionMessage(selectedWorld, selectedRealm),
               "error.play.character-selection-required",
-              Map.of(
-                  "worldSlug",
-                  selectedWorld.slug(),
-                  "realmSlug",
-                  selectedRealm.slug(),
-                  "playUsage",
-                  playUsage(selectedWorld, selectedRealm),
-                  "charsUsage",
-                  charsUsage(selectedWorld, selectedRealm)),
+              Map.of("playUsage", playUsage(selectedWorld, selectedRealm)),
               selectedTenantTag,
               Long.toString(selectedRealm.gameInstanceId()),
               null,
@@ -1458,9 +1450,7 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
     return "Selection required. Use "
         + playUsage(selectedWorld, selectedRealm)
-        + " or browse "
-        + charsUsage(selectedWorld, selectedRealm)
-        + " first.";
+        + " with a known character; character browsing is currently unavailable.";
   }
 
   private String displaySelection(String world, String realm) {
@@ -1481,13 +1471,6 @@ public class PlayCommandHandler {
         + selectedWorld.slug()
         + (selectedRealm.publicProductionRealm() ? "" : " " + selectedRealm.slug())
         + " <character>";
-  }
-
-  private String charsUsage(
-      GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
-    return "CHARS "
-        + selectedWorld.slug()
-        + (selectedRealm.publicProductionRealm() ? "" : " " + selectedRealm.slug());
   }
 
   private record ResolvedPlaySelection(

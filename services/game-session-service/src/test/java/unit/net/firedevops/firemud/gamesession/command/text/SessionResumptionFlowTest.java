@@ -128,8 +128,7 @@ class SessionResumptionFlowTest {
       Mockito.mock(CommunicationCommandHandler.class);
   private final JwtUtil gameplayJwtUtil =
       new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L);
-  private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(gameplayJwtUtil);
+  private final GameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
