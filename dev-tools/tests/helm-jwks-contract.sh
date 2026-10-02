@@ -68,6 +68,8 @@ done
 
 python3 - <<'PY' "$RENDERED"
 import copy
+import hashlib
+import json
 import pathlib
 import sys
 
@@ -104,6 +106,29 @@ data = jwks.get("data")
 jwks_json = data.get("jwks.json") if isinstance(data, dict) else None
 if not isinstance(jwks_json, str) or not jwks_json.strip():
     raise SystemExit("jwt-jwks ConfigMap did not render non-empty data.jwks.json")
+jwks_secret = next(
+    (
+        document
+        for document in documents
+        if document.get("kind") == "Secret"
+        and document.get("metadata", {}).get("name") == "jwt-signing-keys"
+    ),
+    None,
+)
+signing_key = (jwks_secret or {}).get("stringData", {}).get("current.key")
+expected_jwks = {
+    "keys": [],
+    "firemudDiagnostic": {
+        "purpose": "shared-hmac-secret-path-fingerprint",
+        "sha256": hashlib.sha256(signing_key.encode("utf-8")).hexdigest()
+        if isinstance(signing_key, str)
+        else None,
+    },
+}
+if json.loads(jwks_json) != expected_jwks:
+    raise SystemExit("jwt-jwks ConfigMap must contain only the canonical signing-key diagnostic")
+if isinstance(signing_key, str) and signing_key in jwks_json:
+    raise SystemExit("jwt-jwks diagnostic must not contain the signing key")
 projected_jwks_files = {
     key for key in data if isinstance(key, str) and key
 }
