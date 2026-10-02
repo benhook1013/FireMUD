@@ -14,18 +14,13 @@ import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AccountSecurityCutoff;
-import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
-import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator;
-import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Checkpoint;
-import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.Snapshot;
-import net.firedevops.firemud.common.account.authority.RuntimeMembershipAuthorityEvidenceValidator.SourceEvidence;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
+import net.firedevops.firemud.gamesession.client.RuntimeMembershipResponseValidator;
 import net.firedevops.firemud.gamesession.config.GameLogicProperties;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameplayCommand;
@@ -66,8 +61,6 @@ public class PlayCommandHandler {
   private static final String RESUME_DENIED_METRIC = "gamesession.session.resume_denied";
   private static final String FRESH_ENTRY_FALLBACK_METRIC =
       "gamesession.session.fresh_entry_fallback";
-  private static final String ACCOUNT_AUTHORITY_STREAM_PREFIX = "account:auth-authority:v1:";
-  private static final String ACCOUNT_AUTHORITY_ISSUER = "firemud-account-service";
 
   private final SessionAuthenticationService sessionAuthenticationService;
   private final SessionContextService sessionContextService;
@@ -829,7 +822,7 @@ public class PlayCommandHandler {
 
   private boolean isValidMembershipLifecycleEvidence(
       GetTenantMembershipForRuntimeResponse response) {
-    if (!hasCompleteMembershipAuthorityCarrier(response)) {
+    if (!RuntimeMembershipResponseValidator.hasCompleteAuthorityCarrier(response)) {
       return false;
     }
     return switch (response.getMembershipLifecycleState()) {
@@ -860,130 +853,6 @@ public class PlayCommandHandler {
     return isCanonicalUuid(response.getTenantId())
         && version.getKey().equals(response.getTenantId())
         && isPositiveCanonicalDecimal(version.getValue());
-  }
-
-  private static boolean hasCompleteMembershipAuthorityCarrier(
-      GetTenantMembershipForRuntimeResponse response) {
-    if (!response.hasMembershipBaseline() || !response.hasAuthorityTuple()) {
-      return false;
-    }
-    if (!AccountIds.isCanonicalNonNilUuid(response.getAccountId())
-        || !isCanonicalUuid(response.getTenantId())) {
-      return false;
-    }
-    if (!response
-        .getMembershipBaseline()
-        .equals(
-            net.firedevops.firemud.account.v1.RuntimeMembershipBaseline.newBuilder()
-                .setMembershipLifecycleState(response.getMembershipLifecycleState())
-                .putAllMembershipVersion(response.getMembershipVersionMap())
-                .setMembershipAuthorityGeneration(response.getMembershipAuthorityGeneration())
-                .build())) {
-      return false;
-    }
-    var tuple = response.getAuthorityTuple();
-    if (!hasNoMembershipAuthorityUnknownFields(response)
-        || tuple.getPrivateRealmGrantVersionsCount() != 0
-        || tuple.hasTenantBillingCutoff()) {
-      return false;
-    }
-
-    String membershipStream =
-        ACCOUNT_AUTHORITY_STREAM_PREFIX
-            + "membership/"
-            + response.getAccountId()
-            + "/"
-            + response.getTenantId();
-    if (response.getOutboxSourceEvidenceList().stream()
-        .filter(source -> membershipStream.equals(source.getOutboxStreamKey()))
-        .anyMatch(source -> !isCanonicalUuid(source.getEventId()))) {
-      return false;
-    }
-
-    Optional<AccountSecurityCutoff> accountSecurityCutoff =
-        tuple.hasAccountSecurityCutoff()
-            ? Optional.of(
-                new AccountSecurityCutoff(
-                    tuple.getAccountSecurityCutoff().getAccountAuthorityGeneration(),
-                    tuple.getAccountSecurityCutoff().getOutboxStreamKey(),
-                    tuple.getAccountSecurityCutoff().getOutboxSequence()))
-            : Optional.empty();
-    AuthorityTuple currentTuple =
-        new AuthorityTuple(
-            tuple.getIssuerAuthGeneration(),
-            tuple.getAccountAuthorityGeneration(),
-            tuple.getTenantAuthorityGenerationMap(),
-            tuple.getMembershipAuthorityGenerationMap(),
-            List.of(),
-            accountSecurityCutoff,
-            Optional.empty());
-    List<Checkpoint> checkpoints =
-        response.getOutboxCheckpointsList().stream()
-            .map(
-                checkpoint ->
-                    new Checkpoint(checkpoint.getOutboxStreamKey(), checkpoint.getOutboxSequence()))
-            .toList();
-    List<SourceEvidence> sourceEvidence =
-        response.getOutboxSourceEvidenceList().stream()
-            .map(
-                source ->
-                    new SourceEvidence(
-                        source.getOutboxStreamKey(),
-                        source.getOutboxSequence(),
-                        source.getEventId(),
-                        source.getEventDigest(),
-                        source.getCanonicalEventJson()))
-            .toList();
-    try {
-      RuntimeMembershipAuthorityEvidenceValidator.validate(
-          new Snapshot(
-              ACCOUNT_AUTHORITY_ISSUER,
-              response.getAccountId(),
-              response.getTenantId(),
-              response.getMembershipExists(),
-              response.getMembershipLifecycleState(),
-              response.getGameplayAdmissionAllowed(),
-              response.getMembershipVersionMap(),
-              response.getMembershipAuthorityGeneration(),
-              response.getRolesList(),
-              currentTuple,
-              response.getIssuanceFence(),
-              checkpoints,
-              sourceEvidence));
-      return true;
-    } catch (IllegalArgumentException ex) {
-      return false;
-    }
-  }
-
-  private static boolean hasNoMembershipAuthorityUnknownFields(
-      GetTenantMembershipForRuntimeResponse response) {
-    var tuple = response.getAuthorityTuple();
-    if (!response.getUnknownFields().asMap().isEmpty()
-        || !response.getMembershipBaseline().getUnknownFields().asMap().isEmpty()
-        || !tuple.getUnknownFields().asMap().isEmpty()) {
-      return false;
-    }
-    if (tuple.hasAccountSecurityCutoff()
-        && !tuple.getAccountSecurityCutoff().getUnknownFields().asMap().isEmpty()) {
-      return false;
-    }
-    for (var grant : tuple.getPrivateRealmGrantVersionsList()) {
-      if (!grant.getUnknownFields().asMap().isEmpty()) {
-        return false;
-      }
-    }
-    for (var checkpoint : response.getOutboxCheckpointsList()) {
-      if (!checkpoint.getUnknownFields().asMap().isEmpty()) {
-        return false;
-      }
-    }
-    for (var source : response.getOutboxSourceEvidenceList()) {
-      if (!source.getUnknownFields().asMap().isEmpty()) {
-        return false;
-      }
-    }
-    return true;
   }
 
   private static boolean isPositiveCanonicalDecimal(String value) {

@@ -509,9 +509,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     return response.build();
   }
 
-  private static void requireCompleteRuntimePlayerContext(
+  static void requireCompleteRuntimePlayerContext(
       net.firedevops.firemud.shared.v1.PlayerExecutionContext playerContext) {
     if (playerContext == null
+        || !playerContext.getUnknownFields().asMap().isEmpty()
         || !hasText(playerContext.getAccountId())
         || !hasText(playerContext.getTenantId())
         || !hasText(playerContext.getRealmId())
