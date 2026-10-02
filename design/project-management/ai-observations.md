@@ -252,3 +252,8 @@ Entry format:
 - `2026-10-02`: Isolate delegated command text from prose punctuation
   - Context: two focused Account/Game Session helper invocations treated a trailing prose period as a Gradle task named `.` and failed before the intended tasks ran. Corrected invocations without that argument succeeded; the failed invocations supplied no test proof.
   - Expected pattern: put exact allowed commands on standalone fenced or explicitly delimited lines, with no sentence punctuation attached. Read back the actual invocation and task outcome before attributing validation; an intended command is not an executed gate.
+
+- `2026-10-02`: Check migrated constraints before manufacturing a missing-history failure
+  - Context: an Account outbox investigation initially treated a missing stream head with retained events as a possible runtime gap. Reading V33's immediate foreign key, immutable-event guards and unconditional head-delete rejection disproved that state under the intact schema.
+  - Outcome: the unnecessary local query and unit changes were removed before publication. Focused PostgreSQL tests instead exercise rejected deletion with unchanged evidence and exact-stream isolation without synthesizing authority; local Docker absence still requires executed runner proof.
+  - Expected pattern: inspect the complete owning migration before accepting a repository-level failure premise. Do not disable constraints or invent corrupted fixtures to justify a runtime repair; distinguish actual invariant proof from recovery for a separately specified corruption model.

@@ -18,6 +18,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -89,6 +90,118 @@ class AccountAuthorityOutboxRepositoryIntegrationTest {
     assertThat(checkpoint).contains(new Checkpoint(stream, 2L, "event-2", "canonical-digest-2"));
     assertThat(inTransaction(transaction, () -> repository.findEvent(stream, 1L))).contains(first);
     assertThat(inTransaction(transaction, () -> repository.findEvent(stream, 2L))).contains(second);
+  }
+
+  @Test
+  void missingHeadWithNoExactHistoryIsEmptyDespiteAnotherStreamsRetainedEvent() {
+    TestContext context = newTestContext();
+    AccountAuthorityOutboxRepository repository = context.repository();
+    TransactionTemplate transaction = context.transaction();
+    DSLContext dsl = context.dsl();
+    String missingStream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
+    String retainedStream = "account:auth-authority:v1:tenant/" + UUID.randomUUID();
+    byte[] retainedPayload = new byte[] {4, 5, 6};
+
+    Event retained =
+        inTransaction(
+            transaction,
+            () ->
+                repository.append(
+                    retainedStream,
+                    "retained-request",
+                    "retained-event",
+                    "retained-digest",
+                    retainedPayload));
+
+    assertThat(inTransaction(transaction, () -> repository.readCheckpoint(missingStream)))
+        .isEmpty();
+
+    assertThat(inTransaction(transaction, () -> repository.readCheckpoint(retainedStream)))
+        .contains(new Checkpoint(retainedStream, 1L, "retained-event", "retained-digest"));
+    Event retainedAfterRead =
+        inTransaction(transaction, () -> repository.findEvent(retainedStream, 1L)).orElseThrow();
+    assertThat(retainedAfterRead).isEqualTo(retained);
+    assertThat(retainedAfterRead.eventId()).isEqualTo(retained.eventId());
+    assertThat(retainedAfterRead.eventDigest()).isEqualTo(retained.eventDigest());
+    assertThat(retainedAfterRead.payload()).containsExactly(retainedPayload);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_streams "
+                        + "WHERE outbox_stream_key = ?",
+                    missingStream)
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ?",
+                    missingStream)
+                .fetchOne(0, Long.class))
+        .isZero();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ?",
+                    retainedStream)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+  }
+
+  @Test
+  void databaseRejectsDeletingAHeadWithRetainedHistoryWithoutChangingEvidence() {
+    TestContext context = newTestContext();
+    AccountAuthorityOutboxRepository repository = context.repository();
+    TransactionTemplate transaction = context.transaction();
+    DSLContext dsl = context.dsl();
+    String stream = membershipStream(UUID.randomUUID(), UUID.randomUUID());
+    byte[] retainedPayload = new byte[] {7, 8, 9};
+    Event retained =
+        inTransaction(
+            transaction,
+            () ->
+                repository.append(
+                    stream,
+                    "retained-request",
+                    "retained-event",
+                    "retained-digest",
+                    retainedPayload));
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    transaction,
+                    () -> {
+                      dsl.execute(
+                          "DELETE FROM account_authority_outbox_streams "
+                              + "WHERE outbox_stream_key = ?",
+                          stream);
+                      return null;
+                    }))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("Account authority outbox stream history cannot be deleted");
+
+    assertThat(inTransaction(transaction, () -> repository.readCheckpoint(stream)))
+        .contains(new Checkpoint(stream, 1L, retained.eventId(), retained.eventDigest()));
+    Event retainedAfterDelete =
+        inTransaction(transaction, () -> repository.findEvent(stream, 1L)).orElseThrow();
+    assertThat(retainedAfterDelete).isEqualTo(retained);
+    assertThat(retainedAfterDelete.eventId()).isEqualTo(retained.eventId());
+    assertThat(retainedAfterDelete.eventDigest()).isEqualTo(retained.eventDigest());
+    assertThat(retainedAfterDelete.payload()).containsExactly(retainedPayload);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_streams "
+                        + "WHERE outbox_stream_key = ?",
+                    stream)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT count(*) FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ?",
+                    stream)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
   }
 
   @Test
