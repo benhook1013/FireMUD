@@ -1,0 +1,126 @@
+{
+  "schemaVersion": "account-auth-issuer-generation-event-vectors/v1",
+  "validEvents": [
+    {
+      "name": "issuer-generation-advance",
+      "event": {
+        "schemaVersion": "account-auth-issuer-generation-event/v1",
+        "eventType": "ISSUER_GENERATION_ADVANCED",
+        "eventId": "event-issuer-generation-001",
+        "requestId": "request-issuer-generation-001",
+        "issuerId": "https://Auth.FireMUD.example/issuer",
+        "sourceScope": "issuer/https://Auth.FireMUD.example/issuer",
+        "outboxStreamKey": "account:auth-authority:v1:issuer/https://Auth.FireMUD.example/issuer",
+        "outboxSequence": "7",
+        "issuerAuthGeneration": "5",
+        "sourceVersion": "6",
+        "eventDigest": "sha256:df88f7ee54a9f24102b6fbecc5a93595091e2d6a1fc7fca8ba2d8bbbc08cb735"
+      },
+      "expectedEventDigest": "sha256:df88f7ee54a9f24102b6fbecc5a93595091e2d6a1fc7fca8ba2d8bbbc08cb735",
+      "expectedCanonicalJson": "{\"eventDigest\":\"sha256:df88f7ee54a9f24102b6fbecc5a93595091e2d6a1fc7fca8ba2d8bbbc08cb735\",\"eventId\":\"event-issuer-generation-001\",\"eventType\":\"ISSUER_GENERATION_ADVANCED\",\"issuerAuthGeneration\":\"5\",\"issuerId\":\"https://Auth.FireMUD.example/issuer\",\"outboxSequence\":\"7\",\"outboxStreamKey\":\"account:auth-authority:v1:issuer/https://Auth.FireMUD.example/issuer\",\"requestId\":\"request-issuer-generation-001\",\"schemaVersion\":\"account-auth-issuer-generation-event/v1\",\"sourceScope\":\"issuer/https://Auth.FireMUD.example/issuer\",\"sourceVersion\":\"6\"}"
+    },
+    {
+      "name": "arbitrary-precision-counters",
+      "event": {
+        "schemaVersion": "account-auth-issuer-generation-event/v1",
+        "eventType": "ISSUER_GENERATION_ADVANCED",
+        "eventId": "event-issuer-generation-large",
+        "requestId": "request-issuer-generation-large",
+        "issuerId": "https://Auth.FireMUD.example/issuer",
+        "sourceScope": "issuer/https://Auth.FireMUD.example/issuer",
+        "outboxStreamKey": "account:auth-authority:v1:issuer/https://Auth.FireMUD.example/issuer",
+        "outboxSequence": "18446744073709551616000000000000000001",
+        "issuerAuthGeneration": "92233720368547758081234567890123456789",
+        "sourceVersion": "90071992547409931234567890123456789",
+        "eventDigest": "sha256:98b9c742c3267d4db283196c1d80865c3ab9227df08c6efd8c7025d46c79ee5c"
+      },
+      "expectedEventDigest": "sha256:98b9c742c3267d4db283196c1d80865c3ab9227df08c6efd8c7025d46c79ee5c",
+      "expectedCanonicalJson": "{\"eventDigest\":\"sha256:98b9c742c3267d4db283196c1d80865c3ab9227df08c6efd8c7025d46c79ee5c\",\"eventId\":\"event-issuer-generation-large\",\"eventType\":\"ISSUER_GENERATION_ADVANCED\",\"issuerAuthGeneration\":\"92233720368547758081234567890123456789\",\"issuerId\":\"https://Auth.FireMUD.example/issuer\",\"outboxSequence\":\"18446744073709551616000000000000000001\",\"outboxStreamKey\":\"account:auth-authority:v1:issuer/https://Auth.FireMUD.example/issuer\",\"requestId\":\"request-issuer-generation-large\",\"schemaVersion\":\"account-auth-issuer-generation-event/v1\",\"sourceScope\":\"issuer/https://Auth.FireMUD.example/issuer\",\"sourceVersion\":\"90071992547409931234567890123456789\"}"
+    }
+  ],
+  "canonicalReorderedPropertyOrder": [
+    "sourceVersion",
+    "sourceScope",
+    "schemaVersion",
+    "requestId",
+    "outboxStreamKey",
+    "outboxSequence",
+    "issuerId",
+    "issuerAuthGeneration",
+    "eventType",
+    "eventId",
+    "eventDigest"
+  ],
+  "changedDeclaredFieldMutations": [
+    {
+      "name": "schema-version",
+      "sealValid": false,
+      "changes": {"schemaVersion": "account-auth-issuer-generation-event/v2"}
+    },
+    {
+      "name": "event-type",
+      "sealValid": false,
+      "changes": {"eventType": "ISSUER_GENERATION_RESET"}
+    },
+    {
+      "name": "event-id",
+      "sealValid": true,
+      "changes": {"eventId": "event-issuer-generation-changed"}
+    },
+    {
+      "name": "request-id",
+      "sealValid": true,
+      "changes": {"requestId": "request-issuer-generation-changed"}
+    },
+    {
+      "name": "issuer-id-preserves-exact-spelling",
+      "sealValid": true,
+      "changes": {
+        "issuerId": "https://auth.firemud.example/issuer",
+        "sourceScope": "issuer/https://auth.firemud.example/issuer",
+        "outboxStreamKey": "account:auth-authority:v1:issuer/https://auth.firemud.example/issuer"
+      }
+    },
+    {
+      "name": "source-scope",
+      "sealValid": false,
+      "changes": {"sourceScope": "issuer/https://other.firemud.example/issuer"}
+    },
+    {
+      "name": "outbox-stream-key",
+      "sealValid": false,
+      "changes": {"outboxStreamKey": "account:auth-authority:v1:issuer/https://other.firemud.example/issuer"}
+    },
+    {
+      "name": "outbox-sequence",
+      "sealValid": true,
+      "changes": {"outboxSequence": "8"}
+    },
+    {
+      "name": "issuer-auth-generation",
+      "sealValid": true,
+      "changes": {"issuerAuthGeneration": "6"}
+    },
+    {
+      "name": "source-version",
+      "sealValid": true,
+      "changes": {"sourceVersion": "7"}
+    }
+  ],
+  "invalidMutations": [
+    {"name": "missing-required-source-version", "op": "remove", "path": "/sourceVersion"},
+    {"name": "unknown-top-level-property", "op": "add", "path": "/unexpected", "value": true},
+    {"name": "null-issuer", "op": "replace", "path": "/issuerId", "value": null},
+    {"name": "wrong-type-sequence", "op": "replace", "path": "/outboxSequence", "value": 7},
+    {"name": "array-issuer", "op": "replace", "path": "/issuerId", "value": ["https://Auth.FireMUD.example/issuer"]},
+    {"name": "blank-issuer", "op": "replace", "path": "/issuerId", "value": "  \t"},
+    {"name": "empty-event-id", "op": "replace", "path": "/eventId", "value": ""},
+    {"name": "empty-request-id", "op": "replace", "path": "/requestId", "value": ""},
+    {"name": "zero-sequence", "op": "replace", "path": "/outboxSequence", "value": "0"},
+    {"name": "leading-zero-generation", "op": "replace", "path": "/issuerAuthGeneration", "value": "05"},
+    {"name": "negative-source-version", "op": "replace", "path": "/sourceVersion", "value": "-1"},
+    {"name": "mismatched-source-scope", "op": "replace", "path": "/sourceScope", "value": "issuer/https://other.firemud.example/issuer"},
+    {"name": "mismatched-stream-key", "op": "replace", "path": "/outboxStreamKey", "value": "account:auth-authority:v1:issuer/https://other.firemud.example/issuer"},
+    {"name": "invalid-digest", "op": "replace", "path": "/eventDigest", "value": "sha256:1111111111111111111111111111111111111111111111111111111111111111"}
+  ]
+}

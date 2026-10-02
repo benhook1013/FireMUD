@@ -37,6 +37,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolu
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -73,6 +74,7 @@ public class PlayCommandHandler {
   private final GameplayWorldCatalog gameplayWorldCatalog;
   private final GameLogicProperties gameLogicProperties;
   private final AccountClient accountClient;
+  private final RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver;
   private final EntityManagementClient entityManagementClient;
   private final ModerationPolicyClient moderationPolicyClient;
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry;
@@ -89,6 +91,7 @@ public class PlayCommandHandler {
       GameplayWorldCatalog gameplayWorldCatalog,
       GameLogicProperties gameLogicProperties,
       AccountClient accountClient,
+      RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver,
       EntityManagementClient entityManagementClient,
       ModerationPolicyClient moderationPolicyClient,
       FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
@@ -109,6 +112,10 @@ public class PlayCommandHandler {
     this.gameLogicProperties =
         Objects.requireNonNull(gameLogicProperties, "gameLogicProperties must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
+    this.retainedRuntimeTenantUuidResolver =
+        Objects.requireNonNull(
+            retainedRuntimeTenantUuidResolver,
+            "retainedRuntimeTenantUuidResolver must not be null");
     this.entityManagementClient =
         Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
     this.moderationPolicyClient =
@@ -232,13 +239,21 @@ public class PlayCommandHandler {
         if (connectScopeFailure.isPresent()) {
           return connectScopeFailure.get();
         }
+        Optional<UUID> canonicalTenantId =
+            retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(selectedRealm.tenantId());
+        if (canonicalTenantId.isEmpty()
+            || !AccountIds.isCanonicalNonNilUuid(canonicalTenantId.orElseThrow().toString())) {
+          return authorityUnavailableFailure(
+              selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), 0L);
+        }
         Optional<PlayCommandHandlingResult> authorityFailure =
             validateRuntimeAdmission(
                 context,
                 selectedWorld,
                 selectedRealm,
                 selectedTenantTag,
-                selection.characterSelector());
+                selection.characterSelector(),
+                canonicalTenantId.orElseThrow());
         if (authorityFailure.isPresent()) {
           return authorityFailure.get();
         }
@@ -635,7 +650,8 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld,
       GameplayWorldCatalog.RealmView selectedRealm,
       String tenantTag,
-      String requestedCharacter) {
+      String requestedCharacter,
+      UUID canonicalTenantId) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
     // This is only a denial-cleanup hint for an already bound runtime, never actor admission.
     long requestedCharacterId =
@@ -644,8 +660,7 @@ public class PlayCommandHandler {
             ? context.characterId()
             : 0L;
     GetTenantEntitlementsForRuntimeResponse entitlementResponse =
-        accountClient.getTenantEntitlementsForRuntime(
-            Long.toString(selectedRealm.tenantId()), requestId);
+        accountClient.getTenantEntitlementsForRuntime(canonicalTenantId.toString(), requestId);
     Optional<PlayCommandHandlingResult> entitlementFailure =
         validateEntitlementsResponse(
             entitlementResponse,
@@ -653,14 +668,20 @@ public class PlayCommandHandler {
             tenantTag,
             selectedWorld,
             selectedRealm,
-            requestedCharacterId);
+            requestedCharacterId,
+            canonicalTenantId.toString());
     if (entitlementFailure.isPresent()) {
       return entitlementFailure;
     }
 
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
-            membershipPlayerContext(context, selectedRealm, requestedCharacterId, requestId));
+            membershipPlayerContext(
+                context,
+                selectedRealm,
+                requestedCharacterId,
+                requestId,
+                canonicalTenantId.toString()));
     return validateMembershipResponse(
         membershipResponse,
         context,
@@ -669,7 +690,8 @@ public class PlayCommandHandler {
         selectedRealm,
         requestedCharacterId,
         entitlementResponse.getAllowPublicJoin(),
-        requestId);
+        requestId,
+        canonicalTenantId.toString());
   }
 
   private long requireResolvedCharacterId(String characterId) {
@@ -707,7 +729,8 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.RealmView selectedRealm,
       long requestedCharacterId,
       boolean allowPublicJoin,
-      String requestId) {
+      String requestId,
+      String canonicalTenantId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
       if (!isAuthorityUnavailable(maybeError.orElseThrow())) {
@@ -719,7 +742,8 @@ public class PlayCommandHandler {
           authorityUnavailableFailure(
               tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
     }
-    if (!isSafeMembershipAuthorityResponse(response, context, selectedRealm, requestId)) {
+    if (!isSafeMembershipAuthorityResponse(
+        response, context, selectedRealm, canonicalTenantId, requestId)) {
       return Optional.of(
           authorityUnavailableFailure(
               tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
@@ -769,12 +793,19 @@ public class PlayCommandHandler {
       GetRealmAccessGrantForRuntimeResponse grantResponse =
           accountClient.getRealmAccessGrantForRuntime(
               context.accountId(),
-              Long.toString(selectedRealm.tenantId()),
+              canonicalTenantId,
               selectedWorld.slug(),
               selectedRealm.slug(),
               requestId);
       Optional<ErrorDetail> grantError = extractError(grantResponse.getError());
       if (grantError.isPresent() && isAuthorityUnavailable(grantError.get())) {
+        return Optional.of(
+            authorityUnavailableFailure(
+                tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
+      }
+      if (grantError.isEmpty()
+          && !isSafeRealmAccessGrantResponse(
+              grantResponse, context, canonicalTenantId, selectedWorld, selectedRealm)) {
         return Optional.of(
             authorityUnavailableFailure(
                 tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
@@ -1057,10 +1088,11 @@ public class PlayCommandHandler {
       SessionContext caller,
       GameplayWorldCatalog.RealmView target,
       long characterId,
-      String requestId) {
+      String requestId,
+      String canonicalTenantId) {
     return PlayerExecutionContext.newBuilder()
         .setAccountId(caller.accountId())
-        .setTenantId(Long.toString(target.tenantId()))
+        .setTenantId(canonicalTenantId)
         .setRealmId(Objects.toString(target.realmId(), ""))
         .setPlayableStateNamespaceId(Objects.toString(target.playableStateNamespaceId(), ""))
         .setPlayableStateScope(Objects.toString(target.stateScope(), ""))
@@ -1155,7 +1187,8 @@ public class PlayCommandHandler {
       String tenantTag,
       GameplayWorldCatalog.WorldView selectedWorld,
       GameplayWorldCatalog.RealmView selectedRealm,
-      long requestedCharacterId) {
+      long requestedCharacterId,
+      String canonicalTenantId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
       if (isEntitlementUnavailable(maybeError.get())) {
@@ -1172,7 +1205,7 @@ public class PlayCommandHandler {
           tenantBillingBlockedFailure(
               context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
     }
-    if (!isSafeEntitlementAuthorityResponse(response, selectedRealm)) {
+    if (!isSafeEntitlementAuthorityResponse(response, canonicalTenantId)) {
       return Optional.of(
           entitlementUnavailableFailure(
               tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
@@ -1301,6 +1334,7 @@ public class PlayCommandHandler {
       GetTenantMembershipForRuntimeResponse response,
       SessionContext context,
       GameplayWorldCatalog.RealmView selectedRealm,
+      String canonicalTenantId,
       String requestId) {
     if (!"AVAILABLE".equals(response.getAuthorityAvailability())
         || !StringUtils.hasText(response.getAccountId())
@@ -1308,8 +1342,9 @@ public class PlayCommandHandler {
         || !StringUtils.hasText(response.getEvaluatedAt())
         || !AccountIds.isCanonicalNonNilUuid(response.getAccountId())
         || !isCanonicalUuid(response.getTenantId())
+        || !response.getTenantId().equals(canonicalTenantId)
         || !response.getRequestAccountId().equals(context.accountId())
-        || !response.getRequestTenantId().equals(Long.toString(selectedRealm.tenantId()))
+        || !response.getRequestTenantId().equals(canonicalTenantId)
         || !response.getRequestId().equals(requestId)) {
       return false;
     }
@@ -1326,23 +1361,36 @@ public class PlayCommandHandler {
   }
 
   private boolean isSafeEntitlementAuthorityResponse(
-      GetTenantEntitlementsForRuntimeResponse response,
-      GameplayWorldCatalog.RealmView selectedRealm) {
+      GetTenantEntitlementsForRuntimeResponse response, String canonicalTenantId) {
     if (!StringUtils.hasText(response.getTenantId())
         || !StringUtils.hasText(response.getEvaluatedAt())
         || response.getEntitlementVersion() <= 0L) {
       return false;
     }
     try {
-      long tenantId = Long.parseLong(response.getTenantId());
       Instant evaluatedAt = Instant.parse(response.getEvaluatedAt());
       Instant now = Instant.now();
-      return tenantId == selectedRealm.tenantId()
+      return isCanonicalUuid(response.getTenantId())
+          && response.getTenantId().equals(canonicalTenantId)
           && !evaluatedAt.isAfter(now)
           && evaluatedAt.isAfter(now.minus(15, ChronoUnit.SECONDS));
-    } catch (DateTimeParseException | NumberFormatException ex) {
+    } catch (DateTimeParseException ex) {
       return false;
     }
+  }
+
+  private boolean isSafeRealmAccessGrantResponse(
+      GetRealmAccessGrantForRuntimeResponse response,
+      SessionContext context,
+      String canonicalTenantId,
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm) {
+    return AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+        && response.getAccountId().equals(context.accountId())
+        && isCanonicalUuid(response.getTenantId())
+        && response.getTenantId().equals(canonicalTenantId)
+        && response.getWorldSlug().equals(selectedWorld.slug())
+        && response.getRealmSlug().equals(selectedRealm.slug());
   }
 
   private void maybeRecordFreshEntryFallback(

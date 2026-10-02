@@ -10,6 +10,12 @@ import org.junit.jupiter.api.Test;
 
 class GameplaySessionAttestationServiceTest {
 
+  private static final String ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String OTHER_ACCOUNT_UUID = "a7e0feac-60ab-4fd1-9002-0ad38d585db0";
+  private static final String NIL_UUID = "00000000-0000-0000-0000-000000000000";
+  private static final List<String> INVALID_ACCOUNT_IDS =
+      List.of("7", "not-a-uuid", "123E4567-E89B-12D3-A456-426614174000", NIL_UUID);
+
   private final JwtUtil jwtUtil;
   private final GameplaySessionAttestationService service;
 
@@ -22,23 +28,80 @@ class GameplaySessionAttestationServiceTest {
   void requireGameplaySessionMatchAllowsOmittedOptionalDimensions() {
     String token =
         service.issueGameplaySessionAttestation(
-            "22", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
     assertDoesNotThrow(
         () -> service.requireGameplaySessionMatch(token, "22", null, null, "123", "1", "R-1021"));
   }
 
   @Test
+  void requireGameplaySessionMatchAcceptsUuidAccountWithNumericRuntimeTenant() {
+    String token =
+        service.issueGameplaySessionAttestation(
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+
+    assertDoesNotThrow(
+        () ->
+            service.requireGameplaySessionMatch(
+                token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
+  }
+
+  @Test
+  void issueGameplaySessionAttestationRejectsInvalidAccountIds() {
+    for (String accountId : INVALID_ACCOUNT_IDS) {
+      IllegalArgumentException ex =
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  service.issueGameplaySessionAttestation(
+                      "22",
+                      "41",
+                      accountId,
+                      "123",
+                      "1",
+                      "R-1021",
+                      "demo",
+                      "production",
+                      "17",
+                      "SHARED"));
+
+      assertEquals("accountId must be a canonical non-nil UUID", ex.getMessage());
+    }
+  }
+
+  @Test
+  void requireGameplaySessionMatchRejectsInvalidAccountIdClaims() {
+    for (String accountId : INVALID_ACCOUNT_IDS) {
+      GameplaySessionAttestationException ex =
+          assertThrows(
+              GameplaySessionAttestationException.class,
+              () ->
+                  service.requireGameplaySessionMatch(
+                      gameplayTokenWithAccountId(accountId),
+                      "22",
+                      "41",
+                      ACCOUNT_UUID,
+                      "123",
+                      "1",
+                      "R-1021"));
+
+      assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
+      assertEquals("Malformed claim: accountId", ex.getMessage());
+    }
+  }
+
+  @Test
   void requireGameplaySessionMatchStillRejectsProvidedMismatchedDimensions() {
     String token =
         service.issueGameplaySessionAttestation(
-            "22", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
             GameplaySessionAttestationException.class,
             () ->
-                service.requireGameplaySessionMatch(token, "22", "41", "99", "123", "1", "R-1021"));
+                service.requireGameplaySessionMatch(
+                    token, "22", "41", OTHER_ACCOUNT_UUID, "123", "1", "R-1021"));
 
     assertEquals("SESSION_ATTESTATION_MISMATCH", ex.getCode());
     assertEquals("Gameplay session attestation does not match accountId", ex.getMessage());
@@ -48,23 +111,26 @@ class GameplaySessionAttestationServiceTest {
   void requireGameplaySessionMatchAllowsAlphanumericRoomInstanceId() {
     String token =
         service.issueGameplaySessionAttestation(
-            "22", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
     assertDoesNotThrow(
-        () -> service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "R-1021"));
+        () ->
+            service.requireGameplaySessionMatch(
+                token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
   }
 
   @Test
   void requireGameplaySessionMatchRejectsMismatchedAlphanumericRoomInstanceId() {
     String token =
         service.issueGameplaySessionAttestation(
-            "22", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
             GameplaySessionAttestationException.class,
             () ->
-                service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "R-2045"));
+                service.requireGameplaySessionMatch(
+                    token, "22", "41", ACCOUNT_UUID, "123", "1", "R-2045"));
 
     assertEquals("SESSION_ATTESTATION_MISMATCH", ex.getCode());
     assertEquals("Gameplay session attestation does not match roomInstanceId", ex.getMessage());
@@ -79,7 +145,7 @@ class GameplaySessionAttestationServiceTest {
                 Map.entry("attestationType", "GAMEPLAY_SESSION"),
                 Map.entry("tenantId", "22"),
                 Map.entry("sessionId", "41"),
-                Map.entry("accountId", "7"),
+                Map.entry("accountId", ACCOUNT_UUID),
                 Map.entry("characterId", "123"),
                 Map.entry("gameInstanceId", "1"),
                 Map.entry("roomInstanceId", "room-1021"),
@@ -92,7 +158,8 @@ class GameplaySessionAttestationServiceTest {
         assertThrows(
             GameplaySessionAttestationException.class,
             () ->
-                service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "R-1021"));
+                service.requireGameplaySessionMatch(
+                    token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("roomInstanceId must be a runtime room id like R-1021", ex.getMessage());
@@ -102,7 +169,7 @@ class GameplaySessionAttestationServiceTest {
   void requireGameplaySessionMatchRejectsMismatchedAttestedRoutingScope() {
     String token =
         service.issueGameplaySessionAttestation(
-            "22", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
@@ -112,7 +179,7 @@ class GameplaySessionAttestationServiceTest {
                     token,
                     "22",
                     "41",
-                    "7",
+                    ACCOUNT_UUID,
                     "123",
                     "1",
                     "R-1021",
@@ -129,12 +196,14 @@ class GameplaySessionAttestationServiceTest {
   void requireGameplaySessionMatchRejectsZeroTenantIdClaim() {
     String token =
         service.issueGameplaySessionAttestation(
-            "0", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+            "0", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
             GameplaySessionAttestationException.class,
-            () -> service.requireGameplaySessionMatch(token, "0", "41", "7", "123", "1", "R-1021"));
+            () ->
+                service.requireGameplaySessionMatch(
+                    token, "0", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("Invalid claim: tenantId", ex.getMessage());
@@ -144,13 +213,14 @@ class GameplaySessionAttestationServiceTest {
   void requireGameplaySessionMatchRejectsZeroPointerVersionClaim() {
     String token =
         service.issueGameplaySessionAttestation(
-            "22", "41", "7", "123", "1", "R-1021", "demo", "production", "0", "SHARED");
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "0", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
             GameplaySessionAttestationException.class,
             () ->
-                service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "R-1021"));
+                service.requireGameplaySessionMatch(
+                    token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("Invalid claim: pointerVersion", ex.getMessage());
@@ -165,7 +235,7 @@ class GameplaySessionAttestationServiceTest {
                 Map.entry("attestationType", "GAMEPLAY_SESSION"),
                 Map.entry("tenantId", "22"),
                 Map.entry("sessionId", "41"),
-                Map.entry("accountId", "7"),
+                Map.entry("accountId", ACCOUNT_UUID),
                 Map.entry("characterId", "abc"),
                 Map.entry("gameInstanceId", "1"),
                 Map.entry("roomInstanceId", "R-1021"),
@@ -178,7 +248,8 @@ class GameplaySessionAttestationServiceTest {
         assertThrows(
             GameplaySessionAttestationException.class,
             () ->
-                service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "R-1021"));
+                service.requireGameplaySessionMatch(
+                    token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("Malformed claim: characterId", ex.getMessage());
@@ -193,7 +264,7 @@ class GameplaySessionAttestationServiceTest {
                 Map.entry("attestationType", "GAMEPLAY_SESSION"),
                 Map.entry("tenantId", "22"),
                 Map.entry("sessionId", "41"),
-                Map.entry("accountId", "7"),
+                Map.entry("accountId", ACCOUNT_UUID),
                 Map.entry("characterId", "123"),
                 Map.entry("gameInstanceId", "1"),
                 Map.entry("roomInstanceId", "R-1021"),
@@ -206,17 +277,18 @@ class GameplaySessionAttestationServiceTest {
         assertThrows(
             GameplaySessionAttestationException.class,
             () ->
-                service.requireGameplaySessionMatch(token, "22", "41", "7", "123", "1", "R-1021"));
+                service.requireGameplaySessionMatch(
+                    token, "22", "41", ACCOUNT_UUID, "123", "1", "R-1021"));
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
     assertEquals("Gameplay session attestation subject does not match claims", ex.getMessage());
   }
 
   @Test
-  void requireGameplaySessionMatchRejectsNonPositiveExpectedAccountId() {
+  void requireGameplaySessionMatchRejectsMalformedExpectedAccountId() {
     String token =
         service.issueGameplaySessionAttestation(
-            "22", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED");
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "demo", "production", "17", "SHARED");
 
     GameplaySessionAttestationException ex =
         assertThrows(
@@ -225,7 +297,7 @@ class GameplaySessionAttestationServiceTest {
                 service.requireGameplaySessionMatch(token, "22", null, "0", "123", "1", "R-1021"));
 
     assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
-    assertEquals("Invalid claim: accountId", ex.getMessage());
+    assertEquals("Malformed claim: accountId", ex.getMessage());
   }
 
   @Test
@@ -233,6 +305,19 @@ class GameplaySessionAttestationServiceTest {
     String token = service.issueInternalProbeAttestation("22", "1", "R-1021");
 
     assertDoesNotThrow(() -> service.requireGameplayOrProbeMatch(token, "22", "1", "R-1021"));
+  }
+
+  @Test
+  void requireGameplayOrProbeMatchRejectsInvalidAccountIdOnGameplayAttestation() {
+    GameplaySessionAttestationException ex =
+        assertThrows(
+            GameplaySessionAttestationException.class,
+            () ->
+                service.requireGameplayOrProbeMatch(
+                    gameplayTokenWithAccountId("7"), "22", "1", "R-1021"));
+
+    assertEquals("SESSION_ATTESTATION_INVALID", ex.getCode());
+    assertEquals("Malformed claim: accountId", ex.getMessage());
   }
 
   @Test
@@ -331,7 +416,7 @@ class GameplaySessionAttestationServiceTest {
                 service.issueGameplaySessionAttestation(
                     "22",
                     "41",
-                    "7",
+                    ACCOUNT_UUID,
                     "123",
                     "1",
                     "room-1021",
@@ -371,7 +456,16 @@ class GameplaySessionAttestationServiceTest {
     GameplaySessionAttestationClaims claims =
         service.requireValid(
             service.issueGameplaySessionAttestation(
-                "22", "41", "7", "123", "1", "R-1021", "demo", "production", "17", "SHARED"));
+                "22",
+                "41",
+                ACCOUNT_UUID,
+                "123",
+                "1",
+                "R-1021",
+                "demo",
+                "production",
+                "17",
+                "SHARED"));
 
     assertDoesNotThrow(() -> service.requireAdmittedRoutingBundle(claims));
   }
@@ -386,7 +480,7 @@ class GameplaySessionAttestationServiceTest {
                     Map.entry("attestationType", "GAMEPLAY_SESSION"),
                     Map.entry("tenantId", "22"),
                     Map.entry("sessionId", "41"),
-                    Map.entry("accountId", "7"),
+                    Map.entry("accountId", ACCOUNT_UUID),
                     Map.entry("characterId", "123"),
                     Map.entry("gameInstanceId", "1"),
                     Map.entry("roomInstanceId", "R-1021"),
@@ -411,7 +505,16 @@ class GameplaySessionAttestationServiceTest {
             IllegalArgumentException.class,
             () ->
                 service.issueGameplaySessionAttestation(
-                    "22", "41", "7", "123", "1", "R-1021", null, "production", null, "SHARED"));
+                    "22",
+                    "41",
+                    ACCOUNT_UUID,
+                    "123",
+                    "1",
+                    "R-1021",
+                    null,
+                    "production",
+                    null,
+                    "SHARED"));
 
     assertEquals("worldSlug must not be blank", ex.getMessage());
   }
@@ -425,7 +528,7 @@ class GameplaySessionAttestationServiceTest {
                 Map.entry("attestationType", "GAMEPLAY_SESSION"),
                 Map.entry("tenantId", List.of(" ", "22")),
                 Map.entry("sessionId", "41"),
-                Map.entry("accountId", "7"),
+                Map.entry("accountId", ACCOUNT_UUID),
                 Map.entry("characterId", "123"),
                 Map.entry("gameInstanceId", "1"),
                 Map.entry("roomInstanceId", List.of("", "R-1021")),
@@ -439,5 +542,22 @@ class GameplaySessionAttestationServiceTest {
     assertEquals("22", claims.tenantId());
     assertEquals("R-1021", claims.roomInstanceId());
     assertEquals("demo", claims.worldSlug());
+  }
+
+  private String gameplayTokenWithAccountId(String accountId) {
+    return jwtUtil.generateToken(
+        "gameplay-session:41",
+        Map.ofEntries(
+            Map.entry("attestationType", "GAMEPLAY_SESSION"),
+            Map.entry("tenantId", "22"),
+            Map.entry("sessionId", "41"),
+            Map.entry("accountId", accountId),
+            Map.entry("characterId", "123"),
+            Map.entry("gameInstanceId", "1"),
+            Map.entry("roomInstanceId", "R-1021"),
+            Map.entry("worldSlug", "demo"),
+            Map.entry("realmSlug", "production"),
+            Map.entry("pointerVersion", "17"),
+            Map.entry("playableStateScope", "SHARED")));
   }
 }

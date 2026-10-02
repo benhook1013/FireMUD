@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -34,6 +35,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegist
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -55,12 +57,15 @@ class LoginCommandHandlerTest {
   private static final String ACCOUNT_77 = "774f987b-6650-4d04-8e0f-441867c17923";
   private static final String ACCOUNT_99 = "998a7412-13c4-4dbc-86d9-8f40aee3c6f1";
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String CANONICAL_TENANT_UUID = "7c958a3d-401e-47ee-8df8-351988b6ce26";
 
   private final GameInstanceRepository gameInstanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final SessionContextService sessionContextService =
       Mockito.mock(SessionContextService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver =
+      Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
   private final FirstPartyConnectContextRegistry firstPartyConnectContextRegistry =
       Mockito.mock(FirstPartyConnectContextRegistry.class);
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService =
@@ -74,6 +79,8 @@ class LoginCommandHandlerTest {
 
   @BeforeEach
   void setUp() {
+    Mockito.when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(UUID.fromString(CANONICAL_TENANT_UUID)));
     meterRegistry.clear();
     stubSessionContext(bootstrapShell(1L, 1L));
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
@@ -1740,6 +1747,7 @@ class LoginCommandHandlerTest {
         GameplayWorldCatalog.forWorldViews(List.of()),
         new GameLogicProperties(),
         accountClient,
+        retainedRuntimeTenantUuidResolver,
         Mockito.mock(EntityManagementClient.class),
         Mockito.mock(ModerationPolicyClient.class),
         firstPartyConnectContextRegistry,

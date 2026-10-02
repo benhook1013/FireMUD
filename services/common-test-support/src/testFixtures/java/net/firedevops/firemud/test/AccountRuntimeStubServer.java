@@ -7,7 +7,6 @@ import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -183,35 +182,50 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void getTenantMembershipForRuntime(
       GetTenantMembershipForRuntimeRequest request,
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
+    String accountUuid;
+    String tenantUuid;
+    try {
+      accountUuid = requireCanonicalAccountUuid(request.getPlayerContext().getAccountId());
+      tenantUuid = requireCanonicalTenantUuid(request.getPlayerContext().getTenantId());
+    } catch (IllegalArgumentException exception) {
+      responseObserver.onNext(
+          GetTenantMembershipForRuntimeResponse.newBuilder()
+              .setError(
+                  ErrorDetail.newBuilder()
+                      .setCode("INVALID_ARGUMENT")
+                      .setMessage("Runtime membership context requires canonical non-nil UUIDs"))
+              .build());
+      responseObserver.onCompleted();
+      return;
+    }
+
     boolean exists = membershipExists.get();
-    String accountUuid = requireCanonicalAccountUuid(request.getPlayerContext().getAccountId());
-    String tenantSelector = request.getPlayerContext().getTenantId();
     String lifecycle = membershipLifecycleState.get();
     boolean admitted = gameplayAdmissionAllowed.get();
     GetTenantMembershipForRuntimeResponse response;
     if (exists && admitted && "ACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle);
     } else if (exists && !admitted && "INACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle);
     } else if (!exists && !admitted && "MISSING".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle);
     } else {
       response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
               .setAccountId(accountUuid)
-              .setTenantId(syntheticTenantUuid(tenantSelector))
+              .setTenantId(tenantUuid)
               .setRequestAccountId(accountUuid)
-              .setRequestTenantId(tenantSelector)
+              .setRequestTenantId(tenantUuid)
               .setRequestId(request.getPlayerContext().getRequestId())
               .setMembershipExists(exists)
               .setMembershipLifecycleState(lifecycle)
-              .setGameplayAdmissionAllowed(admitted)
+              .setGameplayAdmissionAllowed(false)
               .setEvaluatedAt(Instant.now().toString())
               .build();
     }
@@ -220,10 +234,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   private static GetTenantMembershipForRuntimeResponse completeMembershipSnapshot(
-      String accountUuid, String tenantSelector, String requestId, String lifecycle) {
+      String accountUuid, String tenantUuid, String requestId, String lifecycle) {
     boolean exists = !"MISSING".equals(lifecycle);
     boolean admitted = "ACTIVE".equals(lifecycle);
-    String tenantUuid = syntheticTenantUuid(tenantSelector);
     String membershipStream =
         AUTHORITY_STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
     List<RuntimeOutboxCheckpoint> checkpoints =
@@ -253,7 +266,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setAccountId(accountUuid)
             .setTenantId(tenantUuid)
             .setRequestAccountId(accountUuid)
-            .setRequestTenantId(tenantSelector)
+            .setRequestTenantId(tenantUuid)
             .setRequestId(requestId)
             .setAuthorityAvailability("AVAILABLE")
             .setMembershipExists(exists)
@@ -333,14 +346,21 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     return selector;
   }
 
-  private static String syntheticTenantUuid(String selector) {
-    // This stable UUID-shaped key is only a legacy synthetic-tenant test fixture. It is not
-    // evidence of an Account-owned tenant identity or an authenticated membership snapshot.
-    long value = Long.parseLong(selector);
-    if (value <= 0L || !Long.toString(value).equals(selector)) {
-      throw new IllegalArgumentException("synthetic tenant fixture selector must be canonical");
+  private static String requireCanonicalTenantUuid(String tenantUuid) {
+    if (tenantUuid == null) {
+      throw new IllegalArgumentException("Tenant UUID must be canonical and non-nil");
     }
-    return "00000000-0000-0000-0000-" + String.format(Locale.ROOT, "%012d", value);
+    UUID parsed;
+    try {
+      parsed = UUID.fromString(tenantUuid);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("Tenant UUID must be canonical and non-nil", exception);
+    }
+    if ((parsed.getMostSignificantBits() == 0L && parsed.getLeastSignificantBits() == 0L)
+        || !parsed.toString().equals(tenantUuid)) {
+      throw new IllegalArgumentException("Tenant UUID must be canonical and non-nil");
+    }
+    return tenantUuid;
   }
 
   @Override

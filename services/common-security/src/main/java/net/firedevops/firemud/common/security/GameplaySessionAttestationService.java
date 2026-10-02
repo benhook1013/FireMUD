@@ -3,12 +3,14 @@ package net.firedevops.firemud.common.security;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.util.StringUtils;
 
 /** Issues and validates signed gameplay-session attestations for delegated gameplay RPCs. */
 public class GameplaySessionAttestationService {
   public static final String GAMEPLAY_SESSION = "GAMEPLAY_SESSION";
   public static final String INTERNAL_PROBE = "INTERNAL_PROBE";
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final JwtUtil jwtUtil;
 
@@ -30,7 +32,7 @@ public class GameplaySessionAttestationService {
     String normalizedRoomInstanceId = requireOptionalCanonicalRuntimeRoomId(roomInstanceId);
     requireText(tenantId, "tenantId");
     requireText(sessionId, "sessionId");
-    requireText(accountId, "accountId");
+    requireCanonicalAccountUuidForIssuance(accountId);
     requireText(characterId, "characterId");
     requireText(gameInstanceId, "gameInstanceId");
     requireText(worldSlug, "worldSlug");
@@ -166,13 +168,13 @@ public class GameplaySessionAttestationService {
     }
     requirePositiveId(claims.tenantId(), "tenantId");
     requirePositiveId(claims.sessionId(), "sessionId");
-    requirePositiveId(claims.accountId(), "accountId");
+    requireCanonicalAccountUuidClaim(claims.accountId());
     requirePositiveId(claims.characterId(), "characterId");
     requirePositiveId(claims.gameInstanceId(), "gameInstanceId");
     requirePositiveId(claims.pointerVersion(), "pointerVersion");
     requirePositiveEquals(claims.tenantId(), tenantId, "tenantId");
     requireOptionalPositiveEquals(claims.sessionId(), sessionId, "sessionId");
-    requireOptionalPositiveEquals(claims.accountId(), accountId, "accountId");
+    requireOptionalAccountEquals(claims.accountId(), accountId);
     requireOptionalPositiveEquals(claims.characterId(), characterId, "characterId");
     requireOptionalPositiveEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
     // roomInstanceId remains a routed room identifier string; keep text equality here.
@@ -186,6 +188,9 @@ public class GameplaySessionAttestationService {
   public void requireGameplayOrProbeMatch(
       String token, String tenantId, String gameInstanceId, String roomInstanceId) {
     GameplaySessionAttestationClaims claims = requireValid(token);
+    if (GAMEPLAY_SESSION.equals(claims.attestationType())) {
+      requireCanonicalAccountUuidClaim(claims.accountId());
+    }
     requirePositiveEquals(claims.tenantId(), tenantId, "tenantId");
     requirePositiveEquals(claims.gameInstanceId(), gameInstanceId, "gameInstanceId");
     // roomInstanceId remains a routed room identifier string; keep text equality for probe tokens.
@@ -222,6 +227,13 @@ public class GameplaySessionAttestationService {
     }
   }
 
+  private void requireOptionalAccountEquals(String actual, String expected) {
+    if (StringUtils.hasText(expected)) {
+      requireCanonicalAccountUuidClaim(expected);
+      requireEquals(actual, expected, "accountId");
+    }
+  }
+
   private void requireClaimsType(GameplaySessionAttestationClaims claims, String expectedType) {
     if (claims == null || !expectedType.equals(claims.attestationType())) {
       throw new GameplaySessionAttestationException(
@@ -242,6 +254,31 @@ public class GameplaySessionAttestationService {
     } catch (IllegalArgumentException ex) {
       throw new GameplaySessionAttestationException(
           "SESSION_ATTESTATION_INVALID", ex.getMessage(), ex);
+    }
+  }
+
+  private void requireCanonicalAccountUuidForIssuance(String accountId) {
+    if (!isCanonicalNonNilUuid(accountId)) {
+      throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+    }
+  }
+
+  private void requireCanonicalAccountUuidClaim(String accountId) {
+    if (!isCanonicalNonNilUuid(accountId)) {
+      throw new GameplaySessionAttestationException(
+          "SESSION_ATTESTATION_INVALID", "Malformed claim: accountId");
+    }
+  }
+
+  private boolean isCanonicalNonNilUuid(String value) {
+    if (!StringUtils.hasText(value)) {
+      return false;
+    }
+    try {
+      UUID parsed = UUID.fromString(value);
+      return !NIL_UUID.equals(parsed) && parsed.toString().equals(value);
+    } catch (IllegalArgumentException ex) {
+      return false;
     }
   }
 

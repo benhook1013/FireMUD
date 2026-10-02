@@ -6,12 +6,16 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.time.Instant;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.RuntimeOutboxCheckpoint;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.common.account.AccountProfileJson;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
@@ -19,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerTest {
   private static final String ACCOUNT_UUID = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
+  private static final String TENANT_UUID = "784e0d9c-714f-4a22-9404-04b8b37c8ef1";
   private static final String NIL_ACCOUNT_UUID = "00000000-0000-0000-0000-000000000000";
 
   @Test
@@ -46,7 +51,7 @@ class AccountRuntimeStubServerTest {
                 .setPlayerContext(
                     net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
                         .setAccountId(ACCOUNT_UUID)
-                        .setTenantId("1")
+                        .setTenantId(TENANT_UUID)
                         .setRequestId("request-1"))
                 .build();
         Instant activeBefore = Instant.now();
@@ -57,7 +62,7 @@ class AccountRuntimeStubServerTest {
         assertThat(active.getRequestAccountId()).isEqualTo(ACCOUNT_UUID);
         assertThat(active.getRequestId()).isEqualTo("request-1");
         assertThat(active.getMembershipAuthorityGeneration()).isEqualTo("1");
-        assertMembershipEventMatches(active, "ACTIVE", true);
+        assertMembershipEventMatches(active, "ACTIVE", true, "request-1");
         assertThat(Instant.parse(active.getEvaluatedAt())).isBetween(activeBefore, activeAfter);
 
         var secondRequest =
@@ -67,7 +72,7 @@ class AccountRuntimeStubServerTest {
                 .build();
         var secondActive = stub.getTenantMembershipForRuntime(secondRequest);
         assertThat(secondActive.getRequestId()).isEqualTo("request-2");
-        assertMembershipEventMatches(secondActive, "ACTIVE", true);
+        assertMembershipEventMatches(secondActive, "ACTIVE", true, "request-2");
         assertThat(secondActive.getOutboxSourceEvidence(0).getCanonicalEventJson())
             .isEqualTo(active.getOutboxSourceEvidence(0).getCanonicalEventJson());
         assertThat(secondActive.getOutboxSourceEvidence(0).getEventDigest())
@@ -84,7 +89,7 @@ class AccountRuntimeStubServerTest {
         assertThat(inactive.hasAuthorityTuple()).isTrue();
         assertThat(inactive.getOutboxCheckpointsCount()).isEqualTo(4);
         assertThat(inactive.getOutboxSourceEvidenceCount()).isEqualTo(1);
-        assertMembershipEventMatches(inactive, "INACTIVE", false);
+        assertMembershipEventMatches(inactive, "INACTIVE", false, "request-1");
         assertThat(Instant.parse(inactive.getEvaluatedAt()))
             .isBetween(inactiveBefore, inactiveAfter);
 
@@ -95,7 +100,7 @@ class AccountRuntimeStubServerTest {
         assertThat(membership.getMembershipExists()).isFalse();
         assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
         assertThat(membership.getMembershipLifecycleState()).isEqualTo("MISSING");
-        assertThat(membership.getOutboxSourceEvidenceCount()).isZero();
+        assertMembershipSnapshotMatches(membership, "MISSING", false, false, "request-1", "0");
         assertThat(Instant.parse(membership.getEvaluatedAt()))
             .isBetween(missingBefore, missingAfter);
       } finally {
@@ -104,18 +109,158 @@ class AccountRuntimeStubServerTest {
     }
   }
 
+  @Test
+  void rejectsNonCanonicalRuntimeTenantIdsWithoutReturningMembershipEvidence() throws Exception {
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        List<String> invalidTenantIds =
+            List.of(
+                "1",
+                "00000000-0000-0000-0000-000000000000",
+                TENANT_UUID.toUpperCase(Locale.ROOT),
+                "not-a-uuid");
+
+        for (int index = 0; index < invalidTenantIds.size(); index++) {
+          String tenantId = invalidTenantIds.get(index);
+          var response =
+              stub.withDeadlineAfter(1, TimeUnit.SECONDS)
+                  .getTenantMembershipForRuntime(membershipRequest(tenantId, "invalid-" + index));
+
+          assertThat(response.hasError()).isTrue();
+          assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+          assertThat(response.getError().getMessage()).isNotEmpty();
+          assertThat(response.getAccountId()).isEmpty();
+          assertThat(response.getTenantId()).isEmpty();
+          assertThat(response.getRequestAccountId()).isEmpty();
+          assertThat(response.getRequestTenantId()).isEmpty();
+          assertThat(response.getRequestId()).isEmpty();
+          assertThat(response.getAuthorityAvailability()).isEmpty();
+          assertThat(response.getMembershipVersionMap()).isEmpty();
+          assertThat(response.getOutboxCheckpointsCount()).isZero();
+          assertThat(response.getOutboxSourceEvidenceCount()).isZero();
+          assertThat(response.hasMembershipBaseline()).isFalse();
+          assertThat(response.hasAuthorityTuple()).isFalse();
+        }
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void contradictoryMembershipLifecycleAndAdmissionRemainDenied() throws Exception {
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+
+        server.setGameplayAdmissionAllowed(false);
+        var activeButDenied =
+            stub.getTenantMembershipForRuntime(membershipRequest(TENANT_UUID, "contradictory-1"));
+        assertContradictoryMembershipDenied(activeButDenied, "ACTIVE", "contradictory-1");
+
+        server.denyGameplayAdmission();
+        server.setGameplayAdmissionAllowed(true);
+        var inactiveButAllowed =
+            stub.getTenantMembershipForRuntime(membershipRequest(TENANT_UUID, "contradictory-2"));
+        assertContradictoryMembershipDenied(inactiveButAllowed, "INACTIVE", "contradictory-2");
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  private static GetTenantMembershipForRuntimeRequest membershipRequest(
+      String tenantId, String requestId) {
+    return GetTenantMembershipForRuntimeRequest.newBuilder()
+        .setPlayerContext(
+            net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
+                .setAccountId(ACCOUNT_UUID)
+                .setTenantId(tenantId)
+                .setRequestId(requestId))
+        .build();
+  }
+
+  private static void assertContradictoryMembershipDenied(
+      GetTenantMembershipForRuntimeResponse response, String lifecycle, String requestId) {
+    assertThat(response.getAccountId()).isEqualTo(ACCOUNT_UUID);
+    assertThat(response.getTenantId()).isEqualTo(TENANT_UUID);
+    assertThat(response.getRequestAccountId()).isEqualTo(ACCOUNT_UUID);
+    assertThat(response.getRequestTenantId()).isEqualTo(TENANT_UUID);
+    assertThat(response.getRequestId()).isEqualTo(requestId);
+    assertThat(response.getMembershipExists()).isTrue();
+    assertThat(response.getMembershipLifecycleState()).isEqualTo(lifecycle);
+    assertThat(response.getGameplayAdmissionAllowed()).isFalse();
+    assertThat(response.getAuthorityAvailability()).isEmpty();
+    assertThat(response.getMembershipVersionMap()).isEmpty();
+    assertThat(response.getOutboxCheckpointsCount()).isZero();
+    assertThat(response.getOutboxSourceEvidenceCount()).isZero();
+    assertThat(response.hasMembershipBaseline()).isFalse();
+    assertThat(response.hasAuthorityTuple()).isFalse();
+  }
+
   private static void assertMembershipEventMatches(
-      GetTenantMembershipForRuntimeResponse response, String lifecycle, boolean admitted) {
+      GetTenantMembershipForRuntimeResponse response,
+      String lifecycle,
+      boolean admitted,
+      String requestId) {
+    assertMembershipSnapshotMatches(response, lifecycle, true, admitted, requestId, "1");
     var source = response.getOutboxSourceEvidence(0);
     var event = MembershipAuthorityEventV1Codec.verify(source.getCanonicalEventJson());
+    String membershipStream =
+        "account:auth-authority:v1:membership/" + ACCOUNT_UUID + "/" + TENANT_UUID;
+    var expectedEvent =
+        MembershipAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry("schemaVersion", MembershipAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", MembershipAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry("eventId", "00000000-0000-0000-0000-000000000099"),
+                Map.entry("requestId", "runtime-membership-request"),
+                Map.entry("outboxStreamKey", membershipStream),
+                Map.entry("outboxSequence", "1"),
+                Map.entry("sourceScope", "membership/" + ACCOUNT_UUID + "/" + TENANT_UUID),
+                Map.entry("accountId", ACCOUNT_UUID),
+                Map.entry("tenantId", TENANT_UUID),
+                Map.entry("membershipExists", true),
+                Map.entry("membershipLifecycleState", lifecycle),
+                Map.entry("membershipVersion", Map.of(TENANT_UUID, "1")),
+                Map.entry("membershipAuthorityGeneration", "1"),
+                Map.entry(
+                    "authorityTuple",
+                    Map.of(
+                        "issuerAuthGeneration", "1",
+                        "accountAuthorityGeneration", "1",
+                        "tenantAuthorityGeneration", Map.of(TENANT_UUID, "1"),
+                        "membershipAuthorityGeneration", Map.of(TENANT_UUID, "1"),
+                        "privateRealmGrantVersions", List.of())),
+                Map.entry("issuanceFence", "1"),
+                Map.entry("roles", admitted ? List.of("player") : List.of()),
+                Map.entry("gameplayAdmissionAllowed", admitted),
+                Map.entry("callerBoundAuthorityInvalidated", false)));
+
     assertThat(event.canonicalJson()).isEqualTo(source.getCanonicalEventJson());
+    assertThat(event.canonicalJson()).isEqualTo(expectedEvent.canonicalJson());
     assertThat(event.eventDigest()).isEqualTo(source.getEventDigest());
+    assertThat(event.eventDigest()).isEqualTo(expectedEvent.eventDigest());
+    assertThat(event.schemaVersion()).isEqualTo(MembershipAuthorityEventV1Codec.SCHEMA_VERSION);
+    assertThat(event.eventType()).isEqualTo(MembershipAuthorityEventV1Codec.EVENT_TYPE);
     assertThat(event.eventId()).isEqualTo(source.getEventId());
+    assertThat(event.requestId()).isEqualTo("runtime-membership-request");
     assertThat(event.accountId()).isEqualTo(response.getAccountId());
     assertThat(event.tenantId()).isEqualTo(response.getTenantId());
+    assertThat(event.sourceScope()).isEqualTo("membership/" + ACCOUNT_UUID + "/" + TENANT_UUID);
+    assertThat(event.outboxStreamKey()).isEqualTo(membershipStream);
     assertThat(event.outboxStreamKey()).isEqualTo(source.getOutboxStreamKey());
+    assertThat(event.outboxSequence()).isEqualTo("1");
     assertThat(event.outboxSequence()).isEqualTo(source.getOutboxSequence());
     assertThat(event.membershipLifecycleState()).isEqualTo(lifecycle);
+    assertThat(event.membershipVersion()).containsExactlyEntriesOf(Map.of(TENANT_UUID, "1"));
     assertThat(event.membershipVersion()).isEqualTo(response.getMembershipVersionMap());
     assertThat(event.membershipAuthorityGeneration())
         .isEqualTo(response.getMembershipAuthorityGeneration());
@@ -131,6 +276,69 @@ class AccountRuntimeStubServerTest {
     assertThat(event.issuanceFence()).isEqualTo(response.getIssuanceFence());
     assertThat(event.roles()).containsExactlyElementsOf(response.getRolesList());
     assertThat(event.gameplayAdmissionAllowed()).isEqualTo(admitted);
+  }
+
+  private static void assertMembershipSnapshotMatches(
+      GetTenantMembershipForRuntimeResponse response,
+      String lifecycle,
+      boolean exists,
+      boolean admitted,
+      String requestId,
+      String membershipSequence) {
+    String membershipStream =
+        "account:auth-authority:v1:membership/" + ACCOUNT_UUID + "/" + TENANT_UUID;
+    assertThat(response.getAccountId()).isEqualTo(ACCOUNT_UUID);
+    assertThat(response.getTenantId()).isEqualTo(TENANT_UUID);
+    assertThat(response.getRequestAccountId()).isEqualTo(ACCOUNT_UUID);
+    assertThat(response.getRequestTenantId()).isEqualTo(TENANT_UUID);
+    assertThat(response.getRequestId()).isEqualTo(requestId);
+    assertThat(response.getAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(response.getMembershipExists()).isEqualTo(exists);
+    assertThat(response.getMembershipLifecycleState()).isEqualTo(lifecycle);
+    assertThat(response.getGameplayAdmissionAllowed()).isEqualTo(admitted);
+    assertThat(response.getMembershipVersionMap())
+        .containsExactlyEntriesOf(Map.of(TENANT_UUID, "1"));
+    assertThat(response.getMembershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(response.hasMembershipBaseline()).isTrue();
+    assertThat(response.getMembershipBaseline().getMembershipLifecycleState()).isEqualTo(lifecycle);
+    assertThat(response.getMembershipBaseline().getMembershipVersionMap())
+        .containsExactlyEntriesOf(Map.of(TENANT_UUID, "1"));
+    assertThat(response.getMembershipBaseline().getMembershipAuthorityGeneration()).isEqualTo("1");
+    assertThat(response.hasAuthorityTuple()).isTrue();
+    assertThat(response.getAuthorityTuple().getIssuerAuthGeneration()).isEqualTo("1");
+    assertThat(response.getAuthorityTuple().getAccountAuthorityGeneration()).isEqualTo("1");
+    assertThat(response.getAuthorityTuple().getTenantAuthorityGenerationMap())
+        .containsExactlyEntriesOf(Map.of(TENANT_UUID, "1"));
+    assertThat(response.getAuthorityTuple().getMembershipAuthorityGenerationMap())
+        .containsExactlyEntriesOf(Map.of(TENANT_UUID, "1"));
+    assertThat(response.getAuthorityTuple().getPrivateRealmGrantVersionsList()).isEmpty();
+    assertThat(response.getAuthorityTuple().hasAccountSecurityCutoff()).isFalse();
+    assertThat(response.getAuthorityTuple().hasTenantBillingCutoff()).isFalse();
+    assertThat(response.getIssuanceFence()).isEqualTo("1");
+    assertThat(response.getRolesList())
+        .containsExactlyElementsOf(admitted ? List.of("player") : List.of());
+    assertThat(response.getOutboxCheckpointsList())
+        .containsExactly(
+            checkpoint("account:auth-authority:v1:account/" + ACCOUNT_UUID, "0"),
+            checkpoint("account:auth-authority:v1:issuer/firemud-account-service", "0"),
+            checkpoint(membershipStream, membershipSequence),
+            checkpoint("account:auth-authority:v1:tenant/" + TENANT_UUID, "0"));
+    assertThat(response.getOutboxSourceEvidenceCount()).isEqualTo(exists ? 1 : 0);
+    if (exists) {
+      var source = response.getOutboxSourceEvidence(0);
+      assertThat(source.getOutboxStreamKey()).isEqualTo(membershipStream);
+      assertThat(source.getOutboxSequence()).isEqualTo("1");
+      assertThat(source.getCanonicalEventJson()).isNotEmpty();
+      assertThat(source.getEventId()).isNotEmpty();
+      assertThat(source.getEventDigest()).matches("sha256:[0-9a-f]{64}");
+    }
+  }
+
+  private static RuntimeOutboxCheckpoint checkpoint(String streamKey, String sequence) {
+    return RuntimeOutboxCheckpoint.newBuilder()
+        .setOutboxStreamKey(streamKey)
+        .setOutboxSequence(sequence)
+        .build();
   }
 
   @Test

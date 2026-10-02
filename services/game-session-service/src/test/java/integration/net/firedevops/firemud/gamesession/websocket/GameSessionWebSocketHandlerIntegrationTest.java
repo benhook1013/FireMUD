@@ -15,10 +15,13 @@ import java.math.BigInteger;
 import java.net.URI;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
+import java.security.Signature;
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -29,12 +32,14 @@ import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
 import net.firedevops.firemud.common.security.GatewayConnectContextSignature;
+import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamesession.GameSessionServiceApplication;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
+import net.firedevops.firemud.gamesession.client.GameDesignRuntimeTenantIdentityClient.LegacyGameSessionTenantAssociationReceipt;
 import net.firedevops.firemud.gamesession.client.GameLogicClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
@@ -42,6 +47,9 @@ import net.firedevops.firemud.gamesession.command.text.LookTextRenderer;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository;
+import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository.AssociationReceipt;
+import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
@@ -50,7 +58,10 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
+import net.firedevops.firemud.gamesession.test.stubs.GameDesignStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
@@ -64,6 +75,8 @@ import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleRespon
 import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
+import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -77,10 +90,14 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -98,6 +115,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
       "firemud.database.enabled=true",
       "spring.data.redis.repositories.enabled=false",
       "spring.application.name=game-session-service",
+      "firemud.grpc.workload-namespace=websocket-handler-retained-tenant-test",
       "spring.grpc.server.port=0",
       "spring.flyway.enabled=true",
       "firemud.gameplay.catalog.worlds[0].slug=demo",
@@ -123,6 +141,14 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String TEST_WORKLOAD_NAMESPACE = "websocket-handler-retained-tenant-test";
+  private static final long RETAINED_TENANT_ID = 22L;
+  private static final UUID CANONICAL_TENANT_UUID =
+      UUID.fromString("b80e5c4d-a732-4e99-9126-dfe151cae8e5");
+  private static final UUID SYNTHETIC_APPROVAL_OPERATION_ID =
+      UUID.fromString("301a8ed5-a6c1-4b29-b61f-e1487dc2a190");
+  private static final UUID SYNTHETIC_ASSOCIATION_REQUEST_ID =
+      UUID.fromString("61691c55-76b0-48df-a2a1-20a0148f693a");
 
   // Runtime target 2 belongs to the sandbox route in this fixture.
   private static final long CUTOVER_GAME_INSTANCE_ID = 3L;
@@ -130,10 +156,26 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+  private static final GameDesignStubServer gameDesignStub = startGameDesignStub();
+
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
     PostgresBackedServiceTestSupport.registerPostgresService(
         registry, postgres, "game_session_service");
+    registry.add("firemud.services.gameDesignService", gameDesignStub::endpoint);
+  }
+
+  @AfterAll
+  static void closeGameDesignStub() {
+    gameDesignStub.close();
+  }
+
+  private static GameDesignStubServer startGameDesignStub() {
+    try {
+      return new GameDesignStubServer(0);
+    } catch (java.io.IOException exception) {
+      throw new ExceptionInInitializerError(exception);
+    }
   }
 
   @LocalServerPort private int port;
@@ -182,6 +224,16 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Autowired
   private GameplayAdmissionPointerEventRepository gameplayAdmissionPointerEventRepository;
 
+  @Autowired private DSLContext dsl;
+
+  @Autowired private GameSessionRetainedTenantSnapshotRepository retainedTenantSnapshotRepository;
+
+  @Autowired private PlatformTransactionManager transactionManager;
+
+  @Autowired private JdbcTemplate jdbcTemplate;
+
+  @Autowired private RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver;
+
   private final ConcurrentMap<String, Object> redisValueStore = new ConcurrentHashMap<>();
   private final ConcurrentMap<String, java.util.LinkedHashSet<Object>> redisSetStore =
       new ConcurrentHashMap<>();
@@ -194,7 +246,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
     sessionContextService.deleteBySessionId(22L, 42L);
     sessionContextService.deleteBySessionId(22L, 1L);
     sessionContextService.deleteBySessionId(22L, 2L);
+    GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+        jdbcTemplate, 1L, RETAINED_TENANT_ID, OWNER_ACCOUNT_UUID, 700L);
+    GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+        jdbcTemplate, 2L, RETAINED_TENANT_ID, OWNER_ACCOUNT_UUID, 700L);
     resetAdmissionPointers();
+    ensureSyntheticRetainedTenantAssociation();
     when(redisTemplate.opsForValue()).thenReturn(redisValueOperations);
     when(redisTemplate.opsForSet()).thenReturn(redisSetOperations);
     when(redisValueOperations.get(org.mockito.ArgumentMatchers.anyString()))
@@ -268,7 +325,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                     .echoRequestId(
                         net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
-                            .active("f2ed193b-12c1-4c96-bcad-c162229af440", 22L, "1"),
+                            .active(
+                                "f2ed193b-12c1-4c96-bcad-c162229af440",
+                                RETAINED_TENANT_ID,
+                                CANONICAL_TENANT_UUID.toString(),
+                                "1"),
                         invocation.getArgument(0)))
         .when(accountClient)
         .getTenantMembershipForRuntime(
@@ -276,7 +337,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 net.firedevops.firemud.shared.v1.PlayerExecutionContext.class));
     org.mockito.Mockito.doReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID.toString())
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
@@ -306,7 +367,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .build())
         .when(entityManagementClient)
         .listCharactersByAccount(
-            eq("22"), eq("123"), eq("1"), eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+            eq("22"),
+            eq("f2ed193b-12c1-4c96-bcad-c162229af440"),
+            eq("1"),
+            eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOGIN"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(
@@ -490,6 +554,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("41", "LOOK", false);
+    verify(accountClient, atLeastOnce())
+        .getTenantEntitlementsForRuntime(
+            eq(CANONICAL_TENANT_UUID.toString()),
+            org.mockito.ArgumentMatchers.nullable(String.class));
+    verify(accountClient, atLeastOnce())
+        .getTenantMembershipForRuntime(
+            argThat(
+                request ->
+                    CANONICAL_TENANT_UUID.toString().equals(request.getTenantId())
+                        && "1".equals(request.getGameInstanceId())
+                        && "41".equals(request.getSessionId())));
     verify(gameLogicClient)
         .resolveLook(
             argThat(ctx -> matchesContext(ctx, 22L, 41L, 123L, 1L, "R-1021")),
@@ -1076,6 +1151,82 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOGOUT");
       GameplayWebSocketDriver.CloseEvent closeEvent = client.awaitClosed();
       assertThat(closeEvent.reason()).isEqualTo("logout");
+    }
+  }
+
+  private void ensureSyntheticRetainedTenantAssociation() {
+    Optional<UUID> existing =
+        retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(RETAINED_TENANT_ID);
+    if (existing.isPresent()) {
+      assertThat(existing).contains(CANONICAL_TENANT_UUID);
+      return;
+    }
+
+    GameSessionRetainedTenantAssociationRepository associationRepository =
+        new GameSessionRetainedTenantAssociationRepository(
+            dsl, retainedTenantSnapshotRepository, TEST_WORKLOAD_NAMESPACE);
+    TransactionTemplate ownerTransaction = new TransactionTemplate(transactionManager);
+    ownerTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    ownerTransaction.setIsolationLevel(TransactionDefinition.ISOLATION_READ_COMMITTED);
+    ownerTransaction.setReadOnly(false);
+    var snapshot =
+        java.util.Objects.requireNonNull(
+            ownerTransaction.execute(
+                status ->
+                    retainedTenantSnapshotRepository.capture(
+                        TEST_WORKLOAD_NAMESPACE, Long.toString(RETAINED_TENANT_ID))),
+            "synthetic retained-tenant snapshot must be captured");
+    // This signed owner assertion is synthetic test evidence, not a live Game Design approval.
+    GameSessionTenantAssociationEvidence evidence =
+        new GameSessionTenantAssociationEvidence(
+            1,
+            SYNTHETIC_APPROVAL_OPERATION_ID,
+            TEST_WORKLOAD_NAMESPACE,
+            "synthetic-websocket-fixture-key",
+            "synthetic-websocket-fixture",
+            "synthetic-websocket-test-only",
+            "2026-01-01T00:00:00Z",
+            Long.toString(RETAINED_TENANT_ID),
+            CANONICAL_TENANT_UUID,
+            "900022",
+            "websocket-handler-test-fixture",
+            "NEW_GAME_ROW",
+            snapshot.evidenceDigest());
+    LegacyGameSessionTenantAssociationReceipt approval = syntheticAssociationApproval(evidence);
+    AssociationReceipt committed =
+        java.util.Objects.requireNonNull(
+            ownerTransaction.execute(
+                status ->
+                    associationRepository.register(SYNTHETIC_ASSOCIATION_REQUEST_ID, approval)),
+            "synthetic retained-tenant association must commit");
+    AssociationReceipt readback =
+        associationRepository
+            .read(
+                committed.operationId(),
+                SYNTHETIC_ASSOCIATION_REQUEST_ID,
+                CANONICAL_TENANT_UUID,
+                RETAINED_TENANT_ID,
+                TEST_WORKLOAD_NAMESPACE)
+            .orElseThrow(
+                () -> new IllegalStateException("Synthetic retained-tenant readback is missing"));
+    assertThat(readback).isEqualTo(committed);
+    assertThat(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(RETAINED_TENANT_ID))
+        .contains(CANONICAL_TENANT_UUID);
+  }
+
+  private static LegacyGameSessionTenantAssociationReceipt syntheticAssociationApproval(
+      GameSessionTenantAssociationEvidence evidence) {
+    try {
+      KeyPair keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+      Signature signer = Signature.getInstance("Ed25519");
+      signer.initSign(keyPair.getPrivate());
+      signer.update(evidence.preimage());
+      String signature = Base64.getEncoder().encodeToString(signer.sign());
+      return new LegacyGameSessionTenantAssociationReceipt(
+          evidence, evidence.manifestDigest(), signature);
+    } catch (Exception exception) {
+      throw new IllegalStateException(
+          "Could not sign synthetic websocket fixture evidence", exception);
     }
   }
 

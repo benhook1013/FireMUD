@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package account.v1;
+
+option java_package = "net.firedevops.firemud.account.v1";
+option java_multiple_files = true;
+
+// Owner-local source evidence only; this service is not wired for runtime use.
+// Caller and response workload identities must both be verified from mTLS.
+service IssuerAuthorityService {
+  rpc ReadIssuerAuthorityForRuntime(ReadIssuerAuthorityForRuntimeRequest)
+      returns (ReadIssuerAuthorityForRuntimeResponse);
+}
+
+message ReadIssuerAuthorityForRuntimeRequest {
+  string issuer_id = 1;
+  string request_id = 2;
+  // Omit for current source evidence; when present, must be canonical positive.
+  optional string requested_outbox_sequence = 3;
+}
+
+message IssuerAuthoritySourceSnapshot {
+  string issuer_id = 1;
+  string source_scope = 2;
+  string outbox_stream_key = 3;
+  string issuer_auth_generation = 4;
+  string source_version = 5;
+  string outbox_sequence = 6;
+  // Must be absent at sequence zero, present and exact at positive sequence.
+  optional string latest_event_canonical_json = 7;
+}
+
+message ReadIssuerAuthorityForRuntimeResponse {
+  string schema_version = 1;
+  string target_namespace = 2;
+  string request_id = 3;
+  IssuerAuthoritySourceSnapshot source_snapshot = 4;
+  // Present exactly when the request selected a positive historical sequence.
+  optional string requested_event_canonical_json = 5;
+}

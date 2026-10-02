@@ -7,7 +7,12 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -20,6 +25,13 @@ import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
+import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
+import net.firedevops.firemud.accountservice.entity.PasswordResetToken;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
+import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.repository.PasswordResetTokenRepository;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -79,6 +91,9 @@ class AccountApplicationIntegrationTest {
   @Autowired private JwtUtil jwtUtil;
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
+  @Autowired private AccountRepository accountRepository;
+  @Autowired private AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
+  @Autowired private PasswordResetTokenRepository passwordResetTokenRepository;
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
@@ -186,27 +201,11 @@ class AccountApplicationIntegrationTest {
   }
 
   @Test
-  void concurrentPasswordResetAttemptsConsumeTokenExactlyOnce() throws Exception {
-    String suffix = UUID.randomUUID().toString();
-    String email = "reset-" + suffix + "@example.com";
-    Long accountId =
-        dsl.resultQuery(
-                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-                "reset-" + suffix,
-                email,
-                "initial-hash")
-            .fetchOne(0, Long.class);
-    assertThat(accountId).isNotNull();
-    String rawToken = UUID.randomUUID().toString();
-    dsl.execute(
-        "INSERT INTO password_reset_token (account_id, token, expires_at) VALUES (?, ?, ?)",
-        accountId,
-        rawToken,
-        LocalDateTime.now().plusHours(1));
-
+  void concurrentPasswordResetAttemptsRecoverOneExactCommit() throws Exception {
+    PasswordResetFixture fixture = createPasswordResetFixture("reset");
     CompletePasswordResetRequest request =
-        new CompletePasswordResetRequest(rawToken, "new-password");
-    assertExactlyOneConcurrentSuccess(
+        new CompletePasswordResetRequest(fixture.rawToken(), "new-password");
+    assertBothConcurrentCallsSucceed(
         () -> {
           accountService.completePasswordReset(request);
           return null;
@@ -216,36 +215,14 @@ class AccountApplicationIntegrationTest {
           return null;
         });
 
-    assertThat(
-            dsl.resultQuery("SELECT COUNT(*) FROM password_reset_token WHERE token = ?", rawToken)
-                .fetchOne(0, Long.class))
-        .isZero();
-    assertThat(
-            dsl.resultQuery("SELECT password_hash FROM accounts WHERE id = ?", accountId)
-                .fetchOne(0, String.class))
-        .isNotEqualTo("initial-hash");
+    assertPasswordResetCommittedExactlyOnce(fixture);
   }
 
   @Test
-  void passwordResetConsumptionRollsBackWithAccountMutation() {
-    String suffix = UUID.randomUUID().toString();
-    String email = "reset-rollback-" + suffix + "@example.com";
-    Long accountId =
-        dsl.resultQuery(
-                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-                "rr-" + suffix,
-                email,
-                "initial-hash")
-            .fetchOne(0, Long.class);
-    assertThat(accountId).isNotNull();
-    String rawToken = UUID.randomUUID().toString();
-    dsl.execute(
-        "INSERT INTO password_reset_token (account_id, token, expires_at) VALUES (?, ?, ?)",
-        accountId,
-        rawToken,
-        LocalDateTime.now().plusHours(1));
+  void passwordResetRollbackPreservesEveryAtomicSourceComponent() {
+    PasswordResetFixture fixture = createPasswordResetFixture("reset-rollback");
     CompletePasswordResetRequest request =
-        new CompletePasswordResetRequest(rawToken, "new-password");
+        new CompletePasswordResetRequest(fixture.rawToken(), "new-password");
     TransactionTemplate transaction = new TransactionTemplate(transactionManager);
 
     assertThatThrownBy(
@@ -258,25 +235,11 @@ class AccountApplicationIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("force rollback after token consumption");
 
-    assertThat(
-            dsl.resultQuery("SELECT COUNT(*) FROM password_reset_token WHERE token = ?", rawToken)
-                .fetchOne(0, Long.class))
-        .isEqualTo(1L);
-    assertThat(
-            dsl.resultQuery("SELECT password_hash FROM accounts WHERE id = ?", accountId)
-                .fetchOne(0, String.class))
-        .isEqualTo("initial-hash");
+    assertPasswordResetUnchanged(fixture);
 
     accountService.completePasswordReset(request);
 
-    assertThat(
-            dsl.resultQuery("SELECT COUNT(*) FROM password_reset_token WHERE token = ?", rawToken)
-                .fetchOne(0, Long.class))
-        .isZero();
-    assertThat(
-            dsl.resultQuery("SELECT password_hash FROM accounts WHERE id = ?", accountId)
-                .fetchOne(0, String.class))
-        .isNotEqualTo("initial-hash");
+    assertPasswordResetCommittedExactlyOnce(fixture);
   }
 
   @Test
@@ -440,6 +403,233 @@ class AccountApplicationIntegrationTest {
     assertThat(response.body()).contains("\"code\":\"INVALID_ARGUMENT\"");
     assertThat(response.body()).contains("\"message\":\"tenantId must be positive\"");
   }
+
+  private PasswordResetFixture createPasswordResetFixture(String usernamePrefix) {
+    return new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              String suffix = UUID.randomUUID().toString().substring(0, 20);
+              Account account = new Account();
+              account.setUsername(usernamePrefix + "-" + suffix);
+              account.setEmail(usernamePrefix + "-" + suffix + "@example.com");
+              account.setPasswordHash("initial-hash");
+              Account saved = accountRepository.save(account);
+              assertThat(saved.getAccountUuidProvenance())
+                  .isEqualTo(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              assertThat(saved.getAccountUuidSourceNumericId()).isEqualTo(saved.getId());
+
+              var authority =
+                  accountAuthorityGenerationRepository.initialize(
+                      AuthorityScope.account(saved.getAccountUuid()));
+              assertThat(authority.generation()).isEqualTo(1L);
+              assertThat(authority.sourceVersion()).isEqualTo(1L);
+              assertThat(authority.issuanceFence().value()).isEqualTo(1L);
+              assertThat(authority.issuanceFence().sourceVersion()).isEqualTo(1L);
+
+              String rawToken = "reset-token-" + suffix;
+              LocalDateTime expiresAt = LocalDateTime.now().plusHours(1);
+              PasswordResetToken token = new PasswordResetToken();
+              token.setAccount(saved);
+              token.setToken(rawToken);
+              token.setExpiresAt(expiresAt);
+              passwordResetTokenRepository.save(token);
+              return new PasswordResetFixture(
+                  saved.getId(), saved.getAccountUuid(), rawToken, "initial-hash");
+            });
+  }
+
+  private void assertPasswordResetUnchanged(PasswordResetFixture fixture) {
+    String streamKey = passwordResetStreamKey(fixture.accountUuid());
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM password_reset_token WHERE token = ?", fixture.rawToken())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery("SELECT password_hash FROM accounts WHERE id = ?", fixture.accountId())
+                .fetchOne(0, String.class))
+        .isEqualTo(fixture.originalPasswordHash());
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT generation, source_version FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT source_version FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT issuance_fence FROM account_authority_issuance_fences "
+                        + "WHERE account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT source_version FROM account_authority_issuance_fences "
+                        + "WHERE account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(countEvents(streamKey)).isZero();
+    assertThat(countReceipts(fixture)).isZero();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM account_authority_outbox_streams "
+                        + "WHERE outbox_stream_key = ?",
+                    streamKey)
+                .fetchOne(0, Long.class))
+        .isZero();
+  }
+
+  private void assertPasswordResetCommittedExactlyOnce(PasswordResetFixture fixture) {
+    String streamKey = passwordResetStreamKey(fixture.accountUuid());
+    String tokenHash = HexFormat.of().formatHex(sha256(fixture.rawToken()));
+    String expectedRequestId = "account-password-reset-request-v1:" + tokenHash;
+    String expectedEventId = "account-password-reset-event-v1:" + tokenHash;
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT COUNT(*) FROM password_reset_token WHERE token = ?", fixture.rawToken())
+                .fetchOne(0, Long.class))
+        .isZero();
+    String passwordHash =
+        dsl.resultQuery("SELECT password_hash FROM accounts WHERE id = ?", fixture.accountId())
+            .fetchOne(0, String.class);
+    assertThat(passwordHash).startsWith("$argon2").isNotEqualTo(fixture.originalPasswordHash());
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT generation FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT source_version FROM account_authority_generations "
+                        + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT issuance_fence FROM account_authority_issuance_fences "
+                        + "WHERE account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT source_version FROM account_authority_issuance_fences "
+                        + "WHERE account_uuid = ?",
+                    fixture.accountUuid())
+                .fetchOne(0, Long.class))
+        .isEqualTo(2L);
+    assertThat(countEvents(streamKey)).isEqualTo(1L);
+    assertThat(countReceipts(fixture)).isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT last_sequence FROM account_authority_outbox_streams "
+                        + "WHERE outbox_stream_key = ?",
+                    streamKey)
+                .fetchOne(0, Long.class))
+        .isEqualTo(1L);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT request_id FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+                    streamKey)
+                .fetchOne(0, String.class))
+        .isEqualTo(expectedRequestId);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT event_id FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+                    streamKey)
+                .fetchOne(0, String.class))
+        .isEqualTo(expectedEventId);
+    byte[] payloadBytes =
+        Objects.requireNonNull(
+            dsl.resultQuery(
+                    "SELECT payload FROM account_authority_outbox_events "
+                        + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+                    streamKey)
+                .fetchOne(0, byte[].class),
+            "Password-reset source-event payload readback is missing");
+    String payload = new String(payloadBytes, StandardCharsets.UTF_8);
+    assertThat(payload)
+        .doesNotContain(fixture.rawToken(), passwordHash, fixture.originalPasswordHash());
+  }
+
+  private long countEvents(String streamKey) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_authority_outbox_events WHERE outbox_stream_key = ?",
+                streamKey)
+            .fetchOne(0, Long.class),
+        "Password-reset event count readback is missing");
+  }
+
+  private long countReceipts(PasswordResetFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_password_reset_operation_receipts "
+                    + "WHERE token_hash = ?",
+                sha256(fixture.rawToken()))
+            .fetchOne(0, Long.class),
+        "Password-reset receipt count readback is missing");
+  }
+
+  private static String passwordResetStreamKey(UUID accountUuid) {
+    return "account:auth-authority:v1:account/" + accountUuid;
+  }
+
+  private static byte[] sha256(String value) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 is unavailable", exception);
+    }
+  }
+
+  private static void assertBothConcurrentCallsSucceed(Callable<Void> first, Callable<Void> second)
+      throws Exception {
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<Void> firstResult =
+          executor.submit(() -> runSuccessfulWhenReleased(first, ready, start));
+      Future<Void> secondResult =
+          executor.submit(() -> runSuccessfulWhenReleased(second, ready, start));
+      assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      assertThat(firstResult.get(30, TimeUnit.SECONDS)).isNull();
+      assertThat(secondResult.get(30, TimeUnit.SECONDS)).isNull();
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  private static Void runSuccessfulWhenReleased(
+      Callable<Void> operation, CountDownLatch ready, CountDownLatch start) throws Exception {
+    ready.countDown();
+    if (!start.await(10, TimeUnit.SECONDS)) {
+      throw new IllegalStateException("Timed out waiting to start concurrent password reset");
+    }
+    operation.call();
+    return null;
+  }
+
+  private record PasswordResetFixture(
+      Long accountId, UUID accountUuid, String rawToken, String originalPasswordHash) {}
 
   private static void assertExactlyOneConcurrentSuccess(Callable<Void> first, Callable<Void> second)
       throws Exception {
