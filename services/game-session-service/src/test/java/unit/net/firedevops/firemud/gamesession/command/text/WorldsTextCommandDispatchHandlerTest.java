@@ -41,7 +41,6 @@ class WorldsTextCommandDispatchHandlerTest {
       new WorldsTextCommandDispatchHandler(
           new WorldsCommandHandler(
               TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-              entityManagementClient,
               Mockito.mock(AccountClient.class),
               DirectTextConnectScopeSessionStore.inMemoryForTest()),
           scriptEventPublisher);
@@ -129,7 +128,6 @@ class WorldsTextCommandDispatchHandlerTest {
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-                entityManagementClient,
                 accountClient,
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
@@ -177,7 +175,6 @@ class WorldsTextCommandDispatchHandlerTest {
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-                entityManagementClient,
                 accountClient,
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
@@ -211,7 +208,6 @@ class WorldsTextCommandDispatchHandlerTest {
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-                entityManagementClient,
                 accountClient,
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
@@ -254,7 +250,6 @@ class WorldsTextCommandDispatchHandlerTest {
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-                entityManagementClient,
                 accountClient,
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
@@ -321,8 +316,7 @@ class WorldsTextCommandDispatchHandlerTest {
                             namespaceId)))));
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
-            new WorldsCommandHandler(catalog, entityManagementClient, accountClient, scopeStore),
-            scriptEventPublisher);
+            new WorldsCommandHandler(catalog, accountClient, scopeStore), scriptEventPublisher);
     when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
         .thenReturn(
             IssueDirectTextConnectScopeResponse.newBuilder()
@@ -472,10 +466,7 @@ class WorldsTextCommandDispatchHandlerTest {
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
-                catalog,
-                entityManagementClient,
-                accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
     when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
         .thenReturn(
@@ -558,7 +549,6 @@ class WorldsTextCommandDispatchHandlerTest {
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-                entityManagementClient,
                 accountClient,
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
@@ -742,10 +732,7 @@ class WorldsTextCommandDispatchHandlerTest {
     WorldsTextCommandDispatchHandler scopedHandler =
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
-                catalog,
-                entityManagementClient,
-                accountClient,
-                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+                catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
     SessionContext context =
         new SessionContext(7L, 22L, 41L, "emberline@example.com", 0L, null, 0L, "jwt");
@@ -812,7 +799,6 @@ class WorldsTextCommandDispatchHandlerTest {
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
                 TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-                entityManagementClient,
                 accountClient,
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);

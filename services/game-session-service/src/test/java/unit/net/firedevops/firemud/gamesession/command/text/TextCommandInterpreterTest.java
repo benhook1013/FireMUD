@@ -429,10 +429,7 @@ class TextCommandInterpreterTest {
                 .build());
     WorldsCommandHandler worldsHandler =
         new WorldsCommandHandler(
-            worldCatalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            worldCatalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     LookResult lookResult =
         LookResult.newBuilder()

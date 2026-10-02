@@ -295,10 +295,7 @@ class SessionResumptionFlowTest {
             DirectTextConnectScopeSessionStore.inMemoryForTest());
     worldsHandler =
         new WorldsCommandHandler(
-            worldCatalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            worldCatalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =

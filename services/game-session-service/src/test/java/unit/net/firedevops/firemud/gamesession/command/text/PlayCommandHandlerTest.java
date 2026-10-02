@@ -3187,8 +3187,7 @@ class PlayCommandHandlerTest {
             Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class)))
         .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler worldsCommandHandler =
-        new WorldsCommandHandler(
-            worldCatalog, entityManagementClient, accountClient, connectScopeSessionStore);
+        new WorldsCommandHandler(worldCatalog, accountClient, connectScopeSessionStore);
     assertThat(worldsCommandHandler.browseRealms(resolvedContext, "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
     WorldsTextCommandDispatchHandler worldsDispatchHandler =
