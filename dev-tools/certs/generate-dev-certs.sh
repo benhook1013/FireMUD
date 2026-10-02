@@ -218,6 +218,10 @@ validate_existing_leaf() {
     echo "existing local $description certificate has no readable subject alternative names: $certificate" >&2
     return 1
   fi
+  if [[ "$subject_alt_names" == *"URI:"* ]]; then
+    echo "existing local generic $description certificate must not contain a workload URI SAN: $certificate" >&2
+    return 1
+  fi
   for dns_name in "${local_service_dns_names[@]}"; do
     san_pattern="DNS:${dns_name}([,[:space:]]|$)"
     if [[ ! "$subject_alt_names" =~ $san_pattern ]]; then
