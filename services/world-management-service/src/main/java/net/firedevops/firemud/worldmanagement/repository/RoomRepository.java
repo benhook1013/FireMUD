@@ -157,8 +157,7 @@ public class RoomRepository {
   }
 
   private void advanceRoomIdSequence() {
-    Record sequenceRecord =
-        dsl.fetchOne("SELECT pg_catalog.pg_get_serial_sequence('room', 'id')");
+    Record sequenceRecord = dsl.fetchOne("SELECT pg_catalog.pg_get_serial_sequence('room', 'id')");
     String sequenceName = sequenceRecord == null ? null : sequenceRecord.get(0, String.class);
     if (sequenceName == null) {
       throw new IllegalStateException("Room ID sequence could not be resolved");
@@ -172,9 +171,7 @@ public class RoomRepository {
                 + "WHERE sequence_class.oid = ?::pg_catalog.regclass",
             sequenceName);
     String quotedSequenceName =
-        quotedSequenceRecord == null
-            ? null
-            : quotedSequenceRecord.get(0, String.class);
+        quotedSequenceRecord == null ? null : quotedSequenceRecord.get(0, String.class);
     if (quotedSequenceName == null) {
       throw new IllegalStateException("Resolved Room ID sequence name is invalid");
     }

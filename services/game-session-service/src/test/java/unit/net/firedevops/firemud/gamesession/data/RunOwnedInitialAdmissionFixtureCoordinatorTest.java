@@ -145,6 +145,72 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   }
 
   @Test
+  void rejectsMalformedWorldHoldIdentityBeforeAttachingOrCommitting() {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    doAnswer(
+            invocation -> {
+              UUID namespaceId = invocation.getArgument(7);
+              String requestDigest = invocation.getArgument(5);
+              return AcquireInitialAdmissionBindHoldResponse.newBuilder()
+                  .setHold(
+                      hold(
+                              InitialAdmissionBindHoldStatus
+                                  .INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING,
+                              namespaceId,
+                              requestDigest)
+                          .toBuilder()
+                          .setHoldFence("not-a-uuid")
+                          .build())
+                  .build();
+            })
+        .when(fixture.worldClient)
+        .acquireInitialAdmissionBindHold(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            any(UUID.class),
+            any(UUID.class),
+            any(PlayableStateScope.class),
+            anyLong());
+
+    assertThatThrownBy(() -> fixture.coordinator.coordinate(fixture.capability))
+        .isInstanceOf(IllegalStateException.class);
+
+    verify(fixture.ownerService, never()).attachHold(any());
+    verify(fixture.ownerService, never()).commit(any());
+    verify(fixture.ownerService, never()).abort(any());
+  }
+
+  @Test
+  void rejectsMissingOrNoncanonicalCommittedAuditId() {
+    for (String auditId : new String[] {null, "031"}) {
+      Fixture fixture =
+          fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+      doAnswer(
+              invocation -> {
+                InitialAdmissionBindHoldBinding binding = invocation.getArgument(0);
+                return proof(
+                    binding,
+                    Outcome.COMMITTED,
+                    ATTEMPT_ID,
+                    auditId,
+                    1L,
+                    binding.requestDigest(),
+                    false);
+              })
+          .when(fixture.ownerService)
+          .commit(any());
+
+      assertThatThrownBy(() -> fixture.coordinator.coordinate(fixture.capability))
+          .isInstanceOf(IllegalStateException.class);
+    }
+  }
+
+  @Test
   void terminalWorldAbortUsesExactReadbackWithoutTryingToCommit() {
     Fixture fixture =
         fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_ABORTED);

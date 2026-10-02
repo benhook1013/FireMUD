@@ -461,18 +461,24 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
   }
 
   private static boolean isCanonicalUuid(String value) {
+    if (value == null) {
+      return false;
+    }
     try {
       return UUID.fromString(value).toString().equals(value);
-    } catch (IllegalArgumentException | NullPointerException exception) {
+    } catch (IllegalArgumentException exception) {
       return false;
     }
   }
 
   private static boolean isCanonicalPositiveLong(String value) {
+    if (value == null) {
+      return false;
+    }
     try {
       long parsed = Long.parseLong(value);
       return parsed > 0L && Long.toString(parsed).equals(value);
-    } catch (NumberFormatException | NullPointerException exception) {
+    } catch (NumberFormatException exception) {
       return false;
     }
   }

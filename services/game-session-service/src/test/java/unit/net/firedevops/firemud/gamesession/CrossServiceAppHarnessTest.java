@@ -28,6 +28,7 @@ class CrossServiceAppHarnessTest {
     for (String databaseEnabled : new String[] {"false", null}) {
       try (AnnotationConfigApplicationContext context = context(databaseEnabled)) {
         assertThat(context.getBeanNamesForType(DataSource.class)).isEmpty();
+        assertThat(context.getBeanNamesForType(GameInstanceServiceImpl.class)).isEmpty();
         assertThat(context.getBean("gameInstanceServiceImpl"))
             .isNotInstanceOf(GameInstanceServiceImpl.class);
 

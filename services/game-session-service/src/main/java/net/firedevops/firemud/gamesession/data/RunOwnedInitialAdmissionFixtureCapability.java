@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.PosixFilePermission;
+import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.Certificate;
@@ -219,7 +220,7 @@ record RunOwnedInitialAdmissionFixtureCapability(
       ca.checkValidity();
       leaf.verify(ca.getPublicKey());
       return new CertificatePins(fingerprint(leaf), uriSan, fingerprint(ca));
-    } catch (Exception exception) {
+    } catch (GeneralSecurityException exception) {
       throw invalidCapability();
     }
   }
@@ -403,9 +404,12 @@ record RunOwnedInitialAdmissionFixtureCapability(
   }
 
   private static boolean isCanonicalUuid(String value) {
+    if (value == null) {
+      return false;
+    }
     try {
       return UUID.fromString(value).toString().equals(value);
-    } catch (IllegalArgumentException | NullPointerException exception) {
+    } catch (IllegalArgumentException exception) {
       return false;
     }
   }

@@ -52,6 +52,12 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertInvalid(validJson().replace("\"schema\":", "\"extra\":true,\"schema\":"));
     assertInvalid(validJson().replace("\"schema\":", "\"schema\":\"wrong\",\"schema\":"));
     assertInvalid(validJson().replace(RUN_ID, "different-run"));
+    assertInvalid(validJson().replace(OPERATION_ID, "not-a-uuid"));
+    assertInvalid(
+        validJson()
+            .replace(
+                "\"operationId\": \"" + OPERATION_ID + "\"",
+                "\"operationId\": null"));
     assertInvalid(validJson().replace("\"tenantId\": 7", "\"tenantId\": \"7\""));
     assertInvalid(
         validJson().replace("\"stateScope\": \"SHARED\"", "\"stateScope\": \"ISOLATED\""));
@@ -79,8 +85,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
   @Test
   void readsReadOnlyCapabilityFile(@TempDir Path directory) throws Exception {
     String json = validJson();
-    Path capabilityFile =
-        Files.writeString(directory.resolve("fixture-capability.json"), json);
+    Path capabilityFile = Files.writeString(directory.resolve("fixture-capability.json"), json);
     Files.setPosixFilePermissions(capabilityFile, Set.of(PosixFilePermission.OWNER_READ));
 
     assertThat(RunOwnedInitialAdmissionFixtureCapability.readCapability(capabilityFile))

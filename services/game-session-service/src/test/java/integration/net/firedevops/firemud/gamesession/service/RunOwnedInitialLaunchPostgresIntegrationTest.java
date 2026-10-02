@@ -71,8 +71,8 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
           .isEqualTo(1L);
       assertThat(
               dsl.fetchOne(
-                  "SELECT run_owned_start_request_digest FROM game_instances WHERE id = ?",
-                  firstId)
+                      "SELECT run_owned_start_request_digest FROM game_instances WHERE id = ?",
+                      firstId)
                   .get(0, String.class))
           .isEqualTo(REQUEST_DIGEST);
 
@@ -82,8 +82,7 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
               failure -> {
                 assertThat(sqlState(failure)).isEqualTo("23505");
                 assertThat(
-                        hasCauseMessage(
-                            failure, "game_instances_run_owned_start_request_unique"))
+                        hasCauseMessage(failure, "game_instances_run_owned_start_request_unique"))
                     .isTrue();
               });
 

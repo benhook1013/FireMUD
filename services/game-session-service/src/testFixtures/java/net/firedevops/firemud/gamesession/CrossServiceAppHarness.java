@@ -29,6 +29,10 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.RunOwnedInitialLaunchResult;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -323,11 +327,28 @@ public final class CrossServiceAppHarness {
       };
     }
 
-    @Bean(name = "gameInstanceServiceImpl")
+    @Bean
     @ConditionalOnProperty(
-        name = "firemud.database.enabled", havingValue = "false", matchIfMissing = true)
-    GameInstanceService gameInstanceServiceImpl() {
-      return stubGameInstanceService();
+        name = "firemud.database.enabled",
+        havingValue = "false",
+        matchIfMissing = true)
+    // Replace the scanned service before eager singleton creation in database-free tests.
+    static BeanDefinitionRegistryPostProcessor disabledDatabaseGameInstanceServiceStub() {
+      return new BeanDefinitionRegistryPostProcessor() {
+        @Override
+        public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
+          if (registry.containsBeanDefinition("gameInstanceServiceImpl")) {
+            registry.removeBeanDefinition("gameInstanceServiceImpl");
+          }
+          RootBeanDefinition stub = new RootBeanDefinition(GameInstanceService.class);
+          stub.setInstanceSupplier(GameSessionTestOverrides::stubGameInstanceService);
+          stub.setPrimary(true);
+          registry.registerBeanDefinition("gameInstanceServiceImpl", stub);
+        }
+
+        @Override
+        public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {}
+      };
     }
 
     @Bean(name = "crossServiceTestGameInstanceService")
