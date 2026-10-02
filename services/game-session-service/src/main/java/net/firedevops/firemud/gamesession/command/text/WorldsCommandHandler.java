@@ -122,6 +122,16 @@ public class WorldsCommandHandler {
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
     if (selection instanceof WorldSelectorResolution.Invalid) {
+      try {
+        // A tenant with invalid public-production cardinality is intentionally omitted from the
+        // discovery snapshot. Recheck the no-caller public projection to distinguish that
+        // fail-closed state from an ordinary unknown selector before returning INVALID_SELECTOR.
+        worldCatalog.resolvePublicWorldFromAuthoritySnapshot(worldSelector);
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+        return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+      }
       return RealmBrowseResult.invalidSelector();
     }
     if (selection instanceof WorldSelectorResolution.Stale) {

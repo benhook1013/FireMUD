@@ -774,10 +774,13 @@ class PlayCommandHandlerTest {
     GameplayAdmissionPointerSnapshot pointerA = admissionPointer(1L);
     GameplayAdmissionPointerSnapshot pointerB = admissionPointer(2L);
     AtomicInteger pointerReads = new AtomicInteger();
-    when(authorityService.listPointers())
+    when(authorityService.listPointers()).thenReturn(List.of(pointerA));
+    when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
-            invocation ->
-                pointerReads.getAndIncrement() == 0 ? List.of(pointerA) : List.of(pointerB));
+            invocation -> {
+              pointerReads.incrementAndGet();
+              return List.of(pointerB);
+            });
     GameplayWorldCatalog authorityBackedCatalog = new GameplayWorldCatalog(authorityService);
     PlayCommandHandler authorityBackedHandler =
         new PlayCommandHandler(
@@ -804,7 +807,7 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
-    assertThat(pointerReads).hasValue(2);
+    assertThat(pointerReads).hasValue(1);
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -821,12 +824,11 @@ class PlayCommandHandlerTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     AtomicInteger pointerReads = new AtomicInteger();
-    when(authorityService.listPointers())
+    when(authorityService.listPointers()).thenReturn(List.of(admissionPointer(1L)));
+    when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
             invocation -> {
-              if (pointerReads.getAndIncrement() == 0) {
-                return List.of(admissionPointer(1L));
-              }
+              pointerReads.incrementAndGet();
               if ("throw".equals(failureMode)) {
                 throw new IllegalStateException("authority down on final read");
               }
@@ -862,7 +864,7 @@ class PlayCommandHandlerTest {
         .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE);
     assertThat(((ErrorOutput) result.outputs().getFirst().payload()).messageKey())
         .isEqualTo("error.play.authority-unavailable");
-    assertThat(pointerReads).hasValue(2);
+    assertThat(pointerReads).hasValue(1);
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,

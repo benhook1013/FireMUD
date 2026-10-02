@@ -691,7 +691,7 @@ class GameSessionGrpcServiceTest {
 
     assertFalse(worlds.hasError());
     assertEquals(0, worlds.getWorldsCount());
-    assertEquals("INVALID_ARGUMENT", realms.getError().getCode());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", realms.getError().getCode());
     assertEquals(0, realms.getRealmsCount());
     Mockito.verify(pointerAuthorityService, Mockito.times(2)).listPointers();
   }
@@ -1097,7 +1097,7 @@ class GameSessionGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("INVALID_ARGUMENT", realmsRef.get().getError().getCode());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", realmsRef.get().getError().getCode());
     assertEquals(0, realmsRef.get().getRealmsCount());
 
     AtomicReference<GetAdmissionPointerResponse> pointerRef = new AtomicReference<>();
@@ -1249,7 +1249,7 @@ class GameSessionGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("INVALID_ARGUMENT", response.get().getError().getCode());
+    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.get().getError().getCode());
     assertEquals(0, response.get().getRealmsCount());
 
     AtomicReference<GetAdmissionPointerResponse> pointerResponse = new AtomicReference<>();
