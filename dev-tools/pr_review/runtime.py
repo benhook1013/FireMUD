@@ -1111,6 +1111,8 @@ class LiveEvidence:
         checkpoint: evidence.Checkpoint,
         response_id: int | None,
         response_duration_seconds: int | None,
+        repo: str,
+        pr_number: int,
         captured_head: str,
         record: dict[str, Any],
         payload: dict[str, Any],
@@ -1182,7 +1184,14 @@ class LiveEvidence:
             next_trigger,
         )
         finished_only = hosted.finished_reply_without_findings(
-            payload, captured_head, trigger_at, response_id, next_trigger
+            payload,
+            captured_head,
+            trigger_at,
+            response_id,
+            next_trigger,
+            record,
+            repo=repo,
+            pr_number=pr_number,
         )
         if legacy_summary is None and provider_summary is None and not finished_only:
             return None
@@ -1229,6 +1238,8 @@ class LiveEvidence:
                         checkpoint,
                         state.response_id,
                         state.duration_seconds,
+                        self.repo,
+                        pr,
                         captured_head,
                         record,
                         payload,
