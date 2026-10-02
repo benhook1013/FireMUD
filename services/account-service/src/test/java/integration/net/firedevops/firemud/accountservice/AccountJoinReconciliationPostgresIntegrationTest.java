@@ -174,6 +174,40 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   }
 
   @Test
+  void retainedLegacyReceiptIdsWithoutProjectionVersionStayPending() {
+    JoinFixture fixture = committedEvidencePendingFixture();
+    UUID auditEventId = joinAuditEventId(fixture.requestId());
+    int updated =
+        dsl.execute(
+            "UPDATE account_audit_outbox SET receiver_audit_projection_version = NULL WHERE audit_event_id = ? AND delivery_status = 'COMMITTED'",
+            auditEventId);
+    assertThat(updated).isEqualTo(1);
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT receiver_receipt_id FROM account_audit_outbox WHERE audit_event_id = ?",
+                    auditEventId)
+                .fetchOne(0, String.class))
+        .isNotBlank();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT receiver_log_event_id FROM account_audit_outbox WHERE audit_event_id = ?",
+                    auditEventId)
+                .fetchOne(0, String.class))
+        .isNotBlank();
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                    auditEventId)
+                .fetchOne(0, Integer.class))
+        .isNull();
+
+    assertUnresolvedAtThreshold(fixture, "JOIN_AUDIT_RECEIPT_UNVERIFIED");
+    assertOperation(fixture, "PENDING", null, 2, "JOIN_AUDIT_RECEIPT_UNVERIFIED");
+    assertThat(countMemberships(fixture)).isEqualTo(1L);
+    assertThat(countJoinOutbox(fixture)).isEqualTo(1L);
+  }
+
+  @Test
   void absentScopeAndExpiredScopeWithoutMembershipProofRemainPendingWithDiagnostics() {
     JoinFixture absentScope = committedEvidencePendingFixture();
     dsl.execute(
@@ -391,6 +425,12 @@ class AccountJoinReconciliationPostgresIntegrationTest {
             attempts,
             fixture.requestId());
     assertThat(updated).isEqualTo(1);
+    int auditUpdated =
+        dsl.execute(
+            "UPDATE account_audit_outbox SET delivery_status = 'COMMITTED', receiver_audit_projection_version = 1, receiver_receipt_id = 'verified-receipt', receiver_log_event_id = 'verified-projection' WHERE audit_event_id = ? AND scope = 'tenant' AND tenant_id = ? AND producer_service = 'account-service' AND event_type = 'ACCOUNT_JOINED_PUBLIC_PRODUCTION'",
+            joinAuditEventId(fixture.requestId()),
+            fixture.tenantId());
+    assertThat(auditUpdated).isEqualTo(1);
     assertThat(countMemberships(fixture)).isEqualTo(1L);
     assertThat(countJoinOutbox(fixture)).isEqualTo(1L);
   }

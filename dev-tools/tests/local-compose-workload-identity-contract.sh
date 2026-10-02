@@ -180,6 +180,54 @@ for workload in account-service game-session-service social-groups-service; do
   assert_mode 644 "$runtime_dir/$workload/workloads/$workload.key"
 done
 
+# A hard-linked managed projection destination must be rejected before any
+# other profile's projection is copied or chmodded.
+hardlink_case="$CERT_DIR/hardlink-projection-case"
+copy_generic_bundle "$CERT_DIR" "$hardlink_case"
+bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$hardlink_case"
+hardlink_runtime="$hardlink_case/local-runtime"
+hardlink_target="$hardlink_runtime/social-groups-service/workloads/social-groups-service.key"
+hardlink_sentinel="$hardlink_case/runtime-projection-alias-sentinel.txt"
+hardlink_output="$CERT_DIR/hardlink-projection-output"
+hardlink_before="$CERT_DIR/hardlink-projection-before.sha256"
+hardlink_after="$CERT_DIR/hardlink-projection-after.sha256"
+
+snapshot_runtime_projection() {
+  local root="$1"
+  local file
+  while IFS= read -r -d '' file; do
+    printf '%s ' "$(stat -c '%a' "$file")"
+    sha256sum -- "$file"
+  done < <(find "$root" -type f -print0 | sort -z)
+}
+
+printf 'external hard-link sentinel\n' >"$hardlink_sentinel"
+chmod 640 "$hardlink_sentinel"
+rm -- "$hardlink_target"
+ln -- "$hardlink_sentinel" "$hardlink_target"
+snapshot_runtime_projection "$hardlink_runtime" >"$hardlink_before"
+
+if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$hardlink_case" >"$hardlink_output" 2>&1; then
+  echo "ensure-dev-certs accepted a hard-linked local runtime projection file" >&2
+  exit 1
+fi
+rg -Fq "refusing hard-linked file in local Compose runtime projection: $hardlink_target" \
+  "$hardlink_output" || {
+  echo "ensure-dev-certs did not identify the hard-linked projection path" >&2
+  cat "$hardlink_output" >&2
+  exit 1
+}
+snapshot_runtime_projection "$hardlink_runtime" >"$hardlink_after"
+cmp -s "$hardlink_before" "$hardlink_after" || {
+  echo "ensure-dev-certs partially changed the local runtime projection before refusal" >&2
+  exit 1
+}
+[[ "$(<"$hardlink_sentinel")" == 'external hard-link sentinel' ]] || {
+  echo "ensure-dev-certs changed an external hard-link sentinel" >&2
+  exit 1
+}
+assert_mode 640 "$hardlink_sentinel"
+
 # Unmanaged regular files under workloads/ retain their own bytes and modes;
 # only the three named local Compose identities are normalized by ensure.
 mode_case="$CERT_DIR/unmanaged-workload-modes"

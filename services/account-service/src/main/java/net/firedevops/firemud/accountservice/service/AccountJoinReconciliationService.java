@@ -15,6 +15,7 @@ import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository.JoinAuditEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
@@ -171,7 +172,7 @@ public class AccountJoinReconciliationService {
     }
 
     JoinMembershipProof membership = null;
-    AccountAuditEnvelope envelope = null;
+    JoinAuditEvidence auditEvidence = null;
     if (unresolvedReason == null) {
       membership =
           membershipRepository
@@ -185,15 +186,17 @@ public class AccountJoinReconciliationService {
     }
 
     if (unresolvedReason == null) {
-      envelope =
+      auditEvidence =
           auditOutboxRepository
               .findJoinEnvelopeForUpdate(
                   joinAuditEventId(operation.requestId()), operation.tenantId())
               .orElse(null);
-      if (envelope == null) {
+      if (auditEvidence == null) {
         unresolvedReason = "JOIN_AUDIT_ENVELOPE_ABSENT";
-      } else if (!auditEnvelopeMatches(operation, membership, envelope)) {
+      } else if (!auditEnvelopeMatches(operation, membership, auditEvidence.envelope())) {
         unresolvedReason = "JOIN_AUDIT_ENVELOPE_UNCLEAR";
+      } else if (!verifiedJoinAuditDelivery(auditEvidence)) {
+        unresolvedReason = "JOIN_AUDIT_RECEIPT_UNVERIFIED";
       }
     }
 
@@ -326,6 +329,13 @@ public class AccountJoinReconciliationService {
         && Objects.equals(payload.realmSlug(), operation.realmSlug())
         && payload.membershipVersion() == membership.membershipVersion()
         && Objects.equals(payload.requestId(), operation.requestId());
+  }
+
+  private static boolean verifiedJoinAuditDelivery(JoinAuditEvidence evidence) {
+    return "COMMITTED".equals(evidence.deliveryStatus())
+        && Integer.valueOf(1).equals(evidence.auditProjectionVersion())
+        && hasText(evidence.receiptId())
+        && hasText(evidence.projectionId());
   }
 
   private static JoinAuditPayload parseJoinAuditPayload(String json) {

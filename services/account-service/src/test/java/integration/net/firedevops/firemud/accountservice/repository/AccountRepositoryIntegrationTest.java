@@ -195,6 +195,12 @@ class AccountRepositoryIntegrationTest {
                 Long.class,
                 auditEventId))
         .isEqualTo(1L);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                auditEventId))
+        .isNull();
   }
 
   @Test
@@ -263,6 +269,12 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo("MINIMIZED");
     assertThat(
             jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                minimizedEventId))
+        .isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
                 "SELECT payload FROM account_audit_outbox WHERE audit_event_id = ?",
                 String.class,
                 committedEventId))
@@ -273,9 +285,46 @@ class AccountRepositoryIntegrationTest {
                 String.class,
                 committedEventId))
         .isEqualTo("COMMITTED");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                committedEventId))
+        .isEqualTo(1);
+    assertThatThrownBy(
+            () ->
+                jdbc.update(
+                    "UPDATE account_audit_outbox SET receiver_audit_projection_version = 2 WHERE audit_event_id = ?",
+                    committedEventId))
+        .isInstanceOf(org.springframework.dao.DataAccessException.class);
     assertThat(outbox.pending(10))
         .noneMatch(envelope -> envelope.auditEventId().equals(minimizedEventId))
         .noneMatch(envelope -> envelope.auditEventId().equals(committedEventId));
+  }
+
+  @Test
+  void markDeliveredRejectsBlankReceiverIdentityWithoutChangingPendingRow() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(dsl);
+    UUID eventId = UUID.randomUUID();
+    outbox.append(eventId, "platform", null, "ACCOUNT_REGISTERED", "{\"accountId\":44}");
+
+    assertThatThrownBy(() -> outbox.markDelivered(eventId, " ", "projection-id", false))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Verified audit delivery requires nonblank identity");
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT delivery_status FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                eventId))
+        .isEqualTo("PENDING");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                eventId))
+        .isNull();
   }
 
   @Test

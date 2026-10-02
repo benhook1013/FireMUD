@@ -7,7 +7,6 @@ import static net.firedevops.firemud.loggingadmin.jooq.tables.LogEvents.LOG_EVEN
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
 import java.util.Optional;
-import net.firedevops.firemud.loggingadmin.dto.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.entity.LogEvent;
 import net.firedevops.firemud.loggingadmin.jooq.tables.records.LogEventsRecord;
 import org.jooq.DSLContext;
@@ -33,12 +32,7 @@ public class LogEventRepository {
       Long tenantId, String message) {
     String filter = message == null ? "" : message;
     return dsl.selectFrom(LOG_EVENTS)
-        .where(
-            LOG_EVENTS
-                .SCOPE
-                .eq(AccountAuditScope.TENANT.databaseValue())
-                .and(LOG_EVENTS.TENANT_ID.eq(tenantId))
-                .and(LOG_EVENTS.MESSAGE.containsIgnoreCase(filter)))
+        .where(LOG_EVENTS.TENANT_ID.eq(tenantId).and(LOG_EVENTS.MESSAGE.containsIgnoreCase(filter)))
         .fetch(this::toEntity);
   }
 
@@ -49,7 +43,6 @@ public class LogEventRepository {
             LOG_EVENTS
                 .TENANT_ID
                 .eq(tenantId)
-                .and(LOG_EVENTS.SCOPE.eq(AccountAuditScope.TENANT.databaseValue()))
                 .and(LOG_EVENTS.TYPE.eq(type))
                 .and(LOG_EVENTS.MESSAGE.eq(message)))
         .orderBy(LOG_EVENTS.ID.asc())
@@ -68,13 +61,11 @@ public class LogEventRepository {
     int updated =
         dsl.update(LOG_EVENTS)
             .set(LOG_EVENTS.TENANT_ID, entity.getTenantId())
-            .set(LOG_EVENTS.TENANT_KEY, entity.getTenantId())
-            .set(LOG_EVENTS.SCOPE, AccountAuditScope.TENANT.databaseValue())
             .set(LOG_EVENTS.TYPE, entity.getType())
             .set(LOG_EVENTS.MESSAGE, entity.getMessage())
             .set(LOG_EVENTS.TIMESTAMP, toLocalDateTime(entity.getTimestamp()))
             .set(LOG_EVENTS.ACCOUNT_ID, entity.getAccountId())
-            .where(LOG_EVENTS.ID.eq(entity.getId()).and(LOG_EVENTS.AUDIT_EVENT_ID.isNull()))
+            .where(LOG_EVENTS.ID.eq(entity.getId()))
             .execute();
     if (updated != 1) {
       throw new IllegalStateException("Failed to update log_events id=" + entity.getId());
@@ -88,8 +79,6 @@ public class LogEventRepository {
 
   private void populate(LogEventsRecord record, LogEvent entity) {
     record.setTenantId(entity.getTenantId());
-    record.setTenantKey(entity.getTenantId());
-    record.setScope(AccountAuditScope.TENANT.databaseValue());
     record.setType(entity.getType());
     record.setMessage(entity.getMessage());
     record.setTimestamp(toLocalDateTime(entity.getTimestamp()));

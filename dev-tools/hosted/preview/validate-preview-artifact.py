@@ -1565,7 +1565,7 @@ def validate_service_consumers(
             fail(f"Deployment/{service} has an unexpected container layout")
 
         container = containers[0]
-        if service in DISTINCT_GRPC_WORKLOADS or service == "logging-admin-service":
+        if service in DISTINCT_GRPC_WORKLOADS:
             workload_namespace_entries = [
                 entry
                 for entry in container.get("env", [])
