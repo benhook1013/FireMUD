@@ -2,6 +2,7 @@ package crossservice.net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -12,19 +13,27 @@ import io.grpc.ServerInterceptors;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
-import io.grpc.netty.shaded.io.grpc.netty.NettyChannelBuilder;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.KeyStore;
+import java.security.cert.CertificateFactory;
+import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
-import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManagerFactory;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
@@ -115,23 +124,44 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
   void missingClientCertificateFailsTheRequiredTlsHandshakeBeforeProducerAccess() throws Exception {
     AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
     Server server = startServer("account", producer);
-    var channel =
-        NettyChannelBuilder.forAddress("localhost", server.getPort())
-            .sslContext(
-                GrpcSslContexts.forClient().trustManager(certificate("ca.crt").toFile()).build())
-            .build();
+    SSLContext trustOnlyClientContext = trustOnlyClientContext();
     try {
-      assertThatThrownBy(
-              () ->
-                  IssuerAuthorityServiceGrpc.newBlockingStub(channel)
-                      .withDeadlineAfter(5, TimeUnit.SECONDS)
-                      .readIssuerAuthorityForRuntime(validRequest()))
-          .satisfies(
-              failure -> assertThat(TlsTestSupport.isTlsHandshakeRejection(failure)).isTrue());
+      Throwable handshakeFailure =
+          catchThrowable(
+              () -> {
+                try (Socket transport = new Socket()) {
+                  transport.connect(new InetSocketAddress("127.0.0.1", server.getPort()), 5_000);
+                  try (SSLSocket socket =
+                      (SSLSocket)
+                          trustOnlyClientContext
+                              .getSocketFactory()
+                              .createSocket(transport, "127.0.0.1", server.getPort(), true)) {
+                    socket.setSoTimeout(5_000);
+                    SSLParameters parameters = socket.getSSLParameters();
+                    parameters.setApplicationProtocols(new String[] {"h2"});
+                    parameters.setEndpointIdentificationAlgorithm("HTTPS");
+                    socket.setSSLParameters(parameters);
+                    socket.startHandshake();
+                    // TLS 1.3 can deliver the server's certificate rejection after the client's
+                    // handshake returns. Observe that alert rather than accepting a silent close.
+                    socket
+                        .getOutputStream()
+                        .write(
+                            "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+                    socket.getOutputStream().flush();
+                    socket.getInputStream().read();
+                  }
+                }
+              });
+
+      assertThat(handshakeFailure)
+          .as("the REQUIRED client-certificate TLS handshake must fail")
+          .isNotNull();
+      assertThat(TlsTestSupport.isTlsHandshakeRejection(handshakeFailure))
+          .as("failure must identify client-certificate rejection: %s", describe(handshakeFailure))
+          .isTrue();
       verifyNoInteractions(producer);
     } finally {
-      channel.shutdownNow();
-      channel.awaitTermination(2, TimeUnit.SECONDS);
       stop(server);
     }
   }
@@ -222,6 +252,39 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
     }
   }
 
+  private SSLContext trustOnlyClientContext() throws Exception {
+    X509Certificate caCertificate;
+    try (InputStream input = Files.newInputStream(certificate("ca.crt"))) {
+      caCertificate =
+          (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(input);
+    }
+
+    KeyStore trustStore = KeyStore.getInstance(KeyStore.getDefaultType());
+    trustStore.load(null);
+    trustStore.setCertificateEntry("test-ca", caCertificate);
+    TrustManagerFactory trustManagers =
+        TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trustManagers.init(trustStore);
+
+    SSLContext context = SSLContext.getInstance("TLS");
+    context.init(new KeyManager[0], trustManagers.getTrustManagers(), null);
+    return context;
+  }
+
+  private static String describe(Throwable failure) {
+    StringBuilder description = new StringBuilder();
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (description.length() > 0) {
+        description.append(" <- ");
+      }
+      description.append(cause.getClass().getSimpleName());
+      if (cause.getMessage() != null) {
+        description.append(": ").append(cause.getMessage());
+      }
+    }
+    return description.toString();
+  }
+
   private static IssuerGenerationAuthorityEvent event(
       String requestId, long sequence, long generation, long sourceVersion) {
     return IssuerGenerationAuthorityEventV1Codec.seal(
@@ -246,14 +309,6 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
             Long.toString(generation),
             "sourceVersion",
             Long.toString(sourceVersion)));
-  }
-
-  private static net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest
-      validRequest() {
-    return net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest.newBuilder()
-        .setIssuerId(ISSUER_ID)
-        .setRequestId(CURRENT_READ_REQUEST_ID)
-        .build();
   }
 
   private static void stop(Server server) throws InterruptedException {

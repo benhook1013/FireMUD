@@ -59,6 +59,7 @@ jobs:
             const completeModules = [
               "common-data-runtime",
               "common-platform-core",
+              "common-redis-contracts",
               "common-saga",
               "common-temporal",
               "common-security",
@@ -1029,6 +1030,55 @@ jobs:
         with:
           name: account-issuer-readback-mtls-proof-${{ github.sha }}
           path: services/game-session-service/build/test-results/crossServiceTest/TEST-*AccountIssuerAuthorityGrpcMtlsCrossServiceTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run Account PostgreSQL issuer readback socket mTLS composition proof
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:crossServiceTest \
+            --tests crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresIssuerSourceReturnsBootstrapCurrentAndHistoricalEvidenceOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#[1] clientIdentity = "wrong-service"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#[2] clientIdentity = "wrong-namespace"' \
+            game-session-service
+
+      - name: Upload Account PostgreSQL issuer readback socket mTLS proof results
+        if: ${{ always() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-issuer-postgresql-readback-mtls-proof-${{ github.sha }}
+          path: services/game-session-service/build/test-results/crossServiceTest/TEST-*AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run registered Game Session issuer projection Redis component proof
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#authenticatedCurrentBootstrapAndContiguousEventUseDeterministicPersistentSnapshots()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#authenticatedSequenceZeroAbsenceBootstrapsWithoutEventIdentityOrAdmissionEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#gapAndAuthenticatedOlderDuplicateHaveDistinctNoMutationOutcomes()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#staleExpectedBytesAreNonMutatingThroughTheRegisteredOwnerScript()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#unknownOrDuplicateJsonFieldsQuarantineWithoutChangingBytesOrTtl()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#expiringProjectionIsQuarantinedWithoutChangingItsBytesOrExpiration()' \
+            game-session-service
+
+      - name: Upload registered issuer projection Redis proof results
+        if: ${{ always() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-session-issuer-projection-redis-proof-${{ github.sha }}
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*IssuerAuthorityProjectionRedisIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 
