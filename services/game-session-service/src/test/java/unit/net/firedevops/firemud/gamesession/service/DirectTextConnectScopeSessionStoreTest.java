@@ -85,12 +85,15 @@ class DirectTextConnectScopeSessionStoreTest {
     SessionContext caller = session(7L, 41L);
     Instant now = Instant.now();
     Instant expiry = now.plusSeconds(3600);
-    store.replaceWorldScopes(
+    store.replaceRealmSnapshot(
         caller,
         "demo-world",
         22L,
         "demo-world",
-        List.of(scopedRealm(caller, "production", "scope-first", expiry)));
+        "realms-catalog",
+        List.of(),
+        List.of(scopedRealm(caller, "production", "scope-first", expiry)),
+        now);
 
     DirectTextConnectScopeSessionStore.JoinScope firstAttempt =
         store
@@ -106,12 +109,15 @@ class DirectTextConnectScopeSessionStoreTest {
         .isEqualTo(retryAttempt.scope().connectScopeId());
 
     store.clearWorldScopes(caller, 22L, "demo-world");
-    store.replaceWorldScopes(
+    store.replaceRealmSnapshot(
         caller,
         "demo-world",
         22L,
         "demo-world",
-        List.of(scopedRealm(caller, "production", "scope-second", expiry)));
+        "realms-catalog",
+        List.of(),
+        List.of(scopedRealm(caller, "production", "scope-second", expiry)),
+        now);
     DirectTextConnectScopeSessionStore.JoinScope newAttempt =
         store
             .publicProductionScopeForJoin(caller, "demo-world", 22L, "demo-world", now)
@@ -125,12 +131,15 @@ class DirectTextConnectScopeSessionStoreTest {
   void clearingTransportLobbyRemovesScopeAndBoundJoinIdentityBeforeReuse() {
     SessionContext caller = session(7L, 41L);
     Instant now = Instant.now();
-    store.replaceWorldScopes(
+    store.replaceRealmSnapshot(
         caller,
         "demo-world",
         22L,
         "demo-world",
-        List.of(scopedRealm(caller, "production", "old-scope", now.plusSeconds(600))));
+        "realms-catalog",
+        List.of(),
+        List.of(scopedRealm(caller, "production", "old-scope", now.plusSeconds(600))),
+        now);
     String oldRequestId =
         store
             .publicProductionScopeForJoin(caller, "demo-world", 22L, "demo-world", now)
@@ -142,12 +151,15 @@ class DirectTextConnectScopeSessionStoreTest {
     assertThat(store.publicProductionScopeForJoin(caller, "demo-world", 22L, "demo-world", now))
         .isEmpty();
     assertThat(store.publicProductionScope(caller, 22L, "demo-world", now)).isEmpty();
-    store.replaceWorldScopes(
+    store.replaceRealmSnapshot(
         caller,
         "demo-world",
         22L,
         "demo-world",
-        List.of(scopedRealm(caller, "production", "new-scope", now.plusSeconds(600))));
+        "realms-catalog",
+        List.of(),
+        List.of(scopedRealm(caller, "production", "new-scope", now.plusSeconds(600))),
+        now);
     DirectTextConnectScopeSessionStore.JoinScope newAttempt =
         store
             .publicProductionScopeForJoin(caller, "demo-world", 22L, "demo-world", now)
@@ -173,12 +185,15 @@ class DirectTextConnectScopeSessionStoreTest {
               assertThat(snapshot.expiresAt()).isBeforeOrEqualTo(now.plusSeconds(301));
             });
 
-    store.replaceWorldScopes(
+    store.replaceRealmSnapshot(
         caller,
         "1",
         22L,
         "demo-world",
-        List.of(scopedRealm(caller, "production", "scope-secret", now.plusSeconds(86_400))));
+        "realms-catalog",
+        List.of(),
+        List.of(scopedRealm(caller, "production", "scope-secret", now.plusSeconds(86_400))),
+        now);
     DirectTextConnectScopeSessionStore.JoinScope selected =
         store.publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now).orElseThrow();
 
@@ -311,18 +326,24 @@ class DirectTextConnectScopeSessionStoreTest {
             new DirectTextConnectScopeSessionStore.WorldOrdinalTarget(
                 2, "DEMO", 33L, 4L, "tenant-33-target")),
         now);
-    store.replaceWorldScopes(
+    store.replaceRealmSnapshot(
         caller,
         "1",
         22L,
         "demo",
-        List.of(scopedRealm(caller, 22L, "production", "tenant-22-scope", now.plusSeconds(60))));
-    store.replaceWorldScopes(
+        "tenant-22-catalog",
+        List.of(),
+        List.of(scopedRealm(caller, 22L, "production", "tenant-22-scope", now.plusSeconds(60))),
+        now);
+    store.replaceRealmSnapshot(
         caller,
         "2",
         33L,
         "demo",
-        List.of(scopedRealm(caller, 33L, "production", "tenant-33-scope", now.plusSeconds(60))));
+        "tenant-33-catalog",
+        List.of(),
+        List.of(scopedRealm(caller, 33L, "production", "tenant-33-scope", now.plusSeconds(60))),
+        now);
 
     assertThat(store.publicProductionScopeForJoin(caller, "1", 22L, "demo", now))
         .hasValueSatisfying(
@@ -364,6 +385,36 @@ class DirectTextConnectScopeSessionStoreTest {
     assertThat(store.realmsSnapshot(session(41L, 8L), 22L, "demo", now)).isEmpty();
     assertThat(store.realmsSnapshot(session(42L, 7L), 22L, "demo", now)).isEmpty();
     assertThat(store.realmsSnapshot(caller, 22L, "demo", now.plusSeconds(301))).isEmpty();
+  }
+
+  @Test
+  void replacingWorldScopesClearsOnlyThatWorldsRealmsSnapshotAndKeepsJoinScopes() {
+    SessionContext caller = session(41L, 7L);
+    Instant now = Instant.now();
+    store.replaceRealmSnapshot(
+        caller, "demo", 22L, "demo", "demo-catalog", List.of(), List.of(), now);
+    store.replaceRealmSnapshot(
+        caller, "secondary", 22L, "secondary", "secondary-catalog", List.of(), List.of(), now);
+    store.replaceRealmSnapshot(
+        caller, "demo", 33L, "demo", "other-tenant-catalog", List.of(), List.of(), now);
+    store.replaceWorldScopes(
+        caller,
+        "demo",
+        22L,
+        "demo",
+        List.of(scopedRealm(caller, 22L, "production", "join-scope", now.plusSeconds(60))));
+
+    assertThat(store.realmsSnapshot(caller, 22L, "demo", now)).isEmpty();
+    assertThat(store.realmsSnapshot(caller, 22L, "secondary", now))
+        .hasValueSatisfying(
+            snapshot -> assertThat(snapshot.catalogFingerprint()).isEqualTo("secondary-catalog"));
+    assertThat(store.realmsSnapshot(caller, 33L, "demo", now))
+        .hasValueSatisfying(
+            snapshot ->
+                assertThat(snapshot.catalogFingerprint()).isEqualTo("other-tenant-catalog"));
+    assertThat(store.publicProductionScopeForJoin(caller, "demo", 22L, "demo", now)).isEmpty();
+    assertThat(store.publicProductionScope(caller, 22L, "demo", now))
+        .hasValueSatisfying(scope -> assertThat(scope.connectScopeId()).isEqualTo("join-scope"));
   }
 
   @Test

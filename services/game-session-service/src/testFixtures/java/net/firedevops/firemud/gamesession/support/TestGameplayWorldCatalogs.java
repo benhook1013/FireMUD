@@ -208,14 +208,15 @@ public final class TestGameplayWorldCatalogs {
     if (input.getRealms() != null) {
       for (GameplayCatalogProperties.Realm realm : input.getRealms()) {
         if (realm != null) {
-          realms.add(toRealmView(realm));
+          realms.add(toRealmView(input.getSlug(), realm));
         }
       }
     }
     return new GameplayWorldCatalog.WorldView(input.getSlug(), input.getDisplayName(), realms);
   }
 
-  private static GameplayWorldCatalog.RealmView toRealmView(GameplayCatalogProperties.Realm input) {
+  private static GameplayWorldCatalog.RealmView toRealmView(
+      String worldSlug, GameplayCatalogProperties.Realm input) {
     String stateScope =
         input.getStateScope() == null ? "UNSPECIFIED" : input.getStateScope().name();
     String characterCreationPolicy =
@@ -234,9 +235,7 @@ public final class TestGameplayWorldCatalogs {
         stateScope,
         characterCreationPolicy,
         1L,
-        UUID.nameUUIDFromBytes(
-            ("test-realm:" + input.getTenantId() + ":" + input.getSlug())
-                .getBytes(StandardCharsets.UTF_8)),
+        stableId("realm", input.getTenantId(), worldSlug, input.getSlug()),
         UUID.nameUUIDFromBytes(
             ("test-namespace:" + input.getTenantId() + ":" + input.getGameInstanceId())
                 .getBytes(StandardCharsets.UTF_8)));

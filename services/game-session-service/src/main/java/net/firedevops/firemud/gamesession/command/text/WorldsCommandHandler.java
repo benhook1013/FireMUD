@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -479,20 +480,7 @@ public class WorldsCommandHandler {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
-  }
-
-  private boolean isFreshAuthorityEvaluation(String evaluatedAt) {
-    if (!StringUtils.hasText(evaluatedAt)) {
-      return false;
-    }
-    try {
-      Instant evaluated = Instant.parse(evaluatedAt);
-      Instant now = Instant.now();
-      return !evaluated.isAfter(now) && !evaluated.isBefore(now.minusSeconds(15));
-    } catch (DateTimeParseException ex) {
-      return false;
-    }
+        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
   }
 
   private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
@@ -515,7 +503,7 @@ public class WorldsCommandHandler {
             response.getTenantId(),
             sessionContext.accountId(),
             realm.tenantId())
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
+        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
   }
 
   private boolean hasMatchingAuthorityIdentity(
@@ -969,7 +957,7 @@ public class WorldsCommandHandler {
             response.getTenantId(),
             sessionContext.accountId(),
             realm.tenantId())
-        || !isFreshAuthorityEvaluation(response.getEvaluatedAt())) {
+        || !AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC())) {
       return false;
     }
     if (!response.getMembershipExists()) {

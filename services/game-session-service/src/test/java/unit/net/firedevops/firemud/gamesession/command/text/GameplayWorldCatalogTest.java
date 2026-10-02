@@ -12,10 +12,12 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -1006,6 +1008,63 @@ class GameplayWorldCatalogTest {
                 false,
                 "SHARED",
                 "ALLOW_NEW")));
+  }
+
+  @Test
+  void propertyCatalogRealmIdsIncludeWorldAndRemainDeterministic() {
+    GameplayCatalogProperties properties = new GameplayCatalogProperties();
+    properties.setWorlds(
+        List.of(
+            propertyWorld("world-one", 7L, 11L, true), propertyWorld("world-two", 7L, 12L, false)));
+
+    GameplayWorldCatalog catalog = TestGameplayWorldCatalogs.fromProperties(properties);
+    GameplayWorldCatalog.RealmView firstRealm =
+        catalog
+            .resolveRealm(catalog.resolveWorld("world-one").orElseThrow(), "shared")
+            .orElseThrow();
+    GameplayWorldCatalog.RealmView secondRealm =
+        catalog
+            .resolveRealm(catalog.resolveWorld("world-two").orElseThrow(), "shared")
+            .orElseThrow();
+    GameplayWorldCatalog repeatedCatalog = TestGameplayWorldCatalogs.fromProperties(properties);
+    GameplayWorldCatalog.RealmView repeatedFirstRealm =
+        repeatedCatalog
+            .resolveRealm(repeatedCatalog.resolveWorld("world-one").orElseThrow(), "shared")
+            .orElseThrow();
+    GameplayCatalogProperties otherTenantProperties = new GameplayCatalogProperties();
+    otherTenantProperties.setWorlds(List.of(propertyWorld("world-one", 8L, 11L, true)));
+    GameplayWorldCatalog tenantCatalog =
+        TestGameplayWorldCatalogs.fromProperties(otherTenantProperties);
+    GameplayWorldCatalog.RealmView otherTenantRealm =
+        tenantCatalog
+            .resolveRealm(tenantCatalog.resolveWorld("world-one").orElseThrow(), "shared")
+            .orElseThrow();
+
+    assertThat(firstRealm.realmId()).isNotEqualTo(secondRealm.realmId());
+    assertThat(otherTenantRealm.realmId()).isNotEqualTo(firstRealm.realmId());
+    assertThat(repeatedFirstRealm.realmId()).isEqualTo(firstRealm.realmId());
+    assertThat(repeatedFirstRealm.playableStateNamespaceId())
+        .isEqualTo(firstRealm.playableStateNamespaceId());
+  }
+
+  private static GameplayCatalogProperties.World propertyWorld(
+      String worldSlug, long tenantId, long gameInstanceId, boolean publicProductionRealm) {
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("shared");
+    realm.setDisplayName("Shared Realm");
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setPointerVersion(1L);
+    realm.setVisible(true);
+    realm.setPublicProductionRealm(publicProductionRealm);
+    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
+    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
+
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(worldSlug);
+    world.setDisplayName(worldSlug);
+    world.setRealms(List.of(realm));
+    return world;
   }
 
   private static GameplayWorldCatalog.WorldView worldWithRealm(
