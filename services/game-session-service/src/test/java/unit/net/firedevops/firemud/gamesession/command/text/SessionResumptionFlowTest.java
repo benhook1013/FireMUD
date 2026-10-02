@@ -449,7 +449,7 @@ class SessionResumptionFlowTest {
     assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
     SessionContext before = sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow();
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L, true)));
 
     for (String alias : List.of("LOGOUT", "LOGOFF", "QUIT")) {
       TextCommandInterpretationResult result = interpreter.interpret("1", alias, false);

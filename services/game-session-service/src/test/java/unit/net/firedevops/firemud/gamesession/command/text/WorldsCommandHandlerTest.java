@@ -420,6 +420,12 @@ class WorldsCommandHandlerTest {
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
     gameplayCatalogProperties
         .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(false);
+    gameplayCatalogProperties
+        .getWorlds()
         .get(1)
         .getRealms()
         .getFirst()
@@ -470,6 +476,12 @@ class WorldsCommandHandlerTest {
   @Test
   void browseCharactersUsesIsolatedStateRealmRoster() {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 1L, false)));
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(false);
     gameplayCatalogProperties
         .getWorlds()
         .getFirst()
@@ -893,6 +905,7 @@ class WorldsCommandHandlerTest {
   void browseCharactersRejectsZeroPublicProductionCardinalityWithExplicitRealm() {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     properties.setWorlds(List.of(world("preview", 22L, 2L, false)));
+    properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(false);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 

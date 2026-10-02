@@ -251,7 +251,7 @@ public final class GameplayWorldCatalog {
       return resolveWorld(selector, visibleWorlds, visibleWorlds)
           .filter(world -> hasValidPublicProductionRealm(world, catalogState));
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -624,7 +624,7 @@ public final class GameplayWorldCatalog {
     if (authorityPointerSupplier == null) {
       return visibleWorlds();
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -653,7 +653,7 @@ public final class GameplayWorldCatalog {
       throw new AuthorityPointerUnavailableException(
           "Authoritative public-production realm identity is unavailable");
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
