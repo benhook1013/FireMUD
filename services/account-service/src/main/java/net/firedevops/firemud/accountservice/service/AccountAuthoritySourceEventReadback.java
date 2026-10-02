@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service;
 
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -113,7 +114,7 @@ public final class AccountAuthoritySourceEventReadback {
                           "Latest Account password-reset event has no immutable operation receipt"));
       requirePasswordResetReceipt(account, receipt, latestEvent, verified, current);
     } else {
-      UUID requestId = UUID.fromString(verified.requestId());
+      UUID requestId = parseLogoutAllRequestId(verified.requestId());
       LogoutAllReceipt receipt =
           logoutAllRepository
               .findByRequestId(requestId)
@@ -143,6 +144,48 @@ public final class AccountAuthoritySourceEventReadback {
     }
   }
 
+  /**
+   * Validates one selected immutable Account event and its receipt against the current local
+   * authority fence. Historical password-reset evidence deliberately does not prove that the old
+   * password verifier remains current or make that reset operation recoverable.
+   */
+  public void requireRetainedEvent(Account account, Event event, ScopeState current) {
+    requireAccountAssociation(account);
+    if (current == null
+        || !AuthorityScope.account(account.getAccountUuid()).equals(current.scope())
+        || current.generation() <= 0L
+        || current.sourceVersion() <= 0L) {
+      throw new IllegalStateException("Retained Account source authority state is invalid");
+    }
+    requireCurrentFence(current.issuanceFence(), account.getAccountUuid());
+    VerifiedSourceEvent verified = verifyEvent(event, account.getAccountUuid());
+    if (event.outboxSequence() > currentSourceSequence(account)) {
+      throw new IllegalStateException("Selected Account source event is ahead of its checkpoint");
+    }
+
+    if (verified.passwordReset().isPresent()) {
+      PasswordResetReceipt receipt =
+          passwordResetRepository
+              .findByRequestId(verified.requestId())
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Selected Account password-reset event has no immutable operation receipt"));
+      requirePasswordResetReceiptBinding(account, receipt, event, verified, current);
+      return;
+    }
+
+    UUID requestId = parseLogoutAllRequestId(verified.requestId());
+    LogoutAllReceipt receipt =
+        logoutAllRepository
+            .findByRequestId(requestId)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Selected Account logout-all event has no immutable operation receipt"));
+    requireLogoutAllReceipt(account, receipt, event, verified, current);
+  }
+
   private long currentSourceSequence(Account account) {
     return outboxRepository
         .readCheckpoint(streamKey(account.getAccountUuid()))
@@ -151,6 +194,16 @@ public final class AccountAuthoritySourceEventReadback {
   }
 
   private void requirePasswordResetReceipt(
+      Account account,
+      PasswordResetReceipt receipt,
+      Event event,
+      VerifiedSourceEvent verified,
+      ScopeState current) {
+    requirePasswordResetReceiptBinding(account, receipt, event, verified, current);
+    requireCurrentPasswordVerifier(account, receipt);
+  }
+
+  private void requirePasswordResetReceiptBinding(
       Account account,
       PasswordResetReceipt receipt,
       Event event,
@@ -183,13 +236,6 @@ public final class AccountAuthoritySourceEventReadback {
       throw new IllegalStateException(
           "Latest Account password-reset receipt request digest is inconsistent");
     }
-    String currentVerifier = account.getPasswordHash();
-    if (currentVerifier == null
-        || currentVerifier.isBlank()
-        || !constantTimeTextEquals(sha256Hex(currentVerifier), receipt.passwordVerifierDigest())) {
-      throw new IllegalStateException(
-          "Latest Account password-reset event does not match the current password verifier");
-    }
     requireReceiptNotAhead(
         receipt.accountAuthorityGeneration(),
         receipt.accountSourceVersion(),
@@ -199,18 +245,23 @@ public final class AccountAuthoritySourceEventReadback {
         "Password-reset");
   }
 
+  private void requireCurrentPasswordVerifier(Account account, PasswordResetReceipt receipt) {
+    String currentVerifier = account.getPasswordHash();
+    if (currentVerifier == null
+        || currentVerifier.isBlank()
+        || !constantTimeTextEquals(sha256Hex(currentVerifier), receipt.passwordVerifierDigest())) {
+      throw new IllegalStateException(
+          "Latest Account password-reset event does not match the current password verifier");
+    }
+  }
+
   private void requireLogoutAllReceipt(
       Account account,
       LogoutAllReceipt receipt,
       Event event,
       VerifiedSourceEvent verified,
       ScopeState current) {
-    UUID requestId;
-    try {
-      requestId = UUID.fromString(verified.requestId());
-    } catch (IllegalArgumentException exception) {
-      throw new IllegalStateException("Logout-all source request ID is malformed", exception);
-    }
+    UUID requestId = parseLogoutAllRequestId(verified.requestId());
     if (!requestId.toString().equals(verified.requestId())
         || !requestId.equals(receipt.requestId())
         || receipt.accountId() != account.getId()
@@ -245,7 +296,20 @@ public final class AccountAuthoritySourceEventReadback {
         "Logout-all");
   }
 
-  private VerifiedSourceEvent verifyEvent(Event event, UUID accountUuid) {
+  private UUID parseLogoutAllRequestId(String requestIdText) {
+    UUID requestId;
+    try {
+      requestId = UUID.fromString(requestIdText);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException("Logout-all source request ID is malformed", exception);
+    }
+    if (!requestId.toString().equals(requestIdText)) {
+      throw new IllegalStateException("Logout-all source request ID is not canonical");
+    }
+    return requestId;
+  }
+
+  private static VerifiedSourceEvent verifyEvent(Event event, UUID accountUuid) {
     if (event == null) {
       throw new IllegalStateException("Account source event is missing");
     }
@@ -282,6 +346,33 @@ public final class AccountAuthoritySourceEventReadback {
             "Account source event is not a valid declared password-reset or logout-all event",
             logoutFailure);
       }
+    }
+  }
+
+  /** Reuses the closed schema validator for immutable source-result constructor invariants. */
+  static void requireEventMatchesSnapshot(
+      Event event, UUID accountUuid, ScopeState current, boolean mustBeCurrentLatest) {
+    if (accountUuid == null
+        || current == null
+        || !AuthorityScope.account(accountUuid).equals(current.scope())
+        || current.generation() <= 0L
+        || current.sourceVersion() <= 0L) {
+      throw new IllegalStateException("Account source snapshot scope or counters are invalid");
+    }
+    VerifiedSourceEvent verified = verifyEvent(event, accountUuid);
+    BigInteger eventGeneration = new BigInteger(verified.accountAuthorityGeneration());
+    BigInteger eventSourceVersion = new BigInteger(verified.sourceVersion());
+    BigInteger currentGeneration = BigInteger.valueOf(current.generation());
+    BigInteger currentSourceVersion = BigInteger.valueOf(current.sourceVersion());
+    boolean countersMatch =
+        mustBeCurrentLatest
+            ? eventGeneration.equals(currentGeneration)
+                && eventSourceVersion.equals(currentSourceVersion)
+            : eventGeneration.compareTo(currentGeneration) <= 0
+                && eventSourceVersion.compareTo(currentSourceVersion) <= 0;
+    if (!countersMatch) {
+      throw new IllegalStateException(
+          "Account source event counters contradict or lead the current snapshot");
     }
   }
 

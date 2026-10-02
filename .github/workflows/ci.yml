@@ -1254,6 +1254,10 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#sourceCounterOverflowFailsBeforeAnyCutoffMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#passwordResetThenLogoutAllPreservesBothReceiptsAndResetRetry()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#logoutAllThenPasswordResetValidatesMixedLatestSourceAndPreservesLogoutReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#currentSourceReadbackProvesPristineAccountAndRejectsUnknownAccountWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#historicalReadbackPreservesMixedEventsWhileReturningCurrentSourceAndResetRetryStaysSuperseded()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#invalidHistoricalSelectorsFailWithoutChangingAnyAccountSourceEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#historicalReaderHoldsAccountFenceThroughSelectedAndCurrentSourceReadback()' \
             account-service
 
       - name: Upload Account logout-all source PostgreSQL proof results
