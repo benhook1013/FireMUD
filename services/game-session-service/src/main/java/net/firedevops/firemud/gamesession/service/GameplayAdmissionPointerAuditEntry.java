@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service;
 
 import java.time.Instant;
+import java.util.UUID;
 
 public record GameplayAdmissionPointerAuditEntry(
     String worldSlug,
@@ -19,4 +20,7 @@ public record GameplayAdmissionPointerAuditEntry(
     String reason,
     String controlPlaneRequestId,
     String preparedVersionUpgradeId,
+    Long catalogRevision,
+    UUID realmId,
+    UUID playableStateNamespaceId,
     Instant occurredAt) {}

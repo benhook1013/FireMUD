@@ -206,6 +206,9 @@ message GameplayRealm {
   string state_scope = 9;
   string character_creation_policy = 10;
   bool public_production_realm = 11;
+  int64 catalog_revision = 12;
+  string realm_id = 13;
+  string playable_state_namespace_id = 14;
 }
 
 message ListGameplayRealmsResponse {
@@ -232,6 +235,9 @@ message GameplayAdmissionPointer {
   string state_scope = 10;
   string character_creation_policy = 11;
   bool public_production_realm = 12;
+  int64 catalog_revision = 13;
+  string realm_id = 14;
+  string playable_state_namespace_id = 15;
 }
 
 message GetAdmissionPointerResponse {
@@ -410,6 +416,11 @@ message AdmissionPointerControlPlaneEntry {
   int64 occurred_at_ms = 15;
   string prepared_version_upgrade_id = 16;
   bool public_production_realm = 17;
+  optional int64 catalog_revision = 18;
+  // Empty for historical audit rows that predate durable pointer identity.
+  string realm_id = 19;
+  // Empty for historical audit rows that predate durable pointer identity.
+  string playable_state_namespace_id = 20;
 }
 
 message ListAdmissionPointersRequest {}
