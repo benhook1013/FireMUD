@@ -105,7 +105,10 @@ class AccountRepositoryIntegrationTest {
     AccountRepository accountRepository = new AccountRepository(transactionAwareDsl);
     AccountConnectScopeRepository connectScopes =
         new AccountConnectScopeRepository(
-            transactionAwareDsl, accountRepository, tenantIdentityResolver, freshTenantIdentityRepository);
+            transactionAwareDsl,
+            accountRepository,
+            tenantIdentityResolver,
+            freshTenantIdentityRepository);
     AccountJoinOperationRepository joinOperations =
         new AccountJoinOperationRepository(transactionAwareDsl, connectScopes);
     AccountTenantMembershipRepository memberships =
@@ -949,7 +952,9 @@ class AccountRepositoryIntegrationTest {
             + "- 'playable_state_namespace_uuid' - 'game_instance_uuid')::text";
     String pendingJoinBefore =
         jsonRow(
-            "SELECT " + pendingJoinProjection + " FROM "
+            "SELECT "
+                + pendingJoinProjection
+                + " FROM "
                 + schema
                 + ".account_join_operations j WHERE request_id = ?",
             pendingJoinRequestId);
@@ -1038,7 +1043,9 @@ class AccountRepositoryIntegrationTest {
     assertThat(secondMembershipAfter.get("tenant_provenance_digest", String.class)).isNull();
     assertThat(
             jsonRow(
-                "SELECT " + pendingJoinProjection + " FROM "
+                "SELECT "
+                    + pendingJoinProjection
+                    + " FROM "
                     + schema
                     + ".account_join_operations j WHERE request_id = ?",
                 pendingJoinRequestId))
@@ -1060,8 +1067,7 @@ class AccountRepositoryIntegrationTest {
     assertThat(retainedJoinRepresentation.get("account_uuid", UUID.class)).isNull();
     assertThat(retainedJoinRepresentation.get("tenant_uuid", UUID.class)).isNull();
     assertThat(retainedJoinRepresentation.get("tenant_slug", String.class)).isNull();
-    assertThat(
-            retainedJoinRepresentation.get("playable_state_namespace_uuid", UUID.class))
+    assertThat(retainedJoinRepresentation.get("playable_state_namespace_uuid", UUID.class))
         .isNull();
     assertThat(retainedJoinRepresentation.get("game_instance_uuid", UUID.class)).isNull();
     assertThat(

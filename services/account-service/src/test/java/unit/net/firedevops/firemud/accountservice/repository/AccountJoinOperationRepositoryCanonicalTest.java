@@ -35,28 +35,29 @@ class AccountJoinOperationRepositoryCanonicalTest {
             1L,
             "2026-10-03T00:00:00Z",
             "2026-10-03T00:01:00Z");
-    boolean wasTransactionActive =
-        TransactionSynchronizationManager.isActualTransactionActive();
+    boolean wasTransactionActive = TransactionSynchronizationManager.isActualTransactionActive();
     TransactionSynchronizationManager.setActualTransactionActive(false);
     try {
       assertThatThrownBy(() -> repository.insertCanonicalIntent("request-v2", scope, "caller"))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Canonical Account JOIN operation access requires an active owner transaction");
+          .hasMessage(
+              "Canonical Account JOIN operation access requires an active owner transaction");
       assertThatThrownBy(() -> repository.findCanonicalEvidenceByRequestId("request-v2"))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Canonical Account JOIN operation access requires an active owner transaction");
+          .hasMessage(
+              "Canonical Account JOIN operation access requires an active owner transaction");
       assertThatThrownBy(
-              () ->
-                  repository.bindCanonicalPolicyEvidence(
-                      "request-v2", scope, "caller", true, 1L))
+              () -> repository.bindCanonicalPolicyEvidence("request-v2", scope, "caller", true, 1L))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Canonical Account JOIN operation access requires an active owner transaction");
+          .hasMessage(
+              "Canonical Account JOIN operation access requires an active owner transaction");
       assertThatThrownBy(
               () ->
                   repository.recordCanonicalPolicyUnavailable(
                       "request-v2", scope, "caller", "ENTITLEMENT_UNAVAILABLE"))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessage("Canonical Account JOIN operation access requires an active owner transaction");
+          .hasMessage(
+              "Canonical Account JOIN operation access requires an active owner transaction");
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(wasTransactionActive);
     }

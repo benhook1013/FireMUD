@@ -444,9 +444,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
         .transaction()
         .executeWithoutResult(
             status ->
-                scopeRepository(fixture)
-                    .freshTenantIdentities()
-                    .importVerified(tenantEvidence));
+                scopeRepository(fixture).freshTenantIdentities().importVerified(tenantEvidence));
     flyway(fixture.dataSource(), fixture.schema(), "46").migrate();
     flyway(fixture.dataSource(), fixture.schema(), "47").migrate();
 
@@ -485,11 +483,11 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                               });
                         }))
         .hasMessage("simulated lost canonical JOIN intent acknowledgement");
-    assertThat(
-            fixture
-                .transaction()
-                .execute(status -> operations.insertCanonicalIntent(requestId, scope, callerBinding)))
-        .isFalse();
+    Boolean lostAcknowledgementRetryInserted =
+        fixture
+            .transaction()
+            .execute(status -> operations.insertCanonicalIntent(requestId, scope, callerBinding));
+    assertThat(lostAcknowledgementRetryInserted).isFalse();
 
     CanonicalJoinOperationEvidence pending =
         fixture
@@ -522,8 +520,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     assertThat(aliases.get("game_instance_id", Long.class)).isNull();
     assertThat(aliases.get("playable_state_namespace_id", String.class)).isNull();
     assertThat(aliases.get("tenant_uuid", UUID.class)).isEqualTo(tenantUuid);
-    assertThat(aliases.get("game_instance_uuid", UUID.class))
-        .isEqualTo(scope.gameInstanceId());
+    assertThat(aliases.get("game_instance_uuid", UUID.class)).isEqualTo(scope.gameInstanceId());
     assertThat(aliases.get("playable_state_namespace_uuid", UUID.class))
         .isEqualTo(scope.playableStateNamespaceId());
 
@@ -531,7 +528,9 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
             () ->
                 fixture
                     .transaction()
-                    .execute(status -> operations.insertCanonicalIntent(requestId, scope, "other-caller")))
+                    .execute(
+                        status ->
+                            operations.insertCanonicalIntent(requestId, scope, "other-caller")))
         .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
     CanonicalJoinScopeV2 changedTarget =
         new CanonicalJoinScopeV2(
@@ -574,43 +573,42 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                           throw new IllegalStateException("simulated canonical JOIN rollback");
                         }))
         .hasMessage("simulated canonical JOIN rollback");
-    assertThat(
-            fixture
-                .transaction()
-                .execute(status -> operations.findCanonicalEvidenceByRequestId(rollbackRequestId)))
-        .isEmpty();
-    assertThat(
-            fixture
-                .transaction()
-                .execute(
-                    status -> operations.insertCanonicalIntent(rollbackRequestId, scope, callerBinding)))
-        .isTrue();
+    Optional<CanonicalJoinOperationEvidence> rolledBackEvidence =
+        fixture
+            .transaction()
+            .execute(status -> operations.findCanonicalEvidenceByRequestId(rollbackRequestId));
+    assertThat(rolledBackEvidence).isEmpty();
+    Boolean rollbackRetryInserted =
+        fixture
+            .transaction()
+            .execute(
+                status ->
+                    operations.insertCanonicalIntent(rollbackRequestId, scope, callerBinding));
+    assertThat(rollbackRetryInserted).isTrue();
 
     CanonicalJoinOperationEvidence policyBound =
         fixture
             .transaction()
             .execute(
-                status -> operations.bindCanonicalPolicyEvidence(requestId, scope, callerBinding, true, 9L));
+                status ->
+                    operations.bindCanonicalPolicyEvidence(
+                        requestId, scope, callerBinding, true, 9L));
     String expectedPolicyDigest =
         AccountJoinDigest.requestV2(
-            scope,
-            callerBinding,
-            AccountJoinDigest.EntitlementAvailabilityV2.AVAILABLE,
-            true,
-            9L);
+            scope, callerBinding, AccountJoinDigest.EntitlementAvailabilityV2.AVAILABLE, true, 9L);
     assertThat(policyBound.entitlementAuthorityAvailability()).isEqualTo("AVAILABLE");
     assertThat(policyBound.allowPublicJoin()).isTrue();
     assertThat(policyBound.entitlementVersion()).isEqualTo(9L);
     assertThat(policyBound.requestDigestVersion()).isEqualTo(2);
     assertThat(policyBound.requestDigest()).isEqualTo(expectedPolicyDigest);
-    assertThat(
-            fixture
-                .transaction()
-                .execute(
-                    status ->
-                        operations.bindCanonicalPolicyEvidence(
-                            requestId, scope, callerBinding, true, 9L)))
-        .isEqualTo(policyBound);
+    CanonicalJoinOperationEvidence policyReplay =
+        fixture
+            .transaction()
+            .execute(
+                status ->
+                    operations.bindCanonicalPolicyEvidence(
+                        requestId, scope, callerBinding, true, 9L));
+    assertThat(policyReplay).isEqualTo(policyBound);
     assertThatThrownBy(
             () ->
                 fixture
@@ -664,7 +662,8 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     fixture
         .transaction()
         .executeWithoutResult(
-            status -> operations.insertCanonicalIntent(policyRollbackRequestId, scope, callerBinding));
+            status ->
+                operations.insertCanonicalIntent(policyRollbackRequestId, scope, callerBinding));
     assertThatThrownBy(
             () ->
                 fixture
@@ -679,9 +678,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     CanonicalJoinOperationEvidence afterPolicyRollback =
         fixture
             .transaction()
-            .execute(
-                status ->
-                    operations.findCanonicalEvidenceByRequestId(policyRollbackRequestId))
+            .execute(status -> operations.findCanonicalEvidenceByRequestId(policyRollbackRequestId))
             .orElseThrow();
     assertThat(afterPolicyRollback.entitlementAuthorityAvailability()).isEqualTo("NOT_EVALUATED");
     assertThat(afterPolicyRollback.entitlementVersion()).isNull();
@@ -693,7 +690,12 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
         .executeWithoutResult(
             status -> operations.insertCanonicalIntent(rawGuardSourceId, scope, callerBinding));
     assertRawCanonicalInsertRejected(
-        fixture.setupDsl(), rawGuardSourceId, "canonical-join-raw-invalidated", true, "PENDING", null);
+        fixture.setupDsl(),
+        rawGuardSourceId,
+        "canonical-join-raw-invalidated",
+        true,
+        "PENDING",
+        null);
     assertRawCanonicalInsertRejected(
         fixture.setupDsl(),
         rawGuardSourceId,
@@ -708,14 +710,20 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     assertRawCanonicalRequiredSlotRejected(
         fixture.setupDsl(), rawGuardSourceId, "canonical-join-raw-missing-tenant", "tenant_uuid");
     assertRawCanonicalRequiredSlotRejected(
-        fixture.setupDsl(), rawGuardSourceId, "canonical-join-raw-missing-tenant-slug", "tenant_slug");
+        fixture.setupDsl(),
+        rawGuardSourceId,
+        "canonical-join-raw-missing-tenant-slug",
+        "tenant_slug");
     assertRawCanonicalRequiredSlotRejected(
         fixture.setupDsl(),
         rawGuardSourceId,
         "canonical-join-raw-missing-namespace",
         "playable_state_namespace_uuid");
     assertRawCanonicalRequiredSlotRejected(
-        fixture.setupDsl(), rawGuardSourceId, "canonical-join-raw-missing-instance", "game_instance_uuid");
+        fixture.setupDsl(),
+        rawGuardSourceId,
+        "canonical-join-raw-missing-instance",
+        "game_instance_uuid");
     assertThatThrownBy(
             () ->
                 fixture
@@ -726,7 +734,10 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                         requestId))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(
-            () -> fixture.setupDsl().execute("DELETE FROM account_join_operations WHERE request_id = ?", requestId))
+            () ->
+                fixture
+                    .setupDsl()
+                    .execute("DELETE FROM account_join_operations WHERE request_id = ?", requestId))
         .isInstanceOf(DataAccessException.class);
     assertThatThrownBy(() -> fixture.setupDsl().execute("TRUNCATE TABLE account_join_operations"))
         .isInstanceOf(DataAccessException.class);
@@ -761,8 +772,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                     v1CollisionRequestId,
                     v1Scope,
                     "legacy-caller",
-                    AccountJoinDigest.intent(
-                        v1CollisionRequestId, v1Scope, "legacy-caller")));
+                    AccountJoinDigest.intent(v1CollisionRequestId, v1Scope, "legacy-caller")));
     assertThatThrownBy(
             () ->
                 fixture
@@ -777,24 +787,23 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
         .transaction()
         .executeWithoutResult(
             status -> operations.insertCanonicalIntent(v2CollisionRequestId, scope, callerBinding));
-    assertThat(
-            fixture
-                .transaction()
-                .execute(
-                    status ->
-                        operations.insertIntent(
-                            v2CollisionRequestId,
-                            v1Scope,
-                            "legacy-caller",
-                            AccountJoinDigest.intent(
-                                v2CollisionRequestId, v1Scope, "legacy-caller"))))
-        .isFalse();
+    Boolean v1RetryAgainstV2Inserted =
+        fixture
+            .transaction()
+            .execute(
+                status ->
+                    operations.insertIntent(
+                        v2CollisionRequestId,
+                        v1Scope,
+                        "legacy-caller",
+                        AccountJoinDigest.intent(v2CollisionRequestId, v1Scope, "legacy-caller")));
+    assertThat(v1RetryAgainstV2Inserted).isFalse();
     assertThat(operations.find(v2CollisionRequestId)).isEmpty();
-    assertThat(
-            fixture
-                .transaction()
-                .execute(status -> operations.findCanonicalEvidenceByRequestId(v2CollisionRequestId)))
-        .isPresent();
+    Optional<CanonicalJoinOperationEvidence> v2CollisionEvidence =
+        fixture
+            .transaction()
+            .execute(status -> operations.findCanonicalEvidenceByRequestId(v2CollisionRequestId));
+    assertThat(v2CollisionEvidence).isPresent();
     assertThatThrownBy(
             () ->
                 fixture
@@ -836,8 +845,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                 fixture
                     .transaction()
                     .executeWithoutResult(
-                        status ->
-                            operations.finish(requestId, "COMMITTED", "JOINED", 1L, 1L, 1L)))
+                        status -> operations.finish(requestId, "COMMITTED", "JOINED", 1L, 1L, 1L)))
         .hasMessage("JOIN operation changed concurrently");
     assertThatThrownBy(
             () ->
@@ -849,17 +857,11 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     Instant attemptedAt = Instant.now();
     assertThat(
             operations.recordReconciliationAttempt(
-                requestId,
-                0,
-                1,
-                attemptedAt,
-                "legacy selector guard",
-                attemptedAt.plusSeconds(1)))
+                requestId, 0, 1, attemptedAt, "legacy selector guard", attemptedAt.plusSeconds(1)))
         .isFalse();
     assertThat(operations.find(requestId)).isEmpty();
     assertThat(operations.findForUpdate(requestId)).isEmpty();
-    assertThat(
-            operations.findDuePendingReconciliation(attemptedAt.plusSeconds(1), 100, 1))
+    assertThat(operations.findDuePendingReconciliation(attemptedAt.plusSeconds(1), 100, 1))
         .noneMatch(operation -> operation.requestId().equals(requestId));
   }
 
@@ -873,9 +875,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
         .transaction()
         .executeWithoutResult(
             status ->
-                scopeRepository(fixture)
-                    .freshTenantIdentities()
-                    .importVerified(tenantEvidence));
+                scopeRepository(fixture).freshTenantIdentities().importVerified(tenantEvidence));
     flyway(fixture.dataSource(), fixture.schema(), "46").migrate();
     flyway(fixture.dataSource(), fixture.schema(), "47").migrate();
 
@@ -887,7 +887,8 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
             tenantEvidence.operationId(),
             tenantEvidence.evidenceDigest());
     CanonicalJoinScopeV2 scope =
-        v2Scope("concurrent-canonical-join-scope", account.accountUuid(), tenantUuid, "join-tenant");
+        v2Scope(
+            "concurrent-canonical-join-scope", account.accountUuid(), tenantUuid, "join-tenant");
     fixture
         .transaction()
         .executeWithoutResult(
@@ -907,7 +908,10 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                 .fetchOne(0, Long.class));
     long outboxBefore =
         Objects.requireNonNull(
-            fixture.setupDsl().resultQuery("SELECT COUNT(*) FROM account_audit_outbox").fetchOne(0, Long.class));
+            fixture
+                .setupDsl()
+                .resultQuery("SELECT COUNT(*) FROM account_audit_outbox")
+                .fetchOne(0, Long.class));
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
       CountDownLatch intentReady = new CountDownLatch(2);
@@ -922,8 +926,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                       .transaction()
                       .execute(
                           status ->
-                              operations.insertCanonicalIntent(
-                                  requestId, scope, callerBinding)));
+                              operations.insertCanonicalIntent(requestId, scope, callerBinding)));
       Future<Boolean> secondInsert =
           submitAtBarrier(
               executor,
@@ -934,8 +937,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                       .transaction()
                       .execute(
                           status ->
-                              operations.insertCanonicalIntent(
-                                  requestId, scope, callerBinding)));
+                              operations.insertCanonicalIntent(requestId, scope, callerBinding)));
       assertThat(intentReady.await(15, TimeUnit.SECONDS)).isTrue();
       releaseIntents.countDown();
       boolean firstWasInserted = firstInsert.get(30, TimeUnit.SECONDS);
@@ -1015,10 +1017,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
   }
 
   private static <T> Future<T> submitAtBarrier(
-      ExecutorService executor,
-      CountDownLatch ready,
-      CountDownLatch release,
-      Callable<T> action) {
+      ExecutorService executor, CountDownLatch ready, CountDownLatch release, Callable<T> action) {
     return executor.submit(
         () -> {
           ready.countDown();
@@ -1037,13 +1036,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
       String status,
       String outcome) {
     assertRawCanonicalInsertRejected(
-        dsl,
-        sourceRequestId,
-        rejectedRequestId,
-        callerAuthorityInvalidated,
-        status,
-        outcome,
-        null);
+        dsl, sourceRequestId, rejectedRequestId, callerAuthorityInvalidated, status, outcome, null);
   }
 
   private static void assertRawCanonicalRequiredSlotRejected(
@@ -1079,12 +1072,18 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                         + "catalog_revision, pointer_version, intent_digest_version, intent_digest, "
                         + "entitlement_authority_availability, ?, last_attempt_authority_availability, "
                         + "?, ?, operation_representation_version, scope_digest_version, "
-                        + selectedSlot("target_class", missingSlot) + ", "
-                        + selectedSlot("account_uuid", missingSlot) + ", "
-                        + selectedSlot("tenant_uuid", missingSlot) + ", "
-                        + selectedSlot("tenant_slug", missingSlot) + ", "
-                        + selectedSlot("playable_state_namespace_uuid", missingSlot) + ", "
-                        + selectedSlot("game_instance_uuid", missingSlot) + " "
+                        + selectedSlot("target_class", missingSlot)
+                        + ", "
+                        + selectedSlot("account_uuid", missingSlot)
+                        + ", "
+                        + selectedSlot("tenant_uuid", missingSlot)
+                        + ", "
+                        + selectedSlot("tenant_slug", missingSlot)
+                        + ", "
+                        + selectedSlot("playable_state_namespace_uuid", missingSlot)
+                        + ", "
+                        + selectedSlot("game_instance_uuid", missingSlot)
+                        + " "
                         + "FROM account_join_operations WHERE request_id = ?",
                     rejectedRequestId,
                     callerAuthorityInvalidated,

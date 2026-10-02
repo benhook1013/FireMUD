@@ -13,9 +13,9 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
+import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.dto.CanonicalJoinScopeV2;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
-import net.firedevops.firemud.accountservice.dto.AccountJoinDigest.EntitlementAvailabilityV2;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository.CanonicalConnectScopeEvidence;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -26,9 +26,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 /** Serializes explicit JOIN on the global account row and retains exact operation outcomes. */
 @Repository
-@SuppressFBWarnings(
-    value = "EI_EXPOSE_REP2",
-    justification = "Injected DSLContext and owner scope repository are internal collaborators.")
 public class AccountJoinOperationRepository {
   private static final int MAX_RECONCILIATION_PAGE_SIZE = 100;
   private static final Pattern SHA256 = Pattern.compile("sha256:[0-9a-f]{64}");
@@ -72,21 +69,13 @@ public class AccountJoinOperationRepository {
 
   public Optional<JoinOperation> find(String requestId) {
     return dsl.selectFrom(ACCOUNT_JOIN_OPERATIONS)
-        .where(
-            ACCOUNT_JOIN_OPERATIONS
-                .REQUEST_ID
-                .eq(requestId)
-                .and(retainedV1Representation()))
+        .where(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID.eq(requestId).and(retainedV1Representation()))
         .fetchOptional(AccountJoinOperationRepository::toJoinOperation);
   }
 
   public Optional<JoinOperation> findForUpdate(String requestId) {
     return dsl.selectFrom(ACCOUNT_JOIN_OPERATIONS)
-        .where(
-            ACCOUNT_JOIN_OPERATIONS
-                .REQUEST_ID
-                .eq(requestId)
-                .and(retainedV1Representation()))
+        .where(ACCOUNT_JOIN_OPERATIONS.REQUEST_ID.eq(requestId).and(retainedV1Representation()))
         .forUpdate()
         .fetchOptional(AccountJoinOperationRepository::toJoinOperation);
   }
@@ -264,8 +253,7 @@ public class AccountJoinOperationRepository {
         readCanonicalEvidenceByRequestId(requestId, false)
             .orElseThrow(
                 () -> new IllegalStateException("Canonical JOIN intent insert readback is absent"));
-    requireCanonicalIntentMatch(
-        committed, requestId, callerBinding, intentDigest, scopeEvidence);
+    requireCanonicalIntentMatch(committed, requestId, callerBinding, intentDigest, scopeEvidence);
     return inserted == 1;
   }
 
@@ -304,7 +292,8 @@ public class AccountJoinOperationRepository {
     CanonicalJoinOperationEvidence operation =
         lockCanonicalEvidenceByRequestId(requestId)
             .orElseThrow(
-                () -> new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+                () ->
+                    new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
 
     if (operation.requestDigest() != null) {
@@ -333,8 +322,7 @@ public class AccountJoinOperationRepository {
         readCanonicalEvidenceByRequestId(requestId, false)
             .orElseThrow(
                 () ->
-                    new IllegalStateException(
-                        "Canonical JOIN policy binding readback is absent"));
+                    new IllegalStateException("Canonical JOIN policy binding readback is absent"));
     requireCanonicalIntentMatch(committed, requestId, callerBinding, intentDigest, scopeEvidence);
     requireCanonicalPolicyMatch(committed, requestDigest, allowPublicJoin, entitlementVersion);
     return committed;
@@ -348,14 +336,16 @@ public class AccountJoinOperationRepository {
     requireCanonicalOperationInput(requestId, callerBinding);
     Objects.requireNonNull(scope, "Canonical JOIN scope is required");
     if (failureCode == null || failureCode.isBlank() || failureCode.length() > 64) {
-      throw new IllegalArgumentException("JOIN attempt failure code must contain 1 to 64 characters");
+      throw new IllegalArgumentException(
+          "JOIN attempt failure code must contain 1 to 64 characters");
     }
     CanonicalConnectScopeEvidence scopeEvidence = requireIncomingScope(scope);
     String intentDigest = AccountJoinDigest.intentV2(requestId, scope, callerBinding);
     CanonicalJoinOperationEvidence operation =
         lockCanonicalEvidenceByRequestId(requestId)
             .orElseThrow(
-                () -> new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
+                () ->
+                    new CanonicalJoinOperationConflictException("Canonical JOIN intent is absent"));
     requireCanonicalIntentMatch(operation, requestId, callerBinding, intentDigest, scopeEvidence);
     if (operation.requestDigest() != null) {
       throw new CanonicalJoinOperationConflictException(
@@ -524,9 +514,7 @@ public class AccountJoinOperationRepository {
       String requestId, boolean forUpdate) {
     Record row =
         dsl.fetchOne(
-            CANONICAL_SELECT_COLUMNS
-                + " WHERE request_id = ?"
-                + (forUpdate ? " FOR UPDATE" : ""),
+            CANONICAL_SELECT_COLUMNS + " WHERE request_id = ?" + (forUpdate ? " FOR UPDATE" : ""),
             requestId);
     if (row == null) {
       return Optional.empty();
@@ -541,8 +529,7 @@ public class AccountJoinOperationRepository {
             .findCanonicalEvidenceByTokenHash(scopeTokenHash)
             .orElseThrow(
                 () ->
-                    new IllegalStateException(
-                        "Canonical JOIN operation scope evidence is absent"));
+                    new IllegalStateException("Canonical JOIN operation scope evidence is absent"));
     return Optional.of(toCanonicalOperationEvidence(row, scopeEvidence));
   }
 
@@ -571,9 +558,7 @@ public class AccountJoinOperationRepository {
     return connectScopes
         .findCanonicalEvidenceByTokenHash(AccountJoinDigest.tokenHash(scope.connectScopeId()))
         .orElseThrow(
-            () ->
-                new IllegalStateException(
-                    "Canonical JOIN scope source readback is absent"));
+            () -> new IllegalStateException("Canonical JOIN scope source readback is absent"));
   }
 
   private static CanonicalJoinOperationEvidence toCanonicalOperationEvidence(
@@ -593,13 +578,15 @@ public class AccountJoinOperationRepository {
         || !Objects.equals(
             row.get("playable_state_namespace_uuid", UUID.class),
             scopeEvidence.playableStateNamespaceUuid())
-        || !Objects.equals(row.get("playable_state_scope", String.class), scopeEvidence.playableStateScope())
-        || !Objects.equals(row.get("game_instance_uuid", UUID.class), scopeEvidence.gameInstanceUuid())
         || !Objects.equals(
-            row.get("catalog_revision", Long.class), scopeEvidence.catalogRevision())
+            row.get("playable_state_scope", String.class), scopeEvidence.playableStateScope())
+        || !Objects.equals(
+            row.get("game_instance_uuid", UUID.class), scopeEvidence.gameInstanceUuid())
+        || !Objects.equals(row.get("catalog_revision", Long.class), scopeEvidence.catalogRevision())
         || !Objects.equals(row.get("pointer_version", Long.class), scopeEvidence.pointerVersion())
         || !Objects.equals(
-            required(row, "scope_digest_version", Integer.class), scopeEvidence.scopeDigestVersion())
+            required(row, "scope_digest_version", Integer.class),
+            scopeEvidence.scopeDigestVersion())
         || !Objects.equals(
             required(row, "connect_scope_digest", String.class), scopeEvidence.scopeDigest())) {
       throw new IllegalStateException(
@@ -608,8 +595,7 @@ public class AccountJoinOperationRepository {
 
     String status = required(row, "status", String.class);
     if (!"PENDING".equals(status)) {
-      throw new IllegalStateException(
-          "Canonical JOIN operation has unsupported terminal evidence");
+      throw new IllegalStateException("Canonical JOIN operation has unsupported terminal evidence");
     }
     return new CanonicalJoinOperationEvidence(
         required(row, "request_id", String.class),
@@ -785,8 +771,7 @@ public class AccountJoinOperationRepository {
   }
 
   /** Cross-version or changed-input reuse of the shared request ID is a deterministic conflict. */
-  public static final class CanonicalJoinOperationConflictException
-      extends IllegalStateException {
+  public static final class CanonicalJoinOperationConflictException extends IllegalStateException {
     public CanonicalJoinOperationConflictException(String message) {
       super(message);
     }

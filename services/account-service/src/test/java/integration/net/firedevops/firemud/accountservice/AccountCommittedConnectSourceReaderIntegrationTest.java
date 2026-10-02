@@ -38,10 +38,10 @@ import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchange
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginExchangeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountBareLoginResponseEnvelope;
 import net.firedevops.firemud.accountservice.repository.AccountCommittedConnectSource;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceOperation.Lifecycle;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepository;
-import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
