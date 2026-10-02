@@ -2186,22 +2186,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.listPointers())
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW",
-                    2L)));
+        .thenReturn(List.of(scopedAdmissionPointer(1L, "demo")));
     Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
         .thenReturn(Optional.empty());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -2228,6 +2213,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
     assertEquals(0, responseRef.get().getPointersCount());
+    Mockito.verify(authorityService).findLatestPointerAudit(1L, "demo", "production");
   }
 
   @Test

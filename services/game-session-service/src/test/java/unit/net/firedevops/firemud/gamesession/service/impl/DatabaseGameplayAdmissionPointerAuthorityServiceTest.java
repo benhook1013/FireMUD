@@ -645,7 +645,14 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
         publicProductionRealm,
         expectedPointerVersion,
         expectedCatalogRevision,
-        "catalog-revision-test-" + expectedPointerVersion);
+        "catalog-revision-test-"
+            + gameInstanceId
+            + "-"
+            + publicProductionRealm
+            + "-"
+            + expectedPointerVersion
+            + "-"
+            + expectedCatalogRevision);
   }
 
   private static GameplayAdmissionPointerMutation pointerMutation(
