@@ -966,7 +966,12 @@ class ReviewController:
         expected_pr: int,
         current_anchor: AnchorFacts | None,
     ) -> bool:
-        if current_anchor is None or current_anchor.pr != expected_pr:
+        if (
+            current_anchor is None
+            or current_anchor.pr != expected_pr
+            or current_anchor.merge_base is None
+            or current_anchor.patch_id is None
+        ):
             return False
         anchor = _field(observation, "anchor")
         if not isinstance(anchor, Mapping) or type(anchor.get("pr")) is not int:
@@ -1039,7 +1044,12 @@ class ReviewController:
         expected_pr: int,
         current_anchor: AnchorFacts | None,
     ) -> bool:
-        if current_anchor is None or current_anchor.pr != expected_pr:
+        if (
+            current_anchor is None
+            or current_anchor.pr != expected_pr
+            or current_anchor.merge_base is None
+            or current_anchor.patch_id is None
+        ):
             return False
         checkpoint = _field(observation, "checkpoint", "checkpoint_id")
         observed_head = _field(observation, "head", "reviewed_head")
@@ -3432,12 +3442,31 @@ class ReviewController:
                 details="the in-flight request does not count until it is complete and attributable",
             )
 
+        # Earlier accepted findings remain obligations after a human allowance;
+        # recording a new baseline cannot turn them into request permission.
+        pending_baseline = next(
+            (
+                value
+                for value in history
+                if _field(value, "checkpoint", "checkpoint_id") in allocation.baseline_checkpoints
+                and self._accepted_findings_pending(value, current.child_head if current else allocation.head)
+            ),
+            None,
+        )
+        if pending_baseline is not None:
+            return result(
+                "CAP_EXHAUSTED_PENDING" if cap is not None and used >= cap else "CAP_FINDINGS_PENDING",
+                self._accepted_findings_pending_reason(pending_baseline),
+                control="unresolved_work",
+            )
+
         if any(completed["accepted"] > 0 for completed in snapshot["results"]):
             if current is None or reconciliation_result is None:
                 cap_reached = cap is not None and used >= cap
                 return result(
                     "CAP_EXHAUSTED_PENDING" if cap_reached else "CAP_FINDINGS_PENDING",
-                    "cap exhausted; findings pending" if cap_reached
+                    "cap exhausted; findings pending"
+                    if cap_reached
                     else "accepted findings remain pending; current fix evidence is unavailable",
                     control="unresolved_work",
                     details="current fix evidence is unavailable" if cap_reached else None,
@@ -3997,6 +4026,7 @@ class ReviewController:
             allocation.head.casefold() == current.child_head.casefold()
             and allocation.parent_identity == current.parent_identity
             and allocation.parent_head.casefold() == current.parent_head.casefold()
+            and isinstance(allocation.merge_base, str)
             and allocation.merge_base.casefold() == current.merge_base.casefold()
             and allocation.patch_id == current.patch_id
             and reconciliation.status_for(pr) == stack.ReconciliationStatus.COHERENT
@@ -5607,6 +5637,7 @@ class ReviewController:
         checkpoint: str | None = None,
         min_additional_completed: int | None = None,
         max_additional_completed: int | None = None,
+        exact_additional_completed: int | None = None,
         fresh_taper: bool = False,
     ) -> dict[str, Any]:
         """Grant, replace, or cancel a one-result or bounded review allocation."""
@@ -5623,6 +5654,22 @@ class ReviewController:
             raise ControllerError("fresh taper selection must be boolean")
         if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
             raise ControllerError("allocation baseline checkpoint must be a non-empty immutable identity")
+        if exact_additional_completed is not None and (
+            isinstance(exact_additional_completed, bool)
+            or not isinstance(exact_additional_completed, int)
+            or exact_additional_completed <= 0
+        ):
+            raise ControllerError("exact additional completed reviews must be a positive integer")
+        if exact_additional_completed is not None and (
+            min_additional_completed is not None or max_additional_completed is not None
+        ):
+            raise ControllerError("exact additional completed reviews cannot be combined with minimum or maximum")
+        if exact_additional_completed is not None and fresh_taper:
+            raise ControllerError("exact additional completed reviews preserve the existing taper")
+        exact_replacement = exact_additional_completed is not None
+        if exact_replacement:
+            min_additional_completed = exact_additional_completed
+            max_additional_completed = exact_additional_completed
         if min_additional_completed is not None and (
             isinstance(min_additional_completed, bool)
             or not isinstance(min_additional_completed, int)
@@ -5661,8 +5708,22 @@ class ReviewController:
         )
         if action == "renew" and previous_is_bounded and not bounded_replacement:
             raise ControllerError("renewing a bounded allocation requires a new minimum or maximum")
-        live, reconciliation = self._reconciliation(state)
-        item = live[pr]
+        if exact_replacement:
+            # A human allowance is policy, not a request admission. Capture
+            # the actual PR identity without requiring stack or local Git proof.
+            item = _live(self._require_github().pull_request(pr), pr)
+            reconciliation = None
+            try:
+                merge_base = _sha(self.git.merge_base(item.base_tip, item.head), "merge base")
+                patch_id = self.git.patch_identity(merge_base, item.head)
+                if not isinstance(patch_id, str) or not patch_id.strip():
+                    raise ControllerError("Git provider returned an empty patch identity")
+            except (ControllerError, OSError, ValueError, subprocess.SubprocessError):
+                merge_base, patch_id = None, None
+            current = AnchorFacts(pr, item.head, item.base_ref, item.base_tip, merge_base, patch_id)
+        else:
+            live, reconciliation = self._reconciliation(state)
+            item = live[pr]
         if normalized_head != item.head:
             raise ControllerError("allocation head does not match the live pull-request head")
         if self._head_repository_problem(item):
@@ -5682,16 +5743,20 @@ class ReviewController:
             updated = self.store.update(lambda current_state: update_allocation(current_state, None))
             return {"action": action, "pr": pr, "channel": selected.value, "allocations": list(updated.allocations)}
 
-        if reconciliation.status_for(pr) in {
-            stack.ReconciliationStatus.UNRECONCILED,
-            stack.ReconciliationStatus.PARENT_MOVED,
-        }:
-            raise ControllerError("allocation requires a coherent current stack identity")
-        current = self._anchor(pr, item, reconciliation.links[pr])
+        if not exact_replacement:
+            assert reconciliation is not None
+            if reconciliation.status_for(pr) in {
+                stack.ReconciliationStatus.UNRECONCILED,
+                stack.ReconciliationStatus.PARENT_MOVED,
+            }:
+                raise ControllerError("allocation requires a coherent current stack identity")
+            current = self._anchor(pr, item, reconciliation.links[pr])
         history = _history(self._evidence_provider, pr, selected)
-        policy_history = self._policy_history(state, pr, selected, reconciliation)
+        policy_history = history if exact_replacement else self._policy_history(state, pr, selected, reconciliation)
         reopens_taper = fresh_taper
-        prior_taper_complete = policy.taper_satisfied_for_state(state, selected, policy_history)
+        prior_taper_complete = not exact_replacement and policy.taper_satisfied_for_state(
+            state, selected, policy_history
+        )
 
         def provable_posted_hosted_request(value: Any) -> bool:
             trigger_id = _field(value, "trigger_id")
@@ -5706,10 +5771,50 @@ class ReviewController:
                 and self._hosted_anchor_matches(value, pr, current)
             )
 
+        def exact_in_flight_request(value: Any) -> bool:
+            if not exact_replacement or _field(value, "channel") not in (None, selected.value):
+                return False
+            # Counting retains the immutable identity captured at admission,
+            # even when the live head or parent has since moved. Execution
+            # still requires its separate current identity/admission checks.
+            captured = _field(value, "anchor") if selected == policy.Channel.HOSTED else value
+            request_anchor = AnchorFacts(
+                pr,
+                _field(captured, "child_head"),
+                _field(captured, "parent_identity"),
+                _field(captured, "parent_head"),
+                _field(captured, "merge_base"),
+                _field(captured, "patch_id"),
+            )
+            if not (
+                all(
+                    isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{40}", value) is not None
+                    for value in (request_anchor.child_head, request_anchor.parent_head, request_anchor.merge_base)
+                )
+                and isinstance(request_anchor.parent_identity, str)
+                and bool(request_anchor.parent_identity.strip())
+                and isinstance(request_anchor.patch_id, str)
+                and bool(request_anchor.patch_id.strip())
+            ):
+                return False
+            if selected == policy.Channel.HOSTED:
+                return self._hosted_active_response_overlaps_cli(
+                    value,
+                    pr,
+                    request_anchor.child_head,
+                    request_anchor,
+                    require_response_identity=True,
+                )
+            return self._active_cli_review_overlaps_hosted(value, pr, request_anchor)
+
+        def permitted_in_flight_request(value: Any) -> bool:
+            return exact_in_flight_request(value) if exact_replacement else provable_posted_hosted_request(value)
+
         stop_evidence_checked = False
         if (
             bounded_replacement
-            and not any(provable_posted_hosted_request(value) for value in history)
+            and not exact_replacement
+            and not any(permitted_in_flight_request(value) for value in history)
             and (
                 prior_taper_complete
                 or any(
@@ -5734,7 +5839,7 @@ class ReviewController:
                 allow_hosted_cli_overlap=selected == policy.Channel.HOSTED,
             )
             stop_evidence_checked = True
-        if action == "grant":
+        if action == "grant" and not exact_replacement:
             target = self._target(
                 selected,
                 expected_pr=pr,
@@ -5749,7 +5854,7 @@ class ReviewController:
                     and target.pr == pr
                     and target.status == policy.ReviewStatus.JUDGMENT_REQUIRED
                 ):
-                    if not fresh_taper:
+                    if not fresh_taper and not exact_replacement:
                         raise ControllerError(
                             "bounded Hosted allocation after a judgment-required taper must explicitly reopen fresh taper"
                         )
@@ -5769,16 +5874,16 @@ class ReviewController:
                     bounded_replacement
                     and target.pr == pr
                     and target.status == policy.ReviewStatus.HELD
-                    and any(provable_posted_hosted_request(value) for value in history)
+                    and any(permitted_in_flight_request(value) for value in history)
                 ):
                     raise
-        elif bounded_replacement:
+        elif bounded_replacement and not exact_replacement:
             assert previous is not None
-            if previous.stop_basis is not None:
+            if previous.stop_basis is not None and not exact_replacement:
                 raise ControllerError("a stopped allocation cannot be renewed")
             if self._head_repository_problem(item):
                 raise ControllerError(f"PR #{pr} has an unsupported head repository")
-        else:
+        elif not exact_replacement:
             assert previous is not None
             progress = self._allocation_progress(
                 previous,
@@ -5798,10 +5903,12 @@ class ReviewController:
                 _field(value, flag) is True
                 for flag in ("held", "unstable", "rate_limited", "unreconciled", "parent_moved", "over_ceiling")
             ) and _field(value, "head", "reviewed_head") in (None, "", item.head)
-            if blocked and not provable_posted_hosted_request(value):
+            if blocked and not exact_replacement and not permitted_in_flight_request(value):
                 raise ControllerError("current review evidence is blocked; allocation cannot be promised")
         baseline = tuple(
-            _field(value, "checkpoint", "checkpoint_id") for value in history if _field(value, "correction") is not True
+            _field(value, "checkpoint", "checkpoint_id")
+            for value in history
+            if _field(value, "correction") is not True and not exact_in_flight_request(value)
         )
         if any(not isinstance(value, str) or not value for value in baseline):
             raise ControllerError("existing review evidence lacks a checkpoint identity")
@@ -5828,13 +5935,15 @@ class ReviewController:
                 allocation,
                 policy_history,
                 current,
-                reconciliation.status_for(pr, selected.value),
+                reconciliation.status_for(pr, selected.value)
+                if reconciliation is not None
+                else stack.ReconciliationStatus.UNRECONCILED,
                 state=state,
                 reconciliation_result=reconciliation,
                 stop_audit_cache={},
                 history_cache={},
             )
-            if progress["status"] == "INVALID":
+            if progress["status"] == "INVALID" and not exact_replacement:
                 raise ControllerError(progress["reason"])
         updated = self.store.update(lambda current_state: update_allocation(current_state, allocation))
         result = {
