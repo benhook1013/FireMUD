@@ -991,6 +991,9 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#retainedKeyLookupRejectsMalformedAndContradictoryPersistedRows()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#serviceReturnsExactCommittedAssociationAfterOwnerTransaction()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#serviceRecoversPostCommitReadFailureWithoutRewritingHistoricalAssociation()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#syntheticDemoFixtureRegistersSnapshotAndResolvesItsDeclaredCanonicalTenant()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#syntheticDemoFixtureReusesHistoricalReceiptAfterMutableSourceChanges()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#syntheticDemoFixtureDoesNotInventUnknownOrContradictoryTenantMappings()' \
             game-session-service
 
       - name: Upload Game Session retained tenant UUID PostgreSQL proof results

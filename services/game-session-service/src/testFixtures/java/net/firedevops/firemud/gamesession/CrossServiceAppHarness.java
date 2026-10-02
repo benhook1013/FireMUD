@@ -36,6 +36,8 @@ import org.springframework.test.util.TestSocketUtils;
 
 /** Shared bootstrap helpers for nested cross-service Spring application contexts in tests. */
 public final class CrossServiceAppHarness {
+  public static final String TEST_WORKLOAD_NAMESPACE = "gameplay-cross-service-test";
+
   private static final String CROSS_SERVICE_TEST_JWT_SECRET =
       "stub-secret-key-for-tests-1234567890";
 
@@ -123,6 +125,7 @@ public final class CrossServiceAppHarness {
     props.put("spring.main.allow-bean-definition-overriding", "true");
     props.put("spring.flyway.enabled", "true");
     props.put("spring.flyway.locations", "filesystem:" + gameSessionMigrationDir());
+    props.put("firemud.grpc.workload-namespace", TEST_WORKLOAD_NAMESPACE);
     props.put(
         "spring.autoconfigure.exclude",
         "org.springframework.boot.grpc.server.autoconfigure.GrpcServerAutoConfiguration,"

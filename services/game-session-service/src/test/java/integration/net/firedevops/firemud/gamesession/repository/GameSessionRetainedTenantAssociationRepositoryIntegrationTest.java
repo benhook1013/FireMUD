@@ -41,6 +41,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAs
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepository;
 import net.firedevops.firemud.gamesession.service.GameSessionRetainedTenantAssociationService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
+import net.firedevops.firemud.gamesession.testsupport.RetainedDemoTenantAssociationFixture;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -69,6 +71,88 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+
+  @Test
+  void syntheticDemoFixtureRegistersSnapshotAndResolvesItsDeclaredCanonicalTenant() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(1L, 101L, "demo-runtime-v1");
+    RetainedDemoTenantAssociationFixture demoFixture = fixture.demoTenantAssociationFixture();
+
+    AssociationReceipt receipt = demoFixture.ensureAssociation(1L).orElseThrow();
+
+    assertThat(receipt.approval().canonicalTenantId())
+        .isEqualTo(RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID);
+    assertThat(receipt.approval().legacyGameSessionTenantIdValue()).isEqualTo(1L);
+    assertThat(receipt.approval().gameSessionEvidenceDigest())
+        .isEqualTo(receipt.snapshot().evidenceDigest());
+    assertThat(receipt.snapshot().canonicalJson()).contains("demo-runtime-v1");
+    assertThat(
+            fixture.repository.read(
+                receipt.operationId(),
+                receipt.associationRequestId(),
+                RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID,
+                1L,
+                NAMESPACE))
+        .contains(receipt);
+    assertThat(fixture.demoResolver().resolveCanonicalTenantId(1L))
+        .contains(RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID);
+    assertThat(fixture.associationXmin(receipt.associationRequestId())).isNotBlank();
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void syntheticDemoFixtureReusesHistoricalReceiptAfterMutableSourceChanges() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(1L, 101L, "demo-runtime-before-change");
+    RetainedDemoTenantAssociationFixture demoFixture = fixture.demoTenantAssociationFixture();
+    AssociationReceipt original = demoFixture.ensureAssociation(1L).orElseThrow();
+    String associationXmin = fixture.associationXmin(original.associationRequestId());
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET runtime_version = ? WHERE id = ?",
+        "demo-runtime-after-change",
+        101L);
+
+    assertThat(fixture.capture(1L).evidenceDigest())
+        .isNotEqualTo(original.snapshot().evidenceDigest());
+    assertThat(fixture.demoTenantAssociationFixture().ensureAssociation(1L)).contains(original);
+    assertThat(demoFixture.ensureAssociation(1L)).contains(original);
+    assertThat(fixture.associationXmin(original.associationRequestId())).isEqualTo(associationXmin);
+    assertThat(fixture.demoResolver().resolveCanonicalTenantId(1L))
+        .contains(RetainedDemoTenantAssociationFixture.DEMO_CANONICAL_TENANT_ID);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void syntheticDemoFixtureDoesNotInventUnknownOrContradictoryTenantMappings() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(1L, 101L, "demo-runtime-v1");
+    RetainedDemoTenantAssociationFixture demoFixture = fixture.demoTenantAssociationFixture();
+    AssociationReceipt receipt = demoFixture.ensureAssociation(1L).orElseThrow();
+
+    assertThat(demoFixture.ensureAssociation(2L)).isEmpty();
+    assertThat(fixture.demoResolver().resolveCanonicalTenantId(2L)).isEmpty();
+    assertThat(
+            new RetainedRuntimeTenantUuidResolver(
+                    new GameSessionRetainedTenantAssociationRepository(
+                        fixture.dsl, fixture.snapshotRepository, "other-game-session-test"),
+                    "other-game-session-test",
+                    Objects.requireNonNull(fixture.transactions.getTransactionManager()))
+                .resolveCanonicalTenantId(1L))
+        .isEmpty();
+    assertThat(RetainedRuntimeTenantUuidResolver.denyOnly("").resolveCanonicalTenantId(1L))
+        .isEmpty();
+    assertThatThrownBy(
+            () ->
+                fixture.repository.read(
+                    receipt.operationId(),
+                    receipt.associationRequestId(),
+                    UUID.fromString("528846b9-08e8-4c4f-9e3a-e6997a523730"),
+                    1L,
+                    NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
 
   @Test
   void exactRetryReturnsHistoricalReceiptWithoutRecapturingChangedSource() {
@@ -839,6 +923,19 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
       GameSessionRetainedTenantSnapshotRepository snapshotRepository,
       GameSessionRetainedTenantAssociationRepository repository,
       TransactionTemplate transactions) {
+    RetainedDemoTenantAssociationFixture demoTenantAssociationFixture() {
+      return new RetainedDemoTenantAssociationFixture(
+          dsl,
+          snapshotRepository,
+          Objects.requireNonNull(transactions.getTransactionManager()),
+          NAMESPACE);
+    }
+
+    RetainedRuntimeTenantUuidResolver demoResolver() {
+      return new RetainedRuntimeTenantUuidResolver(
+          repository, NAMESPACE, Objects.requireNonNull(transactions.getTransactionManager()));
+    }
+
     void seedInstance(long tenantId, long instanceId, String runtimeVersion) {
       dsl.execute(
           "INSERT INTO game_instances "
