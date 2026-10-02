@@ -179,7 +179,7 @@ runtime_dir="$CERT_DIR/local-runtime"
 }
 assert_mode 600 "$CERT_DIR/ca.key"
 assert_mode 700 "$CERT_DIR/workloads"
-assert_mode 755 "$runtime_dir"
+assert_mode 700 "$runtime_dir"
 for profile in default account-service game-session-service social-groups-service; do
   assert_mode 755 "$runtime_dir/$profile"
   assert_mode 644 "$runtime_dir/$profile/client.key"
@@ -213,6 +213,18 @@ snapshot_runtime_projection() {
     sha256sum -- "$file"
   done < <(find "$root" -type f -print0 | sort -z)
 }
+
+# A repeat ensure restores the private outer projection boundary without
+# changing the directly mounted files or their container-readable modes.
+runtime_projection_before="$(snapshot_runtime_projection "$runtime_dir")"
+chmod 755 "$runtime_dir"
+bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$CERT_DIR"
+runtime_projection_after="$(snapshot_runtime_projection "$runtime_dir")"
+[[ "$runtime_projection_before" == "$runtime_projection_after" ]] || {
+  echo "idempotent certificate setup changed runtime projection files or modes" >&2
+  exit 1
+}
+assert_mode 700 "$runtime_dir"
 
 snapshot_certificate_tree() {
   local root="$1"

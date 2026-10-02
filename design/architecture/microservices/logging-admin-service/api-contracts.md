@@ -16,6 +16,8 @@ Both typed receipt responses carry `auditProjectionVersion=1` only when the rece
 
 The receipt retention class and cleanup owner are defined in [Logging & Admin Runtime and Data](./runtime-and-data.md#audit-envelope-and-receipt-retention).
 
+**Current live-ingress status:** `CreateLogEvent` authenticates the exact Account mTLS workload, then returns gRPC `UNAVAILABLE` before request-envelope conversion or receipt/payload storage. `ReadLogEventReceipt` remains available under the same exact workload authorization. Positive receipt and projection behavior remains available to isolated offline service and repository fixtures; live writes have no configuration, profile, or environment-variable opt-in while the required retention/cleanup implementation and proof remain incomplete.
+
 ## Script-transition read and audit consequences (target state; complete composition unavailable)
 
 Target state only: for script and plugin operations, Logging & Admin is a composition and audit surface only. The complete joined composition is currently unavailable; current implementation status is recorded in the [Automation runtime/operator projection](../../../project-management/implementation-tracking/automation-and-scheduler-runtime.md#runtime-and-operator-projection) and [Game Session operator readback](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#operator-readback-and-facade-boundaries) tracker sections.
