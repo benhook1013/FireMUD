@@ -1459,6 +1459,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "cutover",
                     "req-1",
                     "pvu-1",
+                    4L,
+                    java.util.UUID.fromString("3ce19e6a-a63f-46f4-8e25-b105694c79e9"),
+                    java.util.UUID.fromString("f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a"),
                     Instant.parse("2026-04-16T00:00:00Z"))));
     VersionUpgradePreparationService versionUpgradePreparationService =
         Mockito.mock(VersionUpgradePreparationService.class);
@@ -1602,6 +1605,82 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void listAdmissionPointersProjectsCatalogIdentityFromLatestAudit() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerAuditEntry(
+                    "demo",
+                    "production",
+                    "Demo World",
+                    "Live Realm",
+                    1L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    "tester",
+                    "cutover",
+                    "req-1",
+                    null,
+                    4L,
+                    java.util.UUID.fromString("3ce19e6a-a63f-46f4-8e25-b105694c79e9"),
+                    java.util.UUID.fromString("f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a"),
+                    Instant.parse("2026-04-15T00:00:00Z"))));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            Mockito.mock(GameInstanceRepository.class),
+            Mockito.mock(GameplayCommandRepository.class),
+            Mockito.mock(RuntimeRegionStatusRepository.class),
+            authorityService,
+            Mockito.mock(InstanceCutoverCompatibilityService.class),
+            Mockito.mock(VersionUpgradePreparationService.class),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.getDefaultInstance(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertNotNull(responseRef.get());
+    assertEquals(1, responseRef.get().getPointersCount());
+    assertEquals(4L, responseRef.get().getPointers(0).getCatalogRevision());
+    assertEquals(
+        "3ce19e6a-a63f-46f4-8e25-b105694c79e9", responseRef.get().getPointers(0).getRealmId());
+    assertEquals(
+        "f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a",
+        responseRef.get().getPointers(0).getPlayableStateNamespaceId());
+  }
+
+  @Test
   void listAdmissionPointersFailsClosedWhenCurrentPointerHasNoAuditHistory() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -1720,6 +1799,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "cutover",
                     "req-1",
                     "pvu-1",
+                    4L,
+                    java.util.UUID.fromString("3ce19e6a-a63f-46f4-8e25-b105694c79e9"),
+                    java.util.UUID.fromString("f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a"),
                     Instant.parse("2026-04-15T00:00:00Z")),
                 new GameplayAdmissionPointerAuditEntry(
                     "demo",
@@ -1737,6 +1819,9 @@ class GameSessionControlPlaneGrpcServiceTest {
                     "tester",
                     "previous",
                     "req-0",
+                    null,
+                    null,
+                    null,
                     null,
                     Instant.parse("2026-04-14T00:00:00Z"))));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -1769,6 +1854,15 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(2, responseRef.get().getAuditCount());
     assertEquals("demo", responseRef.get().getAudit(0).getWorldSlug());
     assertEquals(3L, responseRef.get().getAudit(0).getPointerVersion());
+    assertEquals(4L, responseRef.get().getAudit(0).getCatalogRevision());
+    assertEquals(
+        "3ce19e6a-a63f-46f4-8e25-b105694c79e9", responseRef.get().getAudit(0).getRealmId());
+    assertEquals(
+        "f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a",
+        responseRef.get().getAudit(0).getPlayableStateNamespaceId());
+    assertEquals(false, responseRef.get().getAudit(1).hasCatalogRevision());
+    assertEquals("", responseRef.get().getAudit(1).getRealmId());
+    assertEquals("", responseRef.get().getAudit(1).getPlayableStateNamespaceId());
     Mockito.verify(authorityService).listPointerAudit(1L, "demo", "production");
     Mockito.verify(authorityService, Mockito.never()).listPointers();
   }
@@ -8565,9 +8659,7 @@ class GameSessionControlPlaneGrpcServiceTest {
             gameDesignClient);
     GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService =
         new GameSessionAdmissionPointerControlPlaneService(
-            gameInstanceRepository,
-            gameplayAdmissionPointerAuthorityService,
-            versionUpgradePreparationService);
+            gameplayAdmissionPointerAuthorityService);
     GameSessionCommandControlPlaneService commandControlPlaneService =
         new GameSessionCommandControlPlaneService(
             gameInstanceRepository,

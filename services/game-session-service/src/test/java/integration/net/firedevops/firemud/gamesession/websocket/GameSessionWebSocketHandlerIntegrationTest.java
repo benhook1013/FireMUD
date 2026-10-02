@@ -1605,7 +1605,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private void bumpProductionAdmissionPointer(
       long newGameInstanceId, boolean requiresCharacterSelection) {
-    long expectedPointerVersion =
+    var currentPointer =
         gameplayAdmissionPointerAuthorityService.listPointers().stream()
             .filter(
                 pointer ->
@@ -1613,8 +1613,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         && "demo".equals(pointer.worldSlug())
                         && "production".equals(pointer.realmSlug()))
             .findFirst()
-            .orElseThrow()
-            .pointerVersion();
+            .orElseThrow();
+    long expectedPointerVersion = currentPointer.pointerVersion();
+    long expectedCatalogRevision = currentPointer.catalogRevision();
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
             "demo",
@@ -1632,6 +1633,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "cutover-proof",
             "req-cutover-" + newGameInstanceId + "-" + expectedPointerVersion,
             expectedPointerVersion,
+            expectedCatalogRevision,
             "integration-test-prep-" + newGameInstanceId));
   }
 
@@ -1654,7 +1656,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-demo-pointer",
             "req-reset-demo",
-            null,
+            0L,
+            0L,
             null));
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
@@ -1665,14 +1668,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
             22L,
             2L,
             true,
-            true,
+            false,
             true,
             "SHARED",
             "ALLOW_NEW",
             "integration-test",
             "reset-default-sandbox-pointer",
             "req-reset-sandbox",
-            null,
+            0L,
+            0L,
             null));
   }
 

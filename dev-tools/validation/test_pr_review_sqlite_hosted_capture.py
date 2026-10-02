@@ -1026,6 +1026,8 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n\n_Source: Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines, Path instructions_\n\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines, Path instructions, Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by CodeRabbit -->\n",
         )
         for tail in valid_tails:
@@ -1039,8 +1041,10 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n```text\nFenced substantive detail.\n```",
             "\n<!-- unknown auxiliary: preserve this finding -->",
             "\n_Source: Unrecognized source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Sources: Coding guidelines, Unrecognized source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
             "\n<!-- This is an auto-generated comment by CodeRabbit -->\n_Source: Path instructions_",
             "\n_Source: Linters/SAST tools_\nUnmarked text.\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Sources: Coding guidelines, Path instructions_\nArbitrary suffix.\n<!-- This is an auto-generated comment by CodeRabbit -->",
             "\n_Source: Coding guidelines_",
             "\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by another bot -->",
         )
