@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import fcntl
 import json
 import os
@@ -26,6 +27,7 @@ from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
 from pr_review.controller import ControllerError, HostedAdmissionBusy, StaleReviewTarget, _review_activity
+from pr_review.policy import Channel, taper_satisfied
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
@@ -1606,6 +1608,154 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(post_saw_started_attempt, [True])
             self.assertEqual(event_order, ["sqlite-start", "reservation", "post"])
             self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
+
+    def test_force_posts_at_hosted_boundary_for_known_parent_and_mergeability_warning(self) -> None:
+        snapshot = PullRequestSnapshot(
+            42,
+            "OPEN",
+            "older-base",
+            BASE,
+            HEAD,
+            "feature",
+            1,
+            mergeable="UNKNOWN",
+        )
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("current-parent", "d" * 40, 41),
+            reconciled=False,
+            ancestor_links_valid=False,
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            candidate_warnings=("stack reconciliation is PARENT_MOVED",),
+            default_base_front=True,
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 456,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/456",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+
+        def gh_call(args, **_kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            return CompletedProcess(args, 0, json.dumps(comment), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            actual_merge_base = "e" * 40
+            actual_patch_id = "f" * 64
+            git = SimpleNamespace(
+                merge_base=lambda base, head: actual_merge_base,
+                patch_identity=lambda merge_base, head: actual_patch_id,
+            )
+            payload = self._payload()
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"baseRefName": "older-base", "baseRefOid": BASE})
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations"),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = HostedRunner("owner/repo", live, git=git)(
+                    target,
+                    expect_pr=42,
+                    force=True,
+                    reason="the configured parent moved",
+                    admit=lambda reserve: reserve(),
+                )
+
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "posted")
+            self.assertTrue(result["force_acknowledged"])
+            self.assertEqual(record["actual_base_ref"], "older-base")
+            self.assertEqual(record["actual_base_sha"], BASE)
+            self.assertEqual(record["anchor"]["actual_base_ref"], "older-base")
+            self.assertEqual(record["anchor"]["actual_base_sha"], BASE)
+            self.assertEqual(record["anchor"]["parent_identity"], "older-base")
+            self.assertEqual(record["anchor"]["parent_head"], BASE)
+            self.assertEqual(record["anchor"]["merge_base"], actual_merge_base)
+            self.assertEqual(record["anchor"]["patch_id"], actual_patch_id)
+            self.assertEqual(record["configured_queue_anchor"]["parent_identity"], "41")
+            self.assertEqual(record["configured_queue_anchor"]["parent_head"], "d" * 40)
+            self.assertEqual(record["candidate_warnings"], ["stack reconciliation is PARENT_MOVED"])
+            self.assertEqual(record["force_reason"], "the configured parent moved")
+
+            reviewed = "2026-09-23T00:03:00Z"
+            trigger = {
+                "databaseId": 456,
+                "author": {"login": "maintainer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": "2026-09-23T00:01:00Z",
+                "updatedAt": "2026-09-23T00:01:00Z",
+                "url": "https://example.test/456",
+            }
+            checkpoint = {
+                "databaseId": 457,
+                "author": {"login": "maintainer"},
+                "body": (
+                    f"Hosted: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files · 2m 00s\n"
+                    "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 120 -->"
+                ),
+                "createdAt": reviewed,
+                "updatedAt": reviewed,
+            }
+            review = {
+                "databaseId": 55,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+                "state": "COMMENTED",
+                "submittedAt": reviewed,
+                "commit": {"oid": HEAD},
+            }
+            history_payload = self._payload([trigger, checkpoint], [review])
+            history_pr = history_payload["data"]["repository"]["pullRequest"]
+            history_pr.update({"baseRefName": "older-base", "baseRefOid": BASE, "changedFiles": 1})
+            with patch.object(hosted, "trigger_record_paths", return_value=[path]):
+                history = self._history(Path(directory), history_payload)
+            completed = [item for item in history if item.get("checkpoint") == "457"]
+            self.assertEqual(len(completed), 1)
+            self.assertTrue(completed[0]["completed"])
+            self.assertTrue(completed[0]["anchored"])
+            self.assertEqual(completed[0]["parent_identity"], "older-base")
+            self.assertEqual(completed[0]["parent_head"], BASE)
+            self.assertEqual(completed[0]["merge_base"], actual_merge_base)
+            self.assertEqual(completed[0]["patch_id"], actual_patch_id)
+
+            same_ref_target = dataclasses.replace(
+                target,
+                parent=EffectiveParent("older-base", "d" * 40, 41),
+            )
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations"),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                HostedRunner("owner/repo", live, git=git)(
+                    same_ref_target,
+                    expect_pr=42,
+                    force=True,
+                    reason="acknowledge a known candidate warning",
+                    admit=lambda reserve: reserve(),
+                )
+            same_ref_record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(same_ref_record["anchor"]["parent_identity"], "41")
+            self.assertEqual(same_ref_record["anchor"]["parent_head"], BASE)
+            self.assertEqual(same_ref_record["anchor"]["merge_base"], actual_merge_base)
+            self.assertEqual(same_ref_record["anchor"]["patch_id"], actual_patch_id)
 
     def test_hosted_attempt_start_failure_does_not_block_the_single_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -3239,7 +3389,16 @@ class RuntimeTest(unittest.TestCase):
         path.write_text(json.dumps(record), encoding="utf-8")
 
     def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD):
-        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, current_head, "feature", changed_files)
+        pull = payload["data"]["repository"]["pullRequest"]
+        snapshot = PullRequestSnapshot(
+            42,
+            "OPEN",
+            pull.get("baseRefName", "develop"),
+            pull.get("baseRefOid", BASE),
+            current_head,
+            "feature",
+            changed_files,
+        )
         live = LiveGitHub("owner/repo")
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
@@ -3772,9 +3931,22 @@ class RuntimeTest(unittest.TestCase):
             record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
             record_path.parent.mkdir(parents=True)
             record = self._trigger_record(created=created)
+            record["force_acknowledged"] = True
+            record["force_reason"] = "known parent reconciliation warning"
+            record["candidate_warnings"] = ["stack reconciliation is PARENT_MOVED"]
+            record["actual_base_ref"] = "develop"
+            record["actual_base_sha"] = BASE
+            record["anchor"]["actual_base_ref"] = "develop"
+            record["anchor"]["actual_base_sha"] = BASE
             record_path.write_text(json.dumps(record), encoding="utf-8")
             history = self._history(common, payload)
-            self.assertTrue(any(item.get("completed") and item.get("anchored") for item in history))
+            completed_rows = [item for item in history if item.get("checkpoint") == "12"]
+            self.assertEqual(len(completed_rows), 1)
+            self.assertTrue(completed_rows[0]["completed"])
+            self.assertTrue(completed_rows[0]["attributable"])
+            self.assertTrue(completed_rows[0]["anchored"])
+            self.assertFalse(completed_rows[0]["provisional"])
+            self.assertTrue(taper_satisfied(Channel.HOSTED, completed_rows, required=1))
             self.assertEqual(_review_activity(history, HEAD)["recent"][0]["routed"], 1)
 
             mismatched = {**review, "databaseId": 56}

@@ -2,6 +2,9 @@ package net.firedevops.firemud.accountservice.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,7 +28,7 @@ class AccountAuditDeliveryJobTest {
   @Test
   void marksOnlyAnExactReceiverReceiptDelivered() {
     AccountAuditEnvelope envelope = platformRegistration();
-    when(outbox.pending(50)).thenReturn(List.of(envelope));
+    when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(envelope));
     when(client.deliver(envelope))
         .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-1", "log-1", false));
 
@@ -38,7 +41,7 @@ class AccountAuditDeliveryJobTest {
   @Test
   void minimizedReceiverReceiptMarksSameIdentityTerminal() {
     AccountAuditEnvelope envelope = platformRegistration();
-    when(outbox.pending(50)).thenReturn(List.of(envelope));
+    when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(envelope));
     when(client.deliver(envelope))
         .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-2", "log-2", true));
 
@@ -51,13 +54,34 @@ class AccountAuditDeliveryJobTest {
   @Test
   void unavailableReceiverKeepsSameEnvelopePending() {
     AccountAuditEnvelope envelope = platformRegistration();
-    when(outbox.pending(50)).thenReturn(List.of(envelope));
+    when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(envelope));
     when(client.deliver(envelope)).thenThrow(new IllegalStateException("unavailable"));
 
     job.deliverPending();
 
     verify(outbox).recordAttempt(envelope.auditEventId());
     verify(outbox, never()).markDelivered(envelope.auditEventId(), "receipt-1", "log-1", false);
+  }
+
+  @Test
+  void recordAttemptFailureDoesNotPreventLaterEnvelopesFromDelivery() {
+    AccountAuditEnvelope failed = platformRegistration();
+    AccountAuditEnvelope later =
+        platformRegistration(UUID.fromString("4cb5f750-6d75-4eaa-b0b4-2a9a285e2c32"));
+    when(outbox.pending(eq(50), Mockito.any(Instant.class))).thenReturn(List.of(failed, later));
+    when(client.deliver(failed)).thenThrow(new IllegalStateException("receiver unavailable"));
+    when(client.deliver(later))
+        .thenReturn(new LoggingAdminClient.AuditDeliveryResult("receipt-2", "log-2", false));
+    Mockito.doThrow(new IllegalStateException("outbox unavailable"))
+        .when(outbox)
+        .recordAttempt(failed.auditEventId());
+
+    job.deliverPending();
+
+    verify(outbox, never())
+        .markDelivered(eq(failed.auditEventId()), anyString(), anyString(), anyBoolean());
+    verify(client).deliver(later);
+    verify(outbox).markDelivered(later.auditEventId(), "receipt-2", "log-2", false);
   }
 
   @Test
@@ -71,9 +95,13 @@ class AccountAuditDeliveryJobTest {
   }
 
   private static AccountAuditEnvelope platformRegistration() {
+    return platformRegistration(UUID.fromString("e9659715-e257-4f88-847e-700653e101d1"));
+  }
+
+  private static AccountAuditEnvelope platformRegistration(UUID auditEventId) {
     String payload = "{\"accountId\":1}";
     return new AccountAuditEnvelope(
-        UUID.fromString("e9659715-e257-4f88-847e-700653e101d1"),
+        auditEventId,
         "platform",
         null,
         "account-service",

@@ -73,7 +73,8 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void createLogEventFailsClosedWithoutInvokingLegacyWriter() {
+  void createLogEventRemainsUnimplementedForAdminRoleWithoutDispatch() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     assertCreateLogEventUnavailable(validCreateLogEventRequest(), logEventService);
   }

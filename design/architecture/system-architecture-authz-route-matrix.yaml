@@ -3660,6 +3660,7 @@ routes:
     route: CreateLogEvent
     transport: grpc
     scope: account
+    route_status: target_not_currently_routable
     classification: internal_workload
     auth_path: exact_mtls_workload
     issued_token_state: none
@@ -3673,10 +3674,14 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
     end_user_token_required: false
+    implementation_status:
+      known_drift:
+        - current_handler_retains_AdminRoleGuard_and_returns_UNAVAILABLE_without_dispatch; target_Account_mTLS_audit_receipt_receiver_and_runtime_proof_are_unavailable
   - service: logging-admin-service
     route: ReadLogEventReceipt
     transport: grpc
     scope: account
+    route_status: target_not_currently_routable
     classification: internal_workload
     auth_path: exact_mtls_workload
     issued_token_state: none
@@ -3690,6 +3695,9 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
     end_user_token_required: false
+    implementation_status:
+      known_drift:
+        - current_service_has_no_ReadLogEventReceipt_handler_and_returns_UNIMPLEMENTED; target_Account_mTLS_receipt_readback_and_runtime_proof_are_unavailable
   - service: game-session-service
     route: ToggleFeatureFlag
     transport: grpc

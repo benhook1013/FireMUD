@@ -365,6 +365,25 @@ class LoginCommandHandlerTest {
   void bareLoginPersistsVerifiedFirstPartyAccountWithoutEnqueueingGameplayCommand() {
     TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     GameInstance instance = buildInstance(1L, 22L, 77L);
+    stubSessionContext(
+        new SessionContext(
+            1L,
+            22L,
+            0L,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED",
+            "scope-1",
+            "req-1"));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
@@ -388,7 +407,18 @@ class LoginCommandHandlerTest {
     verify(accountClient, never()).authenticate(anyString(), anyString());
     ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
     verify(sessionContextService).save(captor.capture());
-    assertEquals(99L, captor.getValue().accountId());
+    SessionContext context = captor.getValue();
+    assertEquals(99L, context.accountId());
+    assertEquals(1L, context.bootstrapGameInstanceId());
+    assertEquals(0L, context.gameInstanceId());
+    assertEquals(0L, context.characterId());
+    assertEquals("en-NZ", context.localeTag());
+    assertEquals("demo", context.worldSlug());
+    assertEquals("production", context.realmSlug());
+    assertEquals(1L, context.pointerVersion());
+    assertEquals("SHARED", context.playableStateScope());
+    assertEquals("scope-1", context.connectScopeId());
+    assertEquals("req-1", context.connectRequestId());
     assertEquals(77L, instance.getOwnerAccountId());
   }
 

@@ -186,9 +186,6 @@ public class PlayCommandHandler {
       }
 
       GameplayWorldCatalog.WorldView selectedWorld = maybeWorld.get();
-      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(selectedWorld)) {
-        return admissionPointerUnavailableFailure(tenantTag, null);
-      }
       FirstPartyConnectContextResolution connectContextResolution =
           FirstPartyConnectContextResolution.resolve(
               context.sessionId(), context, firstPartyConnectContextRegistry);
@@ -279,7 +276,7 @@ public class PlayCommandHandler {
                 context.sessionId());
             return new PlayCommandHandlingResult(
                 CommandEnqueueResult.success(),
-                List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), character)),
+                List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
                 true);
           }
 
@@ -332,7 +329,7 @@ public class PlayCommandHandler {
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
-              List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), character)),
+              List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
               resumedOrTookOver || freshEntryFallback);
         }
       }

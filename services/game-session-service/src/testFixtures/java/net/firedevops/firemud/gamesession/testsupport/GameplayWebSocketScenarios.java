@@ -11,6 +11,7 @@ public final class GameplayWebSocketScenarios {
   public static final String DEMO_USERNAME = "demo@example.com";
   public static final String DEMO_PASSWORD = "swordfish";
   public static final String DEMO_WORLD = "demo";
+  public static final String DEFAULT_DEMO_CHARACTER_NAME = "Emberline";
 
   public static Admission demoAdmission(String readyText) {
     return Admission.unnamed(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, readyText);
@@ -18,6 +19,10 @@ public final class GameplayWebSocketScenarios {
 
   public static Admission demoAdmission(String characterName, String readyText) {
     return Admission.named(DEMO_USERNAME, DEMO_PASSWORD, DEMO_WORLD, characterName, readyText);
+  }
+
+  public static Admission demoAdmission(String email, String characterName, String readyText) {
+    return Admission.named(email, DEMO_PASSWORD, DEMO_WORLD, characterName, readyText);
   }
 
   @FunctionalInterface
