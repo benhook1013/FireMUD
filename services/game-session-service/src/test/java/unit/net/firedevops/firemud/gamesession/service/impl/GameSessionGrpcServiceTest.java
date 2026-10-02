@@ -1379,7 +1379,14 @@ class GameSessionGrpcServiceTest {
         "ALLOW_NEW",
         "test",
         "catalog revision test",
-        "catalog-revision-test-" + expectedPointerVersion,
+        "catalog-revision-test-"
+            + gameInstanceId
+            + "-"
+            + publicProductionRealm
+            + "-"
+            + expectedPointerVersion
+            + "-"
+            + expectedCatalogRevision,
         expectedPointerVersion,
         expectedCatalogRevision,
         null);
