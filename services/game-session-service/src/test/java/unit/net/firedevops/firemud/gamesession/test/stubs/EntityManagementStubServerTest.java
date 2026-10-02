@@ -43,6 +43,49 @@ class EntityManagementStubServerTest {
   }
 
   @Test
+  void listsLoadActorsByTheirPersistedTenantAndAccountOwner() throws Exception {
+    Character firstPlayer =
+        Character.newBuilder()
+            .setId("101")
+            .setTenantId("1")
+            .setAccountId("101")
+            .setName("player-1")
+            .build();
+    Character secondPlayer =
+        Character.newBuilder()
+            .setId("102")
+            .setTenantId("1")
+            .setAccountId("102")
+            .setName("player-2")
+            .build();
+
+    try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
+      server.setCharacters(List.of(firstPlayer, secondPlayer));
+      ManagedChannel channel =
+          ManagedChannelBuilder.forTarget(server.endpoint()).usePlaintext().build();
+      try {
+        EntityManagementServiceGrpc.EntityManagementServiceBlockingStub stub =
+            EntityManagementServiceGrpc.newBlockingStub(channel);
+
+        assertThat(
+                listCharacters(stub, "1", "101", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .getCharactersList())
+            .containsExactly(sharedCharacter(firstPlayer));
+        assertThat(
+                listCharacters(stub, "1", "102", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .getCharactersList())
+            .containsExactly(sharedCharacter(secondPlayer));
+        assertThat(
+                listCharacters(stub, "2", "101", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .getCharactersList())
+            .isEmpty();
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void unknownOrMismatchedTenantAndAccountReturnNoCharacters() throws Exception {
     try (EntityManagementStubServer server = new EntityManagementStubServer(0)) {
       ManagedChannel channel =
@@ -103,7 +146,11 @@ class EntityManagementStubServerTest {
   }
 
   private static Character sharedCharacter(String name) {
-    return ChatTestFixtures.characterByName(name).toBuilder()
+    return sharedCharacter(ChatTestFixtures.characterByName(name));
+  }
+
+  private static Character sharedCharacter(Character character) {
+    return character.toBuilder()
         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
         .build();
   }

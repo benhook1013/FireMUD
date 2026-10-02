@@ -98,7 +98,8 @@ class LookWebSocketCrossServiceTest {
                     && response.contains("Room: Candle-lit Antechamber")
                     && response.contains("Short:")
                     && !response.contains("Long:")
-                    && response.endsWith("demo> "));
+                    && response.endsWith(
+                        GameplayWebSocketScenarios.DEFAULT_DEMO_CHARACTER_NAME + "> "));
   }
 
   @Test

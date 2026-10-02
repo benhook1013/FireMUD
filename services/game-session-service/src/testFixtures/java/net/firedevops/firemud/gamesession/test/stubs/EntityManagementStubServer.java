@@ -62,6 +62,8 @@ public final class EntityManagementStubServer implements AutoCloseable {
 
   private final Server server;
   private final int port;
+  private final AtomicReference<List<Character>> characters =
+      new AtomicReference<>(defaultCharacters());
   private final AtomicReference<ListRoomEntitiesResponse> roomEntities =
       new AtomicReference<>(LookTestFixtures.sampleEntities());
   private final AtomicReference<QueryActorStateResponse> actorState =
@@ -98,10 +100,11 @@ public final class EntityManagementStubServer implements AutoCloseable {
                       StreamObserver<FindCharacterByNameResponse> responseObserver) {
                     FindCharacterByNameResponse.Builder builder =
                         FindCharacterByNameResponse.newBuilder();
-                    var character = ChatTestFixtures.characterByName(request.getName());
-                    if (!character.equals(character.getDefaultInstanceForType())) {
-                      builder.setCharacter(character);
-                    }
+                    characters.get().stream()
+                        .filter(
+                            character -> character.getName().equalsIgnoreCase(request.getName()))
+                        .findFirst()
+                        .ifPresent(builder::setCharacter);
                     responseObserver.onNext(builder.build());
                     responseObserver.onCompleted();
                   }
@@ -114,9 +117,8 @@ public final class EntityManagementStubServer implements AutoCloseable {
                         ListCharactersByAccountResponse.newBuilder();
                     if (request.getPlayableStateScope()
                         == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
-                      List<Character> characters =
-                          List.of("Emberline", "Sora", "Nyx").stream()
-                              .map(ChatTestFixtures::characterByName)
+                      response.addAllCharacters(
+                          characters.get().stream()
                               .filter(
                                   character ->
                                       request.getTenantId().equals(character.getTenantId())
@@ -129,8 +131,7 @@ public final class EntityManagementStubServer implements AutoCloseable {
                                           .setPlayableStateScope(
                                               PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                                           .build())
-                              .toList();
-                      response.addAllCharacters(characters);
+                              .toList());
                     }
                     responseObserver.onNext(response.build());
                     responseObserver.onCompleted();
@@ -245,12 +246,26 @@ public final class EntityManagementStubServer implements AutoCloseable {
     roomEntities.set(LookTestFixtures.sampleEntities());
   }
 
+  public void setCharacters(List<Character> characters) {
+    this.characters.set(List.copyOf(characters));
+  }
+
+  public void resetCharacters() {
+    characters.set(defaultCharacters());
+  }
+
   public void setActorState(QueryActorStateResponse response) {
     actorState.set(response == null ? QueryActorStateResponse.getDefaultInstance() : response);
   }
 
   public void resetActorState() {
     actorState.set(QueryActorStateResponse.getDefaultInstance());
+  }
+
+  private static List<Character> defaultCharacters() {
+    return List.of("Emberline", "Sora", "Nyx").stream()
+        .map(ChatTestFixtures::characterByName)
+        .toList();
   }
 
   public synchronized void resetItemState() {
