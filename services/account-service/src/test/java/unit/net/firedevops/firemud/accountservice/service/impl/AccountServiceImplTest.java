@@ -423,7 +423,7 @@ class AccountServiceImplTest {
             () ->
                 service.joinPublicProduction(
                     bootstrap.bootstrapToken(),
-                    new JoinPublicProductionRequest("different-scope", "join-attempt-1")));
+                    new JoinPublicProductionRequest("different-scope", requestId)));
     assertEquals("IDEMPOTENCY_CONFLICT", changedDigest.getCode());
   }
 
@@ -1239,8 +1239,9 @@ class AccountServiceImplTest {
     verifyNoInteractions(subscriptionRepository, accountAuditOutboxRepository);
   }
 
-  @Test
-  void joinPublicProductionReturnsConflictWhenGlobalRequestIdClaimIsLost() {
+  @ParameterizedTest
+  @ValueSource(strings = {"PENDING", "COMMITTED", "FAILED"})
+  void joinPublicProductionHidesAnotherAccountsGlobalRequestIdEvidence(String originalStatus) {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -1260,7 +1261,15 @@ class AccountServiceImplTest {
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
     VerifiedJoinScope scope = retainedScope.get();
-    retainedOperation.set(
+    String requestId = "join-global-collision-" + originalStatus.toLowerCase();
+    String originalOutcome =
+        switch (originalStatus) {
+          case "COMMITTED" -> "JOINED";
+          case "FAILED" -> "PUBLIC_PRODUCTION_ADMISSION_DENIED";
+          default -> null;
+        };
+    Long originalMembershipId = "COMMITTED".equals(originalStatus) ? 812L : null;
+    AccountJoinOperationRepository.JoinOperation originalOperation =
         new AccountJoinOperationRepository.JoinOperation(
             12L,
             scope.tenantId(),
@@ -1268,21 +1277,24 @@ class AccountServiceImplTest {
             "different-caller",
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.tokenHash(connectScopeId),
             scope.snapshotDigest(),
-            "NOT_EVALUATED",
-            null,
-            null,
-            null,
-            null,
-            "PENDING",
-            null,
-            null,
-            null,
-            null,
+            "COMMITTED".equals(originalStatus) || "FAILED".equals(originalStatus)
+                ? "AVAILABLE"
+                : "NOT_EVALUATED",
+            "PENDING".equals(originalStatus) ? null : true,
+            "PENDING".equals(originalStatus) ? null : 7L,
+            "PENDING".equals(originalStatus) ? null : 1,
+            "PENDING".equals(originalStatus) ? null : "original-request-digest",
+            originalStatus,
+            originalOutcome,
+            originalMembershipId,
+            originalMembershipId == null ? null : 9L,
+            originalMembershipId == null ? null : 5L,
             1,
             net.firedevops.firemud.accountservice.dto.AccountJoinDigest.intent(
-                "join-global-collision-1", scope, "different-caller"),
+                requestId, scope, "different-caller"),
             null,
-            "NOT_EVALUATED"));
+            "AVAILABLE");
+    retainedOperation.set(originalOperation);
 
     AuthenticationException conflict =
         assertThrows(
@@ -1290,12 +1302,40 @@ class AccountServiceImplTest {
             () ->
                 service.joinPublicProduction(
                     bootstrap.bootstrapToken(),
-                    new JoinPublicProductionRequest(connectScopeId, "join-global-collision-1")));
+                    new JoinPublicProductionRequest(connectScopeId, requestId)));
 
     assertEquals("IDEMPOTENCY_CONFLICT", conflict.getCode());
-    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
-        .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
-    org.mockito.Mockito.verifyNoInteractions(accountAuditOutboxRepository);
+    assertEquals("JOIN request ID was reused with different input", conflict.getMessage());
+    assertFalse(conflict.getMessage().contains("JOINED"));
+    assertFalse(conflict.getMessage().contains("PUBLIC_PRODUCTION_ADMISSION_DENIED"));
+    assertFalse(conflict.getMessage().contains("812"));
+    assertEquals(originalOperation, retainedOperation.get());
+    assertEquals(originalStatus, retainedOperation.get().status());
+    assertEquals(originalOutcome, retainedOperation.get().outcome());
+    assertEquals(originalMembershipId, retainedOperation.get().membershipId());
+    org.mockito.Mockito.verify(accountJoinOperationRepository)
+        .find(org.mockito.ArgumentMatchers.eq(requestId));
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .insertIntent(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .bindPolicyEvidence(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyBoolean());
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .finish(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.nullable(Long.class),
+            org.mockito.ArgumentMatchers.nullable(Long.class),
+            org.mockito.ArgumentMatchers.nullable(Long.class));
+    verifyNoInteractions(accountTenantMembershipRepository, accountAuditOutboxRepository);
   }
 
   @Test

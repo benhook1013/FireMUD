@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
@@ -165,7 +166,15 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     assertEquals(1L, snapshot.pointerVersion());
     assertEquals(2L, snapshot.catalogRevision());
     verify(pointerRepository).save(any(GameplayAdmissionPointer.class));
-    verify(eventRepository).save(any(GameplayAdmissionPointerEvent.class));
+    ArgumentCaptor<GameplayAdmissionPointerEvent> eventCaptor =
+        ArgumentCaptor.forClass(GameplayAdmissionPointerEvent.class);
+    verify(eventRepository).save(eventCaptor.capture());
+    assertEquals(1L, eventCaptor.getValue().getPointerVersion());
+    assertEquals(2L, eventCaptor.getValue().getCatalogRevision());
+    assertEquals(existing.getRealmId(), eventCaptor.getValue().getRealmId());
+    assertEquals(
+        existing.getPlayableStateNamespaceId(),
+        eventCaptor.getValue().getPlayableStateNamespaceId());
   }
 
   @Test
@@ -232,6 +241,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     pointer.setGameInstanceId(7L);
     pointer.setPointerVersion(1L);
     pointer.setCatalogRevision(1L);
+    pointer.setRealmId(UUID.fromString("3ce19e6a-a63f-46f4-8e25-b105694c79e9"));
+    pointer.setPlayableStateNamespaceId(UUID.fromString("f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a"));
     pointer.setVisible(true);
     pointer.setPublicProductionRealm(true);
     pointer.setRequiresCharacterSelection(false);

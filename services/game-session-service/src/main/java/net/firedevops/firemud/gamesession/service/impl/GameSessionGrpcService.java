@@ -571,16 +571,8 @@ public final class GameSessionGrpcService
           ListGameplayRealmsResponse.newBuilder().addAllRealms(realms).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (AuthorityProjectionUnavailableException ex) {
-      ListGameplayRealmsResponse response =
-          ListGameplayRealmsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException
+        | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(
@@ -646,16 +638,8 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (AuthorityProjectionUnavailableException ex) {
-      GetAdmissionPointerResponse response =
-          GetAdmissionPointerResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException
+        | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setError(

@@ -1515,6 +1515,9 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
+    assertEquals(
+        "prepared cutover is temporarily disabled until catalog revision preconditions are supported",
+        responseRef.get().getError().getMessage());
     Mockito.verifyNoInteractions(authorityService);
     Mockito.verifyNoInteractions(versionUpgradePreparationService);
     Mockito.verifyNoInteractions(gameInstanceRepository);

@@ -509,19 +509,19 @@ class GameSessionGrpcServiceTest {
             "Other World",
             "production",
             "Other Realm",
-            8L,
+            7L,
             55L,
             3L,
-            true,
-            true,
             false,
-            "SHARED",
+            false,
+            false,
+            "ISOLATED",
             "ALLOW_NEW",
             4L,
             java.util.UUID.fromString("c0a801a0-7e42-4cc8-9e18-0c0b20d4e6f9"),
             java.util.UUID.fromString("e94d4b9d-7635-4d7f-b70c-12f4e3ea8e27"));
     Mockito.when(pointerAuthorityService.listPointers())
-        .thenReturn(List.of(firstSnapshot), List.of(secondSnapshot));
+        .thenReturn(List.of(firstSnapshot, secondSnapshot));
     GameSessionGrpcService service =
         newService(
             Mockito.mock(PingService.class),

@@ -125,6 +125,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     event.setTenantId(saved.getTenantId());
     event.setGameInstanceId(saved.getGameInstanceId());
     event.setPointerVersion(saved.getPointerVersion());
+    event.setCatalogRevision(saved.getCatalogRevision());
+    event.setRealmId(saved.getRealmId());
+    event.setPlayableStateNamespaceId(saved.getPlayableStateNamespaceId());
     event.setVisible(saved.isVisible());
     event.setPublicProductionRealm(saved.isPublicProductionRealm());
     event.setRequiresCharacterSelection(saved.isRequiresCharacterSelection());

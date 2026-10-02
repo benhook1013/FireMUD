@@ -34,7 +34,7 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
-  void migrationsV1ThroughV6BackfillStableRealmIdentityAndKeepAdmissionConstraints() {
+  void migrationsV1ThroughV7BackfillPointerIdentityAndKeepHistoricalAuditUnknown() {
     DriverManagerDataSource dataSource = dataSource();
     Flyway.configure()
         .dataSource(dataSource)
@@ -57,6 +57,8 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
             .target(MigrationVersion.fromVersion("6"))
             .load();
     flyway.migrate();
+
+    insertPointerEvent(dsl, 9001L, 1L, 101L);
 
     assertThat(
             Arrays.stream(flyway.info().applied())
@@ -130,6 +132,102 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
                     "UPDATE gameplay_admission_pointer SET catalog_revision = 0 WHERE id = 1"))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("gameplay_admission_pointer_catalog_revision_positive");
+
+    Flyway auditFlyway =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .locations(MIGRATION_LOCATION)
+            .target(MigrationVersion.fromVersion("7"))
+            .load();
+    auditFlyway.migrate();
+
+    assertThat(
+            Arrays.stream(auditFlyway.info().applied())
+                .map(migration -> migration.getVersion().getVersion())
+                .toList())
+        .contains("7");
+    assertThat(
+            dsl.fetchValue(
+                "SELECT catalog_revision FROM gameplay_admission_pointer_event WHERE id = 9001",
+                Long.class))
+        .isNull();
+    assertThat(
+            dsl.fetchValue(
+                "SELECT realm_id FROM gameplay_admission_pointer_event WHERE id = 9001",
+                UUID.class))
+        .isNull();
+    assertThat(
+            dsl.fetchValue(
+                "SELECT playable_state_namespace_id FROM gameplay_admission_pointer_event "
+                    + "WHERE id = 9001",
+                UUID.class))
+        .isNull();
+
+    UUID eventRealmId = realmId(dsl, 1L);
+    UUID eventNamespaceId = namespaceId(dsl, 1L);
+    insertBoundPointerEvent(dsl, 9002L, 1L, 101L, 1L, eventRealmId, eventNamespaceId);
+    Record boundEvent =
+        dsl.fetchOne("SELECT * FROM gameplay_admission_pointer_event WHERE id = 9002");
+    assertThat(boundEvent.get("catalog_revision", Long.class)).isEqualTo(1L);
+    assertThat(boundEvent.get("realm_id", UUID.class)).isEqualTo(eventRealmId);
+    assertThat(boundEvent.get("playable_state_namespace_id", UUID.class))
+        .isEqualTo(eventNamespaceId);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE gameplay_admission_pointer_event SET catalog_revision = 0 "
+                        + "WHERE id = 9002"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("gameplay_admission_pointer_event_catalog_revision_positive");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE gameplay_admission_pointer_event SET playable_state_namespace_id = NULL "
+                        + "WHERE id = 9002"))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("gameplay_admission_pointer_event_identity_pair_complete");
+  }
+
+  private static void insertPointerEvent(
+      DSLContext dsl, long eventId, long tenantId, long gameInstanceId) {
+    dsl.execute(
+        "INSERT INTO gameplay_admission_pointer_event ("
+            + "id, world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+            + "game_instance_id, pointer_version, visible, requires_character_selection, "
+            + "state_scope, character_creation_policy, actor_principal, reason, "
+            + "control_plane_request_id, occurred_at, public_production_realm) "
+            + "VALUES (?, 'demo', 'live', 'Demo World', 'Live Realm', ?, ?, 1, true, false, "
+            + "'SHARED', 'ALLOW_NEW', 'migration-test', 'retained history', 'event-9001', "
+            + "CURRENT_TIMESTAMP, true)",
+        eventId,
+        tenantId,
+        gameInstanceId);
+  }
+
+  private static void insertBoundPointerEvent(
+      DSLContext dsl,
+      long eventId,
+      long tenantId,
+      long gameInstanceId,
+      long catalogRevision,
+      UUID realmId,
+      UUID namespaceId) {
+    dsl.execute(
+        "INSERT INTO gameplay_admission_pointer_event ("
+            + "id, world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+            + "game_instance_id, pointer_version, catalog_revision, realm_id, "
+            + "playable_state_namespace_id, visible, requires_character_selection, state_scope, "
+            + "character_creation_policy, actor_principal, reason, control_plane_request_id, "
+            + "occurred_at, public_production_realm) "
+            + "VALUES (?, 'demo', 'live', 'Demo World', 'Live Realm', ?, ?, 1, ?, ?, ?, true, "
+            + "false, 'SHARED', 'ALLOW_NEW', 'migration-test', 'bound event', 'event-9002', "
+            + "CURRENT_TIMESTAMP, true)",
+        eventId,
+        tenantId,
+        gameInstanceId,
+        catalogRevision,
+        realmId,
+        namespaceId);
   }
 
   private static void insertPointer(
