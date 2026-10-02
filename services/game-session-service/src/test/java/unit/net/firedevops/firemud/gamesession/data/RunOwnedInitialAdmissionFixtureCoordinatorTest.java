@@ -8,18 +8,24 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.same;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
+import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindAttempt.Status;
 import net.firedevops.firemud.gamesession.entity.InitialAdmissionBindCatalog;
@@ -35,11 +41,14 @@ import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHold
 import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHoldStatus;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
+import org.mockito.MockedStatic;
 
 class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private static final String RUN_ID = "compose-smoke-2939";
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
+  private static final String CAPABILITY_PATH = "/fixture/capability.json";
   private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
   private static final UUID REALM_ID = UUID.fromString("23d39978-9d44-4e1a-8659-998ff9239b01");
   private static final UUID NAMESPACE_ID = UUID.fromString("ed1b4d88-81f8-4404-af7c-9a5dc91d3043");
@@ -177,6 +186,154 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     verifyNoInteractions(gameInstanceService, ownerService, worldClient);
   }
 
+  @Test
+  void exhaustedRetryBudgetStopsMutationAndFreshCoordinatorReplaysSameClaim() {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    AtomicInteger worldAcquisitions = new AtomicInteger();
+    doAnswer(
+            invocation -> {
+              int acquisition = worldAcquisitions.incrementAndGet();
+              if (acquisition <= 12) {
+                throw new IllegalStateException("Simulated unresolved World response");
+              }
+              String requestDigest = invocation.getArgument(5);
+              return AcquireInitialAdmissionBindHoldResponse.newBuilder()
+                  .setHold(
+                      hold(
+                          InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING,
+                          NAMESPACE_ID,
+                          requestDigest))
+                  .build();
+            })
+        .when(fixture.worldClient)
+        .acquireInitialAdmissionBindHold(
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyLong(),
+            anyString(),
+            anyString(),
+            any(UUID.class),
+            any(UUID.class),
+            any(PlayableStateScope.class),
+            anyLong());
+
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.load(
+                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .thenReturn(fixture.capability);
+
+      // Orchestration unit proof only; capability TLS and durable cross-service behavior have
+      // separate proof boundaries.
+      for (int attempt = 0; attempt < 12; attempt++) {
+        fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      }
+
+      verify(fixture.ownerService, times(12)).beginIntent(any());
+      verify(fixture.worldClient, times(12))
+          .acquireInitialAdmissionBindHold(
+              anyLong(),
+              anyLong(),
+              anyLong(),
+              anyLong(),
+              eq(OPERATION_ID),
+              anyString(),
+              eq(REALM_ID),
+              eq(NAMESPACE_ID),
+              eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+              eq(3L));
+      verify(fixture.ownerService, never()).attachHold(any());
+      verify(fixture.ownerService, never()).commit(any());
+      capabilityLoader.verify(
+          () ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  eq(Path.of(CAPABILITY_PATH)),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.grpcProperties)),
+          times(12));
+
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      verify(fixture.ownerService, times(12)).beginIntent(any());
+      verify(fixture.worldClient, times(12))
+          .acquireInitialAdmissionBindHold(
+              anyLong(),
+              anyLong(),
+              anyLong(),
+              anyLong(),
+              anyString(),
+              anyString(),
+              any(UUID.class),
+              any(UUID.class),
+              any(PlayableStateScope.class),
+              anyLong());
+      capabilityLoader.verify(
+          () ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  any(Path.class), anyString(), anyString(), any(CommonGrpcClientProperties.class)),
+          times(12));
+
+      RunOwnedInitialAdmissionFixtureCoordinator restarted = newCoordinator(fixture);
+      restarted.retryRunOwnedFixtureBootstrap();
+
+      ArgumentCaptor<StartSessionRequest> launchRequests =
+          ArgumentCaptor.forClass(StartSessionRequest.class);
+      verify(fixture.gameInstanceService, times(13))
+          .startRunOwnedInitialLaunch(launchRequests.capture());
+      assertThat(launchRequests.getAllValues())
+          .allSatisfy(
+              request -> {
+                assertThat(request.tenantId()).isEqualTo(fixture.capability.tenantId());
+                assertThat(request.gameTemplateId()).isEqualTo(fixture.capability.gameTemplateId());
+                assertThat(request.ownerAccountId()).isEqualTo(fixture.capability.ownerAccountId());
+                assertThat(request.controlPlaneRequestId()).isEqualTo(OPERATION_ID);
+              });
+      ArgumentCaptor<InitialAdmissionBindRequest> ownerRequests =
+          ArgumentCaptor.forClass(InitialAdmissionBindRequest.class);
+      verify(fixture.worldClient, times(13))
+          .acquireInitialAdmissionBindHold(
+              anyLong(),
+              anyLong(),
+              anyLong(),
+              anyLong(),
+              eq(OPERATION_ID),
+              anyString(),
+              eq(REALM_ID),
+              eq(NAMESPACE_ID),
+              eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED),
+              eq(3L));
+      verify(fixture.ownerService, times(13)).beginIntent(ownerRequests.capture());
+      assertThat(ownerRequests.getAllValues())
+          .extracting(InitialAdmissionBindRequest::initialAdmissionRequestId)
+          .containsOnly(OPERATION_ID);
+      assertThat(ownerRequests.getAllValues())
+          .extracting(InitialAdmissionBindRequest::requestDigest)
+          .doesNotContainNull()
+          .containsOnly(ownerRequests.getValue().requestDigest());
+      verify(fixture.ownerService).attachHold(any());
+      verify(fixture.ownerService).commit(any());
+      verify(fixture.ownerService, never()).abort(any());
+
+      capabilityLoader.verify(
+          () ->
+              RunOwnedInitialAdmissionFixtureCapability.load(
+                  eq(Path.of(CAPABILITY_PATH)),
+                  eq(RUN_ID),
+                  eq(PROJECT_NAME),
+                  same(fixture.grpcProperties)),
+          times(13));
+      restarted.retryRunOwnedFixtureBootstrap();
+      verify(fixture.ownerService, times(13)).beginIntent(any());
+      verify(fixture.ownerService).commit(any());
+    }
+  }
+
   private static Fixture fixture(InitialAdmissionBindHoldStatus holdStatus) {
     GameInstanceService gameInstanceService = org.mockito.Mockito.mock(GameInstanceService.class);
     InitialAdmissionBindOwnerService ownerService =
@@ -295,7 +452,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     RunOwnedInitialAdmissionFixtureCoordinator coordinator =
         new RunOwnedInitialAdmissionFixtureCoordinator(
             true,
-            "/unused-for-direct-coordination.json",
+            CAPABILITY_PATH,
             RUN_ID,
             PROJECT_NAME,
             grpc,
@@ -303,7 +460,19 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
             ownerService,
             worldClient);
     return new Fixture(
-        coordinator, capability, gameInstanceService, ownerService, worldClient, request);
+        coordinator, capability, grpc, gameInstanceService, ownerService, worldClient, request);
+  }
+
+  private static RunOwnedInitialAdmissionFixtureCoordinator newCoordinator(Fixture fixture) {
+    return new RunOwnedInitialAdmissionFixtureCoordinator(
+        true,
+        CAPABILITY_PATH,
+        RUN_ID,
+        PROJECT_NAME,
+        fixture.grpcProperties,
+        fixture.gameInstanceService,
+        fixture.ownerService,
+        fixture.worldClient);
   }
 
   private static InitialAdmissionBindAttempt attempt(
@@ -389,6 +558,7 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private record Fixture(
       RunOwnedInitialAdmissionFixtureCoordinator coordinator,
       RunOwnedInitialAdmissionFixtureCapability capability,
+      CommonGrpcClientProperties grpcProperties,
       GameInstanceService gameInstanceService,
       InitialAdmissionBindOwnerService ownerService,
       WorldManagementClient worldClient,
