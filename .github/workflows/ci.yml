@@ -1367,6 +1367,32 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#generationAndSourceVersionOverflowFailBeforeAnyMutation()' \
             account-service
 
+      - name: Verify Account issuer reconciliation capture PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#capturesProvedZeroBaselineWithoutSourceOrOutboxWrites()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#capturesCompletePositiveCheckpointWithIndependentSourceCounters()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#committedCaptureWithLostPostCommitReadbackRecoversTheSameReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#exactRetryReturnsOriginalPositiveReceiptAfterLaterSourceAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#concurrentExactCapturesReturnOneDurableOperation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#captureAndSourceAdvanceSerializeOnOneIssuerFenceWithoutHybridSnapshot()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#invalidBindingsAndMissingAuthorityDenyWithoutEnrollment()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#durableReceiptsRejectUpdateAndDelete()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#databaseRejectsIncompleteAndContradictoryPositiveReceiptEvidenceWithoutMutation()' \
+            account-service
+
+      - name: Upload Account issuer reconciliation capture PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-issuer-reconciliation-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*IssuerProjectionReconciliationPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload Account issuer authority PostgreSQL proof results
         if: ${{ always() && matrix.module == 'account-service' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

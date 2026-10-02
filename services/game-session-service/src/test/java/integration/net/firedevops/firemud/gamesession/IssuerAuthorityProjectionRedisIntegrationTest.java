@@ -295,7 +295,7 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
         store.apply(readback("2", "3", "1", first, first), "ignored-for-obsolete-alias");
 
     assertThat(result.outcome()).isEqualTo(Outcome.QUARANTINED);
-    assertThat(result.detail()).contains("MALFORMED_STORED_JSON");
+    assertThat(result.detail()).contains("MALFORMED_EXISTING_PROJECTION");
     assertThat(adminTemplate.opsForValue().get(key())).isEqualTo(obsoleteJson);
     assertThat(adminTemplate.getExpire(key(), TimeUnit.MILLISECONDS)).isEqualTo(-1L);
   }
