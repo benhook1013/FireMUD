@@ -18,6 +18,10 @@ FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
 FIREMUD_SMOKE_RUN_ID="$run_id" \
 COMPOSE_PROJECT_NAME="$project_name" \
   bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$fixture_root"
+[[ "$(stat -c '%a' "$fixture_root/authority")" == 700 ]] || {
+  echo "first Compose mTLS certificate setup did not retain owner-only authority permissions." >&2
+  exit 1
+}
 services=(
   account-service gateway automation-scripting-service entity-management-service
   game-design-service game-logic-service game-session-service logging-admin-service
@@ -49,6 +53,83 @@ COMPOSE_PROJECT_NAME="$project_name" \
 [[ "$(stat -c '%a' "$fixture_root/authority/ca.key")" == 600 ]]
 [[ ! -e "$workloads_dir/ca.key" ]]
 [[ -z "$(find "$workloads_dir" -type f -name ca.key -print -quit)" ]]
+
+snapshot_tree() {
+  local tree_root="$1"
+  find "$tree_root" -type f -print0 | sort -z \
+    | while IFS= read -r -d '' file; do
+        printf '%s %s ' "$(stat -c '%a %h' "$file")" "${file#"$tree_root"/}"
+        sha256sum -- "$file"
+      done
+}
+
+# A CA-valid dedicated workload leaf in the shared authority slot is an
+# accidental misprojection. Reject it before chmod or workload projection.
+misplaced_authority_run_id="${run_id}-misplaced-authority"
+misplaced_authority_project_name="firemud-smoke-$misplaced_authority_run_id"
+misplaced_authority_project_key="$(printf '%s' "$misplaced_authority_project_name" | sha256sum | awk '{print $1}')"
+misplaced_authority_root="$ownership_dir/$misplaced_authority_project_key.grpc-mtls"
+misplaced_authority_dir="$misplaced_authority_root/authority"
+mkdir -m 700 -- "$misplaced_authority_root"
+mkdir -m 755 -- "$misplaced_authority_dir"
+cp -- "$fixture_root/authority/ca.crt" "$misplaced_authority_dir/ca.crt"
+cp -- "$fixture_root/authority/ca.key" "$misplaced_authority_dir/ca.key"
+cp -- "$workloads_dir/game-session-service/client.crt" "$misplaced_authority_dir/client.crt"
+cp -- "$workloads_dir/game-session-service/client.key" "$misplaced_authority_dir/client.key"
+chmod 644 "$misplaced_authority_dir/ca.crt" "$misplaced_authority_dir/client.crt"
+chmod 600 "$misplaced_authority_dir/ca.key"
+# Noncanonical client-key mode proves refusal precedes authority-file chmod.
+chmod 444 "$misplaced_authority_dir/client.key"
+misplaced_authority_before="$(snapshot_tree "$misplaced_authority_root")"
+if FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
+  FIREMUD_SMOKE_RUN_ID="$misplaced_authority_run_id" \
+  COMPOSE_PROJECT_NAME="$misplaced_authority_project_name" \
+  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$misplaced_authority_root" \
+  >"$TEST_ROOT/misplaced-authority-output" 2>&1; then
+  echo "Compose mTLS certificate setup accepted a dedicated leaf in the shared authority slot." >&2
+  exit 1
+fi
+rg -Fq 'shared client certificate must not contain a workload URI SAN' "$TEST_ROOT/misplaced-authority-output"
+[[ "$misplaced_authority_before" == "$(snapshot_tree "$misplaced_authority_root")" \
+  && "$(stat -c '%a' "$misplaced_authority_dir")" == 755 \
+  && ! -e "$misplaced_authority_root/workloads" ]] || {
+  echo "Compose mTLS source-identity refusal changed authority material or created workload projections." >&2
+  exit 1
+}
+
+# Existing generic projections receive the same no-URI-SAN check, with all
+# files left untouched when a dedicated certificate was placed in one.
+misplaced_projection_run_id="${run_id}-misplaced-projection"
+misplaced_projection_project_name="firemud-smoke-$misplaced_projection_run_id"
+misplaced_projection_project_key="$(printf '%s' "$misplaced_projection_project_name" | sha256sum | awk '{print $1}')"
+misplaced_projection_root="$ownership_dir/$misplaced_projection_project_key.grpc-mtls"
+mkdir -m 700 -- "$misplaced_projection_root"
+cp -a -- "$fixture_root/authority" "$misplaced_projection_root/authority"
+cp -a -- "$workloads_dir" "$misplaced_projection_root/workloads"
+chmod 644 "$misplaced_projection_root/workloads/gateway/client.crt" \
+  "$misplaced_projection_root/workloads/gateway/client.key"
+cp -- "$workloads_dir/game-session-service/client.crt" \
+  "$misplaced_projection_root/workloads/gateway/client.crt"
+cp -- "$workloads_dir/game-session-service/client.key" \
+  "$misplaced_projection_root/workloads/gateway/client.key"
+chmod 444 "$misplaced_projection_root/workloads/gateway/client.crt" \
+  "$misplaced_projection_root/workloads/gateway/client.key"
+misplaced_projection_before="$(snapshot_tree "$misplaced_projection_root")"
+if FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
+  FIREMUD_SMOKE_RUN_ID="$misplaced_projection_run_id" \
+  COMPOSE_PROJECT_NAME="$misplaced_projection_project_name" \
+  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$misplaced_projection_root" \
+  >"$TEST_ROOT/misplaced-projection-output" 2>&1; then
+  echo "Compose mTLS certificate setup accepted a dedicated leaf in a generic workload projection." >&2
+  exit 1
+fi
+rg -Fq 'shared generic workload must not contain a URI SAN: gateway' "$TEST_ROOT/misplaced-projection-output"
+[[ "$misplaced_projection_before" == "$(snapshot_tree "$misplaced_projection_root")" ]] || {
+  echo "Compose mTLS generic-identity refusal partially changed an existing workload projection." >&2
+  exit 1
+}
 
 symlink_run_id="${run_id}-symlink"
 symlink_project_name="firemud-smoke-$symlink_run_id"

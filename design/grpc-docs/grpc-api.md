@@ -9752,7 +9752,7 @@ plus scoped tick pause/resume used for rollback safety.
 | payload_digest | [string](#string) |  |  |
 | status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
 | outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
-| audit_projection_version | [int32](#int32) |  |  |
+| audit_projection_version | [int32](#int32) |  | Version 1 attests an exact receipt linked atomically to a distinct audit log projection. Zero or unsupported versions cannot verify delivery or historical producer provenance. |
 
 
 
@@ -9896,7 +9896,7 @@ plus scoped tick pause/resume used for rollback safety.
 | status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
 | outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
-| audit_projection_version | [int32](#int32) |  |  |
+| audit_projection_version | [int32](#int32) |  | Same receipt/projection attestation as CreateLogEventResponse; never payload replay proof. Zero or unsupported versions cannot verify delivery or historical producer provenance. |
 
 
 

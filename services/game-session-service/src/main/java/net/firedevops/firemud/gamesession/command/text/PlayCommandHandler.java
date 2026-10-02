@@ -321,15 +321,7 @@ public class PlayCommandHandler {
             ex);
       }
       if (maybeRealm.isEmpty()) {
-        return failure(
-            GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
-            explicitRealmSelectionMessage(selectedWorld),
-            "error.play.realm-selection-required",
-            Map.of("worldSlug", selectedWorld.slug()),
-            tenantTag,
-            null,
-            null,
-            null);
+        return realmSelectionRequiredFailure(selectedWorld, tenantTag);
       }
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
@@ -368,17 +360,24 @@ public class PlayCommandHandler {
             validateRuntimeAdmission(context, selectedWorld, selectedRealm, selectedTenantTag, 0L);
         if (authorityFailure.isPresent()) {
           PlayCommandHandlingResult admissionFailure = authorityFailure.orElseThrow();
-          if (!gameplayWorldCatalog.isPubliclyDiscoverable(currentCatalog, selectedWorld)
-              && isDefinitivePrivateWorldDenial(admissionFailure)) {
-            return failure(
-                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
-                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
-                "error.play.selection-required",
-                Map.of(),
-                tenantTag,
-                null,
-                null,
-                null);
+          if (isDefinitivePrivateWorldDenial(admissionFailure)) {
+            boolean publiclyDiscoverableWorld =
+                gameplayWorldCatalog.isPubliclyDiscoverable(currentCatalog, selectedWorld);
+            if (!publiclyDiscoverableWorld
+                || !selectedRealm.visible()
+                || !selectedRealm.publicProductionRealm()) {
+              return publiclyDiscoverableWorld
+                  ? realmSelectionRequiredFailure(selectedWorld, tenantTag)
+                  : failure(
+                      GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+                      GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
+                      "error.play.selection-required",
+                      Map.of(),
+                      tenantTag,
+                      null,
+                      null,
+                      null);
+            }
           }
           return admissionFailure;
         }
@@ -1375,11 +1374,13 @@ public class PlayCommandHandler {
   private ResolvedPlaySelection disambiguateSelection(
       ResolvedPlaySelection requestedSelection, GameplayWorldCatalog.WorldView selectedWorld) {
     String secondSelector = requestedSelection.explicitRealmSelector();
-    if (!StringUtils.hasText(secondSelector)
+    if (StringUtils.hasText(requestedSelection.characterSelector())
+        || !StringUtils.hasText(secondSelector)
         || GameplayWorldCatalog.isOrdinalSelector(secondSelector)
-        || gameplayWorldCatalog.hasRealmForAdmission(selectedWorld, secondSelector)) {
+        || gameplayWorldCatalog.resolveRealm(selectedWorld, secondSelector).isPresent()) {
       return requestedSelection;
     }
+    // Character shorthand must not reveal hidden realm existence through interpretation.
     return new ResolvedPlaySelection(requestedSelection.worldSelector(), null, secondSelector);
   }
 
@@ -1405,6 +1406,19 @@ public class PlayCommandHandler {
     return "Selection required. Use PLAY "
         + selectedWorld.slug()
         + " <realm> [character] or browse REALMS first.";
+  }
+
+  private PlayCommandHandlingResult realmSelectionRequiredFailure(
+      GameplayWorldCatalog.WorldView selectedWorld, String tenantTag) {
+    return failure(
+        GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+        explicitRealmSelectionMessage(selectedWorld),
+        "error.play.realm-selection-required",
+        Map.of("worldSlug", selectedWorld.slug()),
+        tenantTag,
+        null,
+        null,
+        null);
   }
 
   private String characterSelectionMessage(

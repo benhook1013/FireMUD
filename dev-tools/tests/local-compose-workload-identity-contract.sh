@@ -112,6 +112,16 @@ assert_workload_certificate() {
   }
 }
 
+assert_no_uri_san() {
+  local certificate="$1"
+  local subject_alt_names
+  subject_alt_names="$(openssl x509 -in "$certificate" -noout -ext subjectAltName)"
+  if [[ "$subject_alt_names" == *"URI:"* ]]; then
+    echo "generic local certificate unexpectedly contains a workload URI SAN: $certificate" >&2
+    exit 1
+  fi
+}
+
 assert_invalid_workload_uri_is_reissued() {
   local case_name="$1"
   local subject_alt_name="$2"
@@ -158,6 +168,9 @@ assert_invalid_workload_uri_is_reissued() {
 }
 
 bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$CERT_DIR"
+
+assert_no_uri_san "$CERT_DIR/client.crt"
+assert_no_uri_san "$CERT_DIR/server.crt"
 
 runtime_dir="$CERT_DIR/local-runtime"
 [[ -z "$(find "$runtime_dir" -name ca.key -print -quit)" ]] || {
@@ -408,6 +421,14 @@ for file in server.crt server.key client.crt client.key dev-cert.pem dev-key.pem
   cp "$other_authority/$file" "$wrong_issuer_case/$file"
 done
 assert_invalid_existing_bundle_is_preserved "$wrong_issuer_case" wrong-issuer
+
+misplaced_workload_case="$CERT_DIR/invalid-generic-workload-identity-bundle"
+copy_generic_bundle "$CERT_DIR" "$misplaced_workload_case"
+cp "$CERT_DIR/workloads/game-session-service.crt" "$misplaced_workload_case/client.crt"
+cp "$CERT_DIR/workloads/game-session-service.key" "$misplaced_workload_case/client.key"
+cp "$misplaced_workload_case/client.crt" "$misplaced_workload_case/dev-cert.pem"
+cp "$misplaced_workload_case/client.key" "$misplaced_workload_case/dev-key.pem"
+assert_invalid_existing_bundle_is_preserved "$misplaced_workload_case" generic-workload-identity
 
 expired_case="$CERT_DIR/invalid-expired-bundle"
 copy_generic_bundle "$CERT_DIR" "$expired_case"

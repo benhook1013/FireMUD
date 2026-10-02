@@ -92,7 +92,7 @@ ensure_compose_mtls_certs() {
     return 1
   fi
 
-  local owner_id authority_dir workloads_dir service
+  local owner_id authority_dir workloads_dir service authority_mode_restored=0
   owner_id="$(id -u)"
   if [[ ! -d "$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED" || -L "$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED" ]]; then
     echo "run-owned smoke ownership directory is unavailable." >&2
@@ -125,13 +125,16 @@ ensure_compose_mtls_certs() {
       return 1
     fi
   fi
-  chmod 700 "$authority_dir"
-  if [[ "$(stat -Lc '%u %a %F' "$authority_dir")" != "$owner_id 700 directory" ]]; then
-    echo "Compose mTLS authority fixture must be an owner-only (0700) directory." >&2
-    return 1
-  fi
   if [[ ! -f "$authority_dir/ca.crt" || ! -f "$authority_dir/ca.key" || ! -f "$authority_dir/client.crt" || ! -f "$authority_dir/client.key" ]]; then
     (umask 077; "$GENERATOR" "$authority_dir")
+    # The generic generator makes the bundle directory container-readable.
+    # Compose authority material must remain private on its first generation too.
+    chmod 700 "$authority_dir"
+    if [[ "$(stat -Lc '%u %a %F' "$authority_dir")" != "$owner_id 700 directory" ]]; then
+      echo "Compose mTLS authority fixture must be an owner-only (0700) directory." >&2
+      return 1
+    fi
+    authority_mode_restored=1
   fi
   for authority_file in ca.crt ca.key client.crt client.key; do
     preflight_managed_file "$authority_dir/$authority_file" "Compose mTLS authority material"
@@ -140,9 +143,27 @@ ensure_compose_mtls_certs() {
       return 1
     fi
   done
+  openssl verify -CAfile "$authority_dir/ca.crt" "$authority_dir/client.crt" >/dev/null
+  if ! certificate_matches_private_key "$authority_dir/client.crt" "$authority_dir/client.key"; then
+    echo "Compose mTLS shared client certificate and private key do not match." >&2
+    return 1
+  fi
+  local authority_san_output authority_uri_sans
+  authority_san_output="$(openssl x509 -in "$authority_dir/client.crt" -noout -ext subjectAltName)"
+  authority_uri_sans="$(printf '%s\n' "$authority_san_output" | grep -oE 'URI:[^,[:space:]]+' || true)"
+  if [[ -n "$authority_uri_sans" ]]; then
+    echo "Compose mTLS shared client certificate must not contain a workload URI SAN." >&2
+    return 1
+  fi
+  if ((authority_mode_restored == 0)); then
+    chmod 700 "$authority_dir"
+    if [[ "$(stat -Lc '%u %a %F' "$authority_dir")" != "$owner_id 700 directory" ]]; then
+      echo "Compose mTLS authority fixture must be an owner-only (0700) directory." >&2
+      return 1
+    fi
+  fi
   chmod 600 "$authority_dir/ca.key" "$authority_dir/client.key"
   chmod 644 "$authority_dir/ca.crt" "$authority_dir/client.crt"
-  openssl verify -CAfile "$authority_dir/ca.crt" "$authority_dir/client.crt" >/dev/null
 
   workloads_dir="$requested_root/workloads"
   local -a services=(
@@ -240,6 +261,16 @@ ensure_compose_mtls_certs() {
       if [[ "$uri_sans" != "URI:spiffe://firemud/ns/dev/sa/$service" \
         || "$san_output" != *"DNS:$service"* ]]; then
         echo "Compose mTLS workload has the wrong SPIFFE identity: $service" >&2
+        return 1
+      fi
+    done
+    for service in \
+      gateway automation-scripting-service game-design-service game-logic-service logging-admin-service tcp-proxy-service; do
+      local san_output uri_sans
+      san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
+      uri_sans="$(printf '%s\n' "$san_output" | grep -oE 'URI:[^,[:space:]]+' || true)"
+      if [[ -n "$uri_sans" ]]; then
+        echo "Compose mTLS shared generic workload must not contain a URI SAN: $service" >&2
         return 1
       fi
     done

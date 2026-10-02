@@ -64,6 +64,8 @@ message CreateLogEventResponse {
   string payload_digest = 9;
   AccountAuditReceiptStatus status = 10;
   AccountAuditReceiptOutcome outcome = 11;
+  // Version 1 attests an exact receipt linked atomically to a distinct audit log projection.
+  // Zero or unsupported versions cannot verify delivery or historical producer provenance.
   int32 audit_projection_version = 12;
 }
 
@@ -92,6 +94,8 @@ message ReadLogEventReceiptResponse {
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
   shared.v1.ErrorDetail error = 11;
+  // Same receipt/projection attestation as CreateLogEventResponse; never payload replay proof.
+  // Zero or unsupported versions cannot verify delivery or historical producer provenance.
   int32 audit_projection_version = 12;
 }
 
