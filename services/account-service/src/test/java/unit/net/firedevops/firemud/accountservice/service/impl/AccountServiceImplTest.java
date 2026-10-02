@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
@@ -1148,7 +1149,7 @@ class AccountServiceImplTest {
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
     when(subscriptionRepository.findByTenantId(7L))
-        .thenThrow(new IllegalStateException("entitlement storage unavailable"));
+        .thenThrow(new org.jooq.exception.DataAccessException("entitlement storage unavailable"));
 
     AuthenticationException unavailable =
         assertThrows(
@@ -3264,15 +3265,33 @@ class AccountServiceImplTest {
     verifyNoInteractions(accountConnectScopeRepository);
   }
 
-  @Test
-  void issueDirectTextConnectScopeDoesNotMintScopeWhenEntitlementReadIsUnavailable() {
-    when(subscriptionRepository.findByTenantId(7L))
-        .thenThrow(new IllegalStateException("subscription store unavailable"));
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void issueDirectTextConnectScopeDoesNotMintScopeWhenEntitlementReadIsUnavailable(
+      boolean jooqFailure) {
+    RuntimeException cause =
+        jooqFailure
+            ? new org.jooq.exception.DataAccessException("subscription store unavailable")
+            : new DataAccessResourceFailureException("subscription store unavailable");
+    when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
 
     AuthenticationException exception =
         assertThrows(AuthenticationException.class, this::issueDirectTextConnectScopeForTest);
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    assertSame(cause, exception.getCause());
+    verifyNoInteractions(accountConnectScopeRepository);
+  }
+
+  @Test
+  void issueDirectTextConnectScopePropagatesUnexpectedRuntimeFailureWithoutMintingScope() {
+    IllegalStateException cause = new IllegalStateException("subscription mapping failed");
+    when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
+
+    IllegalStateException propagated =
+        assertThrows(IllegalStateException.class, this::issueDirectTextConnectScopeForTest);
+
+    assertSame(cause, propagated);
     verifyNoInteractions(accountConnectScopeRepository);
   }
 
@@ -3400,10 +3419,13 @@ class AccountServiceImplTest {
         .insert(org.mockito.ArgumentMatchers.any(VerifiedJoinScope.class));
   }
 
-  @Test
-  void getTenantEntitlementsForRuntimeTreatsStoreFailureAsUnavailable() {
-    DataAccessResourceFailureException cause =
-        new DataAccessResourceFailureException("subscription store unavailable");
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void getTenantEntitlementsForRuntimeTreatsDataAccessFailuresAsUnavailable(boolean jooqFailure) {
+    RuntimeException cause =
+        jooqFailure
+            ? new org.jooq.exception.DataAccessException("subscription store unavailable")
+            : new DataAccessResourceFailureException("subscription store unavailable");
     when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
 
     AuthenticationException exception =
@@ -3412,7 +3434,20 @@ class AccountServiceImplTest {
             () -> service.getTenantEntitlementsForRuntime(7L, "req-entitlement-store-failure"));
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
-    assertEquals(cause, exception.getCause());
+    assertSame(cause, exception.getCause());
+  }
+
+  @Test
+  void getTenantEntitlementsForRuntimePropagatesUnexpectedRuntimeFailureByIdentity() {
+    IllegalStateException cause = new IllegalStateException("subscription mapping failed");
+    when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
+
+    IllegalStateException propagated =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.getTenantEntitlementsForRuntime(7L, "req-entitlement-runtime-failure"));
+
+    assertSame(cause, propagated);
   }
 
   @Test

@@ -90,6 +90,7 @@ import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.jooq.exception.DataAccessException;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.slf4j.Logger;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -1378,7 +1379,7 @@ public class AccountServiceImpl implements AccountService {
     List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
     try {
       subscriptions = subscriptionRepository.findByTenantId(tenantId);
-    } catch (RuntimeException ex) {
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is unavailable; retry later",
