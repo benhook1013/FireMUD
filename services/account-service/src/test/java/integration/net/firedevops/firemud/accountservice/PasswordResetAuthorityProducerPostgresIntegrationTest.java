@@ -25,6 +25,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerati
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.OperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
@@ -319,6 +320,8 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
     AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(transactionDsl);
     AccountPasswordResetOperationRepository operations =
         new AccountPasswordResetOperationRepository(transactionDsl);
+    AccountLogoutAllOperationRepository logoutAllOperations =
+        new AccountLogoutAllOperationRepository(transactionDsl);
     PasswordResetTokenRepository tokens = new PasswordResetTokenRepository(transactionDsl);
     return new Fixture(
         setupDsl,
@@ -329,6 +332,7 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         authority,
         outbox,
         operations,
+        logoutAllOperations,
         tokens);
   }
 
@@ -365,6 +369,7 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
         fixture.authority(),
         fixture.outbox(),
         operations,
+        fixture.logoutAllOperations(),
         null, // audit outbox
         null, // connect scopes
         null, // join operations
@@ -515,6 +520,7 @@ class PasswordResetAuthorityProducerPostgresIntegrationTest {
       AccountAuthorityGenerationRepository authority,
       AccountAuthorityOutboxRepository outbox,
       AccountPasswordResetOperationRepository operations,
+      AccountLogoutAllOperationRepository logoutAllOperations,
       PasswordResetTokenRepository tokens) {}
 
   private record Seed(
