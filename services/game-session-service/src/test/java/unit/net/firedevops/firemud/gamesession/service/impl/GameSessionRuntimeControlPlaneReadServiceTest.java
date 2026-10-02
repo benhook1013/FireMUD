@@ -8,7 +8,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamedesign.v1.PublishedScriptPatchVersion;
 import net.firedevops.firemud.gamedesign.v1.VersionLifecycleState;
@@ -21,6 +23,7 @@ import net.firedevops.firemud.gamesession.repository.GameplayCommandRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateRequest;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.worldmanagement.v1.GetWorldInstanceLifecycleResponse;
@@ -64,6 +67,131 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
 
     assertEquals("patch-1", state.getPinnedScriptPatchVersion());
     assertEquals(9L, state.getScriptPinEpoch());
+  }
+
+  @Test
+  void runtimeReadMapsDurableAdmissionPointerIdentity() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            worldLifecycle(
+                1L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
+    GameplayAdmissionPointerAuthorityService authority =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authority.listByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    11L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "CREATE_ALLOWED",
+                    12L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"))));
+    GameSessionRuntimeControlPlaneReadService service =
+        service(world, "RUNNING", null, null, null, null, authority);
+
+    var state = service.getGameInstanceRuntimeState(1L, runtimeRequest());
+
+    assertEquals(12L, state.getCurrentAdmissionPointers(0).getCatalogRevision());
+    assertEquals(
+        "11111111-1111-1111-1111-111111111111", state.getCurrentAdmissionPointers(0).getRealmId());
+    assertEquals(
+        "22222222-2222-2222-2222-222222222222",
+        state.getCurrentAdmissionPointers(0).getPlayableStateNamespaceId());
+  }
+
+  @Test
+  void runtimeReadFailsClosedWhenAdmissionPointerIdentityIsMissing() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            worldLifecycle(
+                1L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
+    GameplayAdmissionPointerAuthorityService authority =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authority.listByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    11L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "CREATE_ALLOWED",
+                    12L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    null)));
+    GameSessionRuntimeControlPlaneReadService service =
+        service(world, "RUNNING", null, null, null, null, authority);
+
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
+        assertThrows(
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
+            () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
+
+    assertEquals("ADMISSION_POINTER_AUTHORITY_UNAVAILABLE", error.code());
+    assertEquals(
+        "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE: current admission pointer durable identity or catalog revision is unavailable",
+        error.getMessage());
+  }
+
+  @Test
+  void runtimeReadFailsClosedWhenAdmissionPointerCatalogRevisionIsMissing() {
+    WorldManagementClient world = mock(WorldManagementClient.class);
+    when(world.getWorldInstanceLifecycle(1L, 7L))
+        .thenReturn(
+            worldLifecycle(
+                1L, 7L, 3L, WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE));
+    GameplayAdmissionPointerAuthorityService authority =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authority.listByRuntimeTarget(1L, 7L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Production",
+                    1L,
+                    7L,
+                    11L,
+                    true,
+                    true,
+                    true,
+                    "SHARED",
+                    "CREATE_ALLOWED",
+                    0L,
+                    UUID.fromString("11111111-1111-1111-1111-111111111111"),
+                    UUID.fromString("22222222-2222-2222-2222-222222222222"))));
+    GameSessionRuntimeControlPlaneReadService service =
+        service(world, "RUNNING", null, null, null, null, authority);
+
+    GameSessionRuntimeControlPlaneReadService.RuntimeStateException error =
+        assertThrows(
+            GameSessionRuntimeControlPlaneReadService.RuntimeStateException.class,
+            () -> service.getGameInstanceRuntimeState(1L, runtimeRequest()));
+
+    assertEquals("ADMISSION_POINTER_AUTHORITY_UNAVAILABLE", error.code());
+    assertEquals(
+        "ADMISSION_POINTER_AUTHORITY_UNAVAILABLE: current admission pointer durable identity or catalog revision is unavailable",
+        error.getMessage());
   }
 
   @Test
@@ -462,6 +590,24 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
       Long scriptPinEpoch,
       Long scriptPatchBaseVersionId,
       GameDesignClient gameDesignClient) {
+    return service(
+        world,
+        status,
+        scriptPatchVersion,
+        scriptPinEpoch,
+        scriptPatchBaseVersionId,
+        gameDesignClient,
+        mock(GameplayAdmissionPointerAuthorityService.class));
+  }
+
+  private GameSessionRuntimeControlPlaneReadService service(
+      WorldManagementClient world,
+      String status,
+      String scriptPatchVersion,
+      Long scriptPinEpoch,
+      Long scriptPatchBaseVersionId,
+      GameDesignClient gameDesignClient,
+      GameplayAdmissionPointerAuthorityService authority) {
     GameInstance instance = new GameInstance();
     instance.setId(7L);
     instance.setTenantId(1L);
@@ -488,7 +634,7 @@ class GameSessionRuntimeControlPlaneReadServiceTest {
         mock(GameplayCommandRepository.class),
         mock(RemoteFollowupRepository.class),
         runtime,
-        mock(GameplayAdmissionPointerAuthorityService.class),
+        authority,
         gameDesignClient,
         world);
   }
