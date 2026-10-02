@@ -20,12 +20,18 @@ import org.springframework.stereotype.Component;
     justification =
         "Injected Spring collaborators are internal; invalid cleanup configuration must fail startup.")
 public class ExpiredConnectScopeCleanupJob {
+  /**
+   * Caps each scheduled run at five repository batches so continuous churn cannot monopolize it.
+   */
+  private static final int MAX_BATCHES_PER_RUN = 5;
+
   private static final Logger logger = LoggingUtil.getLogger(ExpiredConnectScopeCleanupJob.class);
 
   private final AccountConnectScopeRepository connectScopeRepository;
   private final int batchSize;
   private final Counter deleted;
   private final Counter failures;
+  private final Counter capSaturations;
 
   public ExpiredConnectScopeCleanupJob(
       AccountConnectScopeRepository connectScopeRepository,
@@ -50,6 +56,10 @@ public class ExpiredConnectScopeCleanupJob {
         Counter.builder("account.connect_scopes.cleanup.failure")
             .description("Account connect-scope cleanup failures")
             .register(meterRegistry);
+    this.capSaturations =
+        Counter.builder("account.connect_scopes.cleanup.cap_saturation")
+            .description("Cleanup runs that consume every full batch up to the per-run cap")
+            .register(meterRegistry);
   }
 
   @Timed(value = "account.connect_scopes.cleanup")
@@ -59,7 +69,21 @@ public class ExpiredConnectScopeCleanupJob {
   public void cleanupExpiredConnectScopes() {
     Instant capturedNow = Instant.now();
     try {
-      deleted.increment(connectScopeRepository.deleteExpiredUnreferenced(capturedNow, batchSize));
+      boolean allBatchesFull = true;
+      for (int batch = 0; batch < MAX_BATCHES_PER_RUN; batch++) {
+        int removed = connectScopeRepository.deleteExpiredUnreferenced(capturedNow, batchSize);
+        deleted.increment(removed);
+        if (removed < batchSize) {
+          allBatchesFull = false;
+          break;
+        }
+        if (removed != batchSize) {
+          allBatchesFull = false;
+        }
+      }
+      if (allBatchesFull) {
+        capSaturations.increment();
+      }
     } catch (RuntimeException ex) {
       failures.increment();
       logger.warn("Expired connect-scope cleanup step failed ({})", ex.getClass().getSimpleName());

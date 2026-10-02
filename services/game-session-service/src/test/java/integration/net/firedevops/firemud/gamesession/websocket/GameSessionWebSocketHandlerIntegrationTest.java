@@ -292,6 +292,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         .setTenantId("22")
                         .setAccountId("123")
                         .setName("Emberline")
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setLevel(12)
                         .build())
                 .addCharacters(
@@ -300,6 +301,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         .setTenantId("22")
                         .setAccountId("123")
                         .setName("Sora")
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setLevel(7)
                         .build())
                 .build())
@@ -307,7 +309,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .listCharactersByAccount(
             eq("22"), eq("123"), eq("1"), eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(commandService.enqueue(
-            org.mockito.ArgumentMatchers.anyString(), eq("PLAY demo"), eq(false)))
+            org.mockito.ArgumentMatchers.anyString(), eq("PLAY demo Emberline"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
@@ -323,7 +325,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             });
     when(commandService.enqueue(eq("42"), eq("LOOK"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
-    when(commandService.enqueue(eq("1"), eq("PLAY demo"), eq(false)))
+    when(commandService.enqueue(eq("1"), eq("PLAY demo Emberline"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(eq("1"), eq("AFK"), eq(false)))
         .thenAnswer(
@@ -795,7 +797,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      client.send("PLAY demo");
+      client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       payloads = client.responses();
@@ -960,7 +962,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      client.send("PLAY demo");
+      client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       client.send("AFK");
@@ -1025,7 +1027,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      client.send("PLAY demo");
+      client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       client.awaitMatching(
@@ -1087,7 +1089,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      client.send("PLAY demo");
+      client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       client.send("LOGOUT");
@@ -1110,7 +1112,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("LOGIN");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      client.send("PLAY demo");
+      client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       client.awaitMatching(
@@ -1153,7 +1155,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
       client.login("demo@example.com", "swordfish");
-      client.play("demo");
+      client.play("demo", "Emberline");
       payloads = client.responses();
     }
 
@@ -1179,7 +1181,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
       client.login("demo@example.com", "swordfish");
-      client.play("demo");
+      client.play("demo", "Emberline");
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
       client.send("LOGIN demo@example.com wrongpass");
@@ -1200,7 +1202,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
       client.login("demo@example.com", "swordfish");
-      client.play("demo");
+      client.play("demo", "Emberline");
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
       bumpProductionAdmissionPointer(1L, false);
@@ -1230,7 +1232,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 "X-Realm-Slug", "production",
                 "X-Pointer-Version", "1"))) {
       first.login("demo@example.com", "swordfish");
-      first.play("demo");
+      first.play("demo", "Emberline");
       first.send("LOOK");
       first.awaitStartsWith("OK LOOK");
     }
@@ -1339,7 +1341,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       first.send("LOGIN");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      first.send("PLAY demo");
+      first.send("PLAY demo Emberline");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       first.send("LOOK");
@@ -1368,7 +1370,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       first.send("LOGIN");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      first.send("PLAY demo");
+      first.send("PLAY demo Emberline");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       first.send("LOOK");
@@ -1473,7 +1475,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
       first.send("LOGIN");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
-      first.send("PLAY demo");
+      first.send("PLAY demo Emberline");
       first.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       first.send("LOOK");
@@ -1540,8 +1542,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     return GameplayWebSocketScenarios.openAdmitted(
         ignored -> openGameplayDriver(sessionId, extraHeaders),
         "session-" + sessionId,
-        GameplayWebSocketScenarios.Admission.unnamed(
-            "demo@example.com", "swordfish", "demo", "Candle-lit Antechamber"));
+        GameplayWebSocketScenarios.demoAdmission(
+            GameplayWebSocketScenarios.DEFAULT_DEMO_CHARACTER_NAME, "Candle-lit Antechamber"));
   }
 
   private GameplayWebSocketDriver openGameplayDriver(

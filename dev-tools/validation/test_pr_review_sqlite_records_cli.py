@@ -350,6 +350,32 @@ class ReviewRecordsCliTest(unittest.TestCase):
         )
         self.assertEqual(records.history(2885)["runs"][0]["counts"], {"found": 1, "accepted": 1, "routed": 0})
 
+        correction_args = (
+            "source", "correct-resolution",
+            "--source-pr", "2885",
+            "--run-id", "run.source-resolution-cli",
+            "--finding-key", "accepted-key",
+            "--resolution-id", "source-resolution-cli-proof",
+            "--expected-fix-sha", "b" * 40,
+            "--fix-sha", "c" * 64,
+            "--correction-id", "source-resolution-cli-correction",
+            "--actor", "Overseer",
+            "--reason", "Correct a verified SHA transcription error",
+            "--proof-note", "Checked against the published full commit SHA",
+            "--database", str(self.database),
+        )
+        correction_code, correction_result = self.invoke(*correction_args)
+        self.assertEqual(correction_code, 0, correction_result)
+        self.assertEqual(correction_result["result"]["fix_sha"], "c" * 64)
+        self.assertFalse(correction_result["result"]["idempotent_replay"])
+        replay_code, replay_result = self.invoke(*correction_args)
+        self.assertEqual(replay_code, 0, replay_result)
+        self.assertTrue(replay_result["result"]["idempotent_replay"])
+        history = records.history(2885)
+        self.assertEqual(history["source_resolutions"][0]["fix_sha"], "b" * 40)
+        self.assertEqual(history["source_resolutions"][0]["effective_fix_sha"], "c" * 64)
+        self.assertEqual(len(history["source_resolution_corrections"]), 1)
+
         wrong_pr_code, _ = self.invoke(
             "source",
             "resolve",

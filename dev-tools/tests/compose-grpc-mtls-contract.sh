@@ -93,7 +93,9 @@ for service in "${services[@]}"; do
   [[ "$cert_public_key" == "$leaf_public_key" ]]
 done
 
-identity_services=(account-service game-session-service entity-management-service social-groups-service)
+identity_services=(
+  account-service game-session-service entity-management-service social-groups-service world-management-service
+)
 declare -A identity_fingerprints=()
 for service in "${identity_services[@]}"; do
   echo "Checking exact workload identity: $service"
@@ -117,7 +119,13 @@ echo "Checking canonical Compose entrypoints."
 mtls_compose="$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"
 rg -Fq 'FIREMUD_GRPC_PLAINTEXT: "false"' "$mtls_compose"
 rg -Fq 'GRPC_SERVER_TLS_ENABLED: "true"' "$mtls_compose"
-rg -Fq 'FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev' "$mtls_compose"
+rg -Fq 'client-auth: REQUIRE' "$ROOT_DIR/services/world-management-service/src/main/resources/application.yml"
+world_guard="$ROOT_DIR/services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/InitialAdmissionBindWorkloadGuard.java"
+world_grpc="$ROOT_DIR/services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/WorldManagementGrpcService.java"
+rg -Fq 'world_management.v1.WorldManagementService/AcquireInitialAdmissionBindHold' "$world_guard"
+rg -Fq 'peerIdentity.isService("game-session-service")' "$world_guard"
+rg -Fq 'peerIdentity.isInNamespace(trustedNamespace)' "$world_guard"
+rg -Fq 'firemud.grpc.workload-namespace' "$world_grpc"
 for service in "${services[@]}"; do
   rg -Fq "\${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/$service:/app/certs:ro" "$mtls_compose"
 done
@@ -220,7 +228,7 @@ for profile, config_path, image_only in (
 
     for name in (
         "account-service", "entity-management-service", "logging-admin-service",
-        "social-groups-service",
+        "social-groups-service", "world-management-service",
     ):
         namespace = services[name]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
         assert namespace == "dev", (profile, name, namespace)

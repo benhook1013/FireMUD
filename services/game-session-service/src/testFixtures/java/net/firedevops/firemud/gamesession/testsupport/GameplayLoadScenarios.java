@@ -5,6 +5,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -33,8 +34,10 @@ public final class GameplayLoadScenarios {
     stack.insertRunningGameInstance(tenantId, firstAccountId, gameTemplateId, false);
 
     List<PlayerSeed> players = new ArrayList<>();
+    List<Character> characters = new ArrayList<>();
     for (int i = 0; i < count; i++) {
       long accountId = characterIds[i];
+      String label = "player-" + (i + 1);
       long bootstrapGameInstanceId =
           stack.insertRunningGameInstance(tenantId, accountId, gameTemplateId, false);
       // Admission pointers are uniquely identified by world/realm and runtime target. Give each
@@ -66,16 +69,24 @@ public final class GameplayLoadScenarios {
       long sessionId = firstAccountId + 10_000L + i + 1;
       String email = "player" + (i + 1) + "@example.com";
       stack.accountStub().mapAccountId(email, accountId);
+      characters.add(
+          Character.newBuilder()
+              .setId(Long.toString(accountId))
+              .setTenantId(Long.toString(tenantId))
+              .setAccountId(Long.toString(accountId))
+              .setName(label)
+              .build());
       players.add(
           new PlayerSeed(
               sessionId,
               bootstrapGameInstanceId,
               accountId,
               email,
-              "player-" + (i + 1),
+              label,
               bootstrapWorldSlug,
               pointer.pointerVersion()));
     }
+    stack.entityStub().setCharacters(characters);
     return List.copyOf(players);
   }
 
@@ -94,7 +105,8 @@ public final class GameplayLoadScenarios {
                 "X-Realm-Slug", DEFAULT_REALM_SLUG,
                 "X-Pointer-Version", Long.toString(player.bootstrapPointerVersion())));
     try {
-      driver.enterGameplayAndWaitReady(player.username(), "swordfish", world, readyText);
+      driver.enterGameplayAndWaitReady(
+          player.username(), "swordfish", world, player.label(), readyText);
       return driver;
     } catch (Exception ex) {
       driver.close();

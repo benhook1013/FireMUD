@@ -114,7 +114,8 @@ ensure_compose_mtls_certs() {
       if [[ "$service" == account-service \
         || "$service" == game-session-service \
         || "$service" == entity-management-service \
-        || "$service" == social-groups-service ]]; then
+        || "$service" == social-groups-service \
+        || "$service" == world-management-service ]]; then
         "$GENERATOR" --workload \
           "$authority_dir/ca.crt" "$authority_dir/ca.key" \
           "$service_dir/client.crt" "$service_dir/client.key" dev "$service"
@@ -175,7 +176,7 @@ ensure_compose_mtls_certs() {
       return 1
     fi
     for service in \
-      account-service game-session-service entity-management-service social-groups-service; do
+      account-service game-session-service entity-management-service social-groups-service world-management-service; do
       local san_output uri_sans
       san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
       uri_sans="$(printf '%s\n' "$san_output" | grep -oE 'URI:[^,[:space:]]+' || true)"
