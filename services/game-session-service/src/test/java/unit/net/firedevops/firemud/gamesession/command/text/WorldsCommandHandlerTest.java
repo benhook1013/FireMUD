@@ -487,6 +487,11 @@ class WorldsCommandHandlerTest {
                 .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                 .build(),
             valid.toBuilder().clearId().build(),
+            valid.toBuilder().setId("not-a-number").build(),
+            valid.toBuilder().setId("0").build(),
+            valid.toBuilder().setId("-1").build(),
+            valid.toBuilder().setId("9223372036854775808").build(),
+            valid.toBuilder().setId("-9223372036854775809").build(),
             valid.toBuilder().clearName().build())) {
       Mockito.when(
               entityManagementClient.listCharactersByAccount(
@@ -502,7 +507,8 @@ class WorldsCommandHandlerTest {
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(valid)
-                .addCharacters(valid)
+                .addCharacters(valid.toBuilder().setId("07001").build())
+                .addCharacters(valid.toBuilder().setId("+7001").build())
                 .build());
     assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());

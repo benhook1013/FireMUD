@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.presentation.CharacterBrowseViewOutput
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -853,15 +854,17 @@ public class WorldsCommandHandler {
     }
     java.util.List<CharacterBrowseViewOutput.CharacterEntry> entries =
         new java.util.ArrayList<>(response.getCharactersCount());
-    Set<String> characterIds = new HashSet<>();
+    Set<Long> characterIds = new HashSet<>();
     for (int i = 0; i < response.getCharactersCount(); i++) {
       net.firedevops.firemud.entitymanagement.v1.Character character = response.getCharacters(i);
+      PositiveLongParsing.ParsedPositiveLong parsedCharacterId =
+          PositiveLongParsing.parseOptionalText(character.getId(), "characterId");
       if (!Long.toString(realm.tenantId()).equals(character.getTenantId())
           || !Long.toString(sessionContext.accountId()).equals(character.getAccountId())
           || character.getPlayableStateScope() != toPlayableStateScope(realm)
-          || !StringUtils.hasText(character.getId())
+          || !parsedCharacterId.valid()
           || !StringUtils.hasText(character.getName())
-          || !characterIds.add(character.getId())) {
+          || !characterIds.add(parsedCharacterId.value())) {
         return CharacterBrowseResult.unavailable();
       }
       entries.add(

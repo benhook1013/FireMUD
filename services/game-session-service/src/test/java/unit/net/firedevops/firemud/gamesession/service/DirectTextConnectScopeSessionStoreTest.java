@@ -4,9 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.core.script.RedisScript;
+import tools.jackson.databind.ObjectMapper;
 
 class DirectTextConnectScopeSessionStoreTest {
   private final DirectTextConnectScopeSessionStore store =
@@ -176,6 +185,116 @@ class DirectTextConnectScopeSessionStoreTest {
     assertThat(selected.scope().expiresAt()).isBeforeOrEqualTo(now.plusSeconds(901));
     assertThat(selected.scope().playerContext().getAccountId()).isEqualTo("7");
     assertThat(selected.scope().playerContext().getSessionId()).isEqualTo("41");
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void readsLegacyLobbyJsonAcrossProductionStoreInstances() throws Exception {
+    SessionContext caller = session(41L, 7L);
+    Instant now = Instant.now();
+    long expiresAt = now.plusSeconds(600).toEpochMilli();
+    String worldKey = "22:ZGVtby13b3JsZA";
+    PlayerExecutionContext playerContext =
+        PlayerExecutionContext.newBuilder()
+            .setAccountId(Long.toString(caller.accountId()))
+            .setSessionId(Long.toString(caller.sessionId()))
+            .setTenantId(Long.toString(caller.tenantId()))
+            .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
+            .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328e")
+            .setPlayableStateScope("SHARED")
+            .setGameInstanceId("9")
+            .build();
+    String legacyJson =
+        new ObjectMapper()
+            .writeValueAsString(
+                Map.of(
+                    "sessionId", caller.sessionId(),
+                    "accountId", caller.accountId(),
+                    "worldsExpiresAtEpochMs", expiresAt,
+                    "catalogFingerprint", "catalog-fingerprint-v13",
+                    "ordinalTargets", List.of(),
+                    "scopesByWorld",
+                        Map.of(
+                            worldKey,
+                            List.of(
+                                Map.of(
+                                    "realmSlug",
+                                    "production",
+                                    "publicProductionRealm",
+                                    true,
+                                    "connectScopeId",
+                                    "account-connect-scope-legacy",
+                                    "expiresAtEpochMs",
+                                    expiresAt,
+                                    "playerContextBase64",
+                                    Base64.getEncoder().encodeToString(playerContext.toByteArray()),
+                                    "joinRequestId",
+                                    "join-request-already-bound"))),
+                    "worldBySelector", Map.of("1", worldKey),
+                    "realmsByWorld",
+                        Map.of(
+                            worldKey,
+                            Map.of(
+                                "tenantId",
+                                22L,
+                                "worldSlug",
+                                "demo-world",
+                                "requestedWorldSelector",
+                                "1",
+                                "catalogFingerprint",
+                                "realm-catalog-fingerprint-v13",
+                                "expiresAtEpochMs",
+                                expiresAt,
+                                "ordinalTargets",
+                                List.of()))));
+    AtomicReference<String> sharedRedisValue = new AtomicReference<>(legacyJson);
+    StringRedisTemplate redisTemplate = Mockito.mock(StringRedisTemplate.class);
+    ValueOperations<String, String> valueOperations = Mockito.mock(ValueOperations.class);
+    Mockito.when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    Mockito.when(valueOperations.get(Mockito.anyString()))
+        .thenAnswer(invocation -> sharedRedisValue.get());
+    Mockito.doAnswer(
+            invocation -> {
+              Object[] arguments =
+                  java.util.Arrays.copyOfRange(
+                      invocation.getArguments(), 2, invocation.getArguments().length);
+              String expectedValue = "1".equals(arguments[0]) ? (String) arguments[1] : null;
+              if (!Objects.equals(sharedRedisValue.get(), expectedValue)) {
+                return 0L;
+              }
+              sharedRedisValue.set("1".equals(arguments[2]) ? (String) arguments[3] : null);
+              return 1L;
+            })
+        .when(redisTemplate)
+        .execute(Mockito.any(RedisScript.class), Mockito.anyList(), Mockito.any(Object[].class));
+
+    DirectTextConnectScopeSessionStore firstInstance =
+        new DirectTextConnectScopeSessionStore(redisTemplate, new ObjectMapper());
+    DirectTextConnectScopeSessionStore replacementInstance =
+        new DirectTextConnectScopeSessionStore(redisTemplate, new ObjectMapper());
+
+    assertThat(firstInstance.realmsSnapshot(caller, 22L, "demo-world", now))
+        .hasValueSatisfying(
+            snapshot -> {
+              assertThat(snapshot.tenantId()).isEqualTo(22L);
+              assertThat(snapshot.requestedWorldSelector()).isEqualTo("1");
+            });
+    DirectTextConnectScopeSessionStore.JoinScope selected =
+        replacementInstance
+            .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now)
+            .orElseThrow();
+    assertThat(selected.scope().connectScopeId()).isEqualTo("account-connect-scope-legacy");
+    assertThat(selected.scope().playerContext().getAccountId()).isEqualTo("7");
+    assertThat(selected.scope().playerContext().getSessionId()).isEqualTo("41");
+    assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
+    assertThat(selected.requestId()).isEqualTo("join-request-already-bound");
+    assertThat(
+            firstInstance
+                .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now)
+                .orElseThrow()
+                .requestId())
+        .isEqualTo("join-request-already-bound");
+    assertThat(sharedRedisValue.get()).doesNotContain("worldBySelector");
   }
 
   @Test

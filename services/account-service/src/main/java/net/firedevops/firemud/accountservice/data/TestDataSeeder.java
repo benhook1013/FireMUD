@@ -2,15 +2,19 @@ package net.firedevops.firemud.accountservice.data;
 
 import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
+import net.firedevops.firemud.accountservice.entity.Subscription;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.ProfileRepository;
+import net.firedevops.firemud.accountservice.repository.SubscriptionRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -30,10 +34,12 @@ public class TestDataSeeder implements ApplicationRunner {
   private static final String DEMO_USERNAME = "demo";
   private static final String DEMO_EMAIL = "demo@example.com";
   private static final String DEMO_PASSWORD = "swordfish";
+  private static final String DEMO_SUBSCRIPTION_PLAN_ID = "local-smoke";
 
   private final AccountRepository accountRepository;
   private final AccountTenantMembershipRepository accountTenantMembershipRepository;
   private final ProfileRepository profileRepository;
+  private final SubscriptionRepository subscriptionRepository;
 
   @Override
   @Transactional
@@ -91,6 +97,24 @@ public class TestDataSeeder implements ApplicationRunner {
       profile.setDisplayName("Demo");
       profile.setPresenceVisibilityPolicy(ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
       profileRepository.save(profile);
+    }
+
+    List<Subscription> subscriptions = subscriptionRepository.findByTenantId(DEMO_TENANT_ID);
+    if (subscriptions.isEmpty()) {
+      Subscription subscription = new Subscription();
+      subscription.setAccount(account);
+      subscription.setPlanId(DEMO_SUBSCRIPTION_PLAN_ID);
+      subscription.setStatus("active");
+      subscription.setStartedAt(LocalDateTime.now());
+      subscription.setTenantId(DEMO_TENANT_ID);
+      subscriptionRepository.save(subscription);
+    } else if (subscriptions.size() > 1) {
+      throw new IllegalStateException(
+          "Cannot seed demo tenant entitlement: tenant "
+              + DEMO_TENANT_ID
+              + " has ambiguous subscription authority ("
+              + subscriptions.size()
+              + " rows)");
     }
   }
 

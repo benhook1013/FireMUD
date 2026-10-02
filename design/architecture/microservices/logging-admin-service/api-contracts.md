@@ -26,6 +26,7 @@ Routine rollback is expected to leave ordinary gameplay available while scoped A
 
 ## Implementation Status
 
+- Account-to-Logging audit delivery now uses the existing typed `CreateLogEvent` RPC and `ReadLogEventReceipt` readback, not the legacy generic writer. Logging & Admin validates the exact Account mTLS workload identity and receipt envelope, atomically persists the bounded `log_events` projection with a durable typed receipt, and returns accepted/duplicate/conflict/minimized outcomes; Account retains the same event identity for retries and only marks delivery after matching receipt evidence. Missing receipts and dependency failures remain canonical `NOT_FOUND`/`UNAVAILABLE` responses. Focused unit proof is authored, but PostgreSQL migration/transaction runtime proof and direct text-client-to-Logging end-to-end proof are not claimed. The full receiver retention horizon, safe-watermark, hold, and payload-minimization lifecycle remains governed by the owner contract above and [Logging & Admin Runtime and Data](./runtime-and-data.md#audit-envelope-and-receipt-retention).
 - Feature-flag toggles and scoped tick-remediation pause/resume ingress routes now hard fail closed as unavailable operator mutations until the minimum three-part schema/authorization gate exists: their action-family schemas, shared cross-language `mutationDigest/v1` golden vectors, and Account-issued authorization-reference issuance plus redemption by the receiving authoritative owner. This minimum gate is necessary but not sufficient for live-success support; supported execution also requires the complete durable, idempotent, fenced owner-mutation contract in [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md), including durable intent/audit, stable digest-bound request identity, authoritative-owner state, safety/recovery gates, and durable acknowledgement. The HTTP entrypoints preserve authentication, authorization, and basic request validation, then return `503 Service Unavailable` with stable action-specific unavailable error codes (`FEATURE_FLAG_TOGGLE_UNAVAILABLE` or `TICK_REMEDIATION_UNAVAILABLE`) without invoking a service, owner, or audit dependency. The internal `ToggleFeatureFlag` gRPC entrypoint preserves admin-role, positive-tenant, and feature-name validation, then returns an application-level `UNAVAILABLE` error without dispatch. No Logging & Admin feature-flag or tick forwarding method remains callable internally. Admission-pointer reads, audit, and prepared-upgrade proof reads remain live. The current-pointer list forwards only the caller's authorized tenant scopes; an empty owner request remains reserved for global platform administrators and moderators. Each current pointer in the selected scope requires exact latest-audit identity/catalog evidence, and unavailable authority in that scope returns `503`. Public POST/operator mutation routes under `/admission-pointers`, `/cutover`, or `/version-upgrades` are target-only absent: no public HTTP handlers or Gateway write forwarding exist. Internal preparation/cutover service and control-plane implementation remains behind internal trust boundaries, and there is no current UI control.
 - Availability vocabulary is explicit: **implemented-but-externally-gated** means an executable public controller/owner path exists but the shared mutation gate is incomplete; **target-only absent** means no executable public route exists. Admission-pointer mutation, version-upgrade preparation, and prepared cutover use the latter classification at public HTTP ingress even though internal preparation/cutover implementation remains. Quota-override ingress is also target-only absent. No generic tick-remediation payload or reserved `remediate` route is part of the target; each future recovery operation requires a named typed contract implemented by its authoritative workflow owner.
 - No forwarded owner mutation is currently supported as a live Logging & Admin capability until its minimum schema/authorization gate and the complete durable, idempotent, fenced owner-execution contract in [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md) are implemented and proved. The service-local `POST /moderation/actions` endpoint and `ApplyModerationAction` gRPC path now hard fail closed after their narrow tenant/admin checks: HTTP returns `503 Service Unavailable`, gRPC returns an application-level `UNAVAILABLE` error, and neither path dispatches or persists the generic legacy `moderation_actions` row. They remain unsupported, nonconformant implementation drift and must not be wired or called as available mutations; separate fixed-category policy/audit evidence and owner enforcement state are absent, and they are not Gateway-forwarded or supported at external ingress. In the target local workflow, once its applicable schema/authorization and local durable intent/audit requirements are implemented, Logging & Admin records durable intent/case/audit evidence and redeems its one Account reference exactly once; it never forwards that reference or performs owner enforcement. A future typed owner-enforcement command uses a separately issued reference redeemed by its receiving owner. Game Session and Social & Groups synchronously consume the live `EvaluateModerationPolicy` read at the `GAMEPLAY_ADMISSION` and `CHAT_SEND` enforcement boundaries, but that evaluation does not make the legacy action route live. Fixed-category owner commands, monotonic owner state, bounded appeals, and broader policy coverage are not implemented. Existing Game Session `/sessions*` lifecycle routes are current owner-local hooks, not a complete external Logging & Admin route family. Separate current read and investigation surfaces include the PostgreSQL-backed log query, saga reads, metrics, and owner/control-plane reads; profile-aware indexed or console/journal query integration and embedded dashboard endpoints remain target-only and unimplemented.
@@ -114,8 +115,19 @@ The internal admission-pointer service/owner paths represent exactly one of two 
 - Replacing or rolling back `OPEN(old)` to `OPEN(new)` is a prepared cutover, not a generic open. It must use the internal `ExecutePreparedVersionCutover` control-plane operation with one durable `preparedVersionUpgradeId`; that operation revalidates the preparation, source and target identities, and CAS version before atomically swapping the route. Preparation is proof for cutover, not a substitute for route-version concurrency control.
 - Game Session remains the sole routing-state writer and audits the transition under the same identity and CAS result. Internal callers must not maintain a competing pointer or infer `tenantId` from `worldSlug` or `realmSlug`; Logging & Admin's public REST surface reads the resulting state and audit evidence only.
 
+The deployed Gateway URL and listener are environment-owned; this document does not assign an HTTPS port. For an HTTPS route, set the URL to the environment's published Logging & Admin `/ping` URL and provide the issuing CA bundle so curl verifies the server certificate. The route continues to use its current privileged-JWT authentication; TLS does not imply that the target health authorization policy is implemented.
+
 ```bash
-curl -H 'Authorization: Bearer <privileged-jwt>' http://localhost:8080/ping
+curl --cacert "$FIREMUD_HTTPS_CA_CERT_PATH" \
+  -H 'Authorization: Bearer <short-lived privileged JWT>' \
+  "$FIREMUD_LOGGING_ADMIN_HTTPS_URL"
+```
+
+The current local HTTP harness listens on `localhost:8080` without TLS. Use only a disposable, non-production privileged JWT with that loopback-only harness; never send a real operator token over it. Gateway TLS termination and the current in-cluster HTTP forwarding exception are described in [Security Architecture](../../system-architecture-security.md#tls-termination-for-gateway) and [Cross-Service Trust](../../system-architecture-security.md#cross-service-trust).
+
+```bash
+curl -H 'Authorization: Bearer <disposable non-production privileged JWT>' \
+  http://localhost:8080/ping
 ```
 
 ## gRPC
@@ -150,12 +162,23 @@ curl -H 'Authorization: Bearer <privileged-jwt>' http://localhost:8080/ping
 - `ToggleFeatureFlag(ToggleFeatureFlagRequest) returns (ToggleFeatureFlagResponse)` – target owner-forwarding contract, unavailable until the minimum schema/authorization gate above and the complete [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md) durable, idempotent, fenced owner-execution contract are implemented and proved. The current gRPC ingress preserves admin-role, positive-tenant, and feature-name validation, then returns an application-level `UNAVAILABLE` error without invoking a service or owner. Once enabled, Logging & Admin is the audited forwarding ingress; Game Session owns the feature-flag mutation and its durable result.
 - Tick-remediation is not a Logging & Admin-owned state-mutation gRPC surface. Its HTTP ingress is hard fail closed and no Logging & Admin pause/resume forwarding method remains callable internally; the target owner contract remains unavailable until the minimum schema/authorization gate above and the complete [ADR 0048](../../decisions/adr-0048-durable-idempotent-operator-write-execution.md) durable, idempotent, fenced owner-execution contract are implemented and proved. Once enabled, Logging & Admin audits and forwards to Game Session, which owns tick state, fencing, idempotency, and the durable result. Future recovery operations require separate named typed owner contracts; no generic `remediate` RPC is reserved.
 
-```bash
-grpcurl -plaintext -H 'Authorization: Bearer <jwt>' localhost:6565 logging_admin.v1.LoggingAdminService/Ping
+Internal gRPC examples use the configured CA and workload certificate to verify the server and present a client identity. The target for the command is supplied by the environment; this transport example does not claim that current receiver-side workload/method authorization is implemented. The JWT shown for `CreateReport` reflects the current interim receiver contract and must be disposable/non-production.
 
-# Non-production local harness only; production callers require the target internal workload/method authorization, which remains unproved by the current transport configuration.
-grpcurl -plaintext -d '{"tenant_id":"1","reporter_account_id":"1","target_account_id":"2","type":"BUG","description":"example"}' \
-  localhost:6565 logging_admin.v1.ReportService/CreateReport
+```bash
+grpcurl -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  -H 'Authorization: Bearer <disposable non-production JWT>' \
+  "$FIREMUD_LOGGING_ADMIN_GRPC_TARGET" \
+  logging_admin.v1.LoggingAdminService/Ping
+
+grpcurl -cacert "$FIREMUD_GRPC_CA_CERT_PATH" \
+  -cert "$FIREMUD_GRPC_CERT_CHAIN_PATH" \
+  -key "$FIREMUD_GRPC_PRIVATE_KEY_PATH" \
+  -H 'Authorization: Bearer <disposable non-production internal-service JWT>' \
+  -d '{"tenant_id":"1","reporter_account_id":"1","target_account_id":"2","type":"BUG","description":"example"}' \
+  "$FIREMUD_LOGGING_ADMIN_GRPC_TARGET" \
+  logging_admin.v1.ReportService/CreateReport
 ```
 
 ## Endpoint Authentication Classes
