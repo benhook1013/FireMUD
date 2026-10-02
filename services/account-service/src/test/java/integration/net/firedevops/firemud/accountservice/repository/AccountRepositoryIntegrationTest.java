@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -212,6 +213,26 @@ class AccountRepositoryIntegrationTest {
     outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", true);
     outbox.append(committedEventId, "platform", null, "ACCOUNT_REGISTERED", committedPayload);
     outbox.markDelivered(committedEventId, "receipt-committed", "log-committed", false);
+    outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", true);
+    outbox.markDelivered(committedEventId, "receipt-committed", "log-committed", false);
+
+    assertThatThrownBy(
+            () -> outbox.markDelivered(minimizedEventId, "other-receipt", "log-minimized", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
+    assertThatThrownBy(
+            () -> outbox.markDelivered(minimizedEventId, "receipt-minimized", "other-log", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
+    assertThatThrownBy(
+            () ->
+                outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
+    assertThatThrownBy(
+            () -> outbox.markDelivered(UUID.randomUUID(), "receipt-missing", "log-missing", false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
 
     assertThat(
             jdbc.queryForObject(
@@ -273,9 +294,64 @@ class AccountRepositoryIntegrationTest {
                 String.class,
                 committedEventId))
         .isEqualTo("COMMITTED");
-    assertThat(outbox.pending(10))
+    assertThat(outbox.pending(10, Instant.now()))
         .noneMatch(envelope -> envelope.auditEventId().equals(minimizedEventId))
         .noneMatch(envelope -> envelope.auditEventId().equals(committedEventId));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
+                LocalDateTime.class,
+                minimizedEventId))
+        .isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
+                LocalDateTime.class,
+                committedEventId))
+        .isNull();
+  }
+
+  @Test
+  void auditRetryUsesCappedExponentialBackoffAndDoesNotStarveNewDueEvents() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(dsl);
+    UUID failingEventId = UUID.randomUUID();
+    UUID laterEventId = UUID.randomUUID();
+    outbox.append(failingEventId, "platform", null, "ACCOUNT_REGISTERED", "{\"id\":1}");
+    assertThat(outbox.pending(50, Instant.now()))
+        .extracting(envelope -> envelope.auditEventId())
+        .contains(failingEventId);
+
+    List<Integer> expectedDelays = List.of(5, 10, 20, 40, 80, 160, 300, 300);
+    for (int attempt = 0; attempt < expectedDelays.size(); attempt++) {
+      outbox.recordAttempt(failingEventId);
+
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT attempt_count FROM account_audit_outbox WHERE audit_event_id = ?",
+                  Integer.class,
+                  failingEventId))
+          .isEqualTo(attempt + 1);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT EXTRACT(EPOCH FROM (next_attempt_at - last_attempt_at))::INTEGER "
+                      + "FROM account_audit_outbox WHERE audit_event_id = ?",
+                  Integer.class,
+                  failingEventId))
+          .isEqualTo(expectedDelays.get(attempt));
+    }
+
+    outbox.append(laterEventId, "platform", null, "ACCOUNT_REGISTERED", "{\"id\":2}");
+
+    assertThat(outbox.pending(50, Instant.now()))
+        .extracting(envelope -> envelope.auditEventId())
+        .containsExactly(laterEventId);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT delivery_status FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                failingEventId))
+        .isEqualTo("PENDING");
   }
 
   @Test

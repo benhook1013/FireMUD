@@ -26,6 +26,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       "Moderation actions are unavailable until the shared mutation gate is implemented";
   private static final String FEATURE_FLAG_TOGGLE_UNAVAILABLE_MESSAGE =
       "Feature-flag toggles are unavailable until the shared mutation gate is implemented";
+  private static final String ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE =
+      "Account audit receipt receiver is unavailable until the immutable receipt contract is "
+          + "implemented";
   private static final Set<String> MODERATION_POLICY_CALLERS =
       Set.of("game-session-service", "social-groups-service");
 
@@ -175,16 +178,16 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      var dto =
-          logEventService.createLogEvent(
-              new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
-                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-                  RequestIdValidation.parseOptionalPositiveLong(
-                      request.getAccountId(), "accountId"),
-                  request.getType(),
-                  request.getMessage()));
       CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder().setLogEventId(String.valueOf(dto.id())).build();
+          CreateLogEventResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "CreateLogEvent",
+                      "UNAVAILABLE",
+                      ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
@@ -197,22 +200,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
                       "CreateLogEvent",
                       "PERMISSION_DENIED",
                       ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "CreateLogEvent", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateLogEvent", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

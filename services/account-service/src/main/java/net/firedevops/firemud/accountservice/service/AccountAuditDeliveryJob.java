@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import org.slf4j.Logger;
@@ -26,7 +27,8 @@ public class AccountAuditDeliveryJob {
 
   @Scheduled(fixedDelayString = "${firemud.account.audit-delivery-delay-ms:5000}")
   public void deliverPending() {
-    for (var envelope : outbox.pending(50)) {
+    Instant capturedNow = Instant.now();
+    for (var envelope : outbox.pending(50, capturedNow)) {
       try {
         var receipt = loggingAdminClient.deliver(envelope);
         outbox.markDelivered(
@@ -35,7 +37,12 @@ public class AccountAuditDeliveryJob {
             receipt.logEventId(),
             receipt.minimized());
       } catch (RuntimeException ex) {
-        outbox.recordAttempt(envelope.auditEventId());
+        try {
+          outbox.recordAttempt(envelope.auditEventId());
+        } catch (RuntimeException bookkeepingFailure) {
+          logger.warn(
+              "Failed to record Account audit attempt for event {}", envelope.auditEventId());
+        }
         logger.warn("Account audit delivery remains pending for event {}", envelope.auditEventId());
       }
     }

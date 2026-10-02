@@ -2,12 +2,18 @@ package net.firedevops.firemud.accountservice.client;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.lang.reflect.Field;
@@ -27,6 +33,7 @@ import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 
 class LoggingAdminClientTest {
   private static final long TENANT_ID = 20L;
@@ -51,8 +58,28 @@ class LoggingAdminClientTest {
     var stub = mockStub();
     when(stub.createLogEvent(any())).thenThrow(new IllegalStateException("private detail"));
     LoggingAdminClient client = newClient(stub);
+    ch.qos.logback.classic.Logger logger =
+        (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(LoggingAdminClient.class);
+    ListAppender<ILoggingEvent> appender = new ListAppender<>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      assertDoesNotThrow(() -> client.logPayment(TENANT_ID, ACCOUNT_ID, TRANSACTION_ID));
 
-    assertDoesNotThrow(() -> client.logPayment(TENANT_ID, ACCOUNT_ID, TRANSACTION_ID));
+      assertEquals(1, appender.list.size());
+      ILoggingEvent warning = appender.list.get(0);
+      String message = warning.getFormattedMessage();
+      assertTrue(message.contains("cause=IllegalStateException"));
+      assertTrue(message.contains("tenantId=" + TENANT_ID));
+      assertTrue(message.contains("accountId=" + ACCOUNT_ID));
+      assertTrue(message.contains("transactionId=" + TRANSACTION_ID));
+      assertFalse(message.contains("private detail"));
+      assertFalse(message.contains(PAYMENT_PAYLOAD));
+      assertNull(warning.getThrowableProxy());
+    } finally {
+      logger.detachAppender(appender);
+      appender.stop();
+    }
 
     assertPaymentEnvelope(stub);
   }
@@ -79,6 +106,24 @@ class LoggingAdminClientTest {
     assertThrows(IllegalStateException.class, () -> client.deliver(validEnvelope()));
   }
 
+  @Test
+  void deliverRejectsNullOrNoncanonicalScopeBeforeTransport() throws Exception {
+    var stub = mockStub();
+    LoggingAdminClient client = newClient(stub);
+
+    assertThrows(
+        IllegalArgumentException.class, () -> client.deliver(envelopeWithScope(null, null)));
+    assertThrows(
+        IllegalArgumentException.class, () -> client.deliver(envelopeWithScope("other", null)));
+    assertThrows(
+        IllegalArgumentException.class, () -> client.deliver(envelopeWithScope("tenant", null)));
+    assertThrows(
+        IllegalArgumentException.class, () -> client.deliver(envelopeWithScope("platform", 7L)));
+
+    verify(stub, never()).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verify(stub, never()).createLogEvent(any());
+  }
+
   private static AccountAuditEnvelope validEnvelope() {
     String payload = "{\"event\":\"test\"}";
     return new AccountAuditEnvelope(
@@ -92,6 +137,21 @@ class LoggingAdminClientTest {
         1,
         AccountAuditDigest.ofPayload(payload),
         payload);
+  }
+
+  private static AccountAuditEnvelope envelopeWithScope(String scope, Long tenantId) {
+    AccountAuditEnvelope envelope = validEnvelope();
+    return new AccountAuditEnvelope(
+        envelope.auditEventId(),
+        scope,
+        tenantId,
+        envelope.producerService(),
+        envelope.eventType(),
+        envelope.occurredAt(),
+        envelope.schemaVersion(),
+        envelope.payloadDigestVersion(),
+        envelope.payloadDigest(),
+        envelope.payload());
   }
 
   private static void assertPaymentEnvelope(

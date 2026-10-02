@@ -543,6 +543,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListGameplayWorldsResponse response =
+          ListGameplayWorldsResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ListGameplayWorlds", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 

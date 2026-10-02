@@ -20,6 +20,11 @@ import org.springframework.stereotype.Component;
     justification =
         "Injected Spring collaborators are internal; invalid cleanup configuration must fail startup.")
 public class ExpiredConnectScopeCleanupJob {
+  /**
+   * Caps each scheduled run at five repository batches so continuous churn cannot monopolize it.
+   */
+  private static final int MAX_BATCHES_PER_RUN = 5;
+
   private static final Logger logger = LoggingUtil.getLogger(ExpiredConnectScopeCleanupJob.class);
 
   private final AccountConnectScopeRepository connectScopeRepository;
@@ -59,7 +64,13 @@ public class ExpiredConnectScopeCleanupJob {
   public void cleanupExpiredConnectScopes() {
     Instant capturedNow = Instant.now();
     try {
-      deleted.increment(connectScopeRepository.deleteExpiredUnreferenced(capturedNow, batchSize));
+      for (int batch = 0; batch < MAX_BATCHES_PER_RUN; batch++) {
+        int removed = connectScopeRepository.deleteExpiredUnreferenced(capturedNow, batchSize);
+        deleted.increment(removed);
+        if (removed < batchSize) {
+          break;
+        }
+      }
     } catch (RuntimeException ex) {
       failures.increment();
       logger.warn("Expired connect-scope cleanup step failed ({})", ex.getClass().getSimpleName());

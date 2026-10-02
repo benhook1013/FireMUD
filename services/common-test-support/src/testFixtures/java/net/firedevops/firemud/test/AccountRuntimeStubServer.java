@@ -171,6 +171,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setMembershipExists(exists)
             .setGameplayAdmissionAllowed(gameplayAdmissionAllowed.get())
             .setMembershipVersion(exists ? 1L : 0L)
+            .setMembershipLifecycleState(exists ? "ACTIVE" : "MISSING")
+            .setMembershipAuthorityGeneration(exists ? 1L : 0L)
             .setEvaluatedAt(EVALUATED_AT)
             .build());
     responseObserver.onCompleted();

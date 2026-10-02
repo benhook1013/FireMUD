@@ -65,12 +65,24 @@ public class LoggingAdminClient
 
   /** Send one unchanged owner-local outbox envelope and verify the exact receiver receipt. */
   public AuditDeliveryResult deliver(AccountAuditEnvelope envelope) {
+    AccountAuditScope scope;
+    if ("platform".equals(envelope.scope())) {
+      if (envelope.tenantId() != null) {
+        throw new IllegalArgumentException("Platform audit events must not carry a tenant ID");
+      }
+      scope = AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM;
+    } else if ("tenant".equals(envelope.scope())) {
+      if (envelope.tenantId() == null || envelope.tenantId() <= 0) {
+        throw new IllegalArgumentException("Tenant audit events require a positive tenant ID");
+      }
+      scope = AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT;
+    } else {
+      throw new IllegalArgumentException("Account audit scope must be platform or tenant");
+    }
+
     CreateLogEventRequest.Builder builder =
         CreateLogEventRequest.newBuilder()
-            .setScope(
-                "platform".equals(envelope.scope())
-                    ? AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM
-                    : AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+            .setScope(scope)
             .setAuditEventId(envelope.auditEventId().toString())
             .setProducerService(envelope.producerService())
             .setEventType(envelope.eventType())
@@ -131,9 +143,10 @@ public class LoggingAdminClient
               1,
               AccountAuditDigest.ofPayload(payload),
               payload));
-    } catch (RuntimeException ignored) {
+    } catch (RuntimeException failure) {
       logger.warn(
-          "Deferred payment audit delivery failed for tenantId={} accountId={} transactionId={}",
+          "Deferred payment audit delivery failed; cause={} tenantId={} accountId={} transactionId={}",
+          failure.getClass().getSimpleName(),
           tenantId,
           accountId,
           transactionId);

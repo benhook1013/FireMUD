@@ -9706,8 +9706,8 @@ plus scoped tick pause/resume used for rollback safety.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
 | tenant_id | [string](#string) |  |  |
+| scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
 | audit_event_id | [string](#string) |  |  |
 | producer_service | [string](#string) |  |  |
 | event_type | [string](#string) |  |  |
@@ -9730,11 +9730,12 @@ plus scoped tick pause/resume used for rollback safety.
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
+| log_event_id | [string](#string) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 | scope | [AccountAuditScope](#logging_admin-v1-AccountAuditScope) |  |  |
 | tenant_id | [string](#string) |  |  |
 | audit_event_id | [string](#string) |  |  |
 | receipt_id | [string](#string) |  |  |
-| log_event_id | [string](#string) |  |  |
 | schema_version | [int32](#int32) |  |  |
 | payload_digest_version | [int32](#int32) |  |  |
 | payload_digest | [string](#string) |  |  |
@@ -9882,6 +9883,7 @@ plus scoped tick pause/resume used for rollback safety.
 | payload_digest | [string](#string) |  |  |
 | status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
 | outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
 

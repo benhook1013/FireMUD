@@ -657,7 +657,7 @@ public class AccountServiceImpl implements AccountService {
       return failedJoin(requestId, scope, "CONNECT_SCOPE_INVALID");
     }
 
-    JoinEvaluation evaluation = evaluateJoin(scope);
+    JoinEvaluation evaluation = evaluateJoin(scope, false);
     if (evaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(evaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -692,7 +692,7 @@ public class AccountServiceImpl implements AccountService {
       return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
 
-    JoinEvaluation commitEvaluation = evaluateJoin(scope);
+    JoinEvaluation commitEvaluation = evaluateJoin(scope, true);
     if (commitEvaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(commitEvaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -803,6 +803,9 @@ public class AccountServiceImpl implements AccountService {
       return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
     }
 
+    boolean replayUnboundFailure =
+        "FAILED".equals(operation.status()) && operation.requestDigest() == null;
+
     JoinEvaluation evaluation;
     try {
       evaluation = evaluateJoin(scope);
@@ -819,6 +822,9 @@ public class AccountServiceImpl implements AccountService {
         || evaluation.allowPublicJoin() == null
         || evaluation.entitlementVersion() == null) {
       return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
+    if (replayUnboundFailure) {
+      return resultFromJoinOperation(operation, true);
     }
 
     String currentRequestDigest =
@@ -971,6 +977,10 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private JoinEvaluation evaluateJoin(VerifiedJoinScope scope) {
+    return evaluateJoin(scope, true);
+  }
+
+  private JoinEvaluation evaluateJoin(VerifiedJoinScope scope, boolean lockEntitlement) {
     return evaluateJoin(
         new ConnectScopeContext(
             scope.accountId(),
@@ -984,10 +994,11 @@ public class AccountServiceImpl implements AccountService {
             scope.catalogRevision(),
             scope.pointerVersion(),
             Instant.parse(scope.evaluatedAt()),
-            Instant.parse(scope.connectScopeExpiresAt())));
+            Instant.parse(scope.connectScopeExpiresAt())),
+        lockEntitlement);
   }
 
-  private JoinEvaluation evaluateJoin(ConnectScopeContext scope) {
+  private JoinEvaluation evaluateJoin(ConnectScopeContext scope, boolean lockEntitlement) {
     RuntimeRealmTarget target;
     try {
       target = requireCurrentConnectScopeTarget(scope);
@@ -1003,7 +1014,7 @@ public class AccountServiceImpl implements AccountService {
           "NOT_EVALUATED", null, null, false, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
     try {
-      RuntimeEntitlementsDto entitlement = lockedJoinEntitlement(scope.tenantId());
+      RuntimeEntitlementsDto entitlement = joinEntitlement(scope.tenantId(), lockEntitlement);
       return new JoinEvaluation(
           "AVAILABLE",
           entitlement.allowPublicJoin(),
@@ -1025,9 +1036,11 @@ public class AccountServiceImpl implements AccountService {
       boolean gameplayAvailable,
       String failureCode) {}
 
-  private RuntimeEntitlementsDto lockedJoinEntitlement(long tenantId) {
+  private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> rows =
-        subscriptionRepository.findByTenantIdForUpdate(tenantId);
+        lockSubscription
+            ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
+            : subscriptionRepository.findByTenantId(tenantId);
     if (rows.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");
