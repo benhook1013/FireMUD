@@ -523,7 +523,7 @@ public final class GameSessionGrpcService
       ListGameplayWorldsResponse response =
           ListGameplayWorldsResponse.newBuilder()
               .addAllWorlds(
-                  gameplayWorldCatalog.visibleWorldsFromAuthoritySnapshot().stream()
+                  gameplayWorldCatalog.publicWorldsFromAuthoritySnapshot().stream()
                       .map(
                           world ->
                               net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
@@ -561,7 +561,7 @@ public final class GameSessionGrpcService
     try {
       WorldView world =
           gameplayWorldCatalog
-              .resolveWorldFromAuthoritySnapshot(request.getWorldSlug())
+              .resolvePublicWorldFromAuthoritySnapshot(request.getWorldSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.visibleRealms(world).stream()

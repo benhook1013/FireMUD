@@ -41,17 +41,16 @@ class WorldsCommandHandlerTest {
   void browseViewReturnsStructuredWorldList() {
     WorldsViewOutput response = handler.browseView();
 
-    assertThat(response.worlds()).hasSize(2);
+    assertThat(response.worlds()).hasSize(1);
     assertThat(response.worlds().get(0).slug()).isEqualTo("demo");
     assertThat(response.worlds().get(0).displayName()).isEqualTo("Demo World");
-    assertThat(response.worlds().get(1).displayName()).isEqualTo("Builder Sandbox");
   }
 
   @Test
   void browseRealmsReturnsStructuredRealmList() {
-    RealmBrowseViewOutput response = handler.browseRealms("sandbox").orElseThrow();
+    RealmBrowseViewOutput response = handler.browseRealms("demo").orElseThrow();
 
-    assertThat(response.worldSlug()).isEqualTo("sandbox");
+    assertThat(response.worldSlug()).isEqualTo("demo");
     assertThat(response.realms()).hasSize(1);
     assertThat(response.realms().get(0).realmSlug()).isEqualTo("production");
     assertThat(response.realms().get(0).stateScope()).isEqualTo("SHARED");

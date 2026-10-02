@@ -1179,8 +1179,6 @@ class GameSessionControlPlaneGrpcServiceTest {
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     VersionUpgradePreparationService versionUpgradePreparationService =
         Mockito.mock(VersionUpgradePreparationService.class);
-    Mockito.when(authorityService.findPointer(1L, "demo", "production"))
-        .thenReturn(Optional.empty());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -1220,22 +1218,19 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
-        "admission-pointer creation is temporarily disabled until catalog revision and "
-            + "stable realm/namespace identity preconditions are supported",
+        "SetAdmissionPointer is disabled until catalog revision and stable realm/namespace "
+            + "identity preconditions are supported",
         responseRef.get().getError().getMessage());
-    Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
-    Mockito.verify(authorityService, Mockito.never()).listPointerAudit(1L, "demo", "production");
+    Mockito.verifyNoInteractions(authorityService);
     Mockito.verifyNoInteractions(gameInstanceRepository);
     Mockito.verifyNoInteractions(versionUpgradePreparationService);
   }
 
   @Test
-  void setAdmissionPointerRejectsCreateWithoutExplicitZeroVersion() {
+  void setAdmissionPointerCreationRemainsDisabledWhenPointerVersionIsOmitted() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer(1L, "demo", "production"))
-        .thenReturn(Optional.empty());
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -1274,35 +1269,22 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
-        "admission-pointer creation is temporarily disabled until catalog revision and "
-            + "stable realm/namespace identity preconditions are supported",
+        "SetAdmissionPointer is disabled until catalog revision and stable realm/namespace "
+            + "identity preconditions are supported",
         responseRef.get().getError().getMessage());
-    Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
-    Mockito.verify(authorityService, Mockito.never()).listPointerAudit(1L, "demo", "production");
+    Mockito.verifyNoInteractions(authorityService);
     Mockito.verifyNoInteractions(gameInstanceRepository);
   }
 
   @Test
-  void setAdmissionPointerRejectsMutationOfExistingPointerUntilCatalogRevisionIsSupported() {
+  void setAdmissionPointerRejectsUpdateRequestWhileIdentityGateIsClosed() {
     GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer(1L, "demo", "production"))
-        .thenReturn(
-            Optional.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    5L,
-                    2L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
+        Mockito.mock(
+            GameplayAdmissionPointerAuthorityService.class,
+            invocation -> {
+              throw new IllegalStateException("authority unavailable");
+            });
     VersionUpgradePreparationService versionUpgradePreparationService =
         Mockito.mock(VersionUpgradePreparationService.class);
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
@@ -1345,10 +1327,10 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
-        "admission-pointer updates are temporarily disabled until catalog revision "
-            + "preconditions are supported",
+        "SetAdmissionPointer is disabled until catalog revision and stable realm/namespace "
+            + "identity preconditions are supported",
         responseRef.get().getError().getMessage());
-    Mockito.verify(authorityService, Mockito.never()).upsertPointer(Mockito.any());
+    Mockito.verifyNoInteractions(authorityService);
     Mockito.verifyNoInteractions(gameInstanceRepository);
     Mockito.verifyNoInteractions(versionUpgradePreparationService);
   }

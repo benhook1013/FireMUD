@@ -59,7 +59,8 @@ public final class GameplayWorldCatalog {
   }
 
   public WorldsViewOutput browseView() {
-    return new WorldsViewOutput(worldEntries(loadWorldSnapshot()));
+    CatalogSnapshot snapshot = loadWorldSnapshot();
+    return new WorldsViewOutput(worldEntries(publicDiscoveryWorlds(snapshot)));
   }
 
   public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
@@ -67,7 +68,7 @@ public final class GameplayWorldCatalog {
       return Optional.empty();
     }
     CatalogSnapshot snapshot = loadWorldSnapshot();
-    return resolveWorld(worldSelector, snapshot)
+    return resolveWorld(worldSelector, publicDiscoveryWorlds(snapshot))
         .map(world -> new RealmBrowseViewOutput(world.slug(), realmEntries(world)));
   }
 
@@ -80,7 +81,7 @@ public final class GameplayWorldCatalog {
 
   private Optional<WorldView> resolveWorld(String selector, CatalogSnapshot snapshot) {
     List<WorldView> visibleWorlds = visibleWorlds(snapshot);
-    List<WorldView> indexedWorlds = discoverableWorlds(snapshot);
+    List<WorldView> indexedWorlds = publicDiscoveryWorlds(snapshot);
     try {
       int index = Integer.parseInt(selector);
       if (index >= 1 && index <= indexedWorlds.size()) {
@@ -89,10 +90,7 @@ public final class GameplayWorldCatalog {
     } catch (NumberFormatException ignored) {
       // Fall back to slug matching.
     }
-    String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return visibleWorlds.stream()
-        .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    return resolveWorldBySlug(selector, visibleWorlds);
   }
 
   public Optional<WorldView> resolveWorldFromAuthoritySnapshot(String selector) {
@@ -100,6 +98,19 @@ public final class GameplayWorldCatalog {
       return Optional.empty();
     }
     return resolveWorld(selector, visibleWorldsFromAuthoritySnapshot());
+  }
+
+  /** Builds the no-caller discovery projection from one validated authority snapshot. */
+  public List<WorldView> publicWorldsFromAuthoritySnapshot() {
+    return publicDiscoveryWorlds(loadAuthorityWorldSnapshot());
+  }
+
+  /** Resolves only worlds exposed by the no-caller public discovery surface. */
+  public Optional<WorldView> resolvePublicWorldFromAuthoritySnapshot(String selector) {
+    if (selector == null || selector.isBlank()) {
+      return Optional.empty();
+    }
+    return resolveWorld(selector, publicWorldsFromAuthoritySnapshot());
   }
 
   private Optional<WorldView> resolveWorld(String selector, List<WorldView> worlds) {
@@ -111,20 +122,30 @@ public final class GameplayWorldCatalog {
     } catch (NumberFormatException ignored) {
       // Fall back to slug matching.
     }
-    String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return worlds.stream()
-        .filter(world -> normalized.equals(world.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    List<WorldView> matches =
+        worlds.stream()
+            .filter(world -> selectorKey(selector).equals(selectorKey(world.slug())))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
+  }
+
+  private Optional<WorldView> resolveWorldBySlug(String selector, List<WorldView> worlds) {
+    String normalized = selectorKey(selector);
+    List<WorldView> matches =
+        worlds.stream().filter(world -> normalized.equals(selectorKey(world.slug()))).toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   public Optional<RealmView> resolveRealm(WorldView world, String selector) {
     if (world == null || selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return visibleRealms(world).stream()
-        .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    String normalized = selectorKey(selector);
+    List<RealmView> matches =
+        visibleRealms(world).stream()
+            .filter(realm -> normalized.equals(selectorKey(realm.slug())))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   // Admission may resolve hidden realms, but callers must still perform membership and grant
@@ -133,11 +154,13 @@ public final class GameplayWorldCatalog {
     if (world == null || selector == null || selector.isBlank() || world.realms() == null) {
       return Optional.empty();
     }
-    String normalized = selector.trim().toLowerCase(Locale.ROOT);
-    return world.realms().stream()
-        .filter(realm -> realm != null && realm.slug() != null && !realm.slug().isBlank())
-        .filter(realm -> normalized.equals(realm.slug().toLowerCase(Locale.ROOT)))
-        .findFirst();
+    String normalized = selectorKey(selector);
+    List<RealmView> matches =
+        world.realms().stream()
+            .filter(realm -> realm != null && realm.slug() != null && !realm.slug().isBlank())
+            .filter(realm -> normalized.equals(selectorKey(realm.slug())))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   boolean hasRealmForAdmission(WorldView world, String selector) {
@@ -269,22 +292,24 @@ public final class GameplayWorldCatalog {
     if (worldSlug == null || worldSlug.isBlank() || realmSlug == null || realmSlug.isBlank()) {
       return Optional.empty();
     }
-    String normalizedWorld = worldSlug.trim().toLowerCase(Locale.ROOT);
-    String normalizedRealm = realmSlug.trim().toLowerCase(Locale.ROOT);
-    return visibleWorlds(loadWorldSnapshot()).stream()
-        .filter(world -> normalizedWorld.equals(world.slug().toLowerCase(Locale.ROOT)))
-        .flatMap(
-            world ->
-                visibleRealms(world).stream()
-                    .filter(realm -> normalizedRealm.equals(realm.slug().toLowerCase(Locale.ROOT)))
-                    .map(
-                        realm ->
-                            new RuntimeRealmTarget(
-                                world.slug(),
-                                world.displayName(),
-                                realm.slug(),
-                                realm.displayName())))
-        .findFirst();
+    String normalizedWorld = selectorKey(worldSlug);
+    String normalizedRealm = selectorKey(realmSlug);
+    List<RuntimeRealmTarget> matches =
+        visibleWorlds(loadWorldSnapshot()).stream()
+            .filter(world -> normalizedWorld.equals(selectorKey(world.slug())))
+            .flatMap(
+                world ->
+                    visibleRealms(world).stream()
+                        .filter(realm -> normalizedRealm.equals(selectorKey(realm.slug())))
+                        .map(
+                            realm ->
+                                new RuntimeRealmTarget(
+                                    world.slug(),
+                                    world.displayName(),
+                                    realm.slug(),
+                                    realm.displayName())))
+            .toList();
+    return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
   public List<RealmView> visibleRealms(WorldView world) {
@@ -307,9 +332,7 @@ public final class GameplayWorldCatalog {
     if (authorityPointerSupplier == null) {
       return visibleWorlds();
     }
-    return toWorlds(healthyTenantPointers(loadAuthorityPointers())).stream()
-        .filter(this::hasVisibleRealmEntries)
-        .toList();
+    return visibleWorlds(loadAuthorityWorldSnapshot());
   }
 
   /**
@@ -345,6 +368,7 @@ public final class GameplayWorldCatalog {
           "Authoritative public-production realm is not unique for tenant "
               + expectedPointer.tenantId());
     }
+    requireCollisionSafeVisiblePointer(pointers, expectedPointer);
   }
 
   /**
@@ -384,6 +408,24 @@ public final class GameplayWorldCatalog {
           "Authoritative visible private realm is not unique for tenant "
               + expectedPointer.tenantId());
     }
+    requireCollisionSafeVisiblePointer(pointers, expectedPointer);
+  }
+
+  private static void requireCollisionSafeVisiblePointer(
+      List<GameplayAdmissionPointerSnapshot> pointers,
+      GameplayAdmissionPointerSnapshot expectedPointer) {
+    RealmView expectedRealm = toRealmView(expectedPointer);
+    boolean resolvesUniquely =
+        toWorlds(pointers).stream()
+            .filter(
+                world -> selectorKey(expectedPointer.worldSlug()).equals(selectorKey(world.slug())))
+            .flatMap(world -> world.realms().stream())
+            .anyMatch(expectedRealm::equals);
+    if (!resolvesUniquely) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative visible gameplay realm has ambiguous folded selectors for tenant "
+              + expectedPointer.tenantId());
+    }
   }
 
   private List<GameplayAdmissionPointerSnapshot> loadAuthorityPointersForTenant(long tenantId) {
@@ -410,18 +452,17 @@ public final class GameplayWorldCatalog {
     return pointers;
   }
 
-  private List<WorldsViewOutput.WorldEntry> worldEntries(CatalogSnapshot snapshot) {
-    List<WorldView> worlds = discoverableWorlds(snapshot);
+  private List<WorldsViewOutput.WorldEntry> worldEntries(List<WorldView> worlds) {
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
     for (WorldView world : worlds) {
-      RealmView defaultRealm = defaultRealm(world, snapshot);
+      RealmView publicRealm = world.realms().getFirst();
       entries.add(
           new WorldsViewOutput.WorldEntry(
               entries.size() + 1,
               world.slug(),
               world.displayName(),
-              defaultRealm.gameInstanceId(),
-              defaultRealm.requiresCharacterSelection()));
+              publicRealm.gameInstanceId(),
+              publicRealm.requiresCharacterSelection()));
     }
     return List.copyOf(entries);
   }
@@ -448,13 +489,25 @@ public final class GameplayWorldCatalog {
     return world != null && !visibleRealms(world).isEmpty();
   }
 
-  private List<WorldView> discoverableWorlds(CatalogSnapshot snapshot) {
+  private List<WorldView> publicDiscoveryWorlds(CatalogSnapshot snapshot) {
     return visibleWorlds(snapshot).stream()
-        .filter(world -> resolveDefaultRealm(world, snapshot).isPresent())
+        .map(
+            world ->
+                new WorldView(
+                    world.slug(),
+                    world.displayName(),
+                    visibleRealms(world).stream()
+                        .filter(RealmView::publicProductionRealm)
+                        .filter(
+                            realm ->
+                                publicProductionRealmCardinality(snapshot, realm.tenantId())
+                                    == PublicProductionRealmCardinality.EXACTLY_ONE)
+                        .toList()))
+        .filter(world -> world.realms().size() == 1)
         .toList();
   }
 
-  private boolean isPlayerAddressable(RealmView realm) {
+  private static boolean isPlayerAddressable(RealmView realm) {
     return realm != null
         && realm.visible()
         && realm.slug() != null
@@ -472,12 +525,19 @@ public final class GameplayWorldCatalog {
         && pointer.tenantId() > 0L;
   }
 
-  private RealmView defaultRealm(WorldView world, CatalogSnapshot snapshot) {
-    return resolveDefaultRealm(world, snapshot).orElseThrow();
+  private CatalogSnapshot loadWorldSnapshot() {
+    return catalogSnapshot(worldSupplier.get());
   }
 
-  private CatalogSnapshot loadWorldSnapshot() {
-    List<WorldView> worlds = normalizeWorlds(worldSupplier.get());
+  private CatalogSnapshot loadAuthorityWorldSnapshot() {
+    if (authorityPointerSupplier == null) {
+      return loadWorldSnapshot();
+    }
+    return catalogSnapshot(toWorlds(healthyTenantPointers(loadAuthorityPointers())));
+  }
+
+  private static CatalogSnapshot catalogSnapshot(List<WorldView> sourceWorlds) {
+    List<WorldView> worlds = normalizeWorlds(sourceWorlds);
     Map<Long, Long> publicProductionRealmCounts = new HashMap<>();
     for (WorldView world : worlds) {
       for (RealmView realm : world.realms()) {
@@ -493,10 +553,28 @@ public final class GameplayWorldCatalog {
     if (worlds == null) {
       return List.of();
     }
-    return worlds.stream()
-        .filter(Objects::nonNull)
-        .filter(world -> world.slug() != null && !world.slug().isBlank())
-        .map(GameplayWorldCatalog::copyWorldView)
+    List<WorldView> normalizedWorlds =
+        worlds.stream()
+            .filter(Objects::nonNull)
+            .filter(world -> world.slug() != null && !world.slug().isBlank())
+            .map(GameplayWorldCatalog::copyWorldView)
+            .toList();
+    Map<String, Integer> worldCounts = new HashMap<>();
+    Map<String, Set<Long>> tenantsByWorld = new HashMap<>();
+    for (WorldView world : normalizedWorlds) {
+      String key = selectorKey(world.slug());
+      worldCounts.merge(key, 1, Integer::sum);
+      Set<Long> tenantIds = tenantsByWorld.computeIfAbsent(key, ignored -> new HashSet<>());
+      world.realms().stream().map(RealmView::tenantId).forEach(tenantIds::add);
+    }
+    Set<String> ambiguousWorlds = new HashSet<>();
+    for (String key : worldCounts.keySet()) {
+      if (worldCounts.get(key) > 1 || tenantsByWorld.get(key).size() > 1) {
+        ambiguousWorlds.add(key);
+      }
+    }
+    return normalizedWorlds.stream()
+        .filter(world -> !ambiguousWorlds.contains(selectorKey(world.slug())))
         .toList();
   }
 
@@ -654,17 +732,36 @@ public final class GameplayWorldCatalog {
   }
 
   private static WorldView copyWorldView(WorldView input) {
-    return new WorldView(
-        input.slug(),
-        input.displayName(),
+    List<RealmView> realms =
         input.realms() == null
             ? List.of()
             : input.realms().stream()
                 .filter(Objects::nonNull)
                 .filter(realm -> realm.slug() != null && !realm.slug().isBlank())
                 .map(GameplayWorldCatalog::copyRealmView)
-                .toList());
+                .toList();
+    Map<RealmSelectorKey, Integer> realmCounts = new HashMap<>();
+    for (RealmView realm : realms) {
+      realmCounts.merge(
+          new RealmSelectorKey(realm.tenantId(), selectorKey(realm.slug())), 1, Integer::sum);
+    }
+    return new WorldView(
+        input.slug(),
+        input.displayName(),
+        realms.stream()
+            .filter(
+                realm ->
+                    realmCounts.get(
+                            new RealmSelectorKey(realm.tenantId(), selectorKey(realm.slug())))
+                        == 1)
+            .toList());
   }
+
+  private static String selectorKey(String slug) {
+    return slug.trim().toLowerCase(Locale.ROOT);
+  }
+
+  private record RealmSelectorKey(long tenantId, String selector) {}
 
   private static RealmView copyRealmView(RealmView input) {
     return new RealmView(

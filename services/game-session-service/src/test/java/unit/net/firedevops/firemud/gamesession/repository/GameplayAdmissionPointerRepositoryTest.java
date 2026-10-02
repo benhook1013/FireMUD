@@ -95,11 +95,14 @@ class GameplayAdmissionPointerRepositoryTest {
       GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
       GameplayAdmissionPointer created = repository.save(pointer(7L, 44L, "ISOLATED", "fork"));
 
-      created.setPointerVersion(2L);
       created.setRealmId(UUID.randomUUID());
 
-      org.junit.jupiter.api.Assertions.assertThrows(
-          IllegalStateException.class, () -> repository.updateExisting(created, 1L, 1L));
+      IllegalStateException exception =
+          assertThrows(
+              IllegalStateException.class, () -> repository.updateExisting(created, 1L, 1L));
+      assertEquals(
+          "Admission pointer update cannot replace durable realm or playable-state identity",
+          exception.getMessage());
     }
   }
 
