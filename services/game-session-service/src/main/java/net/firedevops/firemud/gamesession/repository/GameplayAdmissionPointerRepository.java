@@ -3,14 +3,18 @@ package net.firedevops.firemud.gamesession.repository;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toInstant;
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.toLocalDateTime;
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointer.GAMEPLAY_ADMISSION_POINTER;
+import static net.firedevops.firemud.gamesession.jooq.tables.GameplayTenantSharedPlayableStateNamespace.GAMEPLAY_TENANT_SHARED_PLAYABLE_STATE_NAMESPACE;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerRecord;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -73,11 +77,19 @@ public class GameplayAdmissionPointerRepository {
 
   public GameplayAdmissionPointer save(GameplayAdmissionPointer entity) {
     if (entity.getId() == null) {
+      if (!"SHARED".equals(entity.getStateScope()) && !"ISOLATED".equals(entity.getStateScope())) {
+        throw new IllegalArgumentException("state_scope must be SHARED or ISOLATED");
+      }
       lockRuntimeTargetForCreation(entity);
       if (countByRuntimeTarget(entity.getTenantId(), entity.getGameInstanceId()) != 0) {
         throw new IllegalStateException(
             "Admission pointer creation conflicted with another route for the runtime target");
       }
+      entity.setRealmId(UUID.randomUUID());
+      entity.setPlayableStateNamespaceId(
+          "SHARED".equals(entity.getStateScope())
+              ? getOrCreateTenantSharedNamespace(entity.getTenantId())
+              : UUID.randomUUID());
       GameplayAdmissionPointerRecord record = dsl.newRecord(GAMEPLAY_ADMISSION_POINTER);
       populate(record, entity);
       try {
@@ -88,8 +100,8 @@ public class GameplayAdmissionPointerRepository {
       }
       return findById(record.getId()).orElseThrow();
     }
-    if (entity.getPointerVersion() == null || entity.getPointerVersion() <= 1L) {
-      throw new IllegalArgumentException("Existing admission pointer must advance its version");
+    if (entity.getPointerVersion() == null || entity.getPointerVersion() <= 0L) {
+      throw new IllegalArgumentException("Existing admission pointer must have a positive version");
     }
     GameplayAdmissionPointer current =
         findByIdForUpdate(entity.getId())
@@ -104,9 +116,35 @@ public class GameplayAdmissionPointerRepository {
                 () ->
                     new AdmissionPointerVersionMismatchException(
                         "Admission pointer no longer exists: id=" + entity.getId()));
-    if (!Long.valueOf(entity.getPointerVersion() - 1L).equals(current.getPointerVersion())) {
+    if (current.getPointerVersion() == null
+        || current.getCatalogRevision() == null
+        || entity.getCatalogRevision() == null
+        || entity.getCatalogRevision() <= 0L) {
+      throw new IllegalStateException(
+          "Admission pointer version and catalog revision must be present and positive");
+    }
+    if (!Objects.equals(entity.getRealmId(), current.getRealmId())
+        || !Objects.equals(
+            entity.getPlayableStateNamespaceId(), current.getPlayableStateNamespaceId())) {
+      throw new IllegalStateException(
+          "Admission pointer update cannot replace durable realm or playable-state identity");
+    }
+    boolean runtimeTargetChanged =
+        !Objects.equals(entity.getGameInstanceId(), current.getGameInstanceId());
+    boolean catalogChanged = !GameplayAdmissionCatalogPolicy.matches(current, entity);
+    long expectedPointerVersion =
+        runtimeTargetChanged
+            ? Math.addExact(current.getPointerVersion(), 1L)
+            : current.getPointerVersion();
+    long expectedCatalogRevision =
+        catalogChanged
+            ? Math.addExact(current.getCatalogRevision(), 1L)
+            : current.getCatalogRevision();
+    if (entity.getPointerVersion() != expectedPointerVersion
+        || entity.getCatalogRevision() != expectedCatalogRevision) {
       throw new AdmissionPointerVersionMismatchException(
-          "Admission pointer changed before the requested version could be committed: id="
+          "Admission pointer version or catalog revision changed before the requested update could"
+              + " be committed: id="
               + entity.getId());
     }
     long destinationCount =
@@ -127,6 +165,7 @@ public class GameplayAdmissionPointerRepository {
               .set(GAMEPLAY_ADMISSION_POINTER.TENANT_ID, entity.getTenantId())
               .set(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID, entity.getGameInstanceId())
               .set(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION, entity.getPointerVersion())
+              .set(GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION, entity.getCatalogRevision())
               .set(GAMEPLAY_ADMISSION_POINTER.VISIBLE, entity.isVisible())
               .set(
                   GAMEPLAY_ADMISSION_POINTER.PUBLIC_PRODUCTION_REALM,
@@ -148,7 +187,10 @@ public class GameplayAdmissionPointerRepository {
                       .eq(entity.getId())
                       .and(
                           GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(
-                              entity.getPointerVersion() - 1L)))
+                              current.getPointerVersion()))
+                      .and(
+                          GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(
+                              current.getCatalogRevision())))
               .execute();
     } catch (IntegrityConstraintViolationException ex) {
       throw new IllegalStateException(
@@ -228,6 +270,33 @@ public class GameplayAdmissionPointerRepository {
     lockRuntimeTarget(runtimeTargetLockKey(entity.getTenantId(), entity.getGameInstanceId()));
   }
 
+  private UUID getOrCreateTenantSharedNamespace(Long tenantId) {
+    lockRuntimeTarget("tenant-shared-playable-state:" + tenantId);
+    var table = GAMEPLAY_TENANT_SHARED_PLAYABLE_STATE_NAMESPACE;
+    UUID namespace =
+        dsl.select(table.PLAYABLE_STATE_NAMESPACE_ID)
+            .from(table)
+            .where(table.TENANT_ID.eq(tenantId))
+            .fetchOne(table.PLAYABLE_STATE_NAMESPACE_ID);
+    if (namespace != null) {
+      return namespace;
+    }
+    dsl.insertInto(table)
+        .set(table.TENANT_ID, tenantId)
+        .set(table.PLAYABLE_STATE_NAMESPACE_ID, UUID.randomUUID())
+        .onDuplicateKeyIgnore()
+        .execute();
+    UUID allocated =
+        dsl.select(table.PLAYABLE_STATE_NAMESPACE_ID)
+            .from(table)
+            .where(table.TENANT_ID.eq(tenantId))
+            .fetchOne(table.PLAYABLE_STATE_NAMESPACE_ID);
+    if (allocated == null) {
+      throw new IllegalStateException("Tenant shared playable-state namespace allocation failed");
+    }
+    return allocated;
+  }
+
   private void populate(GameplayAdmissionPointerRecord record, GameplayAdmissionPointer entity) {
     record.setWorldSlug(entity.getWorldSlug());
     record.setWorldDisplayName(entity.getWorldDisplayName());
@@ -236,6 +305,9 @@ public class GameplayAdmissionPointerRepository {
     record.setTenantId(entity.getTenantId());
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setPointerVersion(entity.getPointerVersion());
+    record.setCatalogRevision(entity.getCatalogRevision());
+    record.setRealmId(entity.getRealmId());
+    record.setPlayableStateNamespaceId(entity.getPlayableStateNamespaceId());
     record.setVisible(entity.isVisible());
     record.setPublicProductionRealm(entity.isPublicProductionRealm());
     record.setRequiresCharacterSelection(entity.isRequiresCharacterSelection());
@@ -257,6 +329,10 @@ public class GameplayAdmissionPointerRepository {
     entity.setTenantId(record.get(GAMEPLAY_ADMISSION_POINTER.TENANT_ID));
     entity.setGameInstanceId(record.get(GAMEPLAY_ADMISSION_POINTER.GAME_INSTANCE_ID));
     entity.setPointerVersion(record.get(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION));
+    entity.setCatalogRevision(record.get(GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION));
+    entity.setRealmId(record.get(GAMEPLAY_ADMISSION_POINTER.REALM_ID));
+    entity.setPlayableStateNamespaceId(
+        record.get(GAMEPLAY_ADMISSION_POINTER.PLAYABLE_STATE_NAMESPACE_ID));
     entity.setVisible(Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER.VISIBLE)));
     entity.setPublicProductionRealm(
         Boolean.TRUE.equals(record.get(GAMEPLAY_ADMISSION_POINTER.PUBLIC_PRODUCTION_REALM)));

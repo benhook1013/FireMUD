@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -24,6 +25,17 @@ class WorldsCommandHandlerTest {
       new WorldsCommandHandler(
           TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
           entityManagementClient);
+
+  @BeforeEach
+  void setUp() {
+    // The default demo realm is the tenant's sole public-production target.
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(false);
+  }
 
   @Test
   void browseViewReturnsStructuredWorldList() {
@@ -71,6 +83,12 @@ class WorldsCommandHandlerTest {
   void browseCharactersReturnsStructuredCharacterList() {
     gameplayCatalogProperties.setWorlds(
         List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(false);
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
                 "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -179,6 +197,7 @@ class WorldsCommandHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
