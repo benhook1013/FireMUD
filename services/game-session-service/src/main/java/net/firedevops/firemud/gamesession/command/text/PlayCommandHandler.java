@@ -365,7 +365,20 @@ public class PlayCommandHandler {
         Optional<PlayCommandHandlingResult> authorityFailure =
             validateRuntimeAdmission(context, selectedWorld, selectedRealm, selectedTenantTag, 0L);
         if (authorityFailure.isPresent()) {
-          return authorityFailure.get();
+          PlayCommandHandlingResult admissionFailure = authorityFailure.orElseThrow();
+          if (!gameplayWorldCatalog.isPubliclyDiscoverable(currentCatalog, selectedWorld)
+              && isDefinitivePrivateWorldDenial(admissionFailure)) {
+            return failure(
+                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
+                "error.play.selection-required",
+                Map.of(),
+                tenantTag,
+                null,
+                null,
+                null);
+          }
+          return admissionFailure;
         }
 
         if (selectedRealm.requiresCharacterSelection() && !StringUtils.hasText(character)) {

@@ -783,7 +783,6 @@ public final class GameplayWorldCatalog {
               i + 1,
               realm.slug(),
               realm.displayName(),
-              realm.gameInstanceId(),
               realm.requiresCharacterSelection(),
               realm.stateScope(),
               realm.characterCreationPolicy()));

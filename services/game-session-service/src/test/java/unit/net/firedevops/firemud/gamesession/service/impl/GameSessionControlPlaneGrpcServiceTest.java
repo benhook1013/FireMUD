@@ -612,6 +612,16 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("region-7", responseRef.get().getRuntimeState().getRegionId());
     assertEquals(22L, responseRef.get().getRuntimeState().getRegionEpoch());
     assertEquals(17L, responseRef.get().getRuntimeState().getPublication().getVersionId());
+    SessionContext.setContext("42", List.of("moderator"), Map.of());
+    assertEquals(
+        "", invokeAdmissionReadProof(service, AdmissionReadProofOperation.RUNTIME_STATE, "1"));
+    for (String role : List.of("tenantAdmin", "moderator")) {
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of(role)));
+      assertEquals(
+          "",
+          invokeAdmissionReadProof(service, AdmissionReadProofOperation.RUNTIME_STATE, "1"),
+          role);
+    }
   }
 
   @Test
@@ -2307,7 +2317,14 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertFalse(responseRef.get().getAudit(1).hasCatalogRevision());
     assertTrue(responseRef.get().getAudit(1).getRealmId().isEmpty());
     assertTrue(responseRef.get().getAudit(1).getPlayableStateNamespaceId().isEmpty());
-    Mockito.verify(authorityService).listPointerAudit(1L, "demo", "production");
+    SessionContext.setContext("42", List.of("moderator"), Map.of());
+    assertEquals("", invokeAdmissionReadProof(service, AdmissionReadProofOperation.AUDIT, "1"));
+    for (String role : List.of("tenantAdmin", "moderator")) {
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of(role)));
+      assertEquals(
+          "", invokeAdmissionReadProof(service, AdmissionReadProofOperation.AUDIT, "1"), role);
+    }
+    Mockito.verify(authorityService, Mockito.times(4)).listPointerAudit(1L, "demo", "production");
     Mockito.verify(authorityService, Mockito.never()).listPointers();
   }
 
@@ -2429,6 +2446,45 @@ class GameSessionControlPlaneGrpcServiceTest {
     Mockito.verify(authorityService, Mockito.never())
         .listPointerAudit(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
     Mockito.verify(authorityService, Mockito.never()).listPointers();
+  }
+
+  @Test
+  void scopedAdmissionReadProofReceiversRejectOtherTenantBasicRoleAndAbsentContextBeforeReads() {
+    for (AdmissionCallerContext callerContext : AdmissionCallerContext.values()) {
+      AdmissionReadProofFixture fixture = admissionReadProofFixture();
+      switch (callerContext) {
+        case OTHER_TENANT ->
+            SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
+        case BASIC_ROLE -> SessionContext.setContext("42", List.of("player"), Map.of());
+        case ABSENT -> SessionContext.clear();
+      }
+
+      for (AdmissionReadProofOperation operation : AdmissionReadProofOperation.values()) {
+        assertEquals(
+            "PERMISSION_DENIED",
+            invokeAdmissionReadProof(fixture.service(), operation, "2"),
+            callerContext + " " + operation);
+      }
+
+      verifyNoAdmissionReadInteractions(fixture);
+    }
+  }
+
+  @Test
+  void scopedAdmissionReadProofReceiversKeepTenantParseErrorsBeforeAuthorization() {
+    AdmissionReadProofFixture fixture = admissionReadProofFixture();
+
+    for (String invalidTenantId : List.of("not-a-number", "0", "-1", "9223372036854775808")) {
+      SessionContext.clear();
+      for (AdmissionReadProofOperation operation : AdmissionReadProofOperation.values()) {
+        assertEquals(
+            "INVALID_ARGUMENT",
+            invokeAdmissionReadProof(fixture.service(), operation, invalidTenantId),
+            invalidTenantId + " " + operation);
+      }
+    }
+
+    verifyNoAdmissionReadInteractions(fixture);
   }
 
   @Test
@@ -8727,6 +8783,16 @@ class GameSessionControlPlaneGrpcServiceTest {
         responseRef.get().getResult());
     assertEquals("remap-1", responseRef.get().getRemapSetId());
     assertEquals(2, responseRef.get().getParticipantResultsCount());
+    SessionContext.setContext("42", List.of("moderator"), Map.of());
+    assertEquals(
+        "", invokeAdmissionReadProof(service, AdmissionReadProofOperation.COMPATIBILITY, "1"));
+    for (String role : List.of("tenantAdmin", "moderator")) {
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of(role)));
+      assertEquals(
+          "",
+          invokeAdmissionReadProof(service, AdmissionReadProofOperation.COMPATIBILITY, "1"),
+          role);
+    }
   }
 
   @Test
@@ -8839,6 +8905,19 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("pvu-req-1", responseRef.get().getPreparation().getControlPlaneRequestId());
     assertEquals("55", responseRef.get().getPreparation().getExecutedTargetGameInstanceId());
     assertEquals(4L, responseRef.get().getPreparation().getExecutedPointerVersion());
+    SessionContext.setContext("42", List.of("moderator"), Map.of());
+    assertEquals(
+        "",
+        invokeAdmissionReadProof(
+            service, AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"));
+    for (String role : List.of("tenantAdmin", "moderator")) {
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of(role)));
+      assertEquals(
+          "",
+          invokeAdmissionReadProof(
+              service, AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"),
+          role);
+    }
   }
 
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
@@ -10150,6 +10229,147 @@ class GameSessionControlPlaneGrpcServiceTest {
     instance.setScriptPatchPinnedControlPlaneRequestId("request-1");
     return instance;
   }
+
+  private static AdmissionReadProofFixture admissionReadProofFixture() {
+    GameInstanceRepository gameInstanceRepository = Mockito.mock(GameInstanceRepository.class);
+    RuntimeRegionStatusRepository runtimeRegionStatusRepository =
+        Mockito.mock(RuntimeRegionStatusRepository.class);
+    GameplayAdmissionPointerAuthorityService pointerAuthority =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    InstanceCutoverCompatibilityService compatibilityService =
+        Mockito.mock(InstanceCutoverCompatibilityService.class);
+    VersionUpgradePreparationService preparationService =
+        Mockito.mock(VersionUpgradePreparationService.class);
+    GameSessionControlPlaneGrpcService service =
+        controlPlaneService(
+            gameInstanceRepository,
+            Mockito.mock(GameplayCommandRepository.class),
+            runtimeRegionStatusRepository,
+            pointerAuthority,
+            compatibilityService,
+            preparationService,
+            Mockito.mock(GameDesignClient.class),
+            BuiltInTextCommandAliasResolver.unsupported(),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry());
+    return new AdmissionReadProofFixture(
+        service,
+        gameInstanceRepository,
+        runtimeRegionStatusRepository,
+        pointerAuthority,
+        compatibilityService,
+        preparationService);
+  }
+
+  private static String invokeAdmissionReadProof(
+      GameSessionControlPlaneGrpcService service,
+      AdmissionReadProofOperation operation,
+      String tenantId) {
+    return invokeAdmissionReadProof(service, operation, tenantId, "pvu-2");
+  }
+
+  private static String invokeAdmissionReadProof(
+      GameSessionControlPlaneGrpcService service,
+      AdmissionReadProofOperation operation,
+      String tenantId,
+      String preparationId) {
+    return switch (operation) {
+      case AUDIT -> {
+        AtomicReference<ListAdmissionPointerAuditResponse> response = new AtomicReference<>();
+        service.listAdmissionPointerAudit(
+            ListAdmissionPointerAuditRequest.newBuilder()
+                .setTenantId(tenantId)
+                .setWorldSlug("demo")
+                .setRealmSlug("production")
+                .build(),
+            capturingObserver(response));
+        assertNotNull(response.get());
+        yield response.get().getError().getCode();
+      }
+      case RUNTIME_STATE -> {
+        AtomicReference<GetGameInstanceRuntimeStateResponse> response = new AtomicReference<>();
+        service.getGameInstanceRuntimeState(
+            GetGameInstanceRuntimeStateRequest.newBuilder()
+                .setTenantId(tenantId)
+                .setGameInstanceId("7")
+                .build(),
+            capturingObserver(response));
+        assertNotNull(response.get());
+        yield response.get().getError().getCode();
+      }
+      case COMPATIBILITY -> {
+        AtomicReference<ValidateInstanceCutoverCompatibilityResponse> response =
+            new AtomicReference<>();
+        service.validateInstanceCutoverCompatibility(
+            ValidateInstanceCutoverCompatibilityRequest.newBuilder()
+                .setTenantId(tenantId)
+                .setSourceGameInstanceId("7")
+                .setTargetVersionId("9")
+                .build(),
+            capturingObserver(response));
+        assertNotNull(response.get());
+        yield response.get().getError().getCode();
+      }
+      case PREPARED_VERSION -> {
+        AtomicReference<GetPreparedVersionUpgradeResponse> response = new AtomicReference<>();
+        service.getPreparedVersionUpgrade(
+            GetPreparedVersionUpgradeRequest.newBuilder()
+                .setTenantId(tenantId)
+                .setPreparationId(preparationId)
+                .build(),
+            capturingObserver(response));
+        assertNotNull(response.get());
+        yield response.get().getError().getCode();
+      }
+    };
+  }
+
+  private static void verifyNoAdmissionReadInteractions(AdmissionReadProofFixture fixture) {
+    Mockito.verifyNoInteractions(
+        fixture.gameInstanceRepository(),
+        fixture.runtimeRegionStatusRepository(),
+        fixture.pointerAuthority(),
+        fixture.compatibilityService(),
+        fixture.preparationService());
+  }
+
+  private static <T> StreamObserver<T> capturingObserver(AtomicReference<T> response) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(T value) {
+        response.set(value);
+      }
+
+      @Override
+      public void onError(Throwable throwable) {
+        fail(throwable);
+      }
+
+      @Override
+      public void onCompleted() {}
+    };
+  }
+
+  private enum AdmissionReadProofOperation {
+    AUDIT,
+    RUNTIME_STATE,
+    COMPATIBILITY,
+    PREPARED_VERSION
+  }
+
+  private enum AdmissionCallerContext {
+    OTHER_TENANT,
+    BASIC_ROLE,
+    ABSENT
+  }
+
+  private record AdmissionReadProofFixture(
+      GameSessionControlPlaneGrpcService service,
+      GameInstanceRepository gameInstanceRepository,
+      RuntimeRegionStatusRepository runtimeRegionStatusRepository,
+      GameplayAdmissionPointerAuthorityService pointerAuthority,
+      InstanceCutoverCompatibilityService compatibilityService,
+      VersionUpgradePreparationService preparationService) {}
 
   private static void stubLockedGameInstance(
       GameInstanceRepository repository, GameInstance instance) {

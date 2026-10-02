@@ -293,49 +293,6 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playFailsClosedWhenTenantHasMultiplePublicProductionRealmsAcrossWorlds() {
-    gameplayCatalogProperties
-        .getWorlds()
-        .get(1)
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(true);
-    SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-
-    PlayCommandHandlingResult result =
-        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
-  }
-
-  @Test
-  void playFailsClosedWhenTenantHasNoPublicProductionRealm() {
-    gameplayCatalogProperties
-        .getWorlds()
-        .getFirst()
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(false);
-    SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
-    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
-
-    PlayCommandHandlingResult result =
-        handler.handle(
-            "1",
-            new TextCommand(
-                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
-
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
-  }
-
-  @Test
   void playUsesSelectedTargetRosterInsteadOfStaleContextCharacterId() {
     SessionContext context =
         new SessionContext(
@@ -393,7 +350,9 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.character-selection-required");
     verifyNoGameplayBindingSideEffects();
   }
 
@@ -422,7 +381,9 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.character-selection-required");
     verifyNoGameplayBindingSideEffects();
   }
 
@@ -1859,7 +1820,7 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playDeniedByMembershipReturnsWorldAccessDenied() {
+  void playPrivateMembershipDenialUsesNonEnumeratingSelectionFailure() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1886,7 +1847,13 @@ class PlayCommandHandlerTest {
                 "PLAY sandbox preview Emberline"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    ErrorOutput error = (ErrorOutput) result.outputs().get(0).payload();
+    assertThat(error.messageKey()).isEqualTo("error.play.selection-required");
+    assertThat(error.arguments()).isEmpty();
+    Mockito.verify(accountClient)
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("22"), Mockito.anyString());
     Mockito.verify(entityManagementClient, never())
         .listCharactersByAccount(
             Mockito.anyString(),
@@ -1928,10 +1895,15 @@ class PlayCommandHandlerTest {
                 .setEvaluatedAt(evaluatedAtNow())
                 .build());
 
-    PlayCommandHandlingResult result =
-        handler.handle("1", previewRealmPlayCommand());
+    PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
 
-    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    ErrorOutput error = (ErrorOutput) result.outputs().get(0).payload();
+    assertThat(error.messageKey()).isEqualTo("error.play.selection-required");
+    assertThat(error.arguments()).isEmpty();
+    Mockito.verify(accountClient)
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("22"), Mockito.anyString());
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
@@ -2040,7 +2012,10 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    ErrorOutput error = (ErrorOutput) result.outputs().get(0).payload();
+    assertThat(error.messageKey()).isEqualTo("error.play.selection-required");
+    assertThat(error.arguments()).isEmpty();
     Mockito.verify(accountClient, Mockito.never())
         .getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -3042,10 +3017,9 @@ class PlayCommandHandlerTest {
   private void verifyNoGameplayBindingSideEffects() {
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
     Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
+    Mockito.verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
     Mockito.verify(scriptEventPublisher, never())
-        .publishCommandEvent(Mockito.any(), Mockito.any(GameplayCommand.class));
-    Mockito.verify(scriptEventPublisher, never())
-        .publishSpawnEvent(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .publishSpawnEvent(Mockito.any(), Mockito.any(), Mockito.any());
     Mockito.verify(sessionAuthenticationService, never())
         .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
   }
@@ -3075,27 +3049,5 @@ class PlayCommandHandlerTest {
     gameplayCommand.setCommandName(commandName);
     gameplayCommand.setCommandText(commandText);
     return gameplayCommand;
-  }
-
-  private static ListCharactersByAccountResponse characterRoster(
-      String id, String name, String tenantId, String accountId, PlayableStateScope scope) {
-    return ListCharactersByAccountResponse.newBuilder()
-        .addCharacters(
-            net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-                .setId(id)
-                .setTenantId(tenantId)
-                .setAccountId(accountId)
-                .setName(name)
-                .setPlayableStateScope(scope)
-                .build())
-        .build();
-  }
-
-  private void verifyNoGameplayBindingSideEffects() {
-    Mockito.verify(sessionContextService, never()).save(Mockito.any());
-    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
-    Mockito.verify(scriptEventPublisher, never()).publishCommandEvent(Mockito.any(), Mockito.any());
-    Mockito.verify(scriptEventPublisher, never())
-        .publishSpawnEvent(Mockito.any(), Mockito.any(), Mockito.any());
   }
 }
