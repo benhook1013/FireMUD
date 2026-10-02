@@ -6,6 +6,7 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.micrometer.core.annotation.Timed;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -15,6 +16,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -69,12 +71,19 @@ import net.firedevops.firemud.accountservice.mapper.AccountMapper;
 import net.firedevops.firemud.accountservice.mapper.ProfileMapper;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
 import net.firedevops.firemud.accountservice.repository.AccountRealmAccessGrantRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -95,6 +104,8 @@ import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleE
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.LoggingUtil;
+import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent;
 import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -127,6 +138,11 @@ public class AccountServiceImpl implements AccountService {
       "Join the selected world before discovering characters";
   public static final String ACCOUNT_JWT_ISSUER = "firemud-account-service";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
+  private static final String PASSWORD_RESET_OPERATION_KIND = "PASSWORD_RESET";
+  private static final String PASSWORD_RESET_REQUEST_DOMAIN = "account-password-reset-request/v1";
+  private static final String PASSWORD_RESET_REQUEST_ID_PREFIX =
+      "account-password-reset-request-v1:";
+  private static final String PASSWORD_RESET_EVENT_ID_PREFIX = "account-password-reset-event-v1:";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
   private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
@@ -134,6 +150,8 @@ public class AccountServiceImpl implements AccountService {
 
   private final AccountRepository accountRepository;
   private final AccountAuthorityGenerationRepository accountAuthorityGenerationRepository;
+  private final AccountAuthorityOutboxRepository accountAuthorityOutboxRepository;
+  private final AccountPasswordResetOperationRepository passwordResetOperationRepository;
   private final AccountAuditOutboxRepository accountAuditOutboxRepository;
   private final AccountConnectScopeRepository accountConnectScopeRepository;
   private final AccountJoinOperationRepository accountJoinOperationRepository;
@@ -169,6 +187,8 @@ public class AccountServiceImpl implements AccountService {
   public AccountServiceImpl(
       AccountRepository accountRepository,
       AccountAuthorityGenerationRepository accountAuthorityGenerationRepository,
+      AccountAuthorityOutboxRepository accountAuthorityOutboxRepository,
+      AccountPasswordResetOperationRepository passwordResetOperationRepository,
       AccountAuditOutboxRepository accountAuditOutboxRepository,
       AccountConnectScopeRepository accountConnectScopeRepository,
       AccountJoinOperationRepository accountJoinOperationRepository,
@@ -198,6 +218,8 @@ public class AccountServiceImpl implements AccountService {
       PlatformTransactionManager transactionManager) {
     this.accountRepository = accountRepository;
     this.accountAuthorityGenerationRepository = accountAuthorityGenerationRepository;
+    this.accountAuthorityOutboxRepository = accountAuthorityOutboxRepository;
+    this.passwordResetOperationRepository = passwordResetOperationRepository;
     this.accountAuditOutboxRepository = accountAuditOutboxRepository;
     this.accountConnectScopeRepository = accountConnectScopeRepository;
     this.accountJoinOperationRepository = accountJoinOperationRepository;
@@ -2226,20 +2248,544 @@ public class AccountServiceImpl implements AccountService {
   @Transactional
   @Timed(value = "account.complete_password_reset")
   public void completePasswordReset(CompletePasswordResetRequest request) {
+    if (request == null
+        || request.token() == null
+        || request.token().isBlank()
+        || request.newPassword() == null) {
+      throw new IllegalArgumentException("Password-reset token and new password are required");
+    }
+
+    String tokenHash = sha256Hex(request.token());
+    Optional<PasswordResetReceipt> resolvedReceipt =
+        passwordResetOperationRepository.findByTokenHash(tokenHash);
+    Optional<net.firedevops.firemud.accountservice.entity.PasswordResetToken> resolvedToken =
+        resolvedReceipt.isPresent()
+            ? Optional.empty()
+            : passwordResetTokenRepository.findByToken(request.token());
+    Long accountId =
+        resolvedReceipt
+            .map(PasswordResetReceipt::accountId)
+            .orElseGet(
+                () ->
+                    resolvedToken
+                        .map(
+                            token -> token.getAccount() == null ? null : token.getAccount().getId())
+                        .orElse(null));
+    if (accountId == null || accountId <= 0L) {
+      throw new IllegalArgumentException("Invalid token");
+    }
+
+    Account account =
+        accountRepository
+            .findByIdForUpdate(accountId)
+            .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
+    requireAuthenticationPersistedIdentity(account);
+
+    Optional<PasswordResetReceipt> lockedReceipt =
+        passwordResetOperationRepository.findByTokenHash(tokenHash);
+    if (lockedReceipt.isPresent()) {
+      PasswordResetReceipt receipt = lockedReceipt.get();
+      requireReceiptAccountBinding(receipt, account);
+      completePasswordResetRetry(account, receipt, request, tokenHash);
+      return;
+    }
+    if (resolvedReceipt.isPresent()) {
+      throw new IllegalStateException(
+          "Password-reset receipt changed while its Account was locked");
+    }
+
     net.firedevops.firemud.accountservice.entity.PasswordResetToken token =
         passwordResetTokenRepository
             .findByToken(request.token())
             .orElseThrow(() -> new IllegalArgumentException("Invalid token"));
+    requireTokenAccountBinding(token, account);
+    if (resolvedToken.isEmpty()
+        || !Objects.equals(resolvedToken.get().getId(), token.getId())
+        || !Objects.equals(resolvedToken.get().getExpiresAt(), token.getExpiresAt())) {
+      throw new IllegalStateException("Password-reset token changed while its Account was locked");
+    }
+
     LocalDateTime now = LocalDateTime.now();
-    if (token.getExpiresAt().isBefore(now)) {
+    if (token.getExpiresAt() == null || !token.getExpiresAt().isAfter(now)) {
       throw new IllegalArgumentException("Token expired");
     }
-    if (!passwordResetTokenRepository.consumeIfUnexpired(token, now)) {
+
+    AuthorityScope accountScope = AuthorityScope.account(account.getAccountUuid());
+    ScopeState currentAuthority = readPasswordResetAccountAuthority(accountScope);
+    requireProvenPasswordResetSource(account, currentAuthority);
+
+    String newPasswordVerifier = hashPassword(request.newPassword());
+    String passwordVerifierDigest = sha256Hex(newPasswordVerifier);
+    String requestId = passwordResetRequestId(tokenHash);
+    String eventId = passwordResetEventId(tokenHash);
+    String requestDigest =
+        passwordResetRequestDigest(
+            account.getAccountUuid(), tokenHash, token.getExpiresAt(), passwordVerifierDigest);
+
+    LocalDateTime claimTime = LocalDateTime.now();
+    if (!token.getExpiresAt().isAfter(claimTime)) {
+      throw new IllegalArgumentException("Token expired");
+    }
+    if (!passwordResetTokenRepository.consumeIfUnexpired(token, claimTime)) {
       throw new IllegalArgumentException("Invalid token");
     }
-    net.firedevops.firemud.accountservice.entity.Account account = token.getAccount();
-    account.setPasswordHash(hashPassword(request.newPassword()));
-    accountRepository.save(account);
+    Account passwordUpdated =
+        accountRepository.updatePasswordHashForLockedAccount(account, newPasswordVerifier);
+    requireAccountReadback(account, passwordUpdated, newPasswordVerifier);
+
+    ScopeState advancedAuthority =
+        accountAuthorityGenerationRepository.advance(
+            currentAuthority, currentAuthority.issuanceFence());
+    requireAdvancedPasswordResetAuthority(accountScope, currentAuthority, advancedAuthority);
+
+    String streamKey = passwordResetStreamKey(account.getAccountUuid());
+    Event appended =
+        accountAuthorityOutboxRepository.append(
+            streamKey,
+            requestId,
+            sequence ->
+                passwordResetEventEvidence(
+                    account.getAccountUuid(),
+                    requestId,
+                    eventId,
+                    sequence,
+                    advancedAuthority.generation(),
+                    advancedAuthority.sourceVersion()));
+    PasswordResetAuthorityEvent committedEvent =
+        requirePasswordResetEvent(
+            appended,
+            account.getAccountUuid(),
+            requestId,
+            eventId,
+            advancedAuthority.generation(),
+            advancedAuthority.sourceVersion());
+    Checkpoint committedCheckpoint =
+        accountAuthorityOutboxRepository
+            .readCheckpoint(streamKey)
+            .orElseThrow(
+                () -> new IllegalStateException("Password-reset outbox checkpoint is missing"));
+    requireCheckpointMatches(committedCheckpoint, appended);
+
+    PasswordResetReceipt receipt =
+        PasswordResetReceipt.committed(
+            account.getId(),
+            account.getAccountUuid(),
+            tokenHash,
+            requestId,
+            requestDigest,
+            token.getExpiresAt(),
+            passwordVerifierDigest,
+            streamKey,
+            appended.outboxSequence(),
+            committedEvent.eventId(),
+            committedEvent.eventDigest(),
+            advancedAuthority,
+            advancedAuthority.issuanceFence());
+    passwordResetOperationRepository.insert(receipt);
+
+    Account finalAccount =
+        accountRepository
+            .findByIdForUpdate(account.getId())
+            .orElseThrow(
+                () -> new IllegalStateException("Password-reset Account readback is missing"));
+    requireAccountReadback(account, finalAccount, newPasswordVerifier);
+    ScopeState finalAuthority = readPasswordResetAccountAuthority(accountScope);
+    if (!advancedAuthority.equals(finalAuthority)) {
+      throw new IllegalStateException("Password-reset authority readback did not match its commit");
+    }
+    Event eventReadback =
+        accountAuthorityOutboxRepository
+            .findEvent(streamKey, appended.outboxSequence())
+            .orElseThrow(
+                () -> new IllegalStateException("Password-reset event readback is missing"));
+    if (!appended.equals(eventReadback)) {
+      throw new IllegalStateException("Password-reset event readback did not match its commit");
+    }
+    requirePasswordResetEvent(
+        eventReadback,
+        account.getAccountUuid(),
+        requestId,
+        eventId,
+        advancedAuthority.generation(),
+        advancedAuthority.sourceVersion());
+    Checkpoint finalCheckpoint =
+        accountAuthorityOutboxRepository
+            .readCheckpoint(streamKey)
+            .orElseThrow(
+                () -> new IllegalStateException("Password-reset checkpoint readback is missing"));
+    requireCheckpointMatches(finalCheckpoint, eventReadback);
+    PasswordResetReceipt receiptReadback =
+        passwordResetOperationRepository
+            .findByTokenHash(tokenHash)
+            .orElseThrow(
+                () -> new IllegalStateException("Password-reset receipt readback is missing"));
+    if (!receipt.equals(receiptReadback)) {
+      throw new IllegalStateException("Password-reset receipt readback did not match its commit");
+    }
+    if (passwordResetTokenRepository.findByToken(request.token()).isPresent()) {
+      throw new IllegalStateException("Consumed password-reset token remained readable");
+    }
+  }
+
+  private void completePasswordResetRetry(
+      Account account,
+      PasswordResetReceipt receipt,
+      CompletePasswordResetRequest request,
+      String tokenHash) {
+    LocalDateTime now = LocalDateTime.now();
+    if (!receipt.tokenExpiresAt().isAfter(now)) {
+      throw new IllegalArgumentException("Token expired");
+    }
+    requireReceiptAccountBinding(receipt, account);
+    String currentVerifier = account.getPasswordHash();
+    if (currentVerifier == null || currentVerifier.isBlank()) {
+      throw new IllegalStateException("Password-reset result was superseded");
+    }
+    String currentVerifierDigest = sha256Hex(currentVerifier);
+    if (!constantTimeTextEquals(currentVerifierDigest, receipt.passwordVerifierDigest())) {
+      throw new IllegalStateException("Password-reset result was superseded");
+    }
+    if (!verifyPassword(request.newPassword(), currentVerifier)) {
+      throw new AccountPasswordResetOperationRepository.OperationConflictException(
+          "Password-reset token was already committed with a different password");
+    }
+    requireReceiptRequestDigest(receipt);
+    if (!constantTimeTextEquals(receipt.tokenHash(), tokenHash)) {
+      throw new IllegalStateException("Password-reset receipt token identity changed");
+    }
+
+    AuthorityScope accountScope = AuthorityScope.account(account.getAccountUuid());
+    ScopeState currentAuthority = readPasswordResetAccountAuthority(accountScope);
+    requireReceiptAuthorityIsCurrentOrEarlier(receipt, currentAuthority);
+    Event event =
+        accountAuthorityOutboxRepository
+            .findEvent(receipt.outboxStreamKey(), receipt.outboxSequence())
+            .orElseThrow(
+                () -> new IllegalStateException("Password-reset event readback is missing"));
+    requireReceiptEventBinding(receipt, event);
+    PasswordResetReceipt receiptReadback =
+        passwordResetOperationRepository
+            .findByTokenHash(tokenHash)
+            .orElseThrow(
+                () -> new IllegalStateException("Password-reset receipt readback is missing"));
+    if (!receipt.equals(receiptReadback)) {
+      throw new IllegalStateException("Password-reset receipt readback did not match its commit");
+    }
+    if (!receipt.tokenExpiresAt().isAfter(LocalDateTime.now())) {
+      throw new IllegalArgumentException("Token expired");
+    }
+  }
+
+  private void requireProvenPasswordResetSource(Account account, ScopeState state) {
+    AuthorityScope expectedScope = AuthorityScope.account(account.getAccountUuid());
+    if (!expectedScope.equals(state.scope())
+        || state.generation() <= 0L
+        || state.sourceVersion() <= 0L) {
+      throw new IllegalStateException("Account password-reset source scope is missing or invalid");
+    }
+    requirePositiveAccountFence(state.issuanceFence(), account.getAccountUuid());
+
+    String streamKey = passwordResetStreamKey(account.getAccountUuid());
+    Optional<Checkpoint> checkpoint = accountAuthorityOutboxRepository.readCheckpoint(streamKey);
+    if (state.generation() == 1L && state.sourceVersion() == 1L) {
+      if (checkpoint.isPresent()) {
+        throw new IllegalStateException(
+            "Pristine Account password-reset source has contradictory event history");
+      }
+      return;
+    }
+    if (state.generation() <= 1L || state.sourceVersion() <= 1L || checkpoint.isEmpty()) {
+      throw new IllegalStateException("Account password-reset source history is not proven");
+    }
+
+    Checkpoint latestCheckpoint = checkpoint.get();
+    Event latestEvent =
+        accountAuthorityOutboxRepository
+            .findEvent(streamKey, latestCheckpoint.outboxSequence())
+            .orElseThrow(
+                () -> new IllegalStateException("Account password-reset source event is missing"));
+    requireCheckpointMatches(latestCheckpoint, latestEvent);
+    PasswordResetAuthorityEvent verified =
+        verifyPasswordResetEvent(latestEvent, account.getAccountUuid());
+    if (!Long.toString(state.generation()).equals(verified.accountAuthorityGeneration())
+        || !Long.toString(state.sourceVersion()).equals(verified.sourceVersion())) {
+      throw new IllegalStateException(
+          "Latest Account password-reset event does not match its progressed source state");
+    }
+    PasswordResetReceipt priorReceipt =
+        passwordResetOperationRepository
+            .findByRequestId(latestEvent.requestId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Latest Account password-reset event has no immutable operation receipt"));
+    requireReceiptAccountBinding(priorReceipt, account);
+    requireReceiptEventBinding(priorReceipt, latestEvent);
+    requireReceiptAuthorityMatchesCurrent(priorReceipt, state);
+    String currentVerifier = account.getPasswordHash();
+    if (currentVerifier == null
+        || !constantTimeTextEquals(
+            sha256Hex(currentVerifier), priorReceipt.passwordVerifierDigest())) {
+      throw new IllegalStateException(
+          "Latest Account password-reset event does not match the current password verifier");
+    }
+  }
+
+  private ScopeState readPasswordResetAccountAuthority(AuthorityScope accountScope) {
+    ScopeState state = accountAuthorityGenerationRepository.read(accountScope);
+    if (!accountScope.equals(state.scope())) {
+      throw new IllegalStateException("Account password-reset authority scope changed");
+    }
+    requirePositiveAccountFence(state.issuanceFence(), accountScope.accountId());
+    return state;
+  }
+
+  private void requirePositiveAccountFence(
+      AccountAuthorityGenerationRepository.IssuanceFence fence, UUID accountUuid) {
+    if (fence == null
+        || !accountUuid.equals(fence.accountId())
+        || fence.value() <= 0L
+        || fence.sourceVersion() <= 0L) {
+      throw new IllegalStateException(
+          "Account password-reset issuance fence is missing or invalid");
+    }
+  }
+
+  private void requireAdvancedPasswordResetAuthority(
+      AuthorityScope expectedScope, ScopeState previous, ScopeState advanced) {
+    if (advanced == null
+        || !expectedScope.equals(advanced.scope())
+        || advanced.generation() != Math.addExact(previous.generation(), 1L)
+        || advanced.sourceVersion() != Math.addExact(previous.sourceVersion(), 1L)) {
+      throw new IllegalStateException(
+          "Account password-reset authority did not advance exactly once");
+    }
+    requirePositiveAccountFence(advanced.issuanceFence(), expectedScope.accountId());
+    if (advanced.issuanceFence().value() != Math.addExact(previous.issuanceFence().value(), 1L)
+        || advanced.issuanceFence().sourceVersion()
+            != Math.addExact(previous.issuanceFence().sourceVersion(), 1L)) {
+      throw new IllegalStateException(
+          "Account password-reset issuance fence did not advance exactly once");
+    }
+  }
+
+  private void requireReceiptAccountBinding(PasswordResetReceipt receipt, Account account) {
+    if (receipt.accountId() != account.getId()
+        || !account.getAccountUuid().equals(receipt.accountUuid())
+        || !passwordResetStreamKey(account.getAccountUuid()).equals(receipt.outboxStreamKey())) {
+      throw new IllegalStateException(
+          "Password-reset receipt does not match its Account source row");
+    }
+    requireReceiptRequestDigest(receipt);
+  }
+
+  private void requireReceiptRequestDigest(PasswordResetReceipt receipt) {
+    String expected =
+        passwordResetRequestDigest(
+            receipt.accountUuid(),
+            receipt.tokenHash(),
+            receipt.tokenExpiresAt(),
+            receipt.passwordVerifierDigest());
+    if (receipt.requestDigestVersion() != 1
+        || !PASSWORD_RESET_OPERATION_KIND.equals(receipt.operationKind())
+        || !passwordResetRequestId(receipt.tokenHash()).equals(receipt.requestId())
+        || !constantTimeTextEquals(expected, receipt.requestDigest())) {
+      throw new IllegalStateException("Password-reset receipt request evidence is inconsistent");
+    }
+  }
+
+  private void requireReceiptEventBinding(PasswordResetReceipt receipt, Event event) {
+    PasswordResetAuthorityEvent verified = verifyPasswordResetEvent(event, receipt.accountUuid());
+    if (!receipt.outboxStreamKey().equals(event.outboxStreamKey())
+        || receipt.outboxSequence() != event.outboxSequence()
+        || !receipt.requestId().equals(event.requestId())
+        || !receipt.eventId().equals(event.eventId())
+        || !receipt.eventDigest().equals(event.eventDigest())
+        || !passwordResetEventId(receipt.tokenHash()).equals(event.eventId())
+        || !Long.toString(receipt.accountAuthorityGeneration())
+            .equals(verified.accountAuthorityGeneration())
+        || !Long.toString(receipt.accountSourceVersion()).equals(verified.sourceVersion())) {
+      throw new IllegalStateException("Password-reset receipt does not match its source event");
+    }
+  }
+
+  private void requireReceiptAuthorityMatchesCurrent(
+      PasswordResetReceipt receipt, ScopeState state) {
+    if (receipt.accountAuthorityGeneration() != state.generation()
+        || receipt.accountSourceVersion() != state.sourceVersion()) {
+      throw new IllegalStateException(
+          "Latest password-reset receipt differs from Account authority");
+    }
+    requireReceiptAuthorityIsCurrentOrEarlier(receipt, state);
+  }
+
+  private void requireReceiptAuthorityIsCurrentOrEarlier(
+      PasswordResetReceipt receipt, ScopeState state) {
+    AccountAuthorityGenerationRepository.IssuanceFence currentFence = state.issuanceFence();
+    requirePositiveAccountFence(currentFence, receipt.accountUuid());
+    if (receipt.accountAuthorityGeneration() > state.generation()
+        || receipt.accountSourceVersion() > state.sourceVersion()
+        || receipt.issuanceFence() > currentFence.value()
+        || receipt.issuanceFenceSourceVersion() > currentFence.sourceVersion()) {
+      throw new IllegalStateException(
+          "Password-reset receipt is ahead of current Account authority");
+    }
+  }
+
+  private void requireAccountReadback(Account expected, Account readback, String passwordVerifier) {
+    requireAuthenticationPersistedIdentity(readback);
+    if (!Objects.equals(expected.getId(), readback.getId())
+        || !Objects.equals(expected.getAccountUuid(), readback.getAccountUuid())
+        || expected.getAccountUuidProvenance() != readback.getAccountUuidProvenance()
+        || !Objects.equals(
+            expected.getAccountUuidSourceNumericId(), readback.getAccountUuidSourceNumericId())
+        || !Objects.equals(passwordVerifier, readback.getPasswordHash())) {
+      throw new IllegalStateException("Password-reset Account readback did not match its commit");
+    }
+  }
+
+  private void requireTokenAccountBinding(
+      net.firedevops.firemud.accountservice.entity.PasswordResetToken token, Account account) {
+    if (token.getId() == null
+        || token.getToken() == null
+        || token.getExpiresAt() == null
+        || token.getAccount() == null
+        || !Objects.equals(token.getAccount().getId(), account.getId())) {
+      throw new IllegalStateException("Password-reset token source does not match its Account row");
+    }
+  }
+
+  private EventEvidence passwordResetEventEvidence(
+      UUID accountUuid,
+      String requestId,
+      String eventId,
+      long sequence,
+      long accountAuthorityGeneration,
+      long sourceVersion) {
+    PasswordResetAuthorityEvent event =
+        PasswordResetAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry("schemaVersion", PasswordResetAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", PasswordResetAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry("eventId", eventId),
+                Map.entry("requestId", requestId),
+                Map.entry("accountId", accountUuid.toString()),
+                Map.entry("sourceScope", "account/" + accountUuid),
+                Map.entry("outboxStreamKey", passwordResetStreamKey(accountUuid)),
+                Map.entry("outboxSequence", Long.toString(sequence)),
+                Map.entry("accountAuthorityGeneration", Long.toString(accountAuthorityGeneration)),
+                Map.entry("sourceVersion", Long.toString(sourceVersion)),
+                Map.entry(
+                    "accountSecurityCutoff",
+                    Map.of(
+                        "accountAuthorityGeneration", Long.toString(accountAuthorityGeneration),
+                        "outboxStreamKey", passwordResetStreamKey(accountUuid),
+                        "outboxSequence", Long.toString(sequence)))));
+    return new EventEvidence(event.eventId(), event.eventDigest(), event.canonicalJsonUtf8());
+  }
+
+  private PasswordResetAuthorityEvent requirePasswordResetEvent(
+      Event event,
+      UUID accountUuid,
+      String requestId,
+      String eventId,
+      long accountAuthorityGeneration,
+      long sourceVersion) {
+    PasswordResetAuthorityEvent verified = verifyPasswordResetEvent(event, accountUuid);
+    if (!passwordResetStreamKey(accountUuid).equals(event.outboxStreamKey())
+        || !requestId.equals(event.requestId())
+        || !eventId.equals(event.eventId())
+        || !Long.toString(accountAuthorityGeneration).equals(verified.accountAuthorityGeneration())
+        || !Long.toString(sourceVersion).equals(verified.sourceVersion())) {
+      throw new IllegalStateException(
+          "Password-reset source event does not match its committed state");
+    }
+    return verified;
+  }
+
+  private PasswordResetAuthorityEvent verifyPasswordResetEvent(Event event, UUID accountUuid) {
+    if (event == null) {
+      throw new IllegalStateException("Password-reset source event is missing");
+    }
+    PasswordResetAuthorityEvent verified =
+        PasswordResetAuthorityEventV1Codec.verify(
+            new String(event.payload(), StandardCharsets.UTF_8));
+    if (!MessageDigest.isEqual(event.payload(), verified.canonicalJsonUtf8())
+        || !event.outboxStreamKey().equals(verified.outboxStreamKey())
+        || !event.requestId().equals(verified.requestId())
+        || !event.eventId().equals(verified.eventId())
+        || !event.eventDigest().equals(verified.eventDigest())
+        || !accountUuid.toString().equals(verified.accountId())
+        || !Long.toString(event.outboxSequence()).equals(verified.outboxSequence())) {
+      throw new IllegalStateException("Password-reset source event readback is inconsistent");
+    }
+    return verified;
+  }
+
+  private void requireCheckpointMatches(Checkpoint checkpoint, Event event) {
+    if (!checkpoint.outboxStreamKey().equals(event.outboxStreamKey())
+        || checkpoint.outboxSequence() != event.outboxSequence()
+        || !checkpoint.sourceEventId().equals(event.eventId())
+        || !checkpoint.sourceEventDigest().equals(event.eventDigest())) {
+      throw new IllegalStateException("Password-reset outbox checkpoint does not match its event");
+    }
+  }
+
+  private String passwordResetRequestDigest(
+      UUID accountUuid, String tokenHash, LocalDateTime tokenExpiresAt, String verifierDigest) {
+    if (accountUuid == null || tokenExpiresAt == null) {
+      throw new IllegalArgumentException("Password-reset request identity is incomplete");
+    }
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      updateLengthPrefixed(digest, PASSWORD_RESET_REQUEST_DOMAIN);
+      updateLengthPrefixed(digest, PASSWORD_RESET_OPERATION_KIND);
+      updateLengthPrefixed(digest, accountUuid.toString());
+      updateLengthPrefixed(digest, tokenHash);
+      updateLengthPrefixed(digest, tokenExpiresAt.toString());
+      updateLengthPrefixed(digest, verifierDigest);
+      return HexFormat.of().formatHex(digest.digest());
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 is unavailable", exception);
+    }
+  }
+
+  private void updateLengthPrefixed(MessageDigest digest, String value) {
+    if (value == null) {
+      throw new IllegalArgumentException("Password-reset request field is required");
+    }
+    byte[] encoded = value.getBytes(StandardCharsets.UTF_8);
+    digest.update(ByteBuffer.allocate(Integer.BYTES).putInt(encoded.length).array());
+    digest.update(encoded);
+  }
+
+  private boolean constantTimeTextEquals(String left, String right) {
+    return left != null
+        && right != null
+        && MessageDigest.isEqual(
+            left.getBytes(StandardCharsets.US_ASCII), right.getBytes(StandardCharsets.US_ASCII));
+  }
+
+  private String sha256Hex(String value) {
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 is unavailable", exception);
+    }
+  }
+
+  private String passwordResetRequestId(String tokenHash) {
+    return PASSWORD_RESET_REQUEST_ID_PREFIX + tokenHash;
+  }
+
+  private String passwordResetEventId(String tokenHash) {
+    return PASSWORD_RESET_EVENT_ID_PREFIX + tokenHash;
+  }
+
+  private String passwordResetStreamKey(UUID accountUuid) {
+    return "account:auth-authority:v1:account/" + accountUuid;
   }
 
   @Override

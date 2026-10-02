@@ -29,6 +29,15 @@ public class AccountRepository {
         dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(id)).fetchOne(this::toEntity));
   }
 
+  /** Locks and rereads the complete persisted Account identity and credential source row. */
+  public Optional<Account> findByIdForUpdate(Long id) {
+    if (id == null || id <= 0L) {
+      throw new IllegalArgumentException("A positive Account row identity is required");
+    }
+    return Optional.ofNullable(
+        dsl.selectFrom(ACCOUNTS).where(ACCOUNTS.ID.eq(id)).forUpdate().fetchOne(this::toEntity));
+  }
+
   public Optional<Account> findByAccountUuid(UUID accountUuid) {
     Objects.requireNonNull(accountUuid, "accountUuid must not be null");
     return Optional.ofNullable(
@@ -109,6 +118,41 @@ public class AccountRepository {
             : expectedProvenance);
     copyIdentityToEntity(entity, updated);
     return entity;
+  }
+
+  /** Replaces the password verifier only while the caller still owns the exact locked Account. */
+  public Account updatePasswordHashForLockedAccount(Account expected, String passwordHash) {
+    if (expected == null
+        || expected.getId() == null
+        || expected.getAccountUuid() == null
+        || expected.getAccountUuidProvenance() == null
+        || expected.getAccountUuidSourceNumericId() == null
+        || passwordHash == null
+        || passwordHash.isBlank()) {
+      throw new IllegalArgumentException(
+          "A locked Account identity and password verifier are required");
+    }
+    AccountsRecord updated =
+        dsl.update(ACCOUNTS)
+            .set(ACCOUNTS.PASSWORD_HASH, passwordHash)
+            .where(ACCOUNTS.ID.eq(expected.getId()))
+            .and(ACCOUNTS.ACCOUNT_UUID.eq(expected.getAccountUuid()))
+            .and(ACCOUNTS.ACCOUNT_UUID_PROVENANCE.eq(expected.getAccountUuidProvenance().name()))
+            .and(
+                ACCOUNTS.ACCOUNT_UUID_SOURCE_NUMERIC_ID.eq(
+                    expected.getAccountUuidSourceNumericId()))
+            .and(ACCOUNTS.PASSWORD_HASH.isNotDistinctFrom(expected.getPasswordHash()))
+            .returning()
+            .fetchOne();
+    if (updated == null) {
+      throw JooqAccountRepositorySupport.staleWrite("accounts", expected.getId());
+    }
+    requireExactIdentityReadback(
+        updated, expected.getAccountUuid(), expected.getAccountUuidProvenance());
+    if (!Objects.equals(updated.getPasswordHash(), passwordHash)) {
+      throw new IllegalStateException("Account password verifier readback did not match its write");
+    }
+    return toEntity(updated);
   }
 
   public void delete(Account entity) {
