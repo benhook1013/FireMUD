@@ -455,8 +455,10 @@ done
 
 # The complete existing projection passed preflight, so directory setup and
 # copy/chmod operations can now proceed without changing unrelated hard links.
-mkdir -p "$RUNTIME_DIR"
-chmod 755 "$RUNTIME_DIR"
+if [[ ! -d "$RUNTIME_DIR" ]]; then
+  mkdir -m 700 -- "$RUNTIME_DIR"
+fi
+chmod 700 -- "$RUNTIME_DIR"
 for workload in "${workloads[@]}"; do
   mkdir -p "$RUNTIME_DIR/$workload/workloads"
 done
