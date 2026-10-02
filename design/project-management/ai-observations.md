@@ -229,3 +229,8 @@ Entry format:
   - Observation: the second call repaired the first call's incorrect permissions, so the passing contract masked a broken fresh-initialization postcondition.
   - Expected pattern: assert the first-call postconditions before any verification or idempotence rerun, then separately prove the rerun preserves the valid fixture.
   - Outcome: setup now restores owner-only authority permissions after generation, and the focused contract independently proves the first-call boundary and repeated-call preservation.
+
+- `2026-10-03`: Anchor repetitive fixture edits to the owning test method
+  - Context: a row-lock reconciliation fix first matched two identical repository stubs in activation/failure tests instead of the intended terminal-retry tests, producing four test failures.
+  - Expected pattern: include the test-method context when patching repeated fixture statements, inspect the exact changed methods before validation, and retain failed runs as non-completion evidence.
+  - Outcome: the unrelated fixture changes were corrected in place; the final diff changes only the two terminal-retry lookup stubs, and the complete affected proof passes without changing production behavior or weakening assertions.

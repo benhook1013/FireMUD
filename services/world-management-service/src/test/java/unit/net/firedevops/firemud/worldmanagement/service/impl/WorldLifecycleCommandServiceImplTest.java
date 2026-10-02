@@ -278,7 +278,7 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setStatus("TERMINATED");
     instance.setTerminationRequestId("term-1");
     instance.setLifecycleEpoch(4L);
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
 
     var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
@@ -303,7 +303,7 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setStatus("TERMINATED");
     instance.setTerminationRequestId("term-1");
     instance.setLifecycleEpoch(4L);
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
 
     IllegalArgumentException changedIdentity =
