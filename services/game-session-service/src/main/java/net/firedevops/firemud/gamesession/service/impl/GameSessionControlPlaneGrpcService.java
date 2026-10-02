@@ -269,7 +269,7 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
-  private List<Long> validateAdmissionPointerListScope(List<Long> tenantIds) {
+  private List<Long> validateAdmissionPointerListScope(List<String> tenantIds) {
     if (tenantIds.isEmpty()) {
       requireAdminRole();
       return List.of();
@@ -277,7 +277,7 @@ public final class GameSessionControlPlaneGrpcService
 
     List<Long> validatedTenantIds =
         tenantIds.stream()
-            .map(tenantId -> ControlPlaneRequestParser.requirePositive(tenantId, "tenant_ids"))
+            .map(tenantId -> ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_ids"))
             .toList();
     for (long tenantId : validatedTenantIds) {
       if (!SessionContext.hasTenantAccess(tenantId)) {
