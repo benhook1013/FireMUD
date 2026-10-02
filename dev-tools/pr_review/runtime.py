@@ -2647,7 +2647,10 @@ class HostedRunner:
                 except ControllerError:
                     raise
                 except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-                    raise ControllerError(f"current Hosted reservation for PR #{other_pr} cannot be verified") from exc
+                    raise ControllerError(
+                        f"current Hosted reservation for PR #{other_pr} cannot be verified "
+                        f"(phase=hosted_reservation_readback, error={type(exc).__name__})"
+                    ) from exc
                 if state.state in {"active", "awaiting_response"}:
                     raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
                 if state.state == "rate_limited":

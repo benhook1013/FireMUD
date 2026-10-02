@@ -2469,6 +2469,58 @@ class RuntimeTest(unittest.TestCase):
             runner._assert_no_other_active_reservations(42, Path(directory))
         fetch_full.assert_not_called()
 
+    def test_hosted_global_scan_reports_redacted_reservation_readback_cause(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        payload = self._payload()
+        calls = []
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 43, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
+                return []
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        def gh_call(args, **_kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("reservation readback failure must prevent POST")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            other_path = common / "firemud" / "hosted" / "owner_repo" / "pr-43" / "trigger.json"
+            other_path.parent.mkdir(parents=True)
+            other_path.write_text("{}", encoding="utf-8")
+            target_path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            with (
+                patch.object(LiveGitHub, "pull_request", return_value=snapshot),
+                patch.object(LiveGitHub, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(hosted, "load_trigger_reservation", side_effect=ValueError("sensitive fixture detail")),
+                patch.object(hosted, "default_trigger_record_path", return_value=target_path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(
+                    ControllerError,
+                    r"current Hosted reservation for PR #43 cannot be verified "
+                    r"\(phase=hosted_reservation_readback, error=ValueError\)",
+                ) as raised,
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))(target, expect_pr=42)
+
+            self.assertNotIn("sensitive fixture detail", str(raised.exception))
+            self.assertFalse(target_path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
     def test_hosted_global_scan_blocks_off_queue_active_manual_request(self) -> None:
         manual = {
             "databaseId": 901,

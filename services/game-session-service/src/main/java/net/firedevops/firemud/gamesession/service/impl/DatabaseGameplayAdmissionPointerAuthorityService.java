@@ -48,6 +48,17 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
 
   @Override
   @Transactional(readOnly = true)
+  public List<GameplayAdmissionPointerSnapshot> listPointersByTenant(long tenantId) {
+    if (tenantId <= 0L) {
+      throw new IllegalArgumentException("tenantId must be positive");
+    }
+    return pointerRepository.findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(tenantId).stream()
+        .map(this::toSnapshot)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public Optional<GameplayAdmissionPointerSnapshot> findPointer(
       long tenantId, String worldSlug, String realmSlug) {
     return pointerRepository

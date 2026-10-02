@@ -75,6 +75,16 @@ public class GameplayAdmissionPointerRepository {
         .fetch(this::toEntity);
   }
 
+  public List<GameplayAdmissionPointer> findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(
+      Long tenantId) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(GAMEPLAY_ADMISSION_POINTER.TENANT_ID.eq(tenantId))
+        .orderBy(
+            GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
+            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
+        .fetch(this::toEntity);
+  }
+
   public GameplayAdmissionPointer save(GameplayAdmissionPointer entity) {
     if (entity.getId() == null) {
       if (!"SHARED".equals(entity.getStateScope()) && !"ISOLATED".equals(entity.getStateScope())) {

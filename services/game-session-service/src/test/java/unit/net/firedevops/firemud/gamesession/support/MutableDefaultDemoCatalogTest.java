@@ -155,6 +155,11 @@ class MutableDefaultDemoCatalogTest {
     }
 
     @Override
+    public List<GameplayAdmissionPointerSnapshot> listPointersByTenant(long tenantId) {
+      return pointers.stream().filter(pointer -> pointer.tenantId() == tenantId).toList();
+    }
+
+    @Override
     public Optional<GameplayAdmissionPointerSnapshot> findPointer(
         long tenantId, String worldSlug, String realmSlug) {
       return pointers.stream()

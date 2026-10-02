@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.LongFunction;
 import java.util.function.Supplier;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -24,23 +25,27 @@ import org.springframework.stereotype.Component;
 public final class GameplayWorldCatalog {
   private final Supplier<List<WorldView>> worldSupplier;
   private final Supplier<List<GameplayAdmissionPointerSnapshot>> authorityPointerSupplier;
+  private final LongFunction<List<GameplayAdmissionPointerSnapshot>> tenantAuthorityPointerSupplier;
 
   private GameplayWorldCatalog(Supplier<List<WorldView>> worldSupplier) {
-    this(worldSupplier, null);
+    this(worldSupplier, null, null);
   }
 
   private GameplayWorldCatalog(
       Supplier<List<WorldView>> worldSupplier,
-      Supplier<List<GameplayAdmissionPointerSnapshot>> authorityPointerSupplier) {
+      Supplier<List<GameplayAdmissionPointerSnapshot>> authorityPointerSupplier,
+      LongFunction<List<GameplayAdmissionPointerSnapshot>> tenantAuthorityPointerSupplier) {
     this.worldSupplier = Objects.requireNonNull(worldSupplier, "worldSupplier must not be null");
     this.authorityPointerSupplier = authorityPointerSupplier;
+    this.tenantAuthorityPointerSupplier = tenantAuthorityPointerSupplier;
   }
 
   @Autowired
   public GameplayWorldCatalog(GameplayAdmissionPointerAuthorityService authorityService) {
     this(
         () -> toWorlds(healthyTenantPointers(loadAuthorityPointers(authorityService))),
-        () -> loadAuthorityPointers(authorityService));
+        () -> loadAuthorityPointers(authorityService),
+        authorityService::listPointersByTenant);
   }
 
   public static GameplayWorldCatalog forWorldViews(List<WorldView> worlds) {
@@ -310,15 +315,16 @@ public final class GameplayWorldCatalog {
    */
   public void requireUniqueVisiblePublicProductionRealm(
       GameplayAdmissionPointerSnapshot expectedPointer) {
-    if (authorityPointerSupplier == null) {
+    if (tenantAuthorityPointerSupplier == null) {
       throw new AuthorityPointerUnavailableException(
-          "Authoritative gameplay pointer list is unavailable");
+          "Authoritative tenant gameplay pointer list is unavailable");
     }
     if (expectedPointer == null || expectedPointer.tenantId() <= 0L) {
       throw new AuthorityPointerUnavailableException(
           "Authoritative public-production realm identity is unavailable");
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = loadAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers =
+        loadAuthorityPointersForTenant(expectedPointer.tenantId());
     if (!tenantHasValidPublicProductionAuthority(pointers, expectedPointer.tenantId())) {
       throw new AuthorityPointerUnavailableException(
           "Authoritative public-production realm is incomplete or ambiguous for tenant "
@@ -336,6 +342,30 @@ public final class GameplayWorldCatalog {
           "Authoritative public-production realm is not unique for tenant "
               + expectedPointer.tenantId());
     }
+  }
+
+  private List<GameplayAdmissionPointerSnapshot> loadAuthorityPointersForTenant(long tenantId) {
+    List<GameplayAdmissionPointerSnapshot> pointers =
+        tenantAuthorityPointerSupplier.apply(tenantId);
+    if (pointers == null) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative tenant gameplay pointer list is unavailable");
+    }
+    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
+      if (pointer == null) {
+        throw new AuthorityPointerUnavailableException(
+            "Authoritative tenant gameplay pointer identity is unavailable");
+      }
+      if (pointer.tenantId() != tenantId) {
+        throw new AuthorityPointerUnavailableException(
+            "Authoritative tenant gameplay pointer escaped the requested tenant scope");
+      }
+      if (!hasCompleteAuthorityPointer(pointer)) {
+        throw new AuthorityPointerUnavailableException(
+            "Authoritative tenant gameplay pointer is incomplete");
+      }
+    }
+    return pointers;
   }
 
   private List<WorldsViewOutput.WorldEntry> worldEntries(CatalogSnapshot snapshot) {

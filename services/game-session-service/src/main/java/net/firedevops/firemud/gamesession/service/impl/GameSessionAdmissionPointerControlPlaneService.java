@@ -47,7 +47,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
                             + "/"
                             + pointer.realmSlug());
                   }
-                  return toEntry(audit.getFirst());
+                  return toCurrentEntry(pointer, audit.getFirst());
                 })
             .toList();
     return ListAdmissionPointersResponse.newBuilder().addAllPointers(entries).build();
@@ -127,6 +127,41 @@ final class GameSessionAdmissionPointerControlPlaneService {
     }
     if (!normalizeBlank(entry.preparedVersionUpgradeId()).isEmpty()) {
       builder.setPreparedVersionUpgradeId(entry.preparedVersionUpgradeId());
+    }
+    return builder.build();
+  }
+
+  private AdmissionPointerControlPlaneEntry toCurrentEntry(
+      GameplayAdmissionPointerSnapshot pointer, GameplayAdmissionPointerAuditEntry auditEntry) {
+    AdmissionPointerControlPlaneEntry.Builder builder =
+        AdmissionPointerControlPlaneEntry.newBuilder()
+            .setWorldSlug(pointer.worldSlug())
+            .setWorldDisplayName(pointer.worldDisplayName())
+            .setRealmSlug(pointer.realmSlug())
+            .setRealmDisplayName(pointer.realmDisplayName())
+            .setTenantId(Long.toString(pointer.tenantId()))
+            .setGameInstanceId(Long.toString(pointer.gameInstanceId()))
+            .setPointerVersion(pointer.pointerVersion())
+            .setVisible(pointer.visible())
+            .setPublicProductionRealm(pointer.publicProductionRealm())
+            .setRequiresCharacterSelection(pointer.requiresCharacterSelection())
+            .setStateScope(pointer.stateScope())
+            .setCharacterCreationPolicy(pointer.characterCreationPolicy())
+            .setActorPrincipal(auditEntry.actorPrincipal())
+            .setReason(auditEntry.reason())
+            .setControlPlaneRequestId(auditEntry.controlPlaneRequestId())
+            .setOccurredAtMs(auditEntry.occurredAt().toEpochMilli());
+    if (pointer.catalogRevision() > 0) {
+      builder.setCatalogRevision(pointer.catalogRevision());
+    }
+    if (pointer.realmId() != null) {
+      builder.setRealmId(pointer.realmId().toString());
+    }
+    if (pointer.playableStateNamespaceId() != null) {
+      builder.setPlayableStateNamespaceId(pointer.playableStateNamespaceId().toString());
+    }
+    if (!normalizeBlank(auditEntry.preparedVersionUpgradeId()).isEmpty()) {
+      builder.setPreparedVersionUpgradeId(auditEntry.preparedVersionUpgradeId());
     }
     return builder.build();
   }

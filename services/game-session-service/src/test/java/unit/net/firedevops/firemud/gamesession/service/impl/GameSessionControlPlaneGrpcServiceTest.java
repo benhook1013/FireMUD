@@ -1605,7 +1605,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void listAdmissionPointersProjectsCatalogIdentityFromLatestAudit() {
+  void listAdmissionPointersUsesCurrentSnapshotForIdentityAndLatestAuditForMetadata() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(authorityService.listPointers())
@@ -1623,30 +1623,33 @@ class GameSessionControlPlaneGrpcServiceTest {
                     true,
                     false,
                     "SHARED",
-                    "ALLOW_NEW")));
+                    "ALLOW_NEW",
+                    8L,
+                    java.util.UUID.fromString("3ce19e6a-a63f-46f4-8e25-b105694c79e9"),
+                    java.util.UUID.fromString("f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a"))));
     Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
         .thenReturn(
             List.of(
                 new GameplayAdmissionPointerAuditEntry(
                     "demo",
                     "production",
-                    "Demo World",
-                    "Live Realm",
+                    "Historical World Name",
+                    "Historical Realm Name",
                     1L,
-                    7L,
-                    3L,
-                    true,
+                    6L,
+                    2L,
                     true,
                     false,
-                    "SHARED",
-                    "ALLOW_NEW",
+                    true,
+                    "ISOLATED",
+                    "DISALLOW",
                     "tester",
                     "cutover",
                     "req-1",
+                    "pvu-1",
                     null,
-                    4L,
-                    java.util.UUID.fromString("3ce19e6a-a63f-46f4-8e25-b105694c79e9"),
-                    java.util.UUID.fromString("f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a"),
+                    null,
+                    null,
                     Instant.parse("2026-04-15T00:00:00Z"))));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
@@ -1672,12 +1675,22 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertNotNull(responseRef.get());
     assertEquals(1, responseRef.get().getPointersCount());
-    assertEquals(4L, responseRef.get().getPointers(0).getCatalogRevision());
+    assertEquals("Demo World", responseRef.get().getPointers(0).getWorldDisplayName());
+    assertEquals("Live Realm", responseRef.get().getPointers(0).getRealmDisplayName());
+    assertEquals("7", responseRef.get().getPointers(0).getGameInstanceId());
+    assertEquals(3L, responseRef.get().getPointers(0).getPointerVersion());
+    assertEquals("SHARED", responseRef.get().getPointers(0).getStateScope());
+    assertEquals("ALLOW_NEW", responseRef.get().getPointers(0).getCharacterCreationPolicy());
+    assertEquals(8L, responseRef.get().getPointers(0).getCatalogRevision());
     assertEquals(
         "3ce19e6a-a63f-46f4-8e25-b105694c79e9", responseRef.get().getPointers(0).getRealmId());
     assertEquals(
         "f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a",
         responseRef.get().getPointers(0).getPlayableStateNamespaceId());
+    assertEquals("tester", responseRef.get().getPointers(0).getActorPrincipal());
+    assertEquals("cutover", responseRef.get().getPointers(0).getReason());
+    assertEquals("req-1", responseRef.get().getPointers(0).getControlPlaneRequestId());
+    assertEquals("pvu-1", responseRef.get().getPointers(0).getPreparedVersionUpgradeId());
   }
 
   @Test

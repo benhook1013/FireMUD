@@ -680,7 +680,7 @@ class GameSessionGrpcServiceTest {
         authorityPointer("alpha", "live", 7L, 44L, true, true);
     Mockito.when(pointerAuthorityService.findPointer(7L, "alpha", "live"))
         .thenReturn(java.util.Optional.of(selectedPublicRealm));
-    Mockito.when(pointerAuthorityService.listPointers())
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
         .thenReturn(
             List.of(selectedPublicRealm, authorityPointer("beta", "live", 7L, 55L, true, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
@@ -709,7 +709,8 @@ class GameSessionGrpcServiceTest {
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.get().getError().getCode());
     assertFalse(response.get().hasAdmissionPointer());
-    Mockito.verify(pointerAuthorityService).listPointers();
+    Mockito.verify(pointerAuthorityService).listPointersByTenant(7L);
+    Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
   }
 
   @Test
@@ -830,6 +831,8 @@ class GameSessionGrpcServiceTest {
             java.util.UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31"),
             java.util.UUID.fromString("2ea958e0-13a2-41d0-9c39-59a96cf31412"));
     Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of(authoritativeSnapshot));
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
+        .thenReturn(List.of(authoritativeSnapshot));
     Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
         .thenReturn(java.util.Optional.of(authoritativeSnapshot));
     GameSessionGrpcService service =
@@ -935,6 +938,8 @@ class GameSessionGrpcServiceTest {
             "ALLOW_NEW",
             0L);
     Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of(missingRevision));
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
+        .thenReturn(List.of(missingRevision));
     Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
         .thenReturn(java.util.Optional.of(missingRevision));
     GameSessionGrpcService service =
@@ -1060,6 +1065,8 @@ class GameSessionGrpcServiceTest {
             "ALLOW_NEW",
             29L);
     Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of(missingIdentity));
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
+        .thenReturn(List.of(missingIdentity));
     Mockito.when(pointerAuthorityService.findPointer(7L, "demo", "production"))
         .thenReturn(java.util.Optional.of(missingIdentity));
     GameSessionGrpcService service =
