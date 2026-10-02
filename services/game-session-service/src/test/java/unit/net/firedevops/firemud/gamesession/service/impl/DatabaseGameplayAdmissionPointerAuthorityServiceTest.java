@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -166,7 +168,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     GameplayAdmissionPointer existing = existingPointer();
     when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
-    when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
+    when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
     GameplayAdmissionPointerSnapshot snapshot =
@@ -192,7 +194,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
 
     assertEquals(1L, snapshot.pointerVersion());
     assertEquals(2L, snapshot.catalogRevision());
-    verify(pointerRepository).save(any(GameplayAdmissionPointer.class));
+    verify(pointerRepository).updateExisting(any(GameplayAdmissionPointer.class), eq(1L), eq(1L));
     ArgumentCaptor<GameplayAdmissionPointerEvent> eventCaptor =
         ArgumentCaptor.forClass(GameplayAdmissionPointerEvent.class);
     verify(eventRepository).save(eventCaptor.capture());
@@ -209,7 +211,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     GameplayAdmissionPointer existing = existingPointer();
     when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
-    when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
+    when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
     GameplayAdmissionPointerSnapshot snapshot =
@@ -235,7 +237,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
 
     assertEquals(2L, snapshot.pointerVersion());
     assertEquals(1L, snapshot.catalogRevision());
-    verify(pointerRepository).save(any(GameplayAdmissionPointer.class));
+    verify(pointerRepository).updateExisting(any(GameplayAdmissionPointer.class), eq(1L), eq(1L));
     verify(eventRepository).save(any(GameplayAdmissionPointerEvent.class));
   }
 
@@ -332,6 +334,13 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
               currentPointer.set(pointer);
               return pointer;
             });
+    when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              GameplayAdmissionPointer pointer = invocation.getArgument(0);
+              currentPointer.set(pointer);
+              return pointer;
+            });
     when(eventRepository.save(any(GameplayAdmissionPointerEvent.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -348,6 +357,53 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     assertEquals(1L, policyChanged.pointerVersion());
     assertEquals(2L, routeChanged.catalogRevision());
     assertEquals(2L, routeChanged.pointerVersion());
+  }
+
+  @Test
+  void concurrentSameTransitionWinnerPreventsDuplicateAuditForStaleExpectedRevisions() {
+    GameplayAdmissionPointer winnerRead = existingPointerForTenant(7L);
+    GameplayAdmissionPointer staleRead = existingPointerForTenant(7L);
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production"))
+        .thenReturn(Optional.of(winnerRead), Optional.of(staleRead));
+    java.util.concurrent.atomic.AtomicReference<GameplayAdmissionPointer> current =
+        new java.util.concurrent.atomic.AtomicReference<>(existingPointerForTenant(7L));
+    when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              GameplayAdmissionPointer requested = invocation.getArgument(0);
+              Long expectedPointerVersion = invocation.getArgument(1);
+              Long expectedCatalogRevision = invocation.getArgument(2);
+              GameplayAdmissionPointer committed = current.get();
+              if (!java.util.Objects.equals(committed.getPointerVersion(), expectedPointerVersion)
+                  || !java.util.Objects.equals(
+                      committed.getCatalogRevision(), expectedCatalogRevision)) {
+                throw new AdmissionPointerVersionMismatchException(
+                    "Admission pointer changed before the requested version could be committed");
+              }
+              current.set(requested);
+              return requested;
+            });
+    java.util.List<GameplayAdmissionPointerEvent> events = new java.util.ArrayList<>();
+    when(eventRepository.save(any(GameplayAdmissionPointerEvent.class)))
+        .thenAnswer(
+            invocation -> {
+              GameplayAdmissionPointerEvent event = invocation.getArgument(0);
+              events.add(event);
+              return event;
+            });
+
+    GameplayAdmissionPointerSnapshot winner =
+        service.upsertPointer(pointerMutation(45L, false, 1L, 1L, "concurrent-winner"));
+
+    assertEquals(2L, winner.pointerVersion());
+    assertEquals(2L, winner.catalogRevision());
+    assertThrows(
+        AdmissionPointerVersionMismatchException.class,
+        () -> service.upsertPointer(pointerMutation(45L, false, 1L, 1L, "concurrent-stale")));
+    assertEquals(1, events.size());
+    assertEquals("concurrent-winner", events.getFirst().getControlPlaneRequestId());
+    verify(pointerRepository, times(2))
+        .updateExisting(any(GameplayAdmissionPointer.class), eq(1L), eq(1L));
   }
 
   @Test
@@ -386,6 +442,20 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
       boolean publicProductionRealm,
       Long expectedPointerVersion,
       Long expectedCatalogRevision) {
+    return pointerMutation(
+        gameInstanceId,
+        publicProductionRealm,
+        expectedPointerVersion,
+        expectedCatalogRevision,
+        "catalog-revision-test-" + expectedPointerVersion);
+  }
+
+  private static GameplayAdmissionPointerMutation pointerMutation(
+      long gameInstanceId,
+      boolean publicProductionRealm,
+      Long expectedPointerVersion,
+      Long expectedCatalogRevision,
+      String requestId) {
     return new GameplayAdmissionPointerMutation(
         "demo",
         "Demo World",
@@ -400,7 +470,7 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
         "ALLOW_NEW",
         "test",
         "catalog revision test",
-        "catalog-revision-test-" + expectedPointerVersion,
+        requestId,
         expectedPointerVersion,
         expectedCatalogRevision,
         null);
@@ -451,6 +521,12 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     pointer.setRequiresCharacterSelection(false);
     pointer.setStateScope("SHARED");
     pointer.setCharacterCreationPolicy("ALLOW_NEW");
+    return pointer;
+  }
+
+  private static GameplayAdmissionPointer existingPointerForTenant(long tenantId) {
+    GameplayAdmissionPointer pointer = existingPointer();
+    pointer.setTenantId(tenantId);
     return pointer;
   }
 }

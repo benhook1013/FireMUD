@@ -2,6 +2,7 @@ package net.firedevops.firemud.gamesession.command.text;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -12,6 +13,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongFunction;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -143,6 +145,7 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmView> resolveDefaultRealm(WorldView world) {
+    // Avoid loading authoritative routing data when the supplied world cannot be selected.
     if (world == null) {
       return Optional.empty();
     }
@@ -344,6 +347,45 @@ public final class GameplayWorldCatalog {
     }
   }
 
+  /**
+   * Requires a visible non-public realm to belong to a complete tenant catalog with one visible
+   * public-production realm before it is returned through the player-addressable read surface.
+   */
+  public void requireHealthyVisiblePrivateRealm(GameplayAdmissionPointerSnapshot expectedPointer) {
+    if (tenantAuthorityPointerSupplier == null) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative tenant gameplay pointer list is unavailable");
+    }
+    if (expectedPointer == null
+        || expectedPointer.tenantId() <= 0L
+        || !expectedPointer.visible()
+        || expectedPointer.publicProductionRealm()
+        || !isPlayerAddressable(expectedPointer)
+        || !hasCompleteAuthorityPointer(expectedPointer)) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative visible private realm identity is unavailable");
+    }
+    List<GameplayAdmissionPointerSnapshot> pointers =
+        loadAuthorityPointersForTenant(expectedPointer.tenantId());
+    if (!tenantHasValidPublicProductionAuthority(pointers, expectedPointer.tenantId())) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative public-production realm is incomplete or ambiguous for tenant "
+              + expectedPointer.tenantId());
+    }
+
+    List<GameplayAdmissionPointerSnapshot> selectedRealms =
+        pointers.stream()
+            .filter(pointer -> pointer.tenantId() == expectedPointer.tenantId())
+            .filter(pointer -> pointer.worldSlug().equals(expectedPointer.worldSlug()))
+            .filter(pointer -> pointer.realmSlug().equals(expectedPointer.realmSlug()))
+            .toList();
+    if (selectedRealms.size() != 1 || !selectedRealms.getFirst().equals(expectedPointer)) {
+      throw new AuthorityPointerUnavailableException(
+          "Authoritative visible private realm is not unique for tenant "
+              + expectedPointer.tenantId());
+    }
+  }
+
   private List<GameplayAdmissionPointerSnapshot> loadAuthorityPointersForTenant(long tenantId) {
     List<GameplayAdmissionPointerSnapshot> pointers =
         tenantAuthorityPointerSupplier.apply(tenantId);
@@ -459,9 +501,25 @@ public final class GameplayWorldCatalog {
   }
 
   private static List<WorldView> toWorlds(List<GameplayAdmissionPointerSnapshot> pointers) {
+    Map<String, Set<Long>> tenantsByWorldSlug = new HashMap<>();
+    for (GameplayAdmissionPointerSnapshot pointer : pointers) {
+      if (hasCompleteAuthorityPointer(pointer)) {
+        tenantsByWorldSlug
+            .computeIfAbsent(
+                pointer.worldSlug().toLowerCase(Locale.ROOT), ignored -> new HashSet<>())
+            .add(pointer.tenantId());
+      }
+    }
+    Set<String> ambiguousWorldSlugs =
+        tenantsByWorldSlug.entrySet().stream()
+            .filter(entry -> entry.getValue().size() > 1)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toUnmodifiableSet());
+
     Map<String, MutableWorldAccumulator> worlds = new LinkedHashMap<>();
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
-      if (!hasCompleteAuthorityPointer(pointer)) {
+      if (!hasCompleteAuthorityPointer(pointer)
+          || ambiguousWorldSlugs.contains(pointer.worldSlug().toLowerCase(Locale.ROOT))) {
         continue;
       }
       MutableWorldAccumulator world =
