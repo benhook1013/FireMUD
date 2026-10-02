@@ -8,6 +8,8 @@ The service runtime model assumes replaceable workers, not authoritative in-proc
 
 ## Implementation Status
 
+- The unregistered initial canonical realm-catalog candidate stores exact committed authored-world intake evidence and owner-allocated realm/namespace results under the [Game Session catalog contract](./api-contracts.md#initial-canonical-public-production-realm-catalog). V12 widens the existing SHARED allocation family without mapping or rewriting retained numeric rows; ISOLATED allocations remain realm-local. This is not a complete catalog lifecycle, creator authorization, instance/pointer producer or admission path. Execution evidence and remaining composition/activation gates belong to [Player Access](../../../project-management/implementation-tracking/player-access-and-session.md).
+
 The sections below define the target-state runtime contract. Current implementation and proof status is:
 
 - The local V11 candidate adds nullable unique `game_instances.game_instance_uuid` without backfilling retained rows. Game Session's repository allocates a UUID on fresh insertion, reads back that exact persisted source and preserves it on update; unmapped retained identity denies strict canonical lookup. This is only the owner-local identity source: tenant storage, public DTO/proto/catalog/pointer migration, creation-request idempotency and authenticated selected-target composition remain separate gaps. It neither derives a UUID from a private numeric key nor enables admission. Validation and executed-versus-skipped proof belong to [Player Access](../../../project-management/implementation-tracking/player-access-and-session.md).

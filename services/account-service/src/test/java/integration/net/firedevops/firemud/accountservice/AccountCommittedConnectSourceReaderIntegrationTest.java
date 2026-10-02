@@ -41,6 +41,7 @@ import net.firedevops.firemud.accountservice.repository.AccountCommittedConnectS
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceIdentity;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceOperation.Lifecycle;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepository;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
@@ -1390,7 +1391,11 @@ class AccountCommittedConnectSourceReaderIntegrationTest {
     AccountRepository accountRepository = new AccountRepository(dsl);
     AccountTenantIdentityResolver tenantResolver =
         new AccountTenantIdentityResolver(associations, sourceEvidence, WORKLOAD_NAMESPACE);
-    AccountJoinOperationRepository joinRepository = new AccountJoinOperationRepository(dsl);
+    AccountConnectScopeRepository connectScopeRepository =
+        new AccountConnectScopeRepository(
+            dsl, accountRepository, tenantResolver, freshTenantIdentityRepository);
+    AccountJoinOperationRepository joinRepository =
+        new AccountJoinOperationRepository(dsl, connectScopeRepository);
     AccountCommittedConnectSourceReader reader =
         new AccountCommittedConnectSourceReader(
             issuanceRepository,

@@ -16,6 +16,7 @@ import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
@@ -86,8 +87,6 @@ class AccountRepositoryIntegrationTest {
         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
     DSLContext transactionAwareDsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    AccountJoinOperationRepository joinOperations =
-        new AccountJoinOperationRepository(transactionAwareDsl);
     LegacyTenantSourceEvidence legacyTenantSourceEvidence =
         new LegacyTenantSourceEvidence(transactionAwareDsl);
     AccountAuthorityGenerationRepository authorityGenerationRepository =
@@ -101,12 +100,20 @@ class AccountRepositoryIntegrationTest {
     AccountTenantIdentityResolver tenantIdentityResolver =
         new AccountTenantIdentityResolver(
             approvedTenantAssociations, legacyTenantSourceEvidence, "account-service");
+    FreshTenantIdentityAssociationRepository freshTenantIdentityRepository =
+        new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "account-service");
+    AccountRepository accountRepository = new AccountRepository(transactionAwareDsl);
+    AccountConnectScopeRepository connectScopes =
+        new AccountConnectScopeRepository(
+            transactionAwareDsl, accountRepository, tenantIdentityResolver, freshTenantIdentityRepository);
+    AccountJoinOperationRepository joinOperations =
+        new AccountJoinOperationRepository(transactionAwareDsl, connectScopes);
     AccountTenantMembershipRepository memberships =
         new AccountTenantMembershipRepository(
             transactionAwareDsl,
-            new AccountRepository(transactionAwareDsl),
+            accountRepository,
             tenantIdentityResolver,
-            new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "account-service"));
+            freshTenantIdentityRepository);
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
     long accountId =
         Objects.requireNonNull(
@@ -302,7 +309,20 @@ class AccountRepositoryIntegrationTest {
                 "scope-uuid",
                 "scope-uuid@example.com",
                 "hash"));
-    AccountConnectScopeRepository scopes = new AccountConnectScopeRepository(dsl);
+    LegacyTenantSourceEvidence tenantSourceEvidence = new LegacyTenantSourceEvidence(dsl);
+    AccountAuthorityGenerationRepository authorityGenerations =
+        new AccountAuthorityGenerationRepository(dsl);
+    ApprovedLegacyTenantAssociationRepository approvedTenantAssociations =
+        new ApprovedLegacyTenantAssociationRepository(
+            dsl, tenantSourceEvidence, "account-service", authorityGenerations);
+    AccountTenantIdentityResolver retainedTenantIdentities =
+        new AccountTenantIdentityResolver(
+            approvedTenantAssociations, tenantSourceEvidence, "account-service");
+    FreshTenantIdentityAssociationRepository freshTenantIdentities =
+        new FreshTenantIdentityAssociationRepository(dsl, "account-service");
+    AccountConnectScopeRepository scopes =
+        new AccountConnectScopeRepository(
+            dsl, repository, retainedTenantIdentities, freshTenantIdentities);
     VerifiedJoinScope scope = joinScope(accountId);
 
     scopes.insert(scope);
@@ -923,9 +943,13 @@ class AccountRepositoryIntegrationTest {
                 + schema
                 + ".account_tenant_membership m WHERE account_id = ?",
             secondAccountId);
+    String pendingJoinProjection =
+        "(to_jsonb(j) - 'operation_representation_version' - 'scope_digest_version' "
+            + "- 'target_class' - 'account_uuid' - 'tenant_uuid' - 'tenant_slug' "
+            + "- 'playable_state_namespace_uuid' - 'game_instance_uuid')::text";
     String pendingJoinBefore =
         jsonRow(
-            "SELECT to_jsonb(j)::text FROM "
+            "SELECT " + pendingJoinProjection + " FROM "
                 + schema
                 + ".account_join_operations j WHERE request_id = ?",
             pendingJoinRequestId);
@@ -991,11 +1015,32 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(explicitMembershipBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(j)::text FROM "
+                "SELECT " + pendingJoinProjection + " FROM "
                     + schema
                     + ".account_join_operations j WHERE request_id = ?",
                 pendingJoinRequestId))
         .isEqualTo(pendingJoinBefore);
+    Record retainedJoinRepresentation =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT operation_representation_version, scope_digest_version, target_class, "
+                    + "account_uuid, tenant_uuid, tenant_slug, playable_state_namespace_uuid, "
+                    + "game_instance_uuid FROM "
+                    + schema
+                    + ".account_join_operations WHERE request_id = ?",
+                pendingJoinRequestId),
+            "Retained JOIN representation defaults must be readable");
+    assertThat(retainedJoinRepresentation.get("operation_representation_version", Integer.class))
+        .isEqualTo(1);
+    assertThat(retainedJoinRepresentation.get("scope_digest_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedJoinRepresentation.get("target_class", String.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("account_uuid", UUID.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("tenant_uuid", UUID.class)).isNull();
+    assertThat(retainedJoinRepresentation.get("tenant_slug", String.class)).isNull();
+    assertThat(
+            retainedJoinRepresentation.get("playable_state_namespace_uuid", UUID.class))
+        .isNull();
+    assertThat(retainedJoinRepresentation.get("game_instance_uuid", UUID.class)).isNull();
     assertThat(
             jsonRow(
                 "SELECT to_jsonb(h)::text FROM "
