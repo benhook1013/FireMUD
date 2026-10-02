@@ -234,17 +234,6 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld =
           ((WorldSelectorResolution.Selected) worldSelection).world();
       ResolvedPlaySelection selection = disambiguateSelection(requestedSelection, selectedWorld);
-      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(currentCatalog, selectedWorld)) {
-        return failure(
-            "ADMISSION_POINTER_UNAVAILABLE",
-            "Gameplay admission pointer is unavailable",
-            "error.play.authority-unavailable",
-            Map.of(),
-            tenantTag,
-            null,
-            null,
-            null);
-      }
 
       boolean numericRealmSelector =
           GameplayWorldCatalog.isOrdinalSelector(selection.explicitRealmSelector());
@@ -421,7 +410,7 @@ public class PlayCommandHandler {
                 context.sessionId());
             return new PlayCommandHandlingResult(
                 CommandEnqueueResult.success(),
-                List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), character)),
+                List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
                 true);
           }
 
@@ -474,7 +463,7 @@ public class PlayCommandHandler {
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
-              List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), character)),
+              List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
               resumedOrTookOver || freshEntryFallback);
         }
       }

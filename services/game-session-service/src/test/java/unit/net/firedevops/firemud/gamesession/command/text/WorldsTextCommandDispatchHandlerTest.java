@@ -85,6 +85,12 @@ class WorldsTextCommandDispatchHandlerTest {
         List.of(world("sandbox", 1L, 2L, false), world("authority", 1L, 1L, false)));
     gameplayCatalogProperties
         .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(false);
+    gameplayCatalogProperties
+        .getWorlds()
         .get(1)
         .getRealms()
         .getFirst()
@@ -203,9 +209,9 @@ class WorldsTextCommandDispatchHandlerTest {
                         .setId("7001")
                         .setTenantId("22")
                         .setAccountId("123")
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setName("Emberline")
                         .setLevel(12)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
     SessionContext context =
@@ -233,6 +239,8 @@ class WorldsTextCommandDispatchHandlerTest {
         .singleElement()
         .extracting(output -> output.payload())
         .isInstanceOf(CharacterBrowseViewOutput.class);
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),
@@ -885,6 +893,7 @@ class WorldsTextCommandDispatchHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);

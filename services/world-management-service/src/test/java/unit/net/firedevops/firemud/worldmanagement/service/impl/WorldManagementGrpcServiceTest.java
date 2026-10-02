@@ -18,17 +18,22 @@ import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding
 import net.firedevops.firemud.common.security.GameplaySessionAttestationService;
 import net.firedevops.firemud.common.security.PublicationReadGuard;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
+import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldDto;
 import net.firedevops.firemud.worldmanagement.dto.RoomSnapshotDto;
 import net.firedevops.firemud.worldmanagement.dto.RuntimeRoomDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldDesignMutationResultDto;
 import net.firedevops.firemud.worldmanagement.dto.WorldInstanceLifecycleSnapshotDto;
+import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
 import net.firedevops.firemud.worldmanagement.service.PingService;
 import net.firedevops.firemud.worldmanagement.service.RoomService;
 import net.firedevops.firemud.worldmanagement.service.WorldDesignMutationService;
 import net.firedevops.firemud.worldmanagement.service.WorldDraftDesignDigestService;
 import net.firedevops.firemud.worldmanagement.service.WorldInstanceActivationService;
 import net.firedevops.firemud.worldmanagement.service.WorldUpgradeValidationService;
+import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldRequest;
+import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.ApplyWorldDesignMutationRequest;
@@ -48,6 +53,7 @@ import net.firedevops.firemud.worldmanagement.v1.WorldDesignAggregateType;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationOperation;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignMutationResult;
 import net.firedevops.firemud.worldmanagement.v1.WorldDesignScopeType;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.http.HttpStatus;
@@ -114,6 +120,172 @@ class WorldManagementGrpcServiceTest {
     AtomicReference<GetDraftDesignDigestResponse> ref = new AtomicReference<>();
     runWithPeer(peer, () -> ref.set(invokeDigest(service, request)));
     return ref.get();
+  }
+
+  private static AcquireInitialAdmissionBindHoldResponse invokeInitialBindAcquire(
+      WorldManagementGrpcService service, AcquireInitialAdmissionBindHoldRequest request) {
+    AtomicReference<AcquireInitialAdmissionBindHoldResponse> ref = new AtomicReference<>();
+    service.acquireInitialAdmissionBindHold(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(AcquireInitialAdmissionBindHoldResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            throw new AssertionError("Initial bind hold RPC failed", t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+    return ref.get();
+  }
+
+  private static AcquireInitialAdmissionBindHoldRequest initialBindAcquireRequest() {
+    return AcquireInitialAdmissionBindHoldRequest.newBuilder()
+        .setTenantId("42")
+        .setGameInstanceId("101")
+        .setVersionId("11")
+        .setExpectedActiveLifecycleEpoch(7L)
+        .setInitialAdmissionRequestId("initial-admission-1")
+        .setRequestDigest("a".repeat(64))
+        .setRealmUuid("00000000-0000-0000-0000-000000000001")
+        .setPlayableStateNamespaceUuid("00000000-0000-0000-0000-000000000002")
+        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+        .setExpectedNoPriorPointer(true)
+        .setExpectedCatalogRevision(1L)
+        .build();
+  }
+
+  @Nested
+  class InitialAdmissionBindHoldBoundaryTest {
+    @Test
+    void initialAdmissionHoldAcquireDeniesMissingOrWrongWorkloadProof() {
+      InitialAdmissionBindHoldService holdService =
+          Mockito.mock(InitialAdmissionBindHoldService.class);
+      WorldManagementGrpcService service =
+          newService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(RoomService.class),
+              new SimpleMeterRegistry());
+      service.configureInitialAdmissionBindHoldBoundary(holdService, TEST_NAMESPACE);
+      SessionContext.clear();
+
+      var noPeerResponse = invokeInitialBindAcquire(service, initialBindAcquireRequest());
+      assertEquals("PERMISSION_DENIED", noPeerResponse.getError().getCode());
+
+      AtomicReference<AcquireInitialAdmissionBindHoldResponse> wrongPeerResponse =
+          new AtomicReference<>();
+      runWithPeer(
+          peer("entity-management-service"),
+          () ->
+              wrongPeerResponse.set(
+                  invokeInitialBindAcquire(service, initialBindAcquireRequest())));
+      assertEquals("PERMISSION_DENIED", wrongPeerResponse.get().getError().getCode());
+      Mockito.verifyNoInteractions(holdService);
+    }
+
+    @Test
+    void initialAdmissionHoldAcquireAcceptsOnlyGameSessionPeerAndReturnsExactFenceTuple() {
+      InitialAdmissionBindHoldService holdService =
+          Mockito.mock(InitialAdmissionBindHoldService.class);
+      Mockito.when(holdService.acquire(Mockito.any()))
+          .thenReturn(
+              new InitialAdmissionBindHoldDto(
+                  "00000000-0000-0000-0000-000000000003",
+                  "00000000-0000-0000-0000-000000000004",
+                  42L,
+                  "00000000-0000-0000-0000-000000000001",
+                  "00000000-0000-0000-0000-000000000002",
+                  "SHARED",
+                  101L,
+                  11L,
+                  7L,
+                  "initial-admission-1",
+                  "a".repeat(64),
+                  true,
+                  1L,
+                  "PENDING",
+                  java.time.Instant.parse("2026-10-01T00:05:00Z")));
+      WorldManagementGrpcService service =
+          newService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(RoomService.class),
+              new SimpleMeterRegistry());
+      service.configureInitialAdmissionBindHoldBoundary(holdService, TEST_NAMESPACE);
+      SessionContext.clear();
+      AtomicReference<AcquireInitialAdmissionBindHoldResponse> response = new AtomicReference<>();
+
+      runWithPeer(
+          peer("game-session-service"),
+          () -> response.set(invokeInitialBindAcquire(service, initialBindAcquireRequest())));
+
+      assertEquals("", response.get().getError().getCode());
+      assertEquals("00000000-0000-0000-0000-000000000003", response.get().getHold().getHoldId());
+      assertEquals("00000000-0000-0000-0000-000000000004", response.get().getHold().getHoldFence());
+      assertEquals(1L, response.get().getHold().getExpectedCatalogRevision());
+      assertEquals(
+          PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED,
+          response.get().getHold().getPlayableStateScope());
+      Mockito.verify(holdService)
+          .acquire(
+              new net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldRequest(
+                  42L,
+                  101L,
+                  11L,
+                  7L,
+                  "initial-admission-1",
+                  "a".repeat(64),
+                  "00000000-0000-0000-0000-000000000001",
+                  "00000000-0000-0000-0000-000000000002",
+                  "SHARED",
+                  true,
+                  1L));
+    }
+
+    @Test
+    void initialAdmissionHoldAcquireRejectsUnspecifiedAndUnrecognizedScopes() {
+      InitialAdmissionBindHoldService holdService =
+          Mockito.mock(InitialAdmissionBindHoldService.class);
+      WorldManagementGrpcService service =
+          newService(
+              Mockito.mock(PingService.class),
+              Mockito.mock(RoomService.class),
+              new SimpleMeterRegistry());
+      service.configureInitialAdmissionBindHoldBoundary(holdService, TEST_NAMESPACE);
+      SessionContext.clear();
+
+      AtomicReference<AcquireInitialAdmissionBindHoldResponse> unspecifiedResponse =
+          new AtomicReference<>();
+      runWithPeer(
+          peer("game-session-service"),
+          () ->
+              unspecifiedResponse.set(
+                  invokeInitialBindAcquire(
+                      service,
+                      initialBindAcquireRequest().toBuilder()
+                          .setPlayableStateScope(
+                              PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED)
+                          .build())));
+      assertEquals("INVALID_ARGUMENT", unspecifiedResponse.get().getError().getCode());
+
+      AtomicReference<AcquireInitialAdmissionBindHoldResponse> unrecognizedResponse =
+          new AtomicReference<>();
+      runWithPeer(
+          peer("game-session-service"),
+          () ->
+              unrecognizedResponse.set(
+                  invokeInitialBindAcquire(
+                      service,
+                      initialBindAcquireRequest().toBuilder()
+                          .setPlayableStateScopeValue(999)
+                          .build())));
+      assertEquals("INVALID_ARGUMENT", unrecognizedResponse.get().getError().getCode());
+      Mockito.verifyNoInteractions(holdService);
+    }
   }
 
   private static GetDraftDesignDigestRequest fullDigestRequest(String tenantId, String versionId) {

@@ -1,6 +1,6 @@
 # Canonical fresh/image/restart smoke profile. This deliberately overrides the
-# ordinary local Compose profile. Account, Game Session, Entity Management, and
-# Social Groups receive distinct dev-namespace SPIFFE leaves; the other seven
+# ordinary local Compose profile. Account, Game Session, Entity Management,
+# Social Groups, and World Management receive distinct dev-namespace SPIFFE leaves; the other six
 # local apps share the generic client leaf. Each app gets only its scoped
 # read-only leaf mount and the public CA certificate under /app/certs. The CA
 # private key stays host-only and is never mounted into an app.
@@ -79,5 +79,6 @@ services:
   world-management-service:
     environment:
       <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/world-management-service:/app/certs:ro
