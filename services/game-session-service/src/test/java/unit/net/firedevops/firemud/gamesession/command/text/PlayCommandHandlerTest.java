@@ -5,7 +5,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -2746,6 +2748,92 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playAuthorityFreshnessUsesInjectedClockAtExactInclusiveBoundaries() {
+    Instant authorityNow = Instant.parse("2030-05-06T07:08:09Z");
+    handler = handlerWithClock(Clock.fixed(authorityNow, ZoneOffset.UTC));
+    List<String> evaluatedAtValues =
+        List.of(
+            authorityNow.toString(),
+            authorityNow.minusSeconds(15).toString(),
+            authorityNow.minusSeconds(15).minusNanos(1).toString(),
+            authorityNow.plusNanos(1).toString());
+    SessionContext unboundContext =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(unboundContext));
+
+    for (int index = 0; index < evaluatedAtValues.size(); index++) {
+      String evaluatedAt = evaluatedAtValues.get(index);
+      Mockito.doReturn(missingMembershipAt(evaluatedAt))
+          .when(accountClient)
+          .getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+      Mockito.doReturn(publicEntitlement(true, authorityNow.toString()))
+          .when(accountClient)
+          .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+
+      PlayCommandHandlingResult result =
+          handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+      assertThat(result.commandResult().errorCode())
+          .isEqualTo(
+              index < 2
+                  ? GameplayStageCommandConstants.JOIN_REQUIRED_CODE
+                  : GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    }
+
+    for (int index = 0; index < evaluatedAtValues.size(); index++) {
+      String evaluatedAt = evaluatedAtValues.get(index);
+      Mockito.doReturn(missingMembershipAt(authorityNow.toString()))
+          .when(accountClient)
+          .getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+      Mockito.doReturn(publicEntitlement(true, evaluatedAt))
+          .when(accountClient)
+          .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+
+      PlayCommandHandlingResult result =
+          handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+      assertThat(result.commandResult().errorCode())
+          .isEqualTo(
+              index < 2
+                  ? GameplayStageCommandConstants.JOIN_REQUIRED_CODE
+                  : GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE);
+    }
+
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(previewRealmContext()));
+    Mockito.doReturn(publicEntitlement(true, authorityNow.toString()))
+        .when(accountClient)
+        .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+    for (int index = 0; index < evaluatedAtValues.size(); index++) {
+      String evaluatedAt = evaluatedAtValues.get(index);
+      Mockito.doReturn(activeMembershipAt(authorityNow.toString()))
+          .when(accountClient)
+          .getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+      Mockito.doReturn(validGrant().toBuilder().setEvaluatedAt(evaluatedAt).build())
+          .when(accountClient)
+          .getRealmAccessGrantForRuntime(
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString());
+
+      PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+      if (index < 2) {
+        assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+      } else {
+        assertThat(result.commandResult().errorCode())
+            .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+      }
+    }
+  }
+
+  @Test
   void playWhenMembershipAuthorityTimestampIsMalformedFailsClosed() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
@@ -3102,6 +3190,50 @@ class PlayCommandHandlerTest {
     return Instant.now().toString();
   }
 
+  private PlayCommandHandler handlerWithClock(Clock clock) {
+    return new PlayCommandHandler(
+        sessionAuthenticationService,
+        sessionContextService,
+        sessionRoutingNormalizationService,
+        worldCatalog,
+        gameLogicProperties,
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        firstPartyConnectContextRegistry,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher,
+        meterRegistry,
+        connectScopeSessionStore,
+        clock);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse missingMembershipAt(String evaluatedAt) {
+    return GetTenantMembershipForRuntimeResponse.newBuilder()
+        .setAccountId("123")
+        .setTenantId("22")
+        .setMembershipExists(false)
+        .setGameplayAdmissionAllowed(false)
+        .setMembershipLifecycleState("MISSING")
+        .setMembershipVersion(0L)
+        .setMembershipAuthorityGeneration(0L)
+        .setEvaluatedAt(evaluatedAt)
+        .build();
+  }
+
+  private static GetTenantMembershipForRuntimeResponse activeMembershipAt(String evaluatedAt) {
+    return GetTenantMembershipForRuntimeResponse.newBuilder()
+        .setAccountId("123")
+        .setTenantId("22")
+        .setMembershipExists(true)
+        .setGameplayAdmissionAllowed(true)
+        .setMembershipLifecycleState("ACTIVE")
+        .setMembershipVersion(1L)
+        .setMembershipAuthorityGeneration(1L)
+        .setEvaluatedAt(evaluatedAt)
+        .build();
+  }
+
   private static GetRealmAccessGrantForRuntimeResponse validGrant() {
     return validGrant("123", "22", "sandbox", "preview");
   }
@@ -3129,6 +3261,11 @@ class PlayCommandHandlerTest {
         .setTenantBillingSequence(1L)
         .setEvaluatedAt(evaluatedAtNow())
         .build();
+  }
+
+  private static GetTenantEntitlementsForRuntimeResponse publicEntitlement(
+      boolean allowPublicJoin, String evaluatedAt) {
+    return publicEntitlement(allowPublicJoin).toBuilder().setEvaluatedAt(evaluatedAt).build();
   }
 
   private void markPreviewRealmInvisible() {

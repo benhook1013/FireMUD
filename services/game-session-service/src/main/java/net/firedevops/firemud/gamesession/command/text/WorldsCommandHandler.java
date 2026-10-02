@@ -546,6 +546,8 @@ public class WorldsCommandHandler {
       catalogSnapshot = worldCatalog.readDiscoverySnapshot();
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
@@ -562,6 +564,8 @@ public class WorldsCommandHandler {
       currentRealmCatalog = worldCatalog.readRealmDiscoverySnapshot(world);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeRealmSnapshot;
     try {
@@ -609,6 +613,8 @@ public class WorldsCommandHandler {
       hasPublicProductionRealm = worldCatalog.hasValidPublicProductionRealm(tenantId);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     if (!hasPublicProductionRealm) {
       return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");

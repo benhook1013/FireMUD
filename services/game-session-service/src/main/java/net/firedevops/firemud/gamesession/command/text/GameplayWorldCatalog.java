@@ -548,7 +548,8 @@ public final class GameplayWorldCatalog {
     }
     if (authorityPointerSupplier != null) {
       return cardinality(
-          publicProductionCountsFromPointers(loadAuthorityPointers()).getOrDefault(tenantId, 0L));
+          publicProductionCountsFromPointers(validateAuthoritySnapshot(readAuthorityPointers()))
+              .getOrDefault(tenantId, 0L));
     }
     return cardinality(readCatalogState().publicProductionCounts().getOrDefault(tenantId, 0L));
   }
@@ -733,20 +734,26 @@ public final class GameplayWorldCatalog {
       return false;
     }
     if (tenantAuthorityPointerSupplier != null) {
-      List<GameplayAdmissionPointerSnapshot> pointers =
-          loadAuthorityPointersForTenant(expectedRealm.tenantId());
-      if (!tenantHasValidPublicProductionAuthority(pointers, expectedRealm.tenantId())) {
+      try {
+        List<GameplayAdmissionPointerSnapshot> pointers =
+            loadAuthorityPointersForTenant(expectedRealm.tenantId());
+        if (!tenantHasValidPublicProductionAuthority(pointers, expectedRealm.tenantId())) {
+          return false;
+        }
+        List<GameplayAdmissionPointerSnapshot> selected =
+            pointers.stream()
+                .filter(pointer -> matchesExpectedTarget(expectedWorld, expectedRealm, pointer))
+                .toList();
+        if (selected.size() != 1) {
+          return false;
+        }
+        requireCollisionSafeVisiblePointer(pointers, selected.getFirst());
+        return true;
+      } catch (AuthorityPointerReadUnavailableException ex) {
+        throw ex;
+      } catch (AuthorityPointerUnavailableException ex) {
         return false;
       }
-      List<GameplayAdmissionPointerSnapshot> selected =
-          pointers.stream()
-              .filter(pointer -> matchesExpectedTarget(expectedWorld, expectedRealm, pointer))
-              .toList();
-      if (selected.size() != 1) {
-        return false;
-      }
-      requireCollisionSafeVisiblePointer(pointers, selected.getFirst());
-      return true;
     }
     if (authorityPointerSupplier != null) {
       List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
@@ -838,6 +845,8 @@ public final class GameplayWorldCatalog {
     try {
       pointers = tenantAuthorityPointerSupplier.apply(tenantId);
     } catch (AuthorityPointerReadUnavailableException ex) {
+      throw ex;
+    } catch (AuthorityPointerUnavailableException ex) {
       throw ex;
     } catch (RuntimeException ex) {
       throw new AuthorityPointerReadUnavailableException(
@@ -990,6 +999,8 @@ public final class GameplayWorldCatalog {
       }
       return pointers;
     } catch (AuthorityPointerReadUnavailableException ex) {
+      throw ex;
+    } catch (AuthorityPointerUnavailableException ex) {
       throw ex;
     } catch (RuntimeException ex) {
       throw new AuthorityPointerReadUnavailableException(
@@ -1203,6 +1214,10 @@ public final class GameplayWorldCatalog {
       GameplayAdmissionPointerAuthorityService authorityService) {
     Objects.requireNonNull(authorityService, "authorityService must not be null");
     List<GameplayAdmissionPointerSnapshot> pointers = authorityService.listPointers();
+    if (pointers == null) {
+      throw new AuthorityPointerReadUnavailableException(
+          "Authoritative gameplay pointer list is unavailable");
+    }
     return validateAuthoritySnapshot(pointers);
   }
 

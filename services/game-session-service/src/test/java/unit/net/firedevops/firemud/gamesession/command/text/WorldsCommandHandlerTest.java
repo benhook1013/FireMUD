@@ -2045,6 +2045,15 @@ class WorldsCommandHandlerTest {
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
         .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("AUTH_UNAVAILABLE"));
     Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+
+    Mockito.doReturn(List.of(authorityPointer("demo", "production", 0L, 1L, true)))
+        .when(authorityService)
+        .listPointers();
+    Mockito.clearInvocations(accountClient, entityManagementClient);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isEqualTo(
+            WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
   private WorldsCommandHandler authenticatedHandler(
