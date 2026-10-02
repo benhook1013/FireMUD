@@ -196,6 +196,15 @@ snapshot_runtime_projection() {
   local root="$1"
   local file
   while IFS= read -r -d '' file; do
+    printf '%s ' "$(stat -c '%a %h' "$file")"
+    sha256sum -- "$file"
+  done < <(find "$root" -type f -print0 | sort -z)
+}
+
+snapshot_certificate_tree() {
+  local root="$1"
+  local file
+  while IFS= read -r -d '' file; do
     printf '%s ' "$(stat -c '%a' "$file")"
     sha256sum -- "$file"
   done < <(find "$root" -type f -print0 | sort -z)
@@ -227,6 +236,137 @@ cmp -s "$hardlink_before" "$hardlink_after" || {
   exit 1
 }
 assert_mode 640 "$hardlink_sentinel"
+
+# Ensure preflights every managed source before the generic CA-key chmod or a
+# missing workload-pair regeneration can alter either side of a hard link.
+source_hardlink_case="$CERT_DIR/hardlink-source-case"
+copy_generic_bundle "$CERT_DIR" "$source_hardlink_case"
+bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$source_hardlink_case"
+source_hardlink_key="$source_hardlink_case/workloads/game-session-service.key"
+source_hardlink_certificate="$source_hardlink_case/workloads/game-session-service.crt"
+source_hardlink_sentinel="$source_hardlink_case/source-key-alias-sentinel"
+source_hardlink_output="$CERT_DIR/hardlink-source-output"
+printf 'external source-key sentinel\n' >"$source_hardlink_sentinel"
+chmod 640 "$source_hardlink_sentinel"
+rm -- "$source_hardlink_key" "$source_hardlink_certificate"
+ln -- "$source_hardlink_sentinel" "$source_hardlink_key"
+chmod 644 "$source_hardlink_case/ca.key"
+source_hardlink_before="$(snapshot_certificate_tree "$source_hardlink_case")"
+if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$source_hardlink_case" \
+  >"$source_hardlink_output" 2>&1; then
+  echo "ensure-dev-certs accepted a hard-linked workload source key." >&2
+  exit 1
+fi
+rg -Fq "refusing hard-linked workload private-key output: $source_hardlink_key" \
+  "$source_hardlink_output"
+[[ "$source_hardlink_before" == "$(snapshot_certificate_tree "$source_hardlink_case")" \
+  && "$(<"$source_hardlink_sentinel")" == 'external source-key sentinel' ]] || {
+  echo "ensure-dev-certs partially changed a hard-linked workload source or another managed file." >&2
+  exit 1
+}
+assert_mode 640 "$source_hardlink_sentinel"
+assert_mode 644 "$source_hardlink_case/ca.key"
+
+# The standalone generic generator must reject a hard-linked output before an
+# incomplete bundle can rotate or overwrite any of its remaining material.
+generator_hardlink_case="$CERT_DIR/generator-hardlink-case"
+copy_generic_bundle "$CERT_DIR" "$generator_hardlink_case"
+generator_hardlink_key="$generator_hardlink_case/server.key"
+generator_hardlink_sentinel="$generator_hardlink_case/server-key-alias-sentinel"
+generator_hardlink_output="$CERT_DIR/generator-hardlink-output"
+cp -- "$generator_hardlink_key" "$generator_hardlink_sentinel"
+chmod 640 "$generator_hardlink_sentinel"
+rm -- "$generator_hardlink_key" "$generator_hardlink_case/dev-key.pem"
+ln -- "$generator_hardlink_sentinel" "$generator_hardlink_key"
+generator_hardlink_before="$(snapshot_certificate_tree "$generator_hardlink_case")"
+if bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" "$generator_hardlink_case" \
+  >"$generator_hardlink_output" 2>&1; then
+  echo "generate-dev-certs accepted a hard-linked managed certificate output." >&2
+  exit 1
+fi
+rg -Fq "refusing hard-linked certificate material: $generator_hardlink_key" \
+  "$generator_hardlink_output"
+[[ "$generator_hardlink_before" == "$(snapshot_certificate_tree "$generator_hardlink_case")" ]] || {
+  echo "generate-dev-certs partially changed an incomplete hard-linked bundle." >&2
+  exit 1
+}
+assert_mode 640 "$generator_hardlink_sentinel"
+
+# The standalone workload signer preflights both read-only CA inputs and its
+# certificate/key outputs before it creates either output.
+workload_source_case="$CERT_DIR/generator-workload-source-case"
+mkdir -p "$workload_source_case/output"
+cp -- "$CERT_DIR/ca.crt" "$workload_source_case/ca.crt"
+cp -- "$CERT_DIR/ca.key" "$workload_source_case/ca-key-sentinel"
+chmod 640 "$workload_source_case/ca-key-sentinel"
+ln -- "$workload_source_case/ca-key-sentinel" "$workload_source_case/ca.key"
+workload_source_before="$(snapshot_certificate_tree "$workload_source_case")"
+workload_source_output="$CERT_DIR/generator-workload-source-output"
+if bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$workload_source_case/ca.crt" "$workload_source_case/ca.key" \
+  "$workload_source_case/output/client.crt" "$workload_source_case/output/client.key" \
+  local account-service >"$workload_source_output" 2>&1; then
+  echo "generate-dev-certs accepted a hard-linked workload CA source." >&2
+  exit 1
+fi
+rg -Fq "refusing hard-linked certificate authority source: $workload_source_case/ca.key" \
+  "$workload_source_output"
+[[ "$workload_source_before" == "$(snapshot_certificate_tree "$workload_source_case")" \
+  && ! -e "$workload_source_case/output/client.crt" \
+  && ! -e "$workload_source_case/output/client.key" ]] || {
+  echo "generate-dev-certs partially changed output after rejecting a hard-linked CA source." >&2
+  exit 1
+}
+assert_mode 640 "$workload_source_case/ca-key-sentinel"
+
+workload_output_case="$CERT_DIR/generator-workload-output-case"
+mkdir -p "$workload_output_case/ca" "$workload_output_case/output"
+cp -- "$CERT_DIR/ca.crt" "$workload_output_case/ca/ca.crt"
+cp -- "$CERT_DIR/ca.key" "$workload_output_case/ca/ca.key"
+workload_output_sentinel="$workload_output_case/output/key-alias-sentinel"
+workload_output_key="$workload_output_case/output/client.key"
+printf 'external workload-output sentinel\n' >"$workload_output_sentinel"
+chmod 640 "$workload_output_sentinel"
+ln -- "$workload_output_sentinel" "$workload_output_key"
+workload_output_before="$(snapshot_certificate_tree "$workload_output_case")"
+workload_output_output="$CERT_DIR/generator-workload-output-output"
+if bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$workload_output_case/ca/ca.crt" "$workload_output_case/ca/ca.key" \
+  "$workload_output_case/output/client.crt" "$workload_output_key" \
+  local account-service >"$workload_output_output" 2>&1; then
+  echo "generate-dev-certs accepted a hard-linked workload private-key output." >&2
+  exit 1
+fi
+rg -Fq "refusing hard-linked workload private-key output: $workload_output_key" \
+  "$workload_output_output"
+[[ "$workload_output_before" == "$(snapshot_certificate_tree "$workload_output_case")" \
+  && ! -e "$workload_output_case/output/client.crt" \
+  && "$(<"$workload_output_sentinel")" == 'external workload-output sentinel' ]] || {
+  echo "generate-dev-certs partially changed a hard-linked workload output." >&2
+  exit 1
+}
+assert_mode 640 "$workload_output_sentinel"
+
+# Present managed paths must be regular files, not directories or other
+# special entries that a later generator would partially replace.
+invalid_kind_case="$CERT_DIR/non-regular-source-case"
+copy_generic_bundle "$CERT_DIR" "$invalid_kind_case"
+rm -- "$invalid_kind_case/ca.crt"
+mkdir -- "$invalid_kind_case/ca.crt"
+invalid_kind_before="$(snapshot_certificate_tree "$invalid_kind_case")"
+invalid_kind_output="$CERT_DIR/non-regular-source-output"
+if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$invalid_kind_case" \
+  >"$invalid_kind_output" 2>&1; then
+  echo "ensure-dev-certs accepted a non-regular managed certificate path." >&2
+  exit 1
+fi
+rg -Fq "refusing non-regular certificate material: $invalid_kind_case/ca.crt" \
+  "$invalid_kind_output"
+[[ "$invalid_kind_before" == "$(snapshot_certificate_tree "$invalid_kind_case")" \
+  && -d "$invalid_kind_case/ca.crt" ]] || {
+  echo "ensure-dev-certs partially changed an invalid managed source path." >&2
+  exit 1
+}
 
 # Unmanaged regular files under workloads/ retain their own bytes and modes;
 # only the three named local Compose identities are normalized by ensure.
@@ -518,5 +658,46 @@ cleanup_output="$(bash "$ROOT_DIR/dev-tools/certs/clean-dev-certs.sh" "$symlink_
   printf '%s\n' "$cleanup_output" >&2
   exit 1
 }
+
+ancestor_symlink_case="$CERT_DIR/ancestor-symlink-case"
+ancestor_real_parent="$ancestor_symlink_case/real-parent"
+ancestor_real_cert_dir="$ancestor_real_parent/cert-dir"
+ancestor_alias="$ancestor_symlink_case/alias"
+ancestor_alias_cert_dir="$ancestor_alias/cert-dir"
+mkdir -p "$ancestor_real_cert_dir"
+printf 'protected generated-name sentinel\n' >"$ancestor_real_cert_dir/ca.key"
+chmod 640 "$ancestor_real_cert_dir/ca.key"
+printf 'protected workload sentinel\n' >"$ancestor_real_cert_dir/workloads.key"
+chmod 644 "$ancestor_real_cert_dir/workloads.key"
+ln -s "$ancestor_real_parent" "$ancestor_alias"
+if cleanup_output="$(bash "$ROOT_DIR/dev-tools/certs/clean-dev-certs.sh" "$ancestor_alias_cert_dir" 2>&1)"; then
+  echo "certificate cleanup accepted a certificate directory beneath a symlinked ancestor" >&2
+  exit 1
+fi
+[[ "$cleanup_output" == *"Refusing symlinked certificate directory; preserving it: $ancestor_alias_cert_dir"* \
+  && "$(<"$ancestor_real_cert_dir/ca.key")" == 'protected generated-name sentinel' \
+  && "$(<"$ancestor_real_cert_dir/workloads.key")" == 'protected workload sentinel' ]] || {
+  echo "certificate cleanup followed an ancestor symlink or changed protected entries" >&2
+  printf '%s\n' "$cleanup_output" >&2
+  exit 1
+}
+assert_mode 640 "$ancestor_real_cert_dir/ca.key"
+assert_mode 644 "$ancestor_real_cert_dir/workloads.key"
+
+direct_symlink_alias="$ancestor_symlink_case/direct-alias"
+ln -s "$ancestor_real_cert_dir" "$direct_symlink_alias"
+if cleanup_output="$(bash "$ROOT_DIR/dev-tools/certs/clean-dev-certs.sh" "$direct_symlink_alias/" 2>&1)"; then
+  echo "certificate cleanup accepted a symlink directory with a trailing slash" >&2
+  exit 1
+fi
+[[ "$cleanup_output" == *"Refusing symlinked certificate directory; preserving it: $direct_symlink_alias/"* \
+  && "$(<"$ancestor_real_cert_dir/ca.key")" == 'protected generated-name sentinel' \
+  && "$(<"$ancestor_real_cert_dir/workloads.key")" == 'protected workload sentinel' ]] || {
+  echo "certificate cleanup followed a trailing-slash symlink or changed protected entries" >&2
+  printf '%s\n' "$cleanup_output" >&2
+  exit 1
+}
+assert_mode 640 "$ancestor_real_cert_dir/ca.key"
+assert_mode 644 "$ancestor_real_cert_dir/workloads.key"
 
 echo "Local Compose workload identity contract passed."

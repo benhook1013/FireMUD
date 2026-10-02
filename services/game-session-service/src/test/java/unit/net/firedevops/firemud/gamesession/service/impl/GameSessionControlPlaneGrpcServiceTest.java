@@ -9171,6 +9171,55 @@ class GameSessionControlPlaneGrpcServiceTest {
     }
   }
 
+  @Test
+  void getPreparedVersionUpgradeMapsRecognizedPersistenceAvailabilityFailures() {
+    List<RuntimeException> unavailableFailures =
+        List.of(
+            new org.jooq.exception.DataAccessException(
+                "prepared proof database unavailable",
+                new java.sql.SQLException("connection lost", "08006")),
+            new RuntimeException(
+                "wrapped prepared proof timeout",
+                new org.springframework.dao.QueryTimeoutException("query timed out")));
+
+    for (RuntimeException failure : unavailableFailures) {
+      AdmissionReadProofFixture fixture = admissionReadProofFixture();
+      Mockito.when(fixture.preparationService().getPreparedVersionUpgrade(1L, "pvu-1"))
+          .thenThrow(failure);
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
+
+      assertEquals(
+          "AUTHORITY_UNAVAILABLE",
+          invokeAdmissionReadProof(
+              fixture.service(), AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"));
+    }
+  }
+
+  @Test
+  void getPreparedVersionUpgradeKeepsUnexpectedPersistenceFailuresInternal() {
+    List<RuntimeException> unexpectedFailures =
+        List.of(
+            new IllegalStateException("prepared proof mapper failed"),
+            new org.jooq.exception.DataAccessException(
+                "prepared proof integrity failure",
+                new java.sql.SQLException("unique violation", "23505")),
+            new org.jooq.exception.DataAccessException(
+                "prepared proof query failure",
+                new java.sql.SQLException("malformed query", "42601")));
+
+    for (RuntimeException failure : unexpectedFailures) {
+      AdmissionReadProofFixture fixture = admissionReadProofFixture();
+      Mockito.when(fixture.preparationService().getPreparedVersionUpgrade(1L, "pvu-1"))
+          .thenThrow(failure);
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
+
+      assertEquals(
+          "INTERNAL",
+          invokeAdmissionReadProof(
+              fixture.service(), AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"));
+    }
+  }
+
   private static GameSessionControlPlaneGrpcService newService(GameInstanceRepository repository) {
     return newService(repository, new SimpleMeterRegistry());
   }
