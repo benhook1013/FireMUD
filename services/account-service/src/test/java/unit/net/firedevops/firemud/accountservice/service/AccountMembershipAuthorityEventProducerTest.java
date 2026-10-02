@@ -8,8 +8,10 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
+import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
@@ -49,6 +51,8 @@ class AccountMembershipAuthorityEventProducerTest {
             freshAssociationRepository,
             generationRepository,
             outboxRepository,
+            mock(AccountPasswordResetOperationRepository.class),
+            mock(AccountLogoutAllOperationRepository.class),
             receiptRepository,
             membershipRepository,
             rolesRepository);
@@ -94,6 +98,8 @@ class AccountMembershipAuthorityEventProducerTest {
             freshAssociationRepository,
             mock(AccountAuthorityGenerationRepository.class),
             mock(AccountAuthorityOutboxRepository.class),
+            mock(AccountPasswordResetOperationRepository.class),
+            mock(AccountLogoutAllOperationRepository.class),
             mock(AccountMembershipTransitionReceiptRepository.class),
             mock(AccountTenantMembershipRepository.class),
             mock(AccountTenantMembershipRoleSnapshotRepository.class));
@@ -125,6 +131,8 @@ class AccountMembershipAuthorityEventProducerTest {
             freshAssociationRepository,
             mock(AccountAuthorityGenerationRepository.class),
             mock(AccountAuthorityOutboxRepository.class),
+            mock(AccountPasswordResetOperationRepository.class),
+            mock(AccountLogoutAllOperationRepository.class),
             mock(AccountMembershipTransitionReceiptRepository.class),
             mock(AccountTenantMembershipRepository.class),
             mock(AccountTenantMembershipRoleSnapshotRepository.class));
@@ -170,6 +178,8 @@ class AccountMembershipAuthorityEventProducerTest {
             freshAssociationRepository,
             authorityGenerationRepository,
             authorityOutboxRepository,
+            mock(AccountPasswordResetOperationRepository.class),
+            mock(AccountLogoutAllOperationRepository.class),
             transitionReceiptRepository,
             membershipRepository,
             roleSnapshotRepository);

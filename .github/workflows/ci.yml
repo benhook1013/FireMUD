@@ -1297,6 +1297,24 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#directDeletionOfIssuanceOperationOrResponseEnvelopeIsRejected()' \
             account-service
 
+      - name: Verify Account current recipient source composition PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#postJoinSnapshotCarriesCurrentCompositeSourcesWithoutRewritingMembershipEvent()' \
+            account-service
+
+      - name: Upload Account current recipient source composition PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: account-current-recipient-source-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: 🔎 Verify Account authority exhaustion rollback proof
         if: ${{ matrix.module == 'account-service' }}
         run: |

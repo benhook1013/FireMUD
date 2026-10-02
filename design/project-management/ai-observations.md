@@ -243,3 +243,12 @@ Entry format:
 - `2026-10-02`: Verify negative preservation scope as well as transferred split paths
   - Context: while mechanically transferring the Redis projection from #2933 to its existing child, a helper patch briefly deleted the parent-owned PostgreSQL/socket-mTLS test outside the transfer allowlist. The helper reported the scope error and immediately restored that file byte-for-byte from the pinned commit with a patch; the resulting working diff leaves it unchanged.
   - Expected pattern: explicitly check every parent-owned retained blob and the complete cumulative child tree, not just the moved path count. A reviewed transfer map does not make a generated deletion list safe by itself. Keep published history intact and verify no-loss before publication.
+
+- `2026-10-02`: Distinguish structural collaboration exhaustion from model capacity
+  - Context: dispatching the Account current-recipient helper failed with `agent thread limit reached` while two useful bounded workers and one CI sentinel were active. This was a structural slot error, not evidence that Luna was unavailable.
+  - Outcome: following the slot-recovery skill, the orchestrator closed out a completed split helper with a return-only continuation, checked agent state and retried the same fresh Luna xhigh assignment once. It succeeded without interrupting useful work or changing model/tier. The harness's precise reclamation timing remains unknown; the retry success does not prove that the close-out message alone released the slot.
+  - Expected pattern: preserve active work, distinguish the exact failure class and use a bounded structural recovery attempt. Do not substitute models or relabel a reused helper as a fresh independent review.
+
+- `2026-10-02`: Isolate delegated command text from prose punctuation
+  - Context: two focused Account/Game Session helper invocations treated a trailing prose period as a Gradle task named `.` and failed before the intended tasks ran. Corrected invocations without that argument succeeded; the failed invocations supplied no test proof.
+  - Expected pattern: put exact allowed commands on standalone fenced or explicitly delimited lines, with no sentence punctuation attached. Read back the actual invocation and task outcome before attributing validation; an intended command is not an executed gate.

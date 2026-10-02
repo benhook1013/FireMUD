@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.UnknownFieldSet;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.time.Instant;
@@ -19,7 +20,13 @@ import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.RuntimeOutboxCheckpoint;
+import net.firedevops.firemud.account.v1.RuntimeOutboxSourceEvidence;
+import net.firedevops.firemud.common.account.authority.AccountLogoutAllAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.PasswordResetAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.TenantGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
@@ -58,6 +65,8 @@ class PlayCommandHandlerTest {
   private static final String PLAYER_ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
   private static final String CANONICAL_TENANT_UUID = "7c958a3d-401e-47ee-8df8-351988b6ce26";
   private static final String FIXTURE_LEGACY_TENANT_UUID = "00000000-0000-0000-0000-000000000022";
+  private static final String ACCOUNT_AUTHORITY_STREAM_PREFIX = "account:auth-authority:v1:";
+  private static final String ACCOUNT_AUTHORITY_ISSUER = "firemud-account-service";
   private static final ObjectMapper JSON = new ObjectMapper();
   private final SessionAuthenticationService sessionAuthenticationService =
       Mockito.mock(SessionAuthenticationService.class);
@@ -2007,6 +2016,98 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playLeftMembershipWithHigherCurrentFenceStillRequiresJoin() {
+    SessionContext context = unboundContext();
+    var earlierMembership =
+        freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.left(
+                PLAYER_ACCOUNT_ID, 22L, List.of("designer", "player")));
+    String earlierCanonicalEvent =
+        earlierMembership.getOutboxSourceEvidence(0).getCanonicalEventJson();
+    var earlierEvent = MembershipAuthorityEventV1Codec.verify(earlierCanonicalEvent);
+    var currentMembership = earlierMembership.toBuilder().setIssuanceFence("3").build();
+    assertThat(currentMembership.getIssuanceFence()).isEqualTo("3");
+    assertThat(currentMembership.getOutboxSourceEvidence(0).getCanonicalEventJson())
+        .isEqualTo(earlierCanonicalEvent);
+    assertThat(earlierEvent.issuanceFence()).isEqualTo("2");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(currentMembership, invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.join-required");
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        moderationPolicyClient,
+        scriptEventPublisher);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"logout-all", "password-reset"})
+  void playAcceptsCurrentRecipientCarrierAfterAuthorityAdvances(String accountCutoffType) {
+    SessionContext context = unboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    var currentCarrier = currentMembershipCarrierAfterAuthorityAdvances(accountCutoffType);
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(currentCarrier, invocation.getArgument(0)));
+
+    // This mocked Account boundary proves local content acceptance, not an authenticated runtime
+    // RPC.
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22", PLAYER_ACCOUNT_ID, "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    Mockito.verify(sessionContextService).save(Mockito.any(SessionContext.class));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "changed", "scope", "ahead", "unknown-field"})
+  void playRejectsMalformedCurrentRecipientEvidenceBeforeGameplayMutation(String defect) {
+    SessionContext context = unboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    var currentCarrier =
+        currentMembershipCarrierEvidenceWithDefect(
+            currentMembershipCarrierAfterAuthorityAdvances("logout-all"), defect);
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(currentCarrier, invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
+  @Test
   void playBoundLeftMembershipRequiresJoinAndClearsBindingForPublicProduction() {
     SessionContext context =
         new SessionContext(
@@ -3094,6 +3195,294 @@ class PlayCommandHandlerTest {
         .orElse(null);
   }
 
+  private static GetTenantMembershipForRuntimeResponse
+      currentMembershipCarrierAfterAuthorityAdvances(String accountCutoffType) {
+    var earlierMembership =
+        freshMembership(
+            net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
+                PLAYER_ACCOUNT_ID, 22L, "1"));
+    String accountStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "account/" + PLAYER_ACCOUNT_ID;
+    String issuerStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "issuer/" + ACCOUNT_AUTHORITY_ISSUER;
+    String membershipStream =
+        ACCOUNT_AUTHORITY_STREAM_PREFIX
+            + "membership/"
+            + PLAYER_ACCOUNT_ID
+            + "/"
+            + CANONICAL_TENANT_UUID;
+    String tenantStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "tenant/" + CANONICAL_TENANT_UUID;
+
+    var issuerEvent =
+        IssuerGenerationAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry("schemaVersion", IssuerGenerationAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", IssuerGenerationAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry("eventId", "unit-test-issuer-advance"),
+                Map.entry("requestId", "unit-test-issuer-advance"),
+                Map.entry("issuerId", ACCOUNT_AUTHORITY_ISSUER),
+                Map.entry("sourceScope", "issuer/" + ACCOUNT_AUTHORITY_ISSUER),
+                Map.entry("outboxStreamKey", issuerStream),
+                Map.entry("outboxSequence", "1"),
+                Map.entry("issuerAuthGeneration", "2"),
+                Map.entry("sourceVersion", "2")));
+    var accountEvidence = currentAccountCutoffEvidence(accountCutoffType, accountStream);
+    var tenantEvent =
+        TenantGenerationAuthorityEventV1Codec.seal(
+            Map.ofEntries(
+                Map.entry("schemaVersion", TenantGenerationAuthorityEventV1Codec.SCHEMA_VERSION),
+                Map.entry("eventType", TenantGenerationAuthorityEventV1Codec.EVENT_TYPE),
+                Map.entry(
+                    "eventId",
+                    "account-tenant-generation-event-v1:ac6c2c28-72a1-45a2-a8db-a8e92f932a50"),
+                Map.entry("requestId", "ac6c2c28-72a1-45a2-a8db-a8e92f932a50"),
+                Map.entry("tenantId", CANONICAL_TENANT_UUID),
+                Map.entry("sourceScope", "tenant/" + CANONICAL_TENANT_UUID),
+                Map.entry("outboxStreamKey", tenantStream),
+                Map.entry("outboxSequence", "1"),
+                Map.entry("tenantAuthorityGeneration", "2"),
+                Map.entry("sourceVersion", "2")));
+    var membershipEvidence =
+        authoritySource(
+            earlierMembership,
+            ACCOUNT_AUTHORITY_STREAM_PREFIX
+                + "membership/"
+                + PLAYER_ACCOUNT_ID
+                + "/"
+                + CANONICAL_TENANT_UUID);
+
+    var currentTuple =
+        earlierMembership.getAuthorityTuple().toBuilder()
+            .setIssuerAuthGeneration("2")
+            .setAccountAuthorityGeneration("2")
+            .putTenantAuthorityGeneration(CANONICAL_TENANT_UUID, "2")
+            .setAccountSecurityCutoff(
+                net.firedevops.firemud.account.v1.RuntimeAccountSecurityCutoff.newBuilder()
+                    .setAccountAuthorityGeneration("2")
+                    .setOutboxStreamKey(accountStream)
+                    .setOutboxSequence("1"))
+            .build();
+    return earlierMembership.toBuilder()
+        .setIssuanceFence("2")
+        .setAuthorityTuple(currentTuple)
+        .clearOutboxCheckpoints()
+        .addAllOutboxCheckpoints(
+            List.of(
+                authorityCheckpoint(accountStream, "1"),
+                authorityCheckpoint(issuerStream, "1"),
+                authorityCheckpoint(membershipStream, membershipEvidence.getOutboxSequence()),
+                authorityCheckpoint(tenantStream, "1")))
+        .clearOutboxSourceEvidence()
+        .addAllOutboxSourceEvidence(
+            List.of(
+                accountEvidence,
+                authoritySource(issuerEvent),
+                membershipEvidence,
+                authoritySource(tenantEvent)))
+        .build();
+  }
+
+  private static RuntimeOutboxSourceEvidence currentAccountCutoffEvidence(
+      String accountCutoffType, String accountStream) {
+    String requestId = "b5a70a16-15df-4bfa-9568-7f28ce0fd7f6";
+    String sourceScope = "account/" + PLAYER_ACCOUNT_ID;
+    Map<String, Object> preimage =
+        Map.ofEntries(
+            Map.entry(
+                "schemaVersion",
+                "logout-all".equals(accountCutoffType)
+                    ? AccountLogoutAllAuthorityEventV1Codec.SCHEMA_VERSION
+                    : PasswordResetAuthorityEventV1Codec.SCHEMA_VERSION),
+            Map.entry(
+                "eventType",
+                "logout-all".equals(accountCutoffType)
+                    ? AccountLogoutAllAuthorityEventV1Codec.EVENT_TYPE
+                    : PasswordResetAuthorityEventV1Codec.EVENT_TYPE),
+            Map.entry(
+                "eventId",
+                "logout-all".equals(accountCutoffType)
+                    ? "account-logout-all-event-v1:" + requestId
+                    : "account-password-reset-event-v1:" + requestId),
+            Map.entry("requestId", requestId),
+            Map.entry("accountId", PLAYER_ACCOUNT_ID),
+            Map.entry("sourceScope", sourceScope),
+            Map.entry("outboxStreamKey", accountStream),
+            Map.entry("outboxSequence", "1"),
+            Map.entry("accountAuthorityGeneration", "2"),
+            Map.entry("sourceVersion", "2"),
+            Map.entry(
+                "accountSecurityCutoff",
+                Map.of(
+                    "accountAuthorityGeneration", "2",
+                    "outboxStreamKey", accountStream,
+                    "outboxSequence", "1")));
+    return "logout-all".equals(accountCutoffType)
+        ? authoritySource(AccountLogoutAllAuthorityEventV1Codec.seal(preimage))
+        : authoritySource(PasswordResetAuthorityEventV1Codec.seal(preimage));
+  }
+
+  private static GetTenantMembershipForRuntimeResponse currentMembershipCarrierEvidenceWithDefect(
+      GetTenantMembershipForRuntimeResponse response, String defect) {
+    String accountStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "account/" + PLAYER_ACCOUNT_ID;
+    String membershipStream =
+        ACCOUNT_AUTHORITY_STREAM_PREFIX
+            + "membership/"
+            + PLAYER_ACCOUNT_ID
+            + "/"
+            + CANONICAL_TENANT_UUID;
+    var source = authoritySource(response, accountStream);
+    return switch (defect) {
+      case "missing" -> replaceAuthoritySource(response, accountStream, null);
+      case "changed" ->
+          replaceAuthoritySource(
+              response,
+              accountStream,
+              source.toBuilder()
+                  .setCanonicalEventJson(
+                      changeCanonicalEventWithoutResealing(source.getCanonicalEventJson()))
+                  .build());
+      case "scope" ->
+          replaceAuthoritySource(
+              response,
+              accountStream,
+              source.toBuilder()
+                  .setOutboxStreamKey(
+                      ACCOUNT_AUTHORITY_STREAM_PREFIX
+                          + "account/00000000-0000-4000-8000-000000000099")
+                  .build());
+      case "ahead" -> {
+        var membershipSource = authoritySource(response, membershipStream);
+        yield replaceMembershipCanonicalEvent(
+            response,
+            membershipSource,
+            resealMembershipEventWithIssuerGeneration(
+                membershipSource.getCanonicalEventJson(), "3"));
+      }
+      case "unknown-field" ->
+          replaceAuthoritySource(
+              response,
+              accountStream,
+              source.toBuilder().setUnknownFields(testUnknownField()).build());
+      default -> throw new IllegalArgumentException("Unknown current membership evidence defect");
+    };
+  }
+
+  private static RuntimeOutboxSourceEvidence authoritySource(
+      PasswordResetAuthorityEventV1Codec.PasswordResetAuthorityEvent event) {
+    return RuntimeOutboxSourceEvidence.newBuilder()
+        .setOutboxStreamKey(event.outboxStreamKey())
+        .setOutboxSequence(event.outboxSequence())
+        .setEventId(event.eventId())
+        .setEventDigest(event.eventDigest())
+        .setCanonicalEventJson(event.canonicalJson())
+        .build();
+  }
+
+  private static RuntimeOutboxSourceEvidence authoritySource(
+      AccountLogoutAllAuthorityEventV1Codec.AccountLogoutAllAuthorityEvent event) {
+    return RuntimeOutboxSourceEvidence.newBuilder()
+        .setOutboxStreamKey(event.outboxStreamKey())
+        .setOutboxSequence(event.outboxSequence())
+        .setEventId(event.eventId())
+        .setEventDigest(event.eventDigest())
+        .setCanonicalEventJson(event.canonicalJson())
+        .build();
+  }
+
+  private static RuntimeOutboxSourceEvidence authoritySource(
+      IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent event) {
+    return RuntimeOutboxSourceEvidence.newBuilder()
+        .setOutboxStreamKey(event.outboxStreamKey())
+        .setOutboxSequence(event.outboxSequence())
+        .setEventId(event.eventId())
+        .setEventDigest(event.eventDigest())
+        .setCanonicalEventJson(event.canonicalJson())
+        .build();
+  }
+
+  private static RuntimeOutboxSourceEvidence authoritySource(
+      TenantGenerationAuthorityEventV1Codec.TenantGenerationAuthorityEvent event) {
+    return RuntimeOutboxSourceEvidence.newBuilder()
+        .setOutboxStreamKey(event.outboxStreamKey())
+        .setOutboxSequence(event.outboxSequence())
+        .setEventId(event.eventId())
+        .setEventDigest(event.eventDigest())
+        .setCanonicalEventJson(event.canonicalJson())
+        .build();
+  }
+
+  private static RuntimeOutboxCheckpoint authorityCheckpoint(String streamKey, String sequence) {
+    return RuntimeOutboxCheckpoint.newBuilder()
+        .setOutboxStreamKey(streamKey)
+        .setOutboxSequence(sequence)
+        .build();
+  }
+
+  private static GetTenantMembershipForRuntimeResponse replaceMembershipCanonicalEvent(
+      GetTenantMembershipForRuntimeResponse response,
+      RuntimeOutboxSourceEvidence source,
+      String canonicalJson) {
+    var event = MembershipAuthorityEventV1Codec.verify(canonicalJson);
+    return replaceAuthoritySource(
+        response,
+        source.getOutboxStreamKey(),
+        source.toBuilder()
+            .setOutboxStreamKey(event.outboxStreamKey())
+            .setOutboxSequence(event.outboxSequence())
+            .setEventId(event.eventId())
+            .setEventDigest(event.eventDigest())
+            .setCanonicalEventJson(event.canonicalJson())
+            .build());
+  }
+
+  private static String resealMembershipEventWithIssuerGeneration(
+      String canonicalJson, String issuerGeneration) {
+    try {
+      ObjectNode event = (ObjectNode) JSON.readTree(canonicalJson);
+      ((ObjectNode) event.get("authorityTuple")).put("issuerAuthGeneration", issuerGeneration);
+      event.remove("eventDigest");
+      return MembershipAuthorityEventV1Codec.seal(
+              JSON.convertValue(event, new TypeReference<Map<String, Object>>() {}))
+          .canonicalJson();
+    } catch (IOException ex) {
+      throw new AssertionError("test membership event should be valid JSON", ex);
+    }
+  }
+
+  private static GetTenantMembershipForRuntimeResponse replaceAuthoritySource(
+      GetTenantMembershipForRuntimeResponse response,
+      String originalStreamKey,
+      RuntimeOutboxSourceEvidence replacement) {
+    var builder = response.toBuilder().clearOutboxSourceEvidence();
+    boolean found = false;
+    for (var source : response.getOutboxSourceEvidenceList()) {
+      if (source.getOutboxStreamKey().equals(originalStreamKey)) {
+        found = true;
+        if (replacement != null) {
+          builder.addOutboxSourceEvidence(replacement);
+        }
+      } else {
+        builder.addOutboxSourceEvidence(source);
+      }
+    }
+    if (!found) {
+      throw new IllegalArgumentException("Authority source fixture is missing its stream");
+    }
+    return builder.build();
+  }
+
+  private static RuntimeOutboxSourceEvidence authoritySource(
+      GetTenantMembershipForRuntimeResponse response, String streamKey) {
+    return response.getOutboxSourceEvidenceList().stream()
+        .filter(source -> source.getOutboxStreamKey().equals(streamKey))
+        .findFirst()
+        .orElseThrow(() -> new IllegalArgumentException("Authority source fixture is missing"));
+  }
+
+  private static UnknownFieldSet testUnknownField() {
+    return UnknownFieldSet.newBuilder()
+        .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+        .build();
+  }
+
   private static GetTenantMembershipForRuntimeResponse replaceCanonicalEvent(
       GetTenantMembershipForRuntimeResponse response,
       String canonicalJson,
@@ -3280,7 +3669,7 @@ class PlayCommandHandlerTest {
                 response.getAuthorityTuple().toBuilder()
                     .putMembershipAuthorityGeneration(tenantUuid, "3"));
       }
-      case "issuance-fence" -> builder.setIssuanceFence("3");
+      case "issuance-fence" -> builder.setIssuanceFence("1");
       case "zero-sequence" -> {
         String membershipStream = response.getOutboxSourceEvidence(0).getOutboxStreamKey();
         boolean updated = false;

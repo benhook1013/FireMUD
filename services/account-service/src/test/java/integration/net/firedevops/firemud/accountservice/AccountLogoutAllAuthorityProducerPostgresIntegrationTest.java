@@ -284,7 +284,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
   @Test
   void sourceCounterOverflowFailsBeforeAnyCutoffMutation() {
     Fixture fixture = newFixture();
-    Seed seed = seedAccount(fixture);
+    Seed seed = seedAccount(fixture, MAX_COUNTER);
     seedLatestLogoutReceiptAtMaximumCounter(fixture, seed);
     ScopeState maximum = authority(fixture, seed);
     StoredState before = snapshot(fixture, seed);
@@ -410,6 +410,10 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
   }
 
   private Seed seedAccount(Fixture fixture) {
+    return seedAccount(fixture, 1L);
+  }
+
+  private Seed seedAccount(Fixture fixture, long initialCounter) {
     return transaction(
         fixture.transaction(),
         () -> {
@@ -419,7 +423,29 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
           account.setEmail("logout-all-" + unique + "@example.test");
           account.setPasswordHash("initial-verifier");
           Account saved = fixture.accounts().save(account);
-          fixture.authority().initialize(AuthorityScope.account(saved.getAccountUuid()));
+          if (initialCounter == 1L) {
+            fixture.authority().initialize(AuthorityScope.account(saved.getAccountUuid()));
+          } else {
+            // Seed a synthetic retained maximum by INSERT, not an illegal monotonic jump.
+            // All migration constraints and update triggers stay enabled for the whole test.
+            fixture
+                .transactionDsl()
+                .execute(
+                    "INSERT INTO account_authority_generations "
+                        + "(scope_kind, account_uuid, generation, source_version) "
+                        + "VALUES ('ACCOUNT', ?, ?, ?)",
+                    saved.getAccountUuid(),
+                    initialCounter,
+                    initialCounter);
+            fixture
+                .transactionDsl()
+                .execute(
+                    "INSERT INTO account_authority_issuance_fences "
+                        + "(account_uuid, issuance_fence, source_version) VALUES (?, ?, ?)",
+                    saved.getAccountUuid(),
+                    initialCounter,
+                    initialCounter);
+          }
           PasswordResetToken token = new PasswordResetToken();
           String rawToken = "reset-token-" + unique;
           LocalDateTime deadline = LocalDateTime.now().plusHours(2);
@@ -513,22 +539,6 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     transaction(
         fixture.transaction(),
         () -> {
-          fixture
-              .transactionDsl()
-              .execute(
-                  "UPDATE account_authority_generations SET generation = ?, source_version = ? "
-                      + "WHERE scope_kind = 'ACCOUNT' AND account_uuid = ?",
-                  MAX_COUNTER,
-                  MAX_COUNTER,
-                  seed.accountUuid());
-          fixture
-              .transactionDsl()
-              .execute(
-                  "UPDATE account_authority_issuance_fences "
-                      + "SET issuance_fence = ?, source_version = ? WHERE account_uuid = ?",
-                  MAX_COUNTER,
-                  MAX_COUNTER,
-                  seed.accountUuid());
           var event =
               AccountLogoutAllAuthorityEventV1Codec.seal(
                   Map.ofEntries(
