@@ -1135,6 +1135,50 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void rendersFilteredOnlineFriendsWithoutAggregateCounts() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new FriendPresenceViewOutput(
+                    "ONLINE",
+                    2,
+                    List.of(
+                        new FriendPresenceViewOutput.Entry(
+                            1, null, 77L, "active", null, "Sora", true, null, null, null, null,
+                            null, null, null, null, null, "PUBLIC")))));
+
+    assertThat(rendered)
+        .contains("Friends ONLINE:\n", "1) Sora [acct #77] - online")
+        .doesNotContain("[1/2]", "[0/2]");
+  }
+
+  @Test
+  void rendersEmptyFilteredOnlineFriendsWithoutAggregateCounts() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(PlayerOutput.view(new FriendPresenceViewOutput("ONLINE", 2, List.of())));
+
+    assertThat(rendered)
+        .contains("Friends ONLINE: no matching friends.")
+        .doesNotContain("[0/2]", "[0/0]");
+  }
+
+  @Test
   void rendersGenericLastSeenWithoutDisconnectDisposition() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -1149,7 +1193,6 @@ class TextPlayerOutputRendererTest {
             PlayerOutput.view(
                 new FriendPresenceViewOutput(
                     "ALL",
-                    1,
                     1,
                     List.of(
                         new FriendPresenceViewOutput.Entry(

@@ -228,7 +228,7 @@ class CommunicationWebSocketCrossServiceTest {
         runCommunicationSequence(
             sessionId,
             "FRIENDS ONLINE",
-            "Friends ONLINE [1/1]:\n"
+            "Friends ONLINE:\n"
                 + "1) Sora [acct #"
                 + SORA_ACCOUNT_ID
                 + "] - online in Demo World / Live Realm (idle)");
@@ -236,7 +236,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains("Friends ONLINE [1/1]:")
+                response.contains("Friends ONLINE:\n")
                     && response.contains(
                         "1) Sora [acct #"
                             + SORA_ACCOUNT_ID
@@ -257,7 +257,7 @@ class CommunicationWebSocketCrossServiceTest {
         runCommunicationSequence(
             sessionId,
             "FRIENDS SHARED",
-            "Friends SHARED [1/1]:\n"
+            "Friends SHARED:\n"
                 + "1) Sora [acct #"
                 + SORA_ACCOUNT_ID
                 + "] - online in Demo World / Live Realm (idle)");
@@ -265,7 +265,7 @@ class CommunicationWebSocketCrossServiceTest {
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains("Friends SHARED [1/1]:")
+                response.contains("Friends SHARED:\n")
                     && response.contains(
                         "1) Sora [acct #"
                             + SORA_ACCOUNT_ID

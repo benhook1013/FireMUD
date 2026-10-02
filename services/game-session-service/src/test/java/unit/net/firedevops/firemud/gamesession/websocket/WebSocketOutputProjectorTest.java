@@ -37,6 +37,8 @@ import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.web.socket.WebSocketSession;
 
 class WebSocketOutputProjectorTest {
@@ -440,70 +442,49 @@ class WebSocketOutputProjectorTest {
         .isEqualTo("EXPLICIT_AFK");
   }
 
-  @Test
-  void firstPartyWebProjectsFriendsViewPayloads() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"ALL", "ONLINE"})
+  void firstPartyWebProjectsFriendsViewPayloads(String filter) throws Exception {
     WebSocketSession session = mock(WebSocketSession.class);
     when(session.getAttributes())
         .thenReturn(
             Map.of(
                 GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    List<String> arguments = "ALL".equals(filter) ? List.of() : List.of(filter);
+    String commandText = "ALL".equals(filter) ? "FRIENDS" : "FRIENDS " + filter;
+    int totalCount = "ALL".equals(filter) ? 1 : 2;
+    PlayerOutput friendOutput =
+        PlayerOutput.view(
+            new FriendPresenceViewOutput(
+                filter,
+                totalCount,
+                List.of(
+                    new FriendPresenceViewOutput.Entry(
+                        1,
+                        11L,
+                        3L,
+                        "active",
+                        1_744_336_000_000L,
+                        "Sora",
+                        true,
+                        "demo",
+                        "Demo World",
+                        "production",
+                        "Live Realm",
+                        "Sora",
+                        "SHARED",
+                        17L,
+                        "AUTO_AFK",
+                        null,
+                        null))));
 
     String payload =
         projector.projectCommandResponse(
             session,
-            new TextCommand(TextCommandType.FRIENDS, List.of(), "FRIENDS"),
+            new TextCommand(TextCommandType.FRIENDS, arguments, commandText),
             new TextCommandInterpretationResult(
-                CommandEnqueueResult.success(),
-                List.of(
-                    PlayerOutput.view(
-                        new FriendPresenceViewOutput(
-                            "ALL",
-                            1,
-                            1,
-                            List.of(
-                                new FriendPresenceViewOutput.Entry(
-                                    1,
-                                    11L,
-                                    3L,
-                                    "active",
-                                    1_744_336_000_000L,
-                                    "Sora",
-                                    true,
-                                    "demo",
-                                    "Demo World",
-                                    "production",
-                                    "Live Realm",
-                                    "Sora",
-                                    "SHARED",
-                                    17L,
-                                    "AUTO_AFK",
-                                    null,
-                                    null)))))),
-            List.of(
-                PlayerOutput.view(
-                    new FriendPresenceViewOutput(
-                        "ALL",
-                        1,
-                        1,
-                        List.of(
-                            new FriendPresenceViewOutput.Entry(
-                                1,
-                                11L,
-                                3L,
-                                "active",
-                                1_744_336_000_000L,
-                                "Sora",
-                                true,
-                                "demo",
-                                "Demo World",
-                                "production",
-                                "Live Realm",
-                                "Sora",
-                                "SHARED",
-                                17L,
-                                "AUTO_AFK",
-                                null,
-                                null))))),
+                CommandEnqueueResult.success(), List.of(friendOutput)),
+            List.of(friendOutput),
             "en-NZ",
             presentation);
 
@@ -511,8 +492,10 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs")).hasSize(1);
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("friends_view");
     assertThat(json.path("outputs").get(0).path("payload").path("filter").asText())
-        .isEqualTo("ALL");
-    assertThat(json.path("outputs").get(0).path("payload").path("totalCount").asInt()).isEqualTo(1);
+        .isEqualTo(filter);
+    assertThat(json.path("outputs").get(0).path("payload").path("totalCount").asInt())
+        .isEqualTo(totalCount);
+    assertThat(json.path("outputs").get(0).path("payload").has("matchCount")).isFalse();
     assertThat(
             json.path("outputs")
                 .get(0)
@@ -570,6 +553,32 @@ class WebSocketOutputProjectorTest {
   }
 
   @Test
+  void firstPartyWebProjectsEmptyOnlineFriendsWithoutAggregateCounts() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    List<PlayerOutput> outputs =
+        List.of(PlayerOutput.view(new FriendPresenceViewOutput("ONLINE", 2, List.of())));
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(TextCommandType.FRIENDS, List.of("ONLINE"), "FRIENDS ONLINE"),
+            new TextCommandInterpretationResult(CommandEnqueueResult.success(), outputs),
+            outputs,
+            "en-NZ",
+            presentation);
+
+    JsonNode friendPayload = objectMapper.readTree(payload).path("outputs").get(0).path("payload");
+    assertThat(friendPayload.path("filter").asText()).isEqualTo("ONLINE");
+    assertThat(friendPayload.path("totalCount").asInt()).isEqualTo(2);
+    assertThat(friendPayload.path("friends")).hasSize(0);
+    assertThat(friendPayload.has("matchCount")).isFalse();
+  }
+
+  @Test
   void firstPartyWebOmitsDisconnectDispositionForPublicAndFriendsOnlyPresence() throws Exception {
     WebSocketSession session = mock(WebSocketSession.class);
     when(session.getAttributes())
@@ -583,7 +592,6 @@ class WebSocketOutputProjectorTest {
             PlayerOutput.view(
                 new FriendPresenceViewOutput(
                     "ALL",
-                    2,
                     2,
                     List.of(
                         new FriendPresenceViewOutput.Entry(
