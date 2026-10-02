@@ -917,6 +917,65 @@ class PlayCommandHandlerTest {
         scriptEventPublisher);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"throw", "null"})
+  void playMapsDefaultRealmPointerReadFailureToAuthUnavailableWithoutAdmissionSideEffects(
+      String failureMode) {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AtomicInteger pointerReads = new AtomicInteger();
+    when(authorityService.listPointers())
+        .thenAnswer(
+            invocation -> {
+              if (pointerReads.getAndIncrement() == 0) {
+                return List.of(admissionPointer(1L));
+              }
+              if ("throw".equals(failureMode)) {
+                throw new IllegalStateException("authority down during default realm resolution");
+              }
+              return null;
+            });
+    PlayCommandHandler authorityBackedHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authorityService),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            connectScopeSessionStore);
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        authorityBackedHandler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE);
+    assertThat(((ErrorOutput) result.outputs().getFirst().payload()).messageKey())
+        .isEqualTo("error.play.authority-unavailable");
+    assertThat(pointerReads).hasValue(2);
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+    Mockito.verify(firstPartyConnectContextRegistry, never())
+        .register(Mockito.anyLong(), Mockito.any());
+    Mockito.verify(firstPartyConnectContextRegistry, never()).unregister(Mockito.anyLong());
+  }
+
   @Test
   void playUsesSelectedTenantAuthorityWhenAnotherTenantInWorldHasNoPublicProductionRealm() {
     gameplayCatalogProperties
