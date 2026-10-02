@@ -3979,16 +3979,6 @@ def service_consumer_documents():
                 },
                 {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
             ]
-            if service == "logging-admin-service":
-                container["env"].insert(
-                    0,
-                    {
-                        "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
-                        "valueFrom": {
-                            "fieldRef": {"fieldPath": "metadata.namespace"}
-                        },
-                    },
-                )
         if service == "spring-cloud-gateway":
             container["env"] = validator._expected_gateway_container_env("pr-42")
             container["envFrom"] = copy.deepcopy(validator.EXPECTED_GATEWAY_ENV_FROM)
@@ -4805,20 +4795,7 @@ for service in shared_services:
     assert_paths_and_mount(
         container, service, "/tls/client.crt", "/tls/client.key", "/tls/ca.crt"
     )
-    namespace_identity = env_map(container, service).get(
-        "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
-    )
-    if service == "logging-admin-service":
-        if namespace_identity != {
-            "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
-            "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
-        }:
-            fail(
-                "Deployment/logging-admin-service must derive "
-                "FIREMUD_GRPC_WORKLOAD_NAMESPACE from metadata.namespace, "
-                f"found {namespace_identity!r}"
-            )
-    elif namespace_identity is not None:
+    if "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in env_map(container, service):
         fail(
             f"Deployment/{service} shared transport unexpectedly declares "
             "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
@@ -4859,40 +4836,6 @@ for service in (
         fail(f"Kustomize base Deployment/{service} must use non-rolling Recreate strategy")
 for service in distinct_workload_services:
     assert_distinct_workload_service(service, base_deployments, "Kustomize base")
-
-base_logging_admin = deployment_for("logging-admin-service", base_deployments)
-base_logging_admin_container, base_logging_admin_pod = workload_container(
-    base_logging_admin, "logging-admin-service"
-)
-assert_paths_and_mount(
-    base_logging_admin_container,
-    "logging-admin-service",
-    "/tls/client.crt",
-    "/tls/client.key",
-    "/tls/ca.crt",
-)
-base_logging_admin_namespace = env_map(
-    base_logging_admin_container, "logging-admin-service"
-).get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
-if base_logging_admin_namespace != {
-    "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
-    "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
-}:
-    fail(
-        "Kustomize base Deployment/logging-admin-service must derive "
-        "FIREMUD_GRPC_WORKLOAD_NAMESPACE from metadata.namespace, "
-        f"found {base_logging_admin_namespace!r}"
-    )
-base_logging_admin_grpc_volume = named_entry(
-    base_logging_admin_pod.get("volumes"),
-    "grpc-tls",
-    "Kustomize base Deployment/logging-admin-service volumes",
-)
-if base_logging_admin_grpc_volume.get("secret", {}).get("secretName") != "firemud-grpc-tls":
-    fail(
-        "Kustomize base Deployment/logging-admin-service shared grpc-tls must use "
-        "firemud-grpc-tls"
-    )
 PY
 
 python3 - "$resolved_values" "$namespace_gate_values" <<'PY'

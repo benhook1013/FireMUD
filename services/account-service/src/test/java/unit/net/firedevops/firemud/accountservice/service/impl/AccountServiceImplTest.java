@@ -3243,7 +3243,6 @@ class AccountServiceImplTest {
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     AccountTenantMembership deniedMembership = membership(account, 7L);
-    deniedMembership.setGameplayAdmissionAllowed(true);
     when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
         .thenReturn(Optional.of(deniedMembership));
     when(gameSessionClient.listGameplayRealms("demo"))
@@ -3576,7 +3575,7 @@ class AccountServiceImplTest {
   }
 
   @Test
-  void listBootstrapCharactersReturnsEntitlementUnavailableBeforeClassifyingMembership() {
+  void listBootstrapCharactersKeepsSelectedTargetFailClosedWhenEntitlementsAreUnavailable() {
     Account account = new Account();
     account.setId(11L);
     account.setUsername("demo");
@@ -3603,6 +3602,8 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(), "demo", "production", connectScopeId));
 
     assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+        .findByTenantId(7L);
     verifyNoInteractions(accountTenantMembershipRepository, entityManagementClient);
   }
 
@@ -3854,6 +3855,331 @@ class AccountServiceImplTest {
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", exception.getCode());
     verifyNoInteractions(accountConnectScopeRepository);
+  }
+
+  @Test
+  void listBootstrapRealmsReadsFreshEntitlementsOncePerTenantPerInvocation() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setDisplayName("Live Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("44")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(17L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build(),
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Private Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("45")
+                    .setRealmId("ce814357-64ad-44e8-b004-828a9ae37c13")
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(18L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    when(accountRealmAccessGrantRepository.existsByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
+            11L, 7L, "demo", "preview"))
+        .thenReturn(true);
+    when(gameSessionClient.getAdmissionPointer(7L, "demo", "preview"))
+        .thenReturn(
+            net.firedevops.firemud.gamesession.v1.GameplayAdmissionPointer.newBuilder()
+                .setWorldSlug("demo")
+                .setWorldDisplayName("Demo World")
+                .setRealmSlug("preview")
+                .setRealmDisplayName("Private Preview Realm")
+                .setTenantId("7")
+                .setGameInstanceId("45")
+                .setRealmId("ce814357-64ad-44e8-b004-828a9ae37c13")
+                .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
+                .setCatalogRevision(23L)
+                .setPointerVersion(18L)
+                .setVisible(true)
+                .setPublicProductionRealm(false)
+                .setRequiresCharacterSelection(false)
+                .setStateScope("SHARED")
+                .setCharacterCreationPolicy("ALLOW_NEW")
+                .build());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    var firstCall = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
+        .findByTenantId(7L);
+    var secondCall = service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo");
+
+    assertEquals(2, firstCall.size());
+    assertEquals(2, secondCall.size());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+        .findByTenantId(7L);
+  }
+
+  @Test
+  void listBootstrapWorldsReadsFreshEntitlementsOncePerTenantPerInvocation() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayWorlds())
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                    .setWorldSlug("demo")
+                    .setDisplayName("Demo World")
+                    .build(),
+                net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                    .setWorldSlug("sandbox")
+                    .setDisplayName("Sandbox World")
+                    .build()));
+    when(gameSessionClient.listGameplayRealms("sandbox"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("sandbox")
+                    .setRealmSlug("production")
+                    .setDisplayName("Sandbox Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("45")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(18L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    var firstCall = service.listBootstrapWorlds(bootstrap.bootstrapToken());
+    var secondCall = service.listBootstrapWorlds(bootstrap.bootstrapToken());
+
+    assertEquals(2, firstCall.size());
+    assertEquals(2, secondCall.size());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+        .findByTenantId(7L);
+  }
+
+  @Test
+  void listBootstrapWorldsOmitsCanceledTenantAndFailsWhenEntitlementIsUnavailable() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    Subscription activeDemo = new Subscription();
+    activeDemo.setId(1L);
+    activeDemo.setTenantId(7L);
+    activeDemo.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(activeDemo));
+    when(gameSessionClient.listGameplayWorlds())
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                    .setWorldSlug("demo")
+                    .setDisplayName("Demo World")
+                    .build(),
+                net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                    .setWorldSlug("sandbox")
+                    .setDisplayName("Sandbox World")
+                    .build()));
+    when(gameSessionClient.listGameplayRealms("sandbox"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("sandbox")
+                    .setRealmSlug("production")
+                    .setDisplayName("Sandbox Realm")
+                    .setTenantId("8")
+                    .setGameInstanceId("45")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID_TENANT_8)
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(18L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    Subscription canceledSandbox = new Subscription();
+    canceledSandbox.setId(2L);
+    canceledSandbox.setTenantId(8L);
+    canceledSandbox.setStatus("canceled");
+    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of(canceledSandbox));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    var worldsWithCanceledTenant = service.listBootstrapWorlds(bootstrap.bootstrapToken());
+
+    assertEquals(
+        java.util.List.of("demo"),
+        worldsWithCanceledTenant.stream().map(world -> world.worldSlug()).toList());
+
+    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of());
+    AuthenticationException unavailableSandbox =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailableSandbox.getCode());
+
+    Subscription activeSandbox = new Subscription();
+    activeSandbox.setId(3L);
+    activeSandbox.setTenantId(8L);
+    activeSandbox.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+    when(subscriptionRepository.findByTenantId(8L)).thenReturn(java.util.List.of(activeSandbox));
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.getCode());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(3))
+        .findByTenantId(7L);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+        .findByTenantId(8L);
+  }
+
+  @Test
+  void listBootstrapRealmsPropagatesUnavailableEntitlements() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", exception.getCode());
+  }
+
+  @Test
+  void listBootstrapWorldsFailsInsteadOfReturningIncompleteWorldDiscovery() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayWorlds())
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                    .setWorldSlug("demo")
+                    .setDisplayName("Demo World")
+                    .build(),
+                net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
+                    .setWorldSlug("sandbox")
+                    .setDisplayName("Sandbox World")
+                    .build()));
+    when(gameSessionClient.listGameplayRealms("sandbox"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("sandbox")
+                    .setRealmSlug("production")
+                    .setDisplayName("Sandbox Realm")
+                    .setTenantId("8")
+                    .setGameInstanceId("45")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID_TENANT_8)
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(18L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(true)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException unavailable =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapWorlds(bootstrap.bootstrapToken()));
+
+    assertEquals("ENTITLEMENT_UNAVAILABLE", unavailable.getCode());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(1))
+        .findByTenantId(7L);
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.never())
+        .findByTenantId(8L);
+  }
+
+  @Test
+  void listBootstrapRealmsRethrowsOtherAuthenticationErrors() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(gameSessionClient.listGameplayRealms("demo"))
+        .thenReturn(
+            java.util.List.of(
+                net.firedevops.firemud.gamesession.v1.GameplayRealm.newBuilder()
+                    .setWorldSlug("demo")
+                    .setRealmSlug("preview")
+                    .setDisplayName("Private Preview Realm")
+                    .setTenantId("7")
+                    .setGameInstanceId("45")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId(PLAYABLE_STATE_NAMESPACE_ID)
+                    .setCatalogRevision(23L)
+                    .setPointerVersion(18L)
+                    .setVisible(true)
+                    .setPublicProductionRealm(false)
+                    .setStateScope("SHARED")
+                    .setCharacterCreationPolicy("ALLOW_NEW")
+                    .build()));
+    AuthenticationException authorityError =
+        new AuthenticationException("AUTH_UNAVAILABLE", "Membership authority is unavailable");
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenThrow(authorityError);
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () -> service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo"));
+
+    assertEquals("AUTH_UNAVAILABLE", exception.getCode());
   }
 
   @Test

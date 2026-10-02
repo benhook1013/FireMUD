@@ -507,7 +507,8 @@ class WorldsCommandHandlerTest {
         .thenReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(valid)
-                .addCharacters(valid)
+                .addCharacters(valid.toBuilder().setId("07001").build())
+                .addCharacters(valid.toBuilder().setId("+7001").build())
                 .build());
     assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());

@@ -13,6 +13,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -375,8 +376,12 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    return listGameplayWorlds().stream()
-        .filter(world -> hasAdmissibleRealm(bootstrapContext, world.getWorldSlug()))
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
+    return gameSessionClient.listGameplayWorlds().stream()
+        .filter(
+            world ->
+                hasAdmissibleRealm(
+                    bootstrapContext, world.getWorldSlug(), discoveryEntitlementMemo))
         .map(world -> new BootstrapWorldDto(world.getWorldSlug(), world.getDisplayName()))
         .toList();
   }
@@ -386,9 +391,19 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
-    return listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug).stream()
+    final List<RuntimeRealmTarget> admissibleRealms;
+    try {
+      admissibleRealms =
+          listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug, discoveryEntitlementMemo);
+    } catch (AuthenticationException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      throw admissionPointerUnavailable(ex);
+    }
+    return admissibleRealms.stream()
         .map(
             discovered -> {
               RuntimeRealmTarget current =
@@ -1354,7 +1369,14 @@ public class AccountServiceImpl implements AccountService {
       String worldSlug,
       String realmSlug) {
     RuntimeRealmTarget realm = requireRealmTarget(expectedTenantId, worldSlug, realmSlug);
-    if (!isRealmAdmissible(bootstrapContext, realm)) {
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(realm.tenantId(), "bootstrap-selected-target");
+    if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",
           "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -1401,41 +1423,38 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private List<net.firedevops.firemud.gamesession.v1.GameplayWorld> listGameplayWorlds() {
+  private boolean hasAdmissibleRealm(
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
     try {
-      List<net.firedevops.firemud.gamesession.v1.GameplayWorld> worlds =
-          gameSessionClient.listGameplayWorlds();
-      if (worlds == null) {
-        throw new IllegalStateException("Gameplay world discovery returned no authority");
-      }
-      return worlds;
-    } catch (AuthenticationException ex) {
-      throw ex;
-    } catch (RuntimeException ex) {
-      throw admissionPointerUnavailable(ex);
+      return !listAdmissibleRuntimeRealmTargets(
+              bootstrapContext, worldSlug, discoveryEntitlementMemo)
+          .isEmpty();
+    } catch (IllegalStateException ex) {
+      return false;
     }
   }
 
   private List<RuntimeRealmTarget> listAdmissibleRuntimeRealmTargets(
-      BootstrapContext bootstrapContext, String worldSlug) {
-    try {
-      List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
-          gameSessionClient.listGameplayRealms(worldSlug);
-      if (realms == null) {
-        throw new IllegalStateException("Gameplay realm discovery returned no authority");
-      }
-      List<RuntimeRealmTarget> targets =
-          realms.stream()
-              .map(realm -> readReachableDiscoveryRealm(bootstrapContext, realm))
-              .flatMap(Optional::stream)
-              .toList();
-      validatePublicRealmCardinality(targets);
-      return targets.stream().filter(realm -> isRealmAdmissible(bootstrapContext, realm)).toList();
-    } catch (AuthenticationException ex) {
-      throw ex;
-    } catch (RuntimeException ex) {
-      throw admissionPointerUnavailable(ex);
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
+    List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
+        gameSessionClient.listGameplayRealms(worldSlug);
+    if (realms == null) {
+      throw new IllegalStateException("Gameplay realm discovery returned no authority");
     }
+    List<RuntimeRealmTarget> targets =
+        realms.stream()
+            .map(realm -> readReachableDiscoveryRealm(bootstrapContext, realm))
+            .flatMap(Optional::stream)
+            .toList();
+    validatePublicRealmCardinality(targets);
+    return targets.stream()
+        .filter(
+            realm -> isDiscoveryRealmAdmissible(bootstrapContext, realm, discoveryEntitlementMemo))
+        .toList();
   }
 
   private List<RuntimeRealmTarget> listRuntimeRealmTargets(
@@ -1535,11 +1554,22 @@ public class AccountServiceImpl implements AccountService {
         cause);
   }
 
-  private boolean hasAdmissibleRealm(BootstrapContext bootstrapContext, String worldSlug) {
-    return !listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug).isEmpty();
+  private boolean isDiscoveryRealmAdmissible(
+      BootstrapContext bootstrapContext,
+      RuntimeRealmTarget realm,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        discoveryEntitlementMemo.computeIfAbsent(
+            realm.tenantId(),
+            tenantId -> getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery"));
+    return entitlements.gameplayAvailable();
   }
 
-  private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
+  private boolean hasRealmAdmissionAccess(
+      BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
     if (!isPublicProductionRealm(realm)) {
       if (accountTenantMembershipRepository
@@ -1553,9 +1583,7 @@ public class AccountServiceImpl implements AccountService {
         return false;
       }
     }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery");
-    return entitlements.gameplayAvailable();
+    return true;
   }
 
   private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {

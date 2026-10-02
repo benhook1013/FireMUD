@@ -298,7 +298,7 @@ class EnvironmentIdentityPlannerTest {
             IllegalArgumentException.class,
             () -> copyPlan(plan, certificateNames, secretNames, sourceSecretNames));
     assertEquals(
-        "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles",
+        "gRPC workload-identity certificate, runtime Secret, and source Secret maps must contain exactly the supported roles",
         failure.getMessage());
   }
 

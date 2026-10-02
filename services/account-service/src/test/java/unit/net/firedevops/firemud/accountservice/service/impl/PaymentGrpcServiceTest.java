@@ -15,18 +15,13 @@ import net.firedevops.firemud.account.v1.CreateSubscriptionRequest;
 import net.firedevops.firemud.account.v1.CreateSubscriptionResponse;
 import net.firedevops.firemud.account.v1.RefundPaymentRequest;
 import net.firedevops.firemud.account.v1.RefundPaymentResponse;
-import net.firedevops.firemud.accountservice.dto.PaymentIntentDto;
-import net.firedevops.firemud.accountservice.service.PaymentService;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
 
 class PaymentGrpcServiceTest {
   @Test
-  void createPaymentIntentReturnsResponse() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    Mockito.when(paymentService.createPaymentIntent(1L, 2L, 500L))
-        .thenReturn(new PaymentIntentDto(10L, 1L, 2L, 500L, 25L, 475L, "USD", "secret", false));
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+  void createPaymentIntentRejectsValidRequestBeforeDispatchAndRecordsErrorMetric() {
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+    PaymentGrpcService service = new PaymentGrpcService(meterRegistry);
 
     AtomicReference<CreatePaymentIntentResponse> ref = new AtomicReference<>();
     service.createPaymentIntent(
@@ -48,14 +43,18 @@ class PaymentGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("10", ref.get().getIntentId());
-    assertEquals("secret", ref.get().getClientSecret());
+    assertNotNull(ref.get());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals("Generic payment operations are unavailable", ref.get().getError().getMessage());
+    assertEquals("", ref.get().getIntentId());
+    assertEquals("", ref.get().getClientSecret());
+    assertEquals(
+        1.0, meterRegistry.counter("grpc.app_error", "code", "FAILED_PRECONDITION").count());
   }
 
   @Test
   void createSubscriptionReturnsFailedPreconditionWithoutCallingService() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+    PaymentGrpcService service = new PaymentGrpcService(new SimpleMeterRegistry());
 
     AtomicReference<CreateSubscriptionResponse> ref = new AtomicReference<>();
     service.createSubscription(
@@ -80,15 +79,12 @@ class PaymentGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
     assertEquals("Subscription creation is unavailable", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(paymentService);
+    assertEquals("", ref.get().getSubscriptionId());
   }
 
   @Test
-  void createDonationReturnsResponse() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    Mockito.when(paymentService.createDonation(1L, 2L, 100L))
-        .thenReturn(new PaymentIntentDto(11L, 1L, 2L, 100L, 5L, 95L, "USD", "donate", true));
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+  void createDonationRejectsValidRequestBeforeDispatch() {
+    PaymentGrpcService service = new PaymentGrpcService(new SimpleMeterRegistry());
 
     AtomicReference<CreateDonationResponse> ref = new AtomicReference<>();
     service.createDonation(
@@ -110,15 +106,16 @@ class PaymentGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("11", ref.get().getIntentId());
-    assertEquals("donate", ref.get().getClientSecret());
+    assertNotNull(ref.get());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals("Generic payment operations are unavailable", ref.get().getError().getMessage());
+    assertEquals("", ref.get().getIntentId());
+    assertEquals("", ref.get().getClientSecret());
   }
 
   @Test
-  void refundPaymentRuntimeFailureReturnsInternalErrorDetail() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    Mockito.doThrow(new IllegalStateException("boom")).when(paymentService).refundPayment(1L, 9L);
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+  void refundPaymentRejectsValidRequestAndPreservesFailureResponseContract() {
+    PaymentGrpcService service = new PaymentGrpcService(new SimpleMeterRegistry());
 
     AtomicReference<net.firedevops.firemud.account.v1.RefundPaymentResponse> ref =
         new AtomicReference<>();
@@ -141,13 +138,13 @@ class PaymentGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("INTERNAL", ref.get().getError().getCode());
+    assertFalse(ref.get().getSuccess());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
   }
 
   @Test
-  void createPaymentIntentRejectsZeroTenantIdBeforeCreate() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+  void createPaymentIntentRejectsMalformedRequestBeforeDispatch() {
+    PaymentGrpcService service = new PaymentGrpcService(new SimpleMeterRegistry());
 
     AtomicReference<CreatePaymentIntentResponse> ref = new AtomicReference<>();
     service.createPaymentIntent(
@@ -170,15 +167,14 @@ class PaymentGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(paymentService);
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals("", ref.get().getIntentId());
+    assertEquals("", ref.get().getClientSecret());
   }
 
   @Test
   void createSubscriptionRejectsZeroAccountIdBeforeCreate() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+    PaymentGrpcService service = new PaymentGrpcService(new SimpleMeterRegistry());
 
     AtomicReference<CreateSubscriptionResponse> ref = new AtomicReference<>();
     service.createSubscription(
@@ -203,13 +199,12 @@ class PaymentGrpcServiceTest {
     assertNotNull(ref.get());
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("accountId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(paymentService);
+    assertEquals("", ref.get().getSubscriptionId());
   }
 
   @Test
-  void createDonationRejectsZeroTenantIdBeforeCreate() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+  void createDonationRejectsMalformedRequestBeforeDispatch() {
+    PaymentGrpcService service = new PaymentGrpcService(new SimpleMeterRegistry());
 
     AtomicReference<CreateDonationResponse> ref = new AtomicReference<>();
     service.createDonation(
@@ -232,15 +227,14 @@ class PaymentGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("tenantId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(paymentService);
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals("", ref.get().getIntentId());
+    assertEquals("", ref.get().getClientSecret());
   }
 
   @Test
-  void refundPaymentRejectsZeroPaymentIdBeforeRefund() {
-    PaymentService paymentService = Mockito.mock(PaymentService.class);
-    PaymentGrpcService service = new PaymentGrpcService(paymentService, new SimpleMeterRegistry());
+  void refundPaymentRejectsMalformedRequestBeforeDispatch() {
+    PaymentGrpcService service = new PaymentGrpcService(new SimpleMeterRegistry());
 
     AtomicReference<RefundPaymentResponse> ref = new AtomicReference<>();
     service.refundPayment(
@@ -260,8 +254,32 @@ class PaymentGrpcServiceTest {
 
     assertNotNull(ref.get());
     assertFalse(ref.get().getSuccess());
-    assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("paymentId must be positive", ref.get().getError().getMessage());
-    Mockito.verifyNoInteractions(paymentService);
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+  }
+
+  @Test
+  void disabledGenericPaymentMethodReturnsFailedPreconditionWithoutMeterRegistry() {
+    PaymentGrpcService service = new PaymentGrpcService();
+
+    AtomicReference<CreateDonationResponse> ref = new AtomicReference<>();
+    service.createDonation(
+        CreateDonationRequest.newBuilder().setTenantId("malformed").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateDonationResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    assertEquals("", ref.get().getIntentId());
+    assertEquals("", ref.get().getClientSecret());
   }
 }

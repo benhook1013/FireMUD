@@ -854,7 +854,7 @@ public class WorldsCommandHandler {
     }
     java.util.List<CharacterBrowseViewOutput.CharacterEntry> entries =
         new java.util.ArrayList<>(response.getCharactersCount());
-    Set<String> characterIds = new HashSet<>();
+    Set<Long> characterIds = new HashSet<>();
     for (int i = 0; i < response.getCharactersCount(); i++) {
       net.firedevops.firemud.entitymanagement.v1.Character character = response.getCharacters(i);
       PositiveLongParsing.ParsedPositiveLong parsedCharacterId =
@@ -864,7 +864,7 @@ public class WorldsCommandHandler {
           || character.getPlayableStateScope() != toPlayableStateScope(realm)
           || !parsedCharacterId.valid()
           || !StringUtils.hasText(character.getName())
-          || !characterIds.add(character.getId())) {
+          || !characterIds.add(parsedCharacterId.value())) {
         return CharacterBrowseResult.unavailable();
       }
       entries.add(

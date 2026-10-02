@@ -343,9 +343,9 @@ class TextCommandInterpreterTest {
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.listByRuntimeTarget(23L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 23L, 2L, 1L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L, true)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L, false)));
     when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -363,11 +363,11 @@ class TextCommandInterpreterTest {
             gameSessionProperties,
             sessionRoutingNormalizationService(),
             gameplayPresenceLifecycleService);
+    GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
+    gameplayCatalogProperties.setWorlds(
+        List.of(world("demo", 22L, 1L, true, false), world("sandbox", 22L, 2L, false, true)));
     GameplayWorldCatalog worldCatalog =
-        GameplayWorldCatalog.forWorldViews(
-            List.of(
-                worldView("demo", "Demo World", 22L, 1L, false),
-                worldView("sandbox", "Builder Sandbox", 23L, 2L, true)));
+        TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
     LoginCommandHandler loginHandler =
         new LoginCommandHandler(
             gameInstanceRepository,
@@ -424,9 +424,9 @@ class TextCommandInterpreterTest {
                         .setId("7001")
                         .setTenantId("22")
                         .setAccountId("123")
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setName("demo")
                         .setLevel(12)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
     WorldsCommandHandler worldsHandler =
@@ -553,7 +553,7 @@ class TextCommandInterpreterTest {
         interpreter.interpret("1", "CHARS demo", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("CHARS demo", interpretation).contains("demo"));
+    assertTrue(renderedResponse("CHARS demo", interpretation).contains("1) demo [lvl 12]"));
     assertTrue(
         renderedResponse("CHARS demo", interpretation)
             .contains("Realm state: shared, creation: allow_new"));
@@ -1044,34 +1044,47 @@ class TextCommandInterpreterTest {
         interpretation.outputs());
   }
 
-  private static GameplayWorldCatalog.WorldView worldView(
+  private static GameplayCatalogProperties.World world(
       String slug,
-      String displayName,
       long tenantId,
       long gameInstanceId,
+      boolean publicProductionRealm,
       boolean requiresCharacterSelection) {
-    return new GameplayWorldCatalog.WorldView(
-        slug,
-        displayName,
-        List.of(
-            new GameplayWorldCatalog.RealmView(
-                "production",
-                "Live Realm",
-                tenantId,
-                gameInstanceId,
-                1L,
-                true,
-                true,
-                requiresCharacterSelection,
-                "SHARED",
-                "ALLOW_NEW",
-                1L,
-                UUID.nameUUIDFromBytes((slug + ":realm").getBytes(StandardCharsets.UTF_8)),
-                UUID.nameUUIDFromBytes((slug + ":namespace").getBytes(StandardCharsets.UTF_8)))));
+    GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
+    world.setSlug(slug);
+    world.setDisplayName(
+        switch (slug) {
+          case "demo" -> "Demo World";
+          case "sandbox" -> "Builder Sandbox";
+          default -> slug;
+        });
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug("production");
+    realm.setDisplayName("Live Realm");
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setVisible(true);
+    realm.setPublicProductionRealm(publicProductionRealm);
+    realm.setRequiresCharacterSelection(requiresCharacterSelection);
+    world.setRealms(List.of(realm));
+    return world;
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
-      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean publicProductionRealm) {
+    java.util.UUID realmId =
+        switch (worldSlug) {
+          case "demo" -> java.util.UUID.fromString("f67fd9ec-c8e0-48d0-b238-d0c0a57fb8d9");
+          case "sandbox" -> java.util.UUID.fromString("e4d17ea7-c544-4ec1-a6d7-c756b1dc2c0b");
+          default ->
+              java.util.UUID.nameUUIDFromBytes(
+                  (worldSlug + ":" + realmSlug).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        };
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldSlug,
@@ -1081,10 +1094,13 @@ class TextCommandInterpreterTest {
         gameInstanceId,
         pointerVersion,
         true,
-        true,
+        publicProductionRealm,
         false,
         "SHARED",
-        "ALLOW_NEW");
+        "ALLOW_NEW",
+        1L,
+        realmId,
+        java.util.UUID.fromString("5da48e2b-9b0c-4215-bf0e-3d8c1447fc1f"));
   }
 
   private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {
