@@ -141,32 +141,40 @@ class EntityDraftDesignDigestServiceImplTest {
 
   @Test
   void canonicalizesVocabularyKeysAndIgnoresRowOrderAndOptimisticVersion() {
-    var firstSlot = slotDefinition(" HEAD ", "Head", " upper ");
-    firstSlot.setVersion(2);
-    var secondSlot = slotDefinition("TORSO", "Torso", null);
-    secondSlot.setVersion(8);
-    var firstLayoutSlot = bodyLayoutSlot(" Humanoid ", " Head ");
-    firstLayoutSlot.setVersion(3);
-    var secondLayoutSlot = bodyLayoutSlot("HUMANOID", "TORSO");
-    secondLayoutSlot.setVersion(9);
+    var firstSlot = slotDefinition("TORSO", "Torso", null);
+    firstSlot.setId(11L);
+    firstSlot.setVersion(8);
+    var secondSlot = slotDefinition(" HEAD ", "Head", " upper ");
+    secondSlot.setId(22L);
+    secondSlot.setVersion(2);
+    var firstLayoutSlot = bodyLayoutSlot("HUMANOID", "TORSO");
+    firstLayoutSlot.setId(31L);
+    firstLayoutSlot.setVersion(9);
+    var secondLayoutSlot = bodyLayoutSlot(" ALPHA ", " Head ");
+    secondLayoutSlot.setId(32L);
+    secondLayoutSlot.setVersion(3);
 
     var firstDigest =
         digestForDefinitions(
             List.of(firstSlot, secondSlot), List.of(firstLayoutSlot, secondLayoutSlot));
 
     var normalizedSlot = slotDefinition("HEAD", "Head", "UPPER");
+    normalizedSlot.setId(3L);
     normalizedSlot.setVersion(200);
     var normalizedSecondSlot = slotDefinition("TORSO", "Torso", " ");
+    normalizedSecondSlot.setId(100L);
     normalizedSecondSlot.setVersion(800);
-    var normalizedFirstLayoutSlot = bodyLayoutSlot("HUMANOID", "HEAD");
+    var normalizedFirstLayoutSlot = bodyLayoutSlot("ALPHA", "HEAD");
+    normalizedFirstLayoutSlot.setId(5L);
     normalizedFirstLayoutSlot.setVersion(300);
     var normalizedSecondLayoutSlot = bodyLayoutSlot(" humanoid ", " torso ");
+    normalizedSecondLayoutSlot.setId(600L);
     normalizedSecondLayoutSlot.setVersion(900);
 
     var equivalentDigest =
         digestForDefinitions(
-            List.of(normalizedSecondSlot, normalizedSlot),
-            List.of(normalizedSecondLayoutSlot, normalizedFirstLayoutSlot));
+            List.of(normalizedSlot, normalizedSecondSlot),
+            List.of(normalizedFirstLayoutSlot, normalizedSecondLayoutSlot));
 
     assertEquals(firstDigest.contentDigest(), equivalentDigest.contentDigest());
   }
