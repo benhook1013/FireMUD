@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -13,6 +14,10 @@ import org.jooq.Result;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification =
+        "The injected DSLContext is shared Spring infrastructure for repository transaction participation.")
 public class InitialAdmissionBindHoldRepository {
   private static final String SELECT_COLUMNS =
       "hold_id, hold_fence, tenant_id, realm_uuid, playable_state_namespace_uuid, "
@@ -64,26 +69,19 @@ public class InitialAdmissionBindHoldRepository {
     return rows.map(this::toEntity);
   }
 
-  public boolean hasNonterminalForGameInstance(long tenantId, long gameInstanceId) {
-    return Boolean.TRUE.equals(
-        dsl.fetchValue(
-            "SELECT EXISTS (SELECT 1 FROM initial_admission_bind_hold "
-                + "WHERE tenant_id = ? AND game_instance_id = ? "
-                + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED'))",
-            Boolean.class,
-            tenantId,
-            gameInstanceId));
-  }
-
   public boolean hasNonterminalForRealm(long tenantId, String realmUuid) {
-    return Boolean.TRUE.equals(
-        dsl.fetchValue(
+    Record result =
+        dsl.fetchOne(
             "SELECT EXISTS (SELECT 1 FROM initial_admission_bind_hold "
                 + "WHERE tenant_id = ? AND realm_uuid = ?::uuid "
                 + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED'))",
-            Boolean.class,
             tenantId,
-            UUID.fromString(realmUuid)));
+            UUID.fromString(realmUuid));
+    if (result == null) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_BIND_HOLD_LOOKUP_FAILED: realm hold lookup returned no row");
+    }
+    return Boolean.TRUE.equals(result.get(0, Boolean.class));
   }
 
   public Optional<InitialAdmissionBindHold> insertIfNoUniqueConflict(
@@ -120,33 +118,34 @@ public class InitialAdmissionBindHoldRepository {
 
   public Optional<InitialAdmissionBindHold> markReconciliationRequired(
       InitialAdmissionBindHold hold, String errorCode, Instant now) {
-    dsl.execute(
-        "UPDATE initial_admission_bind_hold SET status = 'RECONCILIATION_REQUIRED', "
-            + "reconciliation_error = ?, updated_at = ?, row_version = row_version + 1 "
-            + "WHERE hold_id = ?::uuid AND hold_fence = ?::uuid AND tenant_id = ? "
-            + "AND realm_uuid = ?::uuid AND playable_state_namespace_uuid = ?::uuid "
-            + "AND playable_state_scope = ? AND game_instance_id = ? AND version_id = ? "
-            + "AND active_lifecycle_epoch = ? AND initial_admission_request_id = ? "
-            + "AND request_digest = ? AND expected_no_prior_pointer = ? "
-            + "AND expected_catalog_revision = ? AND row_version = ? "
-            + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED')",
-        errorCode,
-        toLocalDateTime(now),
-        UUID.fromString(hold.holdId()),
-        UUID.fromString(hold.holdFence()),
-        hold.tenantId(),
-        UUID.fromString(hold.realmUuid()),
-        UUID.fromString(hold.playableStateNamespaceUuid()),
-        hold.playableStateScope(),
-        hold.gameInstanceId(),
-        hold.versionId(),
-        hold.activeLifecycleEpoch(),
-        hold.initialAdmissionRequestId(),
-        hold.requestDigest(),
-        hold.expectedNoPriorPointer(),
-        hold.expectedCatalogRevision(),
-        hold.rowVersion());
-    return findByHoldIdForUpdate(hold.holdId());
+    int updated =
+        dsl.execute(
+            "UPDATE initial_admission_bind_hold SET status = 'RECONCILIATION_REQUIRED', "
+                + "reconciliation_error = ?, updated_at = ?, row_version = row_version + 1 "
+                + "WHERE hold_id = ?::uuid AND hold_fence = ?::uuid AND tenant_id = ? "
+                + "AND realm_uuid = ?::uuid AND playable_state_namespace_uuid = ?::uuid "
+                + "AND playable_state_scope = ? AND game_instance_id = ? AND version_id = ? "
+                + "AND active_lifecycle_epoch = ? AND initial_admission_request_id = ? "
+                + "AND request_digest = ? AND expected_no_prior_pointer = ? "
+                + "AND expected_catalog_revision = ? AND row_version = ? "
+                + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED')",
+            errorCode,
+            toLocalDateTime(now),
+            UUID.fromString(hold.holdId()),
+            UUID.fromString(hold.holdFence()),
+            hold.tenantId(),
+            UUID.fromString(hold.realmUuid()),
+            UUID.fromString(hold.playableStateNamespaceUuid()),
+            hold.playableStateScope(),
+            hold.gameInstanceId(),
+            hold.versionId(),
+            hold.activeLifecycleEpoch(),
+            hold.initialAdmissionRequestId(),
+            hold.requestDigest(),
+            hold.expectedNoPriorPointer(),
+            hold.expectedCatalogRevision(),
+            hold.rowVersion());
+    return updated == 1 ? findByHoldIdForUpdate(hold.holdId()) : Optional.empty();
   }
 
   public Optional<InitialAdmissionBindHold> recordTerminalProof(

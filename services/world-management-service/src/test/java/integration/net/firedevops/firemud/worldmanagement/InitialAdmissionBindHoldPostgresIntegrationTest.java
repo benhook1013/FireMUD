@@ -6,12 +6,14 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.entitymanagement.v1.CleanupRuntimeInstanceResponse;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
@@ -26,6 +28,7 @@ import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldSe
 import net.firedevops.firemud.worldmanagement.service.WorldLifecycleCommandService;
 import net.firedevops.firemud.worldmanagement.service.impl.InitialAdmissionBindHoldServiceImpl;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -81,6 +84,7 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
     InitialAdmissionBindHoldRequest request = request(tenantId, gameInstanceId);
     CountDownLatch lifecycleLocked = new CountDownLatch(1);
     CountDownLatch allowAcquireCommit = new CountDownLatch(1);
+    AtomicInteger acquisitionBackendPid = new AtomicInteger();
     TransactionTemplate transactionTemplate = new TransactionTemplate(transactionManager);
 
     try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
@@ -92,11 +96,21 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
                         worldInstanceRepository
                             .findByTenantIdAndGameInstanceIdForUpdate(tenantId, gameInstanceId)
                             .orElseThrow();
+                        Record backendIdentity =
+                            Objects.requireNonNull(
+                                dsl.fetchOne("SELECT pg_backend_pid()"),
+                                "PostgreSQL backend PID query returned no row");
+                        acquisitionBackendPid.set(
+                            Objects.requireNonNull(
+                                backendIdentity.get(0, Integer.class),
+                                "PostgreSQL backend PID query returned a null PID"));
                         lifecycleLocked.countDown();
                         await(allowAcquireCommit);
                         return holdService.acquire(request);
                       }));
       assertThat(lifecycleLocked.await(5, TimeUnit.SECONDS)).isTrue();
+      int exactAcquisitionBackendPid = acquisitionBackendPid.get();
+      assertThat(exactAcquisitionBackendPid).isPositive();
 
       CountDownLatch terminationStarted = new CountDownLatch(1);
       Future<String> terminationFuture =
@@ -112,12 +126,21 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
                 }
               });
       assertThat(terminationStarted.await(5, TimeUnit.SECONDS)).isTrue();
+      int terminationBackendPid = awaitBackendBlockedBy(exactAcquisitionBackendPid);
+      assertThat(isBackendBlockedBy(terminationBackendPid, exactAcquisitionBackendPid)).isTrue();
       allowAcquireCommit.countDown();
 
       var acquired = acquireFuture.get(10, TimeUnit.SECONDS);
       String terminationResult = terminationFuture.get(10, TimeUnit.SECONDS);
       assertThat(acquired).isNotNull();
       assertThat(terminationResult).startsWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:");
+      assertThat(holdRepository.hasNonterminalForRealm(tenantId, request.realmUuid())).isTrue();
+      assertThat(holdRepository.hasNonterminalForRealm(tenantId + 1L, request.realmUuid()))
+          .isFalse();
+      assertThat(
+              holdRepository.hasNonterminalForRealm(
+                  tenantId, "00000000-0000-0000-0000-000000000099"))
+          .isFalse();
       InitialAdmissionBindHoldServiceImpl restartedService =
           new InitialAdmissionBindHoldServiceImpl(holdRepository, worldInstanceRepository);
       var retry = transactionTemplate.execute(status -> restartedService.acquire(request));
@@ -221,6 +244,36 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
 
   private long uniqueGameInstanceId() {
     return Math.abs(System.nanoTime()) + 10_000L;
+  }
+
+  private int awaitBackendBlockedBy(int blockerPid) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    do {
+      Record blockedBackend =
+          dsl.fetchOne(
+              "SELECT pid FROM pg_stat_activity WHERE datname = current_database() "
+                  + "AND pid <> ? AND wait_event_type = 'Lock' "
+                  + "AND query ILIKE '%world_instance%' "
+                  + "AND ? = ANY(pg_blocking_pids(pid)) ORDER BY pid LIMIT 1",
+              blockerPid, blockerPid);
+      Integer blockedPid = blockedBackend == null ? null : blockedBackend.get(0, Integer.class);
+      if (blockedPid != null && isBackendBlockedBy(blockedPid, blockerPid)) {
+        return blockedPid;
+      }
+      Thread.sleep(100L);
+    } while (System.nanoTime() < deadline);
+    throw new AssertionError(
+        "No PostgreSQL backend was observed waiting on acquisition backend " + blockerPid);
+  }
+
+  private boolean isBackendBlockedBy(int blockedPid, int blockerPid) {
+    Record backendState =
+        dsl.fetchOne(
+            "SELECT wait_event_type = 'Lock' AND ? = ANY(pg_blocking_pids(pid)) "
+                + "FROM pg_stat_activity WHERE pid = ?",
+            blockerPid,
+            blockedPid);
+    return backendState != null && Boolean.TRUE.equals(backendState.get(0, Boolean.class));
   }
 
   private void deleteFixture(long tenantId, long gameInstanceId) {

@@ -1111,6 +1111,8 @@ class LiveEvidence:
         checkpoint: evidence.Checkpoint,
         response_id: int | None,
         response_duration_seconds: int | None,
+        repo: str,
+        pr_number: int,
         captured_head: str,
         record: dict[str, Any],
         payload: dict[str, Any],
@@ -1182,7 +1184,14 @@ class LiveEvidence:
             next_trigger,
         )
         finished_only = hosted.finished_reply_without_findings(
-            payload, captured_head, trigger_at, response_id, next_trigger
+            payload,
+            captured_head,
+            trigger_at,
+            response_id,
+            next_trigger,
+            record,
+            repo=repo,
+            pr_number=pr_number,
         )
         if legacy_summary is None and provider_summary is None and not finished_only:
             return None
@@ -1229,6 +1238,8 @@ class LiveEvidence:
                         checkpoint,
                         state.response_id,
                         state.duration_seconds,
+                        self.repo,
+                        pr,
                         captured_head,
                         record,
                         payload,
@@ -2647,7 +2658,10 @@ class HostedRunner:
                 except ControllerError:
                     raise
                 except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-                    raise ControllerError(f"current Hosted reservation for PR #{other_pr} cannot be verified") from exc
+                    raise ControllerError(
+                        f"current Hosted reservation for PR #{other_pr} cannot be verified "
+                        f"(phase=hosted_reservation_readback, error={type(exc).__name__})"
+                    ) from exc
                 if state.state in {"active", "awaiting_response"}:
                     raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
                 if state.state == "rate_limited":

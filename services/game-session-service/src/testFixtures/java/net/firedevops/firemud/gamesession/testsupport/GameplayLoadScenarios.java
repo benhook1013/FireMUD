@@ -64,6 +64,7 @@ public final class GameplayLoadScenarios {
                       "Seed per-player load-test admission pointer",
                       "load-test:" + accountId,
                       null,
+                      null,
                       null));
       long sessionId = firstAccountId + 10_000L + i + 1;
       String email = "player" + (i + 1) + "@example.com";

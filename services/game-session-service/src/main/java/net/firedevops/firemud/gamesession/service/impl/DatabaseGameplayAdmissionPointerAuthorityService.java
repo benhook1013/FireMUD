@@ -10,6 +10,7 @@ import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -41,6 +42,17 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   @Transactional(readOnly = true)
   public List<GameplayAdmissionPointerSnapshot> listPointers() {
     return pointerRepository.findAllByOrderByWorldSlugAscRealmSlugAsc().stream()
+        .map(this::toSnapshot)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<GameplayAdmissionPointerSnapshot> listPointersByTenant(long tenantId) {
+    if (tenantId <= 0L) {
+      throw new IllegalArgumentException("tenantId must be positive");
+    }
+    return pointerRepository.findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(tenantId).stream()
         .map(this::toSnapshot)
         .toList();
   }
@@ -83,18 +95,21 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
       throw new IllegalArgumentException(
           "state_scope changes require a new playable-state lifecycle");
     }
-    enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
+    enforceExpectedRevisions(
+        pointer, mutation.expectedPointerVersion(), mutation.expectedCatalogRevision());
     if (pointer.getId() != null
         && runtimeTargetMatches(pointer, mutation)
-        && catalogPolicyMatches(pointer, mutation)) {
+        && GameplayAdmissionCatalogPolicy.matches(pointer, mutation)) {
       return toSnapshot(pointer);
     }
     boolean runtimeTargetChanged =
         pointer.getId() == null || !runtimeTargetMatches(pointer, mutation);
     long nextPointerVersion =
-        pointer.getId() == null || runtimeTargetChanged
-            ? pointer.getId() == null ? 1L : Math.addExact(pointer.getPointerVersion(), 1L)
-            : pointer.getPointerVersion();
+        pointer.getId() == null
+            ? 1L
+            : runtimeTargetChanged
+                ? Math.addExact(pointer.getPointerVersion(), 1L)
+                : pointer.getPointerVersion();
     long nextCatalogRevision = nextCatalogRevision(pointer, mutation);
     pointer.setWorldSlug(mutation.worldSlug());
     pointer.setWorldDisplayName(mutation.worldDisplayName());
@@ -115,7 +130,11 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
       pointer.setCreatedAt(now);
     }
     pointer.setUpdatedAt(now);
-    GameplayAdmissionPointer saved = pointerRepository.save(pointer);
+    GameplayAdmissionPointer saved =
+        pointer.getId() == null
+            ? pointerRepository.save(pointer)
+            : pointerRepository.updateExisting(
+                pointer, mutation.expectedPointerVersion(), mutation.expectedCatalogRevision());
 
     GameplayAdmissionPointerEvent event = new GameplayAdmissionPointerEvent();
     event.setWorldSlug(saved.getWorldSlug());
@@ -169,6 +188,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
                     event.getReason(),
                     event.getControlPlaneRequestId(),
                     event.getPreparedVersionUpgradeId(),
+                    event.getCatalogRevision(),
+                    event.getRealmId(),
+                    event.getPlayableStateNamespaceId(),
                     event.getOccurredAt()))
         .toList();
   }
@@ -201,23 +223,10 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     if (currentRevision == null || currentRevision <= 0L) {
       throw new IllegalStateException("Admission pointer catalog revision is missing or invalid");
     }
-    if (!catalogPolicyMatches(pointer, mutation)) {
+    if (!GameplayAdmissionCatalogPolicy.matches(pointer, mutation)) {
       return Math.addExact(currentRevision, 1L);
     }
     return currentRevision;
-  }
-
-  private boolean catalogPolicyMatches(
-      GameplayAdmissionPointer pointer, GameplayAdmissionPointerMutation mutation) {
-    return Objects.equals(pointer.getWorldSlug(), mutation.worldSlug())
-        && Objects.equals(pointer.getWorldDisplayName(), mutation.worldDisplayName())
-        && Objects.equals(pointer.getRealmSlug(), mutation.realmSlug())
-        && Objects.equals(pointer.getRealmDisplayName(), mutation.realmDisplayName())
-        && pointer.isVisible() == mutation.visible()
-        && pointer.isPublicProductionRealm() == mutation.publicProductionRealm()
-        && pointer.isRequiresCharacterSelection() == mutation.requiresCharacterSelection()
-        && Objects.equals(pointer.getStateScope(), mutation.stateScope())
-        && Objects.equals(pointer.getCharacterCreationPolicy(), mutation.characterCreationPolicy());
   }
 
   private boolean runtimeTargetMatches(
@@ -251,15 +260,32 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     }
   }
 
-  private void enforceExpectedPointerVersion(
-      GameplayAdmissionPointer pointer, Long expectedPointerVersion) {
-    if (expectedPointerVersion == null) {
+  private void enforceExpectedRevisions(
+      GameplayAdmissionPointer pointer, Long expectedPointerVersion, Long expectedCatalogRevision) {
+    if (pointer.getId() == null) {
+      if (!isAbsentOrZero(expectedPointerVersion) || !isAbsentOrZero(expectedCatalogRevision)) {
+        throw new AdmissionPointerVersionMismatchException(
+            "new admission pointers require absent or zero initial revisions");
+      }
       return;
     }
-    long currentPointerVersion = pointer.getId() == null ? 0L : pointer.getPointerVersion();
-    if (currentPointerVersion != expectedPointerVersion) {
+    if (!isPositive(expectedPointerVersion)
+        || !Objects.equals(pointer.getPointerVersion(), expectedPointerVersion)) {
       throw new AdmissionPointerVersionMismatchException(
           "expected_pointer_version does not match current pointer version");
     }
+    if (!isPositive(expectedCatalogRevision)
+        || !Objects.equals(pointer.getCatalogRevision(), expectedCatalogRevision)) {
+      throw new AdmissionPointerVersionMismatchException(
+          "expected_catalog_revision does not match current catalog revision");
+    }
+  }
+
+  private boolean isPositive(Long value) {
+    return value != null && value > 0L;
+  }
+
+  private boolean isAbsentOrZero(Long value) {
+    return value == null || value == 0L;
   }
 }

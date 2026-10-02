@@ -6,11 +6,61 @@ CERT_DIR="${1:-$SCRIPT_DIR}"
 GENERATOR="$SCRIPT_DIR/generate-dev-certs.sh"
 COMPOSE_MTLS_STAGE_ROOT=""
 COMPOSE_MTLS_STAGE_DIR=""
+COMPOSE_MTLS_LEAF_STAGE_DIR=""
 
 cleanup_compose_mtls_stage() {
   if [[ -n "$COMPOSE_MTLS_STAGE_DIR" && "$COMPOSE_MTLS_STAGE_DIR" == "$COMPOSE_MTLS_STAGE_ROOT"/.workloads.* && -d "$COMPOSE_MTLS_STAGE_DIR" && ! -L "$COMPOSE_MTLS_STAGE_DIR" ]]; then
     rm -rf -- "$COMPOSE_MTLS_STAGE_DIR"
   fi
+  if [[ -n "$COMPOSE_MTLS_LEAF_STAGE_DIR" && "$COMPOSE_MTLS_LEAF_STAGE_DIR" == "$COMPOSE_MTLS_STAGE_ROOT"/.world-management-service-leaf.* && -d "$COMPOSE_MTLS_LEAF_STAGE_DIR" && ! -L "$COMPOSE_MTLS_LEAF_STAGE_DIR" ]]; then
+    rm -rf -- "$COMPOSE_MTLS_LEAF_STAGE_DIR"
+  fi
+}
+
+compose_certificate_matches_private_key() {
+  local certificate="$1" private_key="$2" certificate_public_key private_key_public_key
+  certificate_public_key="$(openssl x509 -in "$certificate" -pubkey -noout | openssl pkey -pubin -outform DER | sha256sum | awk '{print $1}')"
+  private_key_public_key="$(openssl pkey -in "$private_key" -pubout -outform DER | sha256sum | awk '{print $1}')"
+  [[ "$certificate_public_key" == "$private_key_public_key" ]]
+}
+
+migrate_legacy_world_management_leaf() {
+  local requested_root="$1" authority_dir="$2" service_dir="$3"
+  local staged_certificate staged_private_key san_output
+
+  # The only upgradeable shape is the original generic authority/client pair,
+  # copied byte-for-byte into the WMS fixture and still using the same CA.
+  if ! cmp -s "$service_dir/client.crt" "$authority_dir/client.crt" \
+    || ! cmp -s "$service_dir/client.key" "$authority_dir/client.key" \
+    || ! cmp -s "$service_dir/ca.crt" "$authority_dir/ca.crt" \
+    || ! compose_certificate_matches_private_key "$service_dir/client.crt" "$service_dir/client.key"; then
+    return 1
+  fi
+
+  COMPOSE_MTLS_STAGE_ROOT="$requested_root"
+  COMPOSE_MTLS_LEAF_STAGE_DIR="$(mktemp -d "$requested_root/.world-management-service-leaf.XXXXXX")" || return 1
+  chmod 700 "$COMPOSE_MTLS_LEAF_STAGE_DIR" || return 1
+  staged_certificate="$COMPOSE_MTLS_LEAF_STAGE_DIR/client.crt"
+  staged_private_key="$COMPOSE_MTLS_LEAF_STAGE_DIR/client.key"
+  "$GENERATOR" --workload \
+    "$authority_dir/ca.crt" "$authority_dir/ca.key" \
+    "$staged_certificate" "$staged_private_key" dev world-management-service || return 1
+  chmod 444 "$staged_certificate" "$staged_private_key" || return 1
+
+  openssl verify -CAfile "$authority_dir/ca.crt" "$staged_certificate" >/dev/null || return 1
+  san_output="$(openssl x509 -in "$staged_certificate" -noout -ext subjectAltName)" || return 1
+  if [[ "$san_output" != *"URI:spiffe://firemud/ns/dev/sa/world-management-service"* ]] \
+    || ! compose_certificate_matches_private_key "$staged_certificate" "$staged_private_key"; then
+    echo "Generated Compose mTLS WMS leaf failed identity or key validation." >&2
+    return 1
+  fi
+
+  # Both validated files are staged on the fixture filesystem; each rename
+  # atomically replaces only the corresponding WMS leaf file.
+  mv -fT -- "$staged_certificate" "$service_dir/client.crt" || return 1
+  mv -fT -- "$staged_private_key" "$service_dir/client.key" || return 1
+  openssl verify -CAfile "$service_dir/ca.crt" "$service_dir/client.crt" >/dev/null || return 1
+  compose_certificate_matches_private_key "$service_dir/client.crt" "$service_dir/client.key" || return 1
 }
 
 ensure_compose_mtls_certs() {
@@ -140,6 +190,10 @@ ensure_compose_mtls_certs() {
         return 1
       fi
       openssl verify -CAfile "$service_dir/ca.crt" "$service_dir/client.crt" >/dev/null
+      if ! compose_certificate_matches_private_key "$service_dir/client.crt" "$service_dir/client.key"; then
+        echo "Compose mTLS workload certificate and private key do not match: $service" >&2
+        return 1
+      fi
     done
     local found_service_count=0 entry
     for entry in "$workloads_dir"/*; do
@@ -158,8 +212,12 @@ ensure_compose_mtls_certs() {
       local san_output
       san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
       if [[ "$san_output" != *"URI:spiffe://firemud/ns/dev/sa/$service"* ]]; then
-        echo "Compose mTLS workload has the wrong SPIFFE identity: $service" >&2
-        return 1
+        if [[ "$service" != world-management-service ]] \
+          || ! migrate_legacy_world_management_leaf \
+            "$requested_root" "$authority_dir" "$workloads_dir/$service"; then
+          echo "Compose mTLS workload has the wrong SPIFFE identity: $service" >&2
+          return 1
+        fi
       fi
     done
   fi

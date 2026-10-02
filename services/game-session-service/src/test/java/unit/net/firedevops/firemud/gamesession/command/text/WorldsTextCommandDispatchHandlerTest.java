@@ -64,6 +64,7 @@ class WorldsTextCommandDispatchHandlerTest {
 
   @Test
   void publishesCommandEventForGameplayScopedRealmsBrowse() {
+    gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     SessionContext context =
         new SessionContext(
             7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
@@ -72,7 +73,7 @@ class WorldsTextCommandDispatchHandlerTest {
         handler.handle(
             new TextCommandDispatchRequest(
                 "session-1",
-                new TextCommand(TextCommandType.REALMS, List.of("sandbox"), "REALMS sandbox"),
+                new TextCommand(TextCommandType.REALMS, List.of("demo"), "REALMS demo"),
                 false,
                 Optional.of(context)));
 
@@ -87,7 +88,7 @@ class WorldsTextCommandDispatchHandlerTest {
             Mockito.argThat(
                 gameplayCommand ->
                     "REALMS".equals(gameplayCommand.getCommandName())
-                        && "REALMS sandbox".equals(gameplayCommand.getCommandText())));
+                        && "REALMS demo".equals(gameplayCommand.getCommandText())));
   }
 
   @Test

@@ -13,6 +13,7 @@ import net.firedevops.firemud.gamesession.entity.RuntimeRegionStatus;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.EntityManagementStubServer;
@@ -41,6 +42,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
   private final ListFriendPresenceResponse baselineFriendPresenceResponse;
   private CrossServiceAppHarness.GameLogicHolder gameLogic;
   private final CrossServiceAppHarness.GameSessionHolder gameSession;
+  private final TestGameplayWorldCatalogs.MutableDefaultDemoCatalog defaultDemoCatalogFixture;
 
   private GameplayCrossServiceStack(
       AccountRuntimeStubServer accountStub,
@@ -51,7 +53,8 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
       net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse baselineRoomEntities,
       ListFriendPresenceResponse baselineFriendPresenceResponse,
       CrossServiceAppHarness.GameLogicHolder gameLogic,
-      CrossServiceAppHarness.GameSessionHolder gameSession) {
+      CrossServiceAppHarness.GameSessionHolder gameSession,
+      TestGameplayWorldCatalogs.MutableDefaultDemoCatalog defaultDemoCatalogFixture) {
     this.accountStub = accountStub;
     this.gameDesignStub = gameDesignStub;
     this.worldStub = worldStub;
@@ -61,6 +64,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     this.baselineFriendPresenceResponse = baselineFriendPresenceResponse;
     this.gameLogic = gameLogic;
     this.gameSession = gameSession;
+    this.defaultDemoCatalogFixture = defaultDemoCatalogFixture;
   }
 
   public static Builder builder() {
@@ -69,15 +73,18 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
 
   public static Builder defaultDemoBuilder(
       PostgreSQLContainer<?> postgres, GenericContainer<?> redis, long defaultAccountId) {
-    return builder()
-        .withPostgres(
-            postgres.getHost(),
-            postgres.getMappedPort(5432),
-            postgres.getDatabaseName(),
-            postgres.getUsername(),
-            postgres.getPassword())
-        .withRedis(redis.getHost(), redis.getMappedPort(6379))
-        .withDefaultAccountId(defaultAccountId);
+    Builder builder =
+        builder()
+            .withPostgres(
+                postgres.getHost(),
+                postgres.getMappedPort(5432),
+                postgres.getDatabaseName(),
+                postgres.getUsername(),
+                postgres.getPassword())
+            .withRedis(redis.getHost(), redis.getMappedPort(6379))
+            .withDefaultAccountId(defaultAccountId);
+    builder.useDefaultDemoCatalogFixture = true;
+    return builder;
   }
 
   @SuppressFBWarnings(
@@ -186,7 +193,17 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         GameInstanceTestFixtures.insertRunningGameInstance(
             jdbc, tenantId, ownerAccountId, gameTemplateId);
     seedRuntimeOwnership(tenantId, gameInstanceId);
+    if (defaultDemoCatalogFixture != null) {
+      defaultDemoCatalogFixture.useDefaultDemo(tenantId, gameInstanceId);
+    }
     return gameInstanceId;
+  }
+
+  /** Removes only the test catalog fallback; persisted pointer authority remains untouched. */
+  public void clearDefaultDemoCatalogFixture() {
+    if (defaultDemoCatalogFixture != null) {
+      defaultDemoCatalogFixture.clearDefaultDemo();
+    }
   }
 
   private void clearSyntheticAdmissionPointerState(JdbcTemplate jdbc) {
@@ -352,6 +369,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     private final Map<String, Object> gameSessionProps = new LinkedHashMap<>();
     private Class<?>[] gameLogicConfigs = new Class<?>[0];
     private Class<?>[] gameSessionConfigs = new Class<?>[0];
+    private boolean useDefaultDemoCatalogFixture;
 
     private Builder() {}
 
@@ -439,6 +457,14 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         socialStub.setFriendPresenceResponse(initialFriendPresenceResponse);
       }
 
+      Class<?>[] selectedGameSessionConfigs = gameSessionConfigs;
+      if (useDefaultDemoCatalogFixture) {
+        selectedGameSessionConfigs =
+            java.util.Arrays.copyOf(gameSessionConfigs, gameSessionConfigs.length + 1);
+        selectedGameSessionConfigs[gameSessionConfigs.length] =
+            CrossServiceAppHarness.DefaultDemoCatalogTestOverrides.class;
+      }
+
       CrossServiceAppHarness.GameLogicHolder gameLogic =
           CrossServiceAppHarness.startGameLogic(
               0,
@@ -472,7 +498,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
                 }
                 props.putAll(gameSessionProps);
               },
-              gameSessionConfigs);
+              selectedGameSessionConfigs);
 
       return new GameplayCrossServiceStack(
           accountStub,
@@ -483,7 +509,10 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
           initialRoomEntities,
           initialFriendPresenceResponse,
           gameLogic,
-          gameSession);
+          gameSession,
+          useDefaultDemoCatalogFixture
+              ? gameSession.bean(TestGameplayWorldCatalogs.MutableDefaultDemoCatalog.class)
+              : null);
     }
 
     private void requireConfigured() {

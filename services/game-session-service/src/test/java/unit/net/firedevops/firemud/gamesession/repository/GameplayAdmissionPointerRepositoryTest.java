@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
@@ -18,6 +19,31 @@ import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
 class GameplayAdmissionPointerRepositoryTest {
+  @Test
+  void tenantScopedListFiltersRowsInTheDatabaseBeforeMapping() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-tenant-list;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      GameplayAdmissionPointer target = repository.save(pointer(7L, 44L, "SHARED", "production"));
+      GameplayAdmissionPointer unrelated =
+          repository.save(pointer(8L, 55L, "SHARED", "production"));
+      dsl.execute(
+          "UPDATE gameplay_admission_pointer SET realm_id = NULL, "
+              + "playable_state_namespace_id = NULL WHERE id = ?",
+          unrelated.getId());
+
+      var scopedRows = repository.findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(7L);
+
+      assertEquals(1, scopedRows.size());
+      assertEquals(target.getId(), scopedRows.getFirst().getId());
+      assertEquals(7L, scopedRows.getFirst().getTenantId());
+      assertNotNull(scopedRows.getFirst().getRealmId());
+    }
+  }
+
   @Test
   void stableRealmAndNamespaceIdentitySurviveRuntimeReplacement() throws Exception {
     try (Connection connection =
@@ -51,7 +77,7 @@ class GameplayAdmissionPointerRepositoryTest {
       createdShared.setGameInstanceId(99L);
       createdShared.setPointerVersion(2L);
       createdShared.setCatalogRevision(1L);
-      GameplayAdmissionPointer replaced = repository.save(createdShared);
+      GameplayAdmissionPointer replaced = repository.updateExisting(createdShared, 1L, 1L);
 
       assertEquals(99L, replaced.getGameInstanceId());
       assertEquals(sharedRealmId, replaced.getRealmId());
@@ -69,11 +95,14 @@ class GameplayAdmissionPointerRepositoryTest {
       GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
       GameplayAdmissionPointer created = repository.save(pointer(7L, 44L, "ISOLATED", "fork"));
 
-      created.setPointerVersion(2L);
       created.setRealmId(UUID.randomUUID());
 
-      org.junit.jupiter.api.Assertions.assertThrows(
-          IllegalStateException.class, () -> repository.save(created));
+      IllegalStateException exception =
+          assertThrows(
+              IllegalStateException.class, () -> repository.updateExisting(created, 1L, 1L));
+      assertEquals(
+          "Admission pointer update cannot replace durable realm or playable-state identity",
+          exception.getMessage());
     }
   }
 
@@ -95,7 +124,7 @@ class GameplayAdmissionPointerRepositoryTest {
       catalogUpdate.setPointerVersion(1L);
       catalogUpdate.setCatalogRevision(2L);
 
-      GameplayAdmissionPointer updated = repository.save(catalogUpdate);
+      GameplayAdmissionPointer updated = repository.updateExisting(catalogUpdate, 1L, 1L);
 
       assertEquals(1L, updated.getPointerVersion());
       assertEquals(2L, updated.getCatalogRevision());
@@ -103,7 +132,46 @@ class GameplayAdmissionPointerRepositoryTest {
       stale.setRealmDisplayName("Stale Realm Display");
       stale.setPointerVersion(1L);
       stale.setCatalogRevision(2L);
-      assertThrows(AdmissionPointerVersionMismatchException.class, () -> repository.save(stale));
+      assertThrows(
+          AdmissionPointerVersionMismatchException.class,
+          () -> repository.updateExisting(stale, 1L, 1L));
+    }
+  }
+
+  @Test
+  void rejectsSecondConcurrentRequestWhenWinnerCommittedTheSameTransition() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-convergent-update;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+
+      GameplayAdmissionPointer winner =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      GameplayAdmissionPointer staleConcurrentRequest =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      for (GameplayAdmissionPointer request : List.of(winner, staleConcurrentRequest)) {
+        request.setWorldDisplayName("Renamed Demo World");
+        request.setGameInstanceId(99L);
+        request.setPointerVersion(2L);
+        request.setCatalogRevision(2L);
+      }
+
+      GameplayAdmissionPointer committed = repository.updateExisting(winner, 1L, 1L);
+
+      assertEquals(2L, committed.getPointerVersion());
+      assertEquals(2L, committed.getCatalogRevision());
+      assertThrows(
+          AdmissionPointerVersionMismatchException.class,
+          () -> repository.updateExisting(staleConcurrentRequest, 1L, 1L));
+      GameplayAdmissionPointer persisted =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      assertEquals(99L, persisted.getGameInstanceId());
+      assertEquals(2L, persisted.getPointerVersion());
+      assertEquals(2L, persisted.getCatalogRevision());
+      assertEquals("Renamed Demo World", persisted.getWorldDisplayName());
     }
   }
 

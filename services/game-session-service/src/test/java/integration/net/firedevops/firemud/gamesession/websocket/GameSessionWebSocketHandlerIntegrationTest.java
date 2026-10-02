@@ -1186,13 +1186,46 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketActiveGameplaySessionFallsBackToPlayRequiredWhenPointerAdvances() throws Exception {
+    var pointerBefore =
+        gameplayAdmissionPointerAuthorityService
+            .findPointer(22L, "demo", "production")
+            .orElseThrow();
+    assertThat(pointerBefore.gameInstanceId()).isEqualTo(1L);
+
+    var targetRuntimeRoster =
+        ListCharactersByAccountResponse.newBuilder()
+            .addCharacters(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("789")
+                    .setTenantId("22")
+                    .setAccountId("123")
+                    .setName("CutoverArrival")
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .setLevel(1)
+                    .build())
+            .build();
+    org.mockito.Mockito.doReturn(targetRuntimeRoster)
+        .when(entityManagementClient)
+        .listCharactersByAccount(
+            "22",
+            "123",
+            Long.toString(CUTOVER_GAME_INSTANCE_ID),
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+
     List<String> payloads;
     try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
       client.login("demo@example.com", "swordfish");
       client.play("demo", "Emberline");
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
-      bumpProductionAdmissionPointer(1L, false);
+      bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, false);
+      var pointerAfter =
+          gameplayAdmissionPointerAuthorityService
+              .findPointer(22L, "demo", "production")
+              .orElseThrow();
+      assertThat(pointerAfter.gameInstanceId()).isEqualTo(CUTOVER_GAME_INSTANCE_ID);
+      assertThat(pointerAfter.pointerVersion()).isEqualTo(pointerBefore.pointerVersion() + 1L);
+      assertThat(pointerAfter.catalogRevision()).isEqualTo(pointerBefore.catalogRevision());
       client.send("LOOK");
       client.awaitStartsWith("ERROR PLAY_REQUIRED");
       client.send("CHARS demo");
@@ -1204,6 +1237,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR PLAY_REQUIRED"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK CHARS"));
+    assertThat(payloads).anyMatch(payload -> payload.contains("CutoverArrival"));
+    org.mockito.Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22",
+            "123",
+            Long.toString(CUTOVER_GAME_INSTANCE_ID),
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -1239,8 +1279,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
       second.awaitStartsWith("ERROR LOGIN_REQUIRED");
       second.login("demo@example.com", "swordfish");
       second.awaitStartsWith("OK LOGIN");
+      second.send("WORLDS");
+      second.awaitStartsWith("OK WORLDS");
       second.send("REALMS sandbox");
-      second.awaitStartsWith("OK REALMS");
+      second.awaitStartsWith("ERROR INVALID_ARGUMENT");
       payloads = second.responses();
     }
 
@@ -1249,7 +1291,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads)
         .anyMatch(
             payload ->
-                payload.startsWith("OK REALMS") && payload.contains("Live Realm (production)"));
+                payload.startsWith("OK WORLDS") && !payload.contains("Builder Sandbox (sandbox)"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                payload.startsWith("ERROR INVALID_ARGUMENT")
+                    && payload.contains("REALMS requires a valid world selector"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
@@ -1374,6 +1421,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
       second.send("LOOK");
       second.awaitMatching(
           payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+      second.send("WORLDS");
+      second.awaitMatching(
+          payload -> isStructuredCommand(payload, "WORLDS"), "structured WORLDS result");
       second.send("REALMS sandbox");
       second.awaitMatching(
           payload -> isStructuredCommand(payload, "REALMS"), "structured REALMS result");
@@ -1397,15 +1447,23 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(lookFailure.path("accepted").asBoolean()).isFalse();
     assertThat(lookFailure.path("errorCode").asText()).isEqualTo("PLAY_REQUIRED");
 
-    JsonNode realmsSuccess =
+    JsonNode worldsSuccess =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "WORLDS"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(worldsSuccess.path("accepted").asBoolean()).isTrue();
+    assertThat(worldsSuccess.toString()).doesNotContain("Builder Sandbox", "sandbox");
+
+    JsonNode realmsRejected =
         payloads.stream()
             .filter(payload -> isStructuredCommand(payload, "REALMS"))
             .findFirst()
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .orElseThrow();
-    assertThat(realmsSuccess.path("accepted").asBoolean()).isTrue();
-    assertThat(realmsSuccess.path("outputs").get(0).path("payload").path("worldSlug").asText())
-        .isEqualTo("sandbox");
+    assertThat(realmsRejected.path("accepted").asBoolean()).isFalse();
+    assertThat(realmsRejected.path("errorCode").asText()).isEqualTo("INVALID_ARGUMENT");
 
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(
@@ -1605,7 +1663,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private void bumpProductionAdmissionPointer(
       long newGameInstanceId, boolean requiresCharacterSelection) {
-    long expectedPointerVersion =
+    var currentPointer =
         gameplayAdmissionPointerAuthorityService.listPointers().stream()
             .filter(
                 pointer ->
@@ -1613,8 +1671,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         && "demo".equals(pointer.worldSlug())
                         && "production".equals(pointer.realmSlug()))
             .findFirst()
-            .orElseThrow()
-            .pointerVersion();
+            .orElseThrow();
+    long expectedPointerVersion = currentPointer.pointerVersion();
+    long expectedCatalogRevision = currentPointer.catalogRevision();
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
             "demo",
@@ -1632,6 +1691,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "cutover-proof",
             "req-cutover-" + newGameInstanceId + "-" + expectedPointerVersion,
             expectedPointerVersion,
+            expectedCatalogRevision,
             "integration-test-prep-" + newGameInstanceId));
   }
 
@@ -1654,7 +1714,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "integration-test",
             "reset-default-demo-pointer",
             "req-reset-demo",
-            null,
+            0L,
+            0L,
             null));
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
@@ -1665,14 +1726,15 @@ class GameSessionWebSocketHandlerIntegrationTest {
             22L,
             2L,
             true,
-            true,
+            false,
             true,
             "SHARED",
             "ALLOW_NEW",
             "integration-test",
             "reset-default-sandbox-pointer",
             "req-reset-sandbox",
-            null,
+            0L,
+            0L,
             null));
   }
 
