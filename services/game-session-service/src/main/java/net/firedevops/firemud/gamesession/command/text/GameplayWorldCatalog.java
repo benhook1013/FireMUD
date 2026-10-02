@@ -568,9 +568,9 @@ public final class GameplayWorldCatalog {
       world.realms().stream().map(RealmView::tenantId).forEach(tenantIds::add);
     }
     Set<String> ambiguousWorlds = new HashSet<>();
-    for (String key : worldCounts.keySet()) {
-      if (worldCounts.get(key) > 1 || tenantsByWorld.get(key).size() > 1) {
-        ambiguousWorlds.add(key);
+    for (Map.Entry<String, Integer> entry : worldCounts.entrySet()) {
+      if (entry.getValue() > 1 || tenantsByWorld.get(entry.getKey()).size() > 1) {
+        ambiguousWorlds.add(entry.getKey());
       }
     }
     return normalizedWorlds.stream()
