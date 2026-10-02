@@ -164,6 +164,12 @@ public final class DirectTextConnectScopeSessionStore {
         nowMillis,
         current -> {
           LobbyRecord record = current == null ? LobbyRecord.empty(caller.sessionId()) : current;
+          if (record.sessionId() != caller.sessionId()) {
+            throw new ConflictingIdentityException("lobby record transport session did not match");
+          }
+          if (record.accountId() > 0L && record.accountId() != caller.accountId()) {
+            record = LobbyRecord.empty(caller.sessionId());
+          }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
           byWorld.remove(key);
           if (!storedScopes.isEmpty()) {

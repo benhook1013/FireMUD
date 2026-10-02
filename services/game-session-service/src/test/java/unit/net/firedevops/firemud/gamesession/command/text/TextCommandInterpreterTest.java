@@ -383,6 +383,8 @@ class TextCommandInterpreterTest {
             pointerAuthorityService,
             gameplayPresenceLifecycleService,
             meterRegistry);
+    DirectTextConnectScopeSessionStore connectScopeSessionStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -397,7 +399,7 @@ class TextCommandInterpreterTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            connectScopeSessionStore);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     WhoCommandHandler whoHandler =
@@ -435,10 +437,7 @@ class TextCommandInterpreterTest {
                 .build());
     WorldsCommandHandler worldsHandler =
         new WorldsCommandHandler(
-            worldCatalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            worldCatalog, entityManagementClient, accountClient, connectScopeSessionStore);
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -535,6 +534,43 @@ class TextCommandInterpreterTest {
     assertTrue(renderedResponse("WORLDS", interpretation).startsWith("OK WORLDS\n1) Demo World"));
     assertTrue(renderedResponse("WORLDS", interpretation).contains("Demo World"));
     verify(commandService, never()).enqueue(anyString(), anyString(), anyBoolean());
+  }
+
+  @Test
+  void logoutAliasDispatchesBeforeStaleBindingNormalization() {
+    SessionContext staleBinding =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "jwt-token",
+            null,
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    sessionContextService.save(staleBinding);
+    gameplayPresenceService.registerConnected(staleBinding);
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L)).thenReturn(List.of());
+    Mockito.clearInvocations(pointerAuthorityService);
+
+    TextCommandInterpretationResult result = interpreter.interpret("1", "QUIT", false);
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("LOGOUT_UNAVAILABLE");
+    assertThat(sessionContextService.findBySessionId(1L)).hasValue(staleBinding);
+    assertThat(gameplayPresenceService.findConnectedBySessionId(1L))
+        .hasValueSatisfying(
+            presence -> {
+              assertThat(presence.accountId()).isEqualTo(staleBinding.accountId());
+              assertThat(presence.gameInstanceId()).isEqualTo(staleBinding.gameInstanceId());
+            });
+    Mockito.verify(pointerAuthorityService, never()).listByRuntimeTarget(22L, 1L);
   }
 
   @Test

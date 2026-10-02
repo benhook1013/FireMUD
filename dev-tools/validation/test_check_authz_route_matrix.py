@@ -6154,6 +6154,18 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.assertIn("CONNECT_SCOPE_INVALID", outcomes)
         self.assertIn("MEMBERSHIP_RECONCILIATION_REQUIRED", outcomes)
 
+        for route_name in (
+            "POST /auth/bootstrap/join",
+            "JoinPublicProductionMembership",
+        ):
+            with self.subTest(route_name=route_name):
+                account_route = route_for(document, "account-service", route_name)
+                account_outcomes = account_route["canonical_errors"]["any_of"]
+                self.assertIn("CONNECT_SCOPE_INVALID", account_outcomes)
+                self.assertIn("MEMBERSHIP_RECONCILIATION_REQUIRED", account_outcomes)
+                self.assertIn("AUTH_UNAVAILABLE", account_outcomes)
+                self.assertIn("ENTITLEMENT_UNAVAILABLE", account_outcomes)
+
     def test_privileged_control_cardinality_error_uses_shared_set(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         routes = [

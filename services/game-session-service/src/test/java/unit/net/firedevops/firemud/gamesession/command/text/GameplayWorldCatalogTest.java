@@ -364,6 +364,89 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void authorityWorldResolutionUsesReadOutageClassificationBeforeSnapshotValidation() {
+    when(authorityService.listPointers())
+        .thenThrow(new IllegalStateException("authority down"))
+        .thenReturn(null)
+        .thenReturn(
+            List.of(pointer("demo", "Demo World", "production", "Live Realm", 0L, 11L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(() -> catalog.resolveWorldFromAuthoritySnapshot("demo"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+    assertThatThrownBy(() -> catalog.resolveWorldFromAuthoritySnapshot("demo"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+    assertThatThrownBy(() -> catalog.resolveWorldFromAuthoritySnapshot("demo"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .isNotInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+  }
+
+  @Test
+  void publicProductionCardinalityKeepsReadOutageDistinctFromMalformedSnapshot() {
+    when(authorityService.listPointers())
+        .thenThrow(new IllegalStateException("authority down"))
+        .thenReturn(
+            List.of(pointer("demo", "Demo World", "production", "Live Realm", 0L, 11L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(() -> catalog.publicProductionRealmCardinality(1L))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+    assertThatThrownBy(() -> catalog.publicProductionRealmCardinality(1L))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .isNotInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class)
+        .hasMessageContaining("tenant identity is unavailable");
+  }
+
+  @Test
+  void matchesCurrentAdmissionPointerReturnsFalseForMalformedTenantSnapshot() {
+    CurrentAdmissionTarget target = currentAdmissionTarget();
+    when(authorityService.listPointersByTenant(1L))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "live",
+                    "Live Realm",
+                    1L,
+                    11L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    0L)));
+
+    assertThat(target.catalog().matchesCurrentAdmissionPointer(target.world(), target.realm()))
+        .isFalse();
+  }
+
+  @Test
+  void matchesCurrentAdmissionPointerReturnsFalseForSelectorCollision() {
+    CurrentAdmissionTarget target = currentAdmissionTarget();
+    when(authorityService.listPointersByTenant(1L))
+        .thenReturn(
+            List.of(
+                publicPointer("demo", "Demo World", 1L, 11L),
+                privatePointer("Demo", "Demo World Alias", "preview", "Preview Realm", 1L, 12L)));
+
+    assertThat(target.catalog().matchesCurrentAdmissionPointer(target.world(), target.realm()))
+        .isFalse();
+  }
+
+  @Test
+  void matchesCurrentAdmissionPointerPropagatesTenantReadOutage() {
+    CurrentAdmissionTarget target = currentAdmissionTarget();
+    when(authorityService.listPointersByTenant(1L))
+        .thenThrow(new IllegalStateException("authority down"));
+
+    assertThatThrownBy(
+            () -> target.catalog().matchesCurrentAdmissionPointer(target.world(), target.realm()))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+  }
+
+  @Test
   void reverseRuntimeLookupFailsClosedWhenMultipleVisibleRealmsShareRuntimeTarget() {
     when(authorityService.listPointers())
         .thenReturn(
@@ -1066,6 +1149,21 @@ class GameplayWorldCatalogTest {
     world.setRealms(List.of(realm));
     return world;
   }
+
+  private CurrentAdmissionTarget currentAdmissionTarget() {
+    when(authorityService.listPointers())
+        .thenReturn(List.of(publicPointer("demo", "Demo World", 1L, 11L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+    GameplayWorldCatalog.WorldView world =
+        catalog.resolveWorldFromAuthoritySnapshot("demo").orElseThrow();
+    GameplayWorldCatalog.RealmView realm = catalog.resolveRealm(world, "live").orElseThrow();
+    return new CurrentAdmissionTarget(catalog, world, realm);
+  }
+
+  private record CurrentAdmissionTarget(
+      GameplayWorldCatalog catalog,
+      GameplayWorldCatalog.WorldView world,
+      GameplayWorldCatalog.RealmView realm) {}
 
   private static GameplayWorldCatalog.WorldView worldWithRealm(
       String worldSlug, String realmSlug, long tenantId, boolean publicProduction) {

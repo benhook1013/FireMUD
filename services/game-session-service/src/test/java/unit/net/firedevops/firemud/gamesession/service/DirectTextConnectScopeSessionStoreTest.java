@@ -418,6 +418,47 @@ class DirectTextConnectScopeSessionStoreTest {
   }
 
   @Test
+  void replacingWorldScopesForAnotherAccountClearsPriorLobbyAuthority() {
+    SessionContext previousCaller = session(41L, 7L);
+    SessionContext currentCaller = session(41L, 8L);
+    Instant now = Instant.now();
+    Instant expiresAt = now.plusSeconds(60);
+    store.replaceRealmSnapshot(
+        previousCaller,
+        "demo",
+        22L,
+        "demo",
+        "previous-demo-catalog",
+        List.of(),
+        List.of(scopedRealm(previousCaller, 22L, "production", "previous-demo-scope", expiresAt)),
+        now);
+    store.replaceRealmSnapshot(
+        previousCaller,
+        "secondary",
+        22L,
+        "secondary",
+        "previous-secondary-catalog",
+        List.of(),
+        List.of(
+            scopedRealm(previousCaller, 22L, "production", "previous-secondary-scope", expiresAt)),
+        now);
+
+    store.replaceWorldScopes(
+        currentCaller,
+        "demo",
+        22L,
+        "demo",
+        List.of(scopedRealm(currentCaller, 22L, "production", "current-demo-scope", expiresAt)));
+
+    assertThat(store.realmsSnapshot(currentCaller, 22L, "demo", now)).isEmpty();
+    assertThat(store.realmsSnapshot(currentCaller, 22L, "secondary", now)).isEmpty();
+    assertThat(store.publicProductionScope(currentCaller, 22L, "secondary", now)).isEmpty();
+    assertThat(store.publicProductionScope(currentCaller, 22L, "demo", now))
+        .hasValueSatisfying(
+            scope -> assertThat(scope.connectScopeId()).isEqualTo("current-demo-scope"));
+  }
+
+  @Test
   void rejectsInvalidTransportIdsAndScopesBoundToAnotherIdentity() {
     assertThatThrownBy(() -> store.clearSession(0L)).isInstanceOf(IllegalArgumentException.class);
 

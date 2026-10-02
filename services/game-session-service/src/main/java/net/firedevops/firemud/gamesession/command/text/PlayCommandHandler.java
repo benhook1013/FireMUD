@@ -77,6 +77,7 @@ public class PlayCommandHandler {
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final ScriptEventPublisher scriptEventPublisher;
   private final MeterRegistry meterRegistry;
+  private final Clock authorityEvaluationClock;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -95,6 +96,38 @@ public class PlayCommandHandler {
       ScriptEventPublisher scriptEventPublisher,
       MeterRegistry meterRegistry,
       DirectTextConnectScopeSessionStore connectScopeSessionStore) {
+    this(
+        sessionAuthenticationService,
+        sessionContextService,
+        sessionRoutingNormalizationService,
+        gameplayWorldCatalog,
+        gameLogicProperties,
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        firstPartyConnectContextRegistry,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher,
+        meterRegistry,
+        connectScopeSessionStore,
+        Clock.systemUTC());
+  }
+
+  PlayCommandHandler(
+      SessionAuthenticationService sessionAuthenticationService,
+      SessionContextService sessionContextService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
+      GameplayWorldCatalog gameplayWorldCatalog,
+      GameLogicProperties gameLogicProperties,
+      AccountClient accountClient,
+      EntityManagementClient entityManagementClient,
+      ModerationPolicyClient moderationPolicyClient,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
+      ScriptEventPublisher scriptEventPublisher,
+      MeterRegistry meterRegistry,
+      DirectTextConnectScopeSessionStore connectScopeSessionStore,
+      Clock authorityEvaluationClock) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -125,6 +158,9 @@ public class PlayCommandHandler {
     this.scriptEventPublisher =
         Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
+    this.authorityEvaluationClock =
+        Objects.requireNonNull(
+            authorityEvaluationClock, "authorityEvaluationClock must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
   }
@@ -195,6 +231,8 @@ public class PlayCommandHandler {
             null,
             null,
             ex);
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return admissionPointerUnavailableFailure(tenantTag, null);
       }
       WorldSelectorResolution worldSelection =
           resolvePlayWorld(context, requestedSelection.worldSelector(), currentCatalog);
@@ -1117,7 +1155,8 @@ public class PlayCommandHandler {
             response.getTenantId(),
             context.accountId(),
             selectedRealm.tenantId())
-        || !AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC())) {
+        || !AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock)) {
       return false;
     }
     if (!response.getMembershipExists()) {
@@ -1147,7 +1186,8 @@ public class PlayCommandHandler {
             response.getAccountId(), response.getTenantId(), context.accountId(), realm.tenantId())
         && world.slug().equals(response.getWorldSlug())
         && realm.slug().equals(response.getRealmSlug())
-        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
+        && AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock);
   }
 
   private boolean isValidEntitlement(
@@ -1155,7 +1195,8 @@ public class PlayCommandHandler {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
-        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
+        && AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock);
   }
 
   private boolean hasMatchingAuthorityIdentity(

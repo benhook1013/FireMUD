@@ -278,6 +278,8 @@ class SessionResumptionFlowTest {
                     true,
                     List.of(),
                     List.of())));
+    DirectTextConnectScopeSessionStore connectScopeSessionStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
     playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -292,13 +294,10 @@ class SessionResumptionFlowTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            connectScopeSessionStore);
     worldsHandler =
         new WorldsCommandHandler(
-            worldCatalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            worldCatalog, entityManagementClient, accountClient, connectScopeSessionStore);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
