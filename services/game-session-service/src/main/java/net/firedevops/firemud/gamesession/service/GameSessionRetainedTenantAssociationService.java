@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
@@ -83,7 +84,50 @@ public class GameSessionRetainedTenantAssociationService {
     LegacyGameSessionTenantAssociationReceipt validatedReceipt =
         validateOwnerReceipt(ownerReceipt, tenantUuid, approvalOperationUuid, legacyKey);
 
-    return ownerTransaction.execute(status -> repository.register(requestUuid, validatedReceipt));
+    AssociationReceipt registeredReceipt =
+        ownerTransaction.execute(status -> repository.register(requestUuid, validatedReceipt));
+    requireRegistrationMatches(
+        registeredReceipt, requestUuid, validatedReceipt, approvalOperationUuid);
+
+    Optional<AssociationReceipt> committedReadback =
+        repository.read(
+            registeredReceipt.operationId(),
+            requestUuid,
+            tenantUuid,
+            Long.parseLong(legacyKey),
+            workloadNamespace);
+    if (committedReadback == null || committedReadback.isEmpty()) {
+      throw new IllegalStateException("Committed retained-tenant association readback is missing");
+    }
+    AssociationReceipt committedReceipt = committedReadback.orElseThrow();
+    if (!registeredReceipt.equals(committedReceipt)) {
+      throw new IllegalStateException(
+          "Committed retained-tenant association readback contradicts its registration receipt");
+    }
+    return committedReceipt;
+  }
+
+  private static void requireRegistrationMatches(
+      AssociationReceipt receipt,
+      UUID associationRequestId,
+      LegacyGameSessionTenantAssociationReceipt ownerReceipt,
+      UUID approvalOperationId) {
+    if (receipt == null) {
+      throw new IllegalStateException(
+          "Committed retained-tenant association registration receipt is missing");
+    }
+    GameSessionTenantAssociationEvidence ownerEvidence = ownerReceipt.evidence();
+    if (receipt.operationId() == null
+        || NIL_UUID.equals(receipt.operationId())
+        || !associationRequestId.equals(receipt.associationRequestId())
+        || !Objects.equals(ownerEvidence, receipt.approval())
+        || !Objects.equals(ownerReceipt.manifestDigest(), receipt.approvalManifestDigest())
+        || !Objects.equals(ownerReceipt.ed25519Signature(), receipt.approvalSignature())
+        || !approvalOperationId.equals(ownerEvidence.operationId())) {
+      throw new IllegalStateException(
+          "Committed retained-tenant association registration contradicts its exact request"
+              + " or approval");
+    }
   }
 
   private LegacyGameSessionTenantAssociationReceipt validateOwnerReceipt(

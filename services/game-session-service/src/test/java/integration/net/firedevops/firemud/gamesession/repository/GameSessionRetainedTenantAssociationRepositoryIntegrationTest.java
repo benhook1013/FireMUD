@@ -3,10 +3,14 @@ package integration.net.firedevops.firemud.gamesession.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.io.ByteArrayOutputStream;
@@ -25,7 +29,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
+import net.firedevops.firemud.gamesession.client.GameDesignRuntimeTenantIdentityClient;
 import net.firedevops.firemud.gamesession.client.GameDesignRuntimeTenantIdentityClient.LegacyGameSessionTenantAssociationReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository.AssociationConflictException;
@@ -33,6 +40,7 @@ import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAs
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepository.InvalidAssociationEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshot;
 import net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantSnapshotRepository;
+import net.firedevops.firemud.gamesession.service.GameSessionRetainedTenantAssociationService;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.Record;
@@ -44,6 +52,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -177,6 +186,228 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("configured Game Session workload namespace");
     assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void serviceReturnsExactCommittedAssociationAfterOwnerTransaction() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(42L, 420L, "runtime-before-service-association");
+    UUID associationRequestId = uuid(1101);
+    UUID approvalOperationId = uuid(1102);
+    UUID canonicalTenantId = uuid(1103);
+    LegacyGameSessionTenantAssociationReceipt approval =
+        fixture.approval(approvalOperationId, canonicalTenantId, 42L, fixture.capture(42L));
+
+    // The transport is mocked; this verifies database composition, not live mTLS.
+    GameDesignRuntimeTenantIdentityClient sourceClient =
+        mock(GameDesignRuntimeTenantIdentityClient.class);
+    AtomicReference<String> ownerReadRequestId = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              ownerReadRequestId.set(invocation.getArgument(3, String.class));
+              return approval;
+            })
+        .when(sourceClient)
+        .resolveLegacyGameSessionTenantAssociation(
+            eq(canonicalTenantId.toString()),
+            eq(approvalOperationId.toString()),
+            eq("42"),
+            anyString());
+
+    GameSessionRetainedTenantAssociationRepository committedReadRepository =
+        spy(fixture.repository);
+    AtomicReference<UUID> committedLocalOperationId = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              committedLocalOperationId.set(invocation.getArgument(0, UUID.class));
+              return invocation.callRealMethod();
+            })
+        .when(committedReadRepository)
+        .read(
+            any(UUID.class),
+            eq(associationRequestId),
+            eq(canonicalTenantId),
+            eq(42L),
+            eq(NAMESPACE));
+    GameSessionRetainedTenantAssociationService service =
+        new GameSessionRetainedTenantAssociationService(
+            sourceClient,
+            committedReadRepository,
+            Objects.requireNonNull(fixture.transactions.getTransactionManager()),
+            NAMESPACE);
+
+    AssociationReceipt receipt =
+        service.associate(
+            associationRequestId.toString(),
+            canonicalTenantId.toString(),
+            approvalOperationId.toString(),
+            "42");
+
+    assertThat(ownerReadRequestId.get()).isNotBlank();
+    assertThat(UUID.fromString(ownerReadRequestId.get()).toString())
+        .isEqualTo(ownerReadRequestId.get());
+    assertThat(ownerReadRequestId.get())
+        .isNotEqualTo(associationRequestId.toString())
+        .isNotEqualTo(approvalOperationId.toString());
+    assertThat(receipt.operationId()).isEqualTo(committedLocalOperationId.get());
+    assertThat(receipt.operationId())
+        .isNotEqualTo(approvalOperationId)
+        .isNotEqualTo(associationRequestId);
+    verify(sourceClient)
+        .resolveLegacyGameSessionTenantAssociation(
+            canonicalTenantId.toString(),
+            approvalOperationId.toString(),
+            "42",
+            ownerReadRequestId.get());
+    verify(committedReadRepository)
+        .read(receipt.operationId(), associationRequestId, canonicalTenantId, 42L, NAMESPACE);
+    assertThat(receipt)
+        .isEqualTo(
+            committedReadRepository
+                .read(
+                    receipt.operationId(), associationRequestId, canonicalTenantId, 42L, NAMESPACE)
+                .orElseThrow());
+    assertThat(committedReadRepository.readCanonicalTenantIdByRetainedTenantKey(42L, NAMESPACE))
+        .contains(canonicalTenantId);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void serviceRecoversPostCommitReadFailureWithoutRewritingHistoricalAssociation() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(42L, 420L, "runtime-before-post-commit-read-failure");
+    UUID associationRequestId = uuid(1201);
+    UUID approvalOperationId = uuid(1202);
+    UUID canonicalTenantId = uuid(1203);
+    LegacyGameSessionTenantAssociationReceipt approval =
+        fixture.approval(approvalOperationId, canonicalTenantId, 42L, fixture.capture(42L));
+    String sourceXminBefore = fixture.instanceXmin(420L);
+
+    // The transport is mocked; this verifies database composition, not live mTLS.
+    GameDesignRuntimeTenantIdentityClient sourceClient =
+        mock(GameDesignRuntimeTenantIdentityClient.class);
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return approval;
+            })
+        .when(sourceClient)
+        .resolveLegacyGameSessionTenantAssociation(
+            eq(canonicalTenantId.toString()),
+            eq(approvalOperationId.toString()),
+            eq("42"),
+            anyString());
+
+    GameSessionRetainedTenantSnapshotRepository snapshotRepository =
+        spy(fixture.snapshotRepository);
+    GameSessionRetainedTenantAssociationRepository serviceRepository =
+        spy(
+            new GameSessionRetainedTenantAssociationRepository(
+                fixture.dsl, snapshotRepository, NAMESPACE));
+    AtomicBoolean failFirstPostCommitRead = new AtomicBoolean(true);
+    AtomicReference<UUID> postCommitReadOperationId = new AtomicReference<>();
+    doAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              postCommitReadOperationId.set(invocation.getArgument(0, UUID.class));
+              if (failFirstPostCommitRead.compareAndSet(true, false)) {
+                throw new IllegalStateException("simulated post-commit read outage");
+              }
+              return invocation.callRealMethod();
+            })
+        .when(serviceRepository)
+        .read(
+            any(UUID.class),
+            eq(associationRequestId),
+            eq(canonicalTenantId),
+            eq(42L),
+            eq(NAMESPACE));
+    GameSessionRetainedTenantAssociationService service =
+        new GameSessionRetainedTenantAssociationService(
+            sourceClient,
+            serviceRepository,
+            Objects.requireNonNull(fixture.transactions.getTransactionManager()),
+            NAMESPACE);
+
+    assertThatThrownBy(
+            () ->
+                service.associate(
+                    associationRequestId.toString(),
+                    canonicalTenantId.toString(),
+                    approvalOperationId.toString(),
+                    "42"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("simulated post-commit read outage");
+    assertThat(failFirstPostCommitRead.get()).isFalse();
+    assertThat(fixture.instanceRuntimeVersion(420L))
+        .isEqualTo("runtime-before-post-commit-read-failure");
+    assertThat(fixture.instanceXmin(420L)).isEqualTo(sourceXminBefore);
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+    assertThat(fixture.storedRequestCount(associationRequestId)).isEqualTo(1L);
+    UUID localOperationId =
+        fixture.storedByRequest(associationRequestId).get("operation_id", UUID.class);
+    assertThat(localOperationId)
+        .isNotNull()
+        .isNotEqualTo(approvalOperationId)
+        .isNotEqualTo(associationRequestId);
+    assertThat(postCommitReadOperationId.get()).isEqualTo(localOperationId);
+
+    AssociationReceipt historicalReceipt =
+        fixture
+            .repository
+            .read(localOperationId, associationRequestId, canonicalTenantId, 42L, NAMESPACE)
+            .orElseThrow();
+    String associationXmin = fixture.associationXmin(associationRequestId);
+    assertThat(historicalReceipt.approval()).isEqualTo(approval.evidence());
+    assertThat(historicalReceipt.snapshot().evidenceDigest())
+        .isEqualTo(approval.evidence().gameSessionEvidenceDigest());
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET runtime_version = ? WHERE id = ?",
+        "runtime-after-post-commit-read-failure",
+        420L);
+    assertThat(fixture.instanceRuntimeVersion(420L))
+        .isEqualTo("runtime-after-post-commit-read-failure");
+    assertThat(fixture.capture(42L).evidenceDigest())
+        .isNotEqualTo(historicalReceipt.snapshot().evidenceDigest());
+
+    AssociationReceipt recovered =
+        service.associate(
+            associationRequestId.toString(),
+            canonicalTenantId.toString(),
+            approvalOperationId.toString(),
+            "42");
+
+    assertThat(postCommitReadOperationId.get()).isEqualTo(localOperationId);
+    verify(serviceRepository, times(2))
+        .read(localOperationId, associationRequestId, canonicalTenantId, 42L, NAMESPACE);
+    assertThat(recovered).isEqualTo(historicalReceipt);
+    assertThat(recovered.operationId()).isEqualTo(localOperationId);
+    assertThat(recovered.operationId()).isEqualTo(historicalReceipt.operationId());
+    assertThat(recovered.associationRequestId()).isEqualTo(associationRequestId);
+    assertThat(recovered.requestDigest()).isEqualTo(historicalReceipt.requestDigest());
+    assertThat(recovered.approvalManifestDigest())
+        .isEqualTo(historicalReceipt.approvalManifestDigest());
+    assertThat(recovered.snapshot()).isEqualTo(historicalReceipt.snapshot());
+    assertThat(recovered.snapshot().evidenceDigest())
+        .isEqualTo(historicalReceipt.snapshot().evidenceDigest());
+    assertThat(recovered.receiptDigest()).isEqualTo(historicalReceipt.receiptDigest());
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+    assertThat(fixture.storedRequestCount(associationRequestId)).isEqualTo(1L);
+    assertThat(fixture.associationXmin(associationRequestId)).isEqualTo(associationXmin);
+    verify(snapshotRepository, times(1)).capture(NAMESPACE, "42");
+    verify(sourceClient, times(2))
+        .resolveLegacyGameSessionTenantAssociation(
+            eq(canonicalTenantId.toString()),
+            eq(approvalOperationId.toString()),
+            eq("42"),
+            anyString());
+    assertThat(
+            fixture.repository.read(
+                localOperationId, associationRequestId, canonicalTenantId, 42L, NAMESPACE))
+        .contains(historicalReceipt);
   }
 
   @Test
@@ -706,6 +937,12 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
       Record row =
           dsl.fetchOne("SELECT xmin::text AS xmin FROM game_instances WHERE id = ?", instanceId);
       return Objects.requireNonNull(row).get("xmin", String.class);
+    }
+
+    String instanceRuntimeVersion(long instanceId) {
+      Record row =
+          dsl.fetchOne("SELECT runtime_version FROM game_instances WHERE id = ?", instanceId);
+      return Objects.requireNonNull(row).get("runtime_version", String.class);
     }
   }
 }

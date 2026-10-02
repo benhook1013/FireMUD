@@ -989,6 +989,8 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#concurrentExactFirstWritersReturnSameImmutableReceipt()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#retainedKeyLookupReturnsHistoricalUuidOnlyForExactNamespaceAndKey()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#retainedKeyLookupRejectsMalformedAndContradictoryPersistedRows()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#serviceReturnsExactCommittedAssociationAfterOwnerTransaction()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#serviceRecoversPostCommitReadFailureWithoutRewritingHistoricalAssociation()' \
             game-session-service
 
       - name: Upload Game Session retained tenant UUID PostgreSQL proof results
@@ -996,7 +998,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: game-session-retained-tenant-uuid-postgresql-proof-${{ github.sha }}
-          path: services/game-session-service/build/test-results/integrationTest/TEST-integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest.xml
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionRetainedTenantAssociationRepositoryIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 
@@ -1099,7 +1101,7 @@ jobs:
         with:
           name: account-password-reset-postgresql-proof-${{ github.sha }}
           path: |
-            services/account-service/build/test-results/integrationTest/TEST-integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*PasswordResetAuthorityProducerPostgresIntegrationTest.xml
             services/account-service/build/test-results/integrationTest/TEST-net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
