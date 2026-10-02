@@ -145,7 +145,7 @@ public class FriendsCommandHandler {
 
   private boolean isPlayerSafeFilter(FriendListFilter filter) {
     return switch (filter) {
-      case OFFLINE, PUBLIC, FRIENDS_ONLY, PRIVATE, UNSPECIFIED_SCOPE -> false;
+      case OFFLINE, PUBLIC, FRIENDS_ONLY, PRIVATE, SHARED, ISOLATED, UNSPECIFIED_SCOPE -> false;
       default -> true;
     };
   }
@@ -446,13 +446,13 @@ public class FriendsCommandHandler {
         entry.getCreatedAtMs() > 0 ? entry.getCreatedAtMs() : null,
         characterName != null ? characterName : "Friend #" + friendAccountId,
         presence.getOnline(),
-        blankToNull(presence.getWorldSlug()),
-        blankToNull(presence.getWorldDisplayName()),
-        blankToNull(presence.getRealmSlug()),
-        blankToNull(presence.getRealmDisplayName()),
+        null,
+        null,
+        null,
+        null,
         characterName,
-        playableStateScope(presence.getPlayableStateScope()),
-        presence.getPointerVersion() > 0 ? presence.getPointerVersion() : null,
+        null,
+        null,
         activityState(presence.getActivityState()),
         presence.getLastSeenAtMs() > 0 ? presence.getLastSeenAtMs() : null,
         visibilityPolicy(presence.getVisibilityPolicy()));
@@ -521,14 +521,6 @@ public class FriendsCommandHandler {
 
   private String blankToNull(String value) {
     return value == null || value.isBlank() ? null : value;
-  }
-
-  private String playableStateScope(PlayableStateScope scope) {
-    return switch (scope) {
-      case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
-      case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
-      default -> null;
-    };
   }
 
   private String visibilityPolicy(

@@ -123,6 +123,21 @@ class HelpCommandHandlerTest {
     assertFalse(result.outputs().get(0).text().contains("FRIENDS FRIENDS_ONLY"));
     assertFalse(result.outputs().get(0).text().contains("FRIENDS PRIVATE"));
     assertFalse(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_SCOPE"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains(
+                "SHARED and ISOLATED filters are currently unavailable until Social provides viewer-bound location discovery."));
+    assertFalse(
+        result.outputs().get(0).text().contains("FRIENDS SHARED, and FRIENDS ISOLATED filter"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("Player output currently withholds world/realm labels"));
     assertTrue(result.outputs().get(0).text().contains("#entryNumber removal"));
     assertFalse(result.outputs().get(0).text().contains("HIDDEN_STAFF"));
     assertFalse(result.outputs().get(0).text().contains("hidden-staff"));

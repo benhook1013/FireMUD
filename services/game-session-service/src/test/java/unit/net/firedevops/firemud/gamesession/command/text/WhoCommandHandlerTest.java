@@ -88,7 +88,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoShowsGlobalOnlyRolesAsPlayers() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String globalOnlyJwt =
