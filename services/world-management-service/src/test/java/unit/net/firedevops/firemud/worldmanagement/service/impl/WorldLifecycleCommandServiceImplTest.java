@@ -210,6 +210,7 @@ class WorldLifecycleCommandServiceImplTest {
     assertEquals(42L, storedInstance.get().getTenantId());
     assertEquals(101L, storedInstance.get().getGameInstanceId());
     assertEquals(11L, storedInstance.get().getVersionId());
+    assertEquals(0L, storedInstance.get().getRowVersion());
     verify(regionInstanceRepository).save(any());
     verify(zoneInstanceRepository).save(any());
     ArgumentCaptor<RoomInstance> roomCaptor = ArgumentCaptor.forClass(RoomInstance.class);

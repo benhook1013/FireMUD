@@ -19,6 +19,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.dto.InitialAdmissionBindHoldRequest;
 import net.firedevops.firemud.worldmanagement.jooq.tables.WorldInstance;
 import net.firedevops.firemud.worldmanagement.jooq.tables.records.WorldInstanceRecord;
@@ -71,6 +72,7 @@ class InitialAdmissionBindHoldPostgresIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  @MockitoBean private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
