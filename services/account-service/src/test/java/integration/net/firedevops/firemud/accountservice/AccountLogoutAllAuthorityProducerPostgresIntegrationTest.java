@@ -51,7 +51,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
 class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
-  private static final String SCHEMA_PREFIX = "account_logout_all_source_proof";
+  private static final String SCHEMA_PREFIX = "logout_src";
   private static final String STREAM_PREFIX = "account:auth-authority:v1:account/";
   private static final String EVENT_ID_PREFIX = "account-logout-all-event-v1:";
   private static final long MAX_COUNTER = Long.MAX_VALUE;

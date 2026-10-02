@@ -1158,6 +1158,35 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: Verify Account tenant-generation source PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#atomicallyAdvancesEnrolledTenantSourceAndReadsBackExactCheckpointWithoutAccountFenceChange()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#exactRetryRecoversOriginalEventAfterLaterTenantAdvances()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#historicalReadbackReturnsRequestedEventAndCurrentSourceFromOneTenantFence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#concurrentHistoricalReadWaitsForTenantFenceAndReturnsConsistentCurrentEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#concurrentExactRequestSerializesAndCommitsOneTenantEvent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#unknownTenantStaleBindingAndChangedRetryFailWithoutEnrollmentOrMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#sequenceZeroRequiresOriginalBaselineAndPositiveHistoryRequiresBothCountersToProgress()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#persistedNumericTenantScopeEvidenceIsRejectedWithoutChangingSourceState()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#historicalReadRejectsMissingRetainedPayloadAndCurrentReadRejectsChangedDigestEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#appendFailureRollsBackTenantSourceAndOutboxTogether()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#transactionLocalReadbackFailureRollsBackTenantAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantAuthorityProducerPostgresIntegrationTest#unavailablePostCommitReadLeavesDurableEventAndExactRetryRecoversIt()' \
+            account-service
+
+      - name: Upload Account tenant-generation source PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-tenant-generation-source-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*TenantAuthorityProducerPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Verify Account logout-all source PostgreSQL proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |
