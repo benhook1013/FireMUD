@@ -28,7 +28,7 @@ workloads_dir="$fixture_root/workloads"
 snapshot_workloads() {
   find "$workloads_dir" -type f -print0 | sort -z \
     | while IFS= read -r -d '' file; do
-        printf '%s ' "$(stat -c '%a' "$file")"
+        printf '%s ' "$(stat -c '%a %h' "$file")"
         sha256sum -- "$file"
       done
 }
@@ -68,6 +68,58 @@ if FIREMUD_SMOKE_TEST_MODE=1 \
   exit 1
 fi
 rg -Fq 'Compose mTLS workloads path must be a real directory.' "$TEST_ROOT/symlink-output"
+
+authority_hardlink_run_id="${run_id}-authority-hardlink"
+authority_hardlink_project_name="firemud-smoke-$authority_hardlink_run_id"
+authority_hardlink_project_key="$(printf '%s' "$authority_hardlink_project_name" | sha256sum | awk '{print $1}')"
+authority_hardlink_fixture="$ownership_dir/$authority_hardlink_project_key.grpc-mtls"
+authority_hardlink_dir="$authority_hardlink_fixture/authority"
+authority_hardlink_key="$authority_hardlink_dir/ca.key"
+authority_hardlink_sentinel="$authority_hardlink_dir/ca-key-alias-sentinel"
+mkdir -m 700 -- "$authority_hardlink_fixture"
+mkdir -m 711 -- "$authority_hardlink_dir"
+for file in ca.crt ca.key client.crt client.key; do
+  cp -- "$fixture_root/authority/$file" "$authority_hardlink_dir/$file"
+done
+cp -- "$authority_hardlink_key" "$authority_hardlink_sentinel"
+chmod 640 "$authority_hardlink_sentinel"
+rm -- "$authority_hardlink_key"
+ln -- "$authority_hardlink_sentinel" "$authority_hardlink_key"
+
+snapshot_authority_sources() {
+  find "$authority_hardlink_dir" -maxdepth 1 -type f -print0 | sort -z \
+    | while IFS= read -r -d '' file; do
+        printf '%s ' "$(stat -c '%a %h' "$file")"
+        sha256sum -- "$file"
+      done
+}
+
+authority_before_hardlink_refusal="$(snapshot_authority_sources)"
+if FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
+  FIREMUD_SMOKE_RUN_ID="$authority_hardlink_run_id" \
+  COMPOSE_PROJECT_NAME="$authority_hardlink_project_name" \
+  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$authority_hardlink_fixture" \
+  >"$TEST_ROOT/authority-hardlink-output" 2>&1; then
+  echo "Compose mTLS certificate setup accepted a hard-linked authority key." >&2
+  exit 1
+fi
+rg -Fq "refusing hard-linked Compose mTLS authority material: $authority_hardlink_key" \
+  "$TEST_ROOT/authority-hardlink-output"
+[[ "$authority_before_hardlink_refusal" == "$(snapshot_authority_sources)" \
+  && "$(stat -c '%a' "$authority_hardlink_dir")" == 711 \
+  && ! -e "$authority_hardlink_fixture/workloads" ]] || {
+  echo "Compose mTLS authority preflight partially changed hard-linked source material." >&2
+  exit 1
+}
+[[ "$(<"$authority_hardlink_sentinel")" == "$(<"$fixture_root/authority/ca.key")" ]] || {
+  echo "Compose mTLS authority preflight changed the hard-link sentinel contents." >&2
+  exit 1
+}
+[[ "$(stat -c '%a' "$authority_hardlink_sentinel")" == 640 ]] || {
+  echo "Compose mTLS authority preflight changed the hard-link sentinel mode." >&2
+  exit 1
+}
 
 public_key_digest() {
   local cert_or_key="$1" kind="$2"
@@ -222,10 +274,37 @@ else
   echo "Docker Compose unavailable; skipped rendered-configuration assertion."
 fi
 
+social_groups_key="$workloads_dir/social-groups-service/client.key"
+social_groups_key_backup="$TEST_ROOT/social-groups-client-key.backup"
+cp -- "$social_groups_key" "$social_groups_key_backup"
+chmod 644 "$social_groups_key"
+cp -- "$workloads_dir/account-service/client.key" "$social_groups_key"
+chmod 444 "$social_groups_key"
+mismatched_key_snapshot="$(snapshot_workloads)"
+if FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
+  FIREMUD_SMOKE_RUN_ID="$run_id" \
+  COMPOSE_PROJECT_NAME="$project_name" \
+  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$fixture_root" \
+  >"$TEST_ROOT/mismatched-key-output" 2>&1; then
+  echo "Compose mTLS certificate verification accepted a mismatched certificate/key pair." >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS workload certificate and private key do not match: social-groups-service' \
+  "$TEST_ROOT/mismatched-key-output"
+[[ "$mismatched_key_snapshot" == "$(snapshot_workloads)" ]] || {
+  echo "Compose mTLS verification changed an existing mismatched fixture." >&2
+  exit 1
+}
+chmod 644 "$social_groups_key"
+cp -- "$social_groups_key_backup" "$social_groups_key"
+chmod 444 "$social_groups_key"
+
 social_groups_leaf="$workloads_dir/social-groups-service/client.crt"
-chmod 644 "$social_groups_leaf"
+chmod 644 "$social_groups_leaf" "$social_groups_key"
 cp -- "$workloads_dir/account-service/client.crt" "$social_groups_leaf"
-chmod 444 "$social_groups_leaf"
+cp -- "$workloads_dir/account-service/client.key" "$social_groups_key"
+chmod 444 "$social_groups_leaf" "$social_groups_key"
 wrong_leaf_snapshot="$(snapshot_workloads)"
 if FIREMUD_SMOKE_TEST_MODE=1 \
   FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
