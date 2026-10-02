@@ -17,6 +17,31 @@ class TextPlayerOutputRendererTest {
   private static final String STRIDE_COMMAND_ID = "stride";
 
   @Test
+  void characterRosterExplainsCurrentNameOnlySelection() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new CharacterBrowseViewOutput(
+                    "demo",
+                    "production",
+                    "SHARED",
+                    "ALLOW_NEW",
+                    List.of(new CharacterBrowseViewOutput.CharacterEntry(1, "7001", "Sora", 3)))));
+
+    assertThat(rendered)
+        .contains("1) Sora [lvl 3]")
+        .contains("Use the character name with PLAY; list numbers are not character selectors.");
+  }
+
+  @Test
   void briefModeSuppressesLongLookDescription() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

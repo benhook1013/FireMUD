@@ -82,7 +82,8 @@ public class HelpCommandHandler {
       case "PLAY" ->
           success(
               "PLAY <world> [realm] [character]\n"
-                  + "Select the world to enter, optionally name a visible realm, and optionally choose a character.");
+                  + "Select the world to enter, optionally name a visible realm, and optionally choose a character.\n"
+                  + "Use the character name shown by CHARS, not its list number.");
       case "JOIN" ->
           success(
               "JOIN <world>\n"

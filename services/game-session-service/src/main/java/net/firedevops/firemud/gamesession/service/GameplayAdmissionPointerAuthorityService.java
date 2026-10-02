@@ -6,6 +6,8 @@ import java.util.Optional;
 public interface GameplayAdmissionPointerAuthorityService {
   List<GameplayAdmissionPointerSnapshot> listPointers();
 
+  List<GameplayAdmissionPointerSnapshot> listPointersForTenants(List<Long> tenantIds);
+
   Optional<GameplayAdmissionPointerSnapshot> findPointer(
       long tenantId, String worldSlug, String realmSlug);
 
@@ -14,5 +16,8 @@ public interface GameplayAdmissionPointerAuthorityService {
   GameplayAdmissionPointerSnapshot upsertPointer(GameplayAdmissionPointerMutation mutation);
 
   List<GameplayAdmissionPointerAuditEntry> listPointerAudit(
+      long tenantId, String worldSlug, String realmSlug);
+
+  Optional<GameplayAdmissionPointerAuditEntry> findLatestPointerAudit(
       long tenantId, String worldSlug, String realmSlug);
 }

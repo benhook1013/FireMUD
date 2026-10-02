@@ -17,6 +17,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -151,6 +152,70 @@ class LoggingAdminApplicationIntegrationTest {
         .isOne();
     assertThat(logQueryService.queryLogs(new QueryLogsRequest(42L, eventId)))
         .containsExactly("Account audit event " + eventId);
+  }
+
+  @Test
+  void auditEventIdHasDistinctPlatformAndTenantReceiptIdentities() {
+    String eventId = "9a25cba0-b6f3-40c2-82ec-4ffcad2f2081";
+    String payload = "{\"accountId\":96,\"auditMarker\":\"scoped-identity-proof\"}";
+    List<CreateLogEventRequest> requests =
+        List.of(
+            platformAuditRequest(eventId, payload),
+            auditRequest(AccountAuditScope.TENANT, 42L, eventId, payload),
+            auditRequest(AccountAuditScope.TENANT, 43L, eventId, payload));
+    List<AccountAuditReceiptDto> accepted =
+        requests.stream().map(logEventService::createLogEvent).toList();
+
+    assertThat(accepted)
+        .extracting(AccountAuditReceiptDto::outcome)
+        .containsOnly(AccountAuditReceiptOutcome.ACCEPTED);
+    assertThat(accepted.stream().map(AccountAuditReceiptDto::receiptId).toList())
+        .doesNotHaveDuplicates();
+    assertThat(accepted.stream().map(AccountAuditReceiptDto::logEventId).toList())
+        .doesNotHaveDuplicates();
+
+    for (int index = 0; index < requests.size(); index++) {
+      CreateLogEventRequest request = requests.get(index);
+      AccountAuditReceiptDto original = accepted.get(index);
+
+      assertDuplicateOf(logEventService.createLogEvent(request), original);
+      assertDuplicateOf(logEventService.readLogEventReceipt(request), original);
+
+      CreateLogEventRequest changedPayload =
+          auditRequest(
+              request.scope(), request.tenantId(), request.auditEventId(), "{\"changed\":true}");
+      assertConflictWithOriginal(logEventService.createLogEvent(changedPayload), original);
+
+      CreateLogEventRequest changedMetadata =
+          withOccurredAt(request, request.occurredAt().plusSeconds(1));
+      assertConflictWithOriginal(logEventService.createLogEvent(changedMetadata), original);
+
+      LogEventsRecord projection =
+          dsl.selectFrom(LOG_EVENTS).where(LOG_EVENTS.ID.eq(original.logEventId())).fetchOne();
+      AccountAuditReceiptsRecord receipt =
+          dsl.selectFrom(ACCOUNT_AUDIT_RECEIPTS)
+              .where(ACCOUNT_AUDIT_RECEIPTS.RECEIPT_ID.eq(UUID.fromString(original.receiptId())))
+              .fetchOne();
+      assertThat(projection).isNotNull();
+      assertThat(projection.getScope()).isEqualTo(request.scope().databaseValue());
+      assertThat(projection.getTenantId()).isEqualTo(request.tenantId());
+      assertThat(projection.getAuditEventId()).isEqualTo(eventId);
+      assertThat(receipt).isNotNull();
+      assertThat(receipt.getScope()).isEqualTo(request.scope().databaseValue());
+      assertThat(receipt.getTenantId()).isEqualTo(request.tenantId());
+      assertThat(receipt.getLogEventId()).isEqualTo(original.logEventId());
+    }
+
+    assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isEqualTo(3);
+    assertThat(
+            dsl.fetchCount(
+                ACCOUNT_AUDIT_RECEIPTS, ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID.eq(eventId)))
+        .isEqualTo(3);
+    assertThat(logQueryService.queryLogs(new QueryLogsRequest(42L, eventId)))
+        .containsExactly("Account audit event " + eventId);
+    assertThat(logQueryService.queryLogs(new QueryLogsRequest(43L, eventId)))
+        .containsExactly("Account audit event " + eventId);
+    assertThat(logQueryService.queryLogs(new QueryLogsRequest(44L, eventId))).isEmpty();
   }
 
   @Test
@@ -537,6 +602,11 @@ class LoggingAdminApplicationIntegrationTest {
 
   private static CreateLogEventRequest auditRequest(
       AccountAuditScope scope, Long tenantId, String eventId, String payload) {
+    return auditRequest(scope, tenantId, eventId, payload, Instant.parse("2026-09-24T00:00:00Z"));
+  }
+
+  private static CreateLogEventRequest auditRequest(
+      AccountAuditScope scope, Long tenantId, String eventId, String payload, Instant occurredAt) {
     ByteString payloadBytes = ByteString.copyFrom(payload, StandardCharsets.UTF_8);
     return new CreateLogEventRequest(
         scope,
@@ -544,11 +614,41 @@ class LoggingAdminApplicationIntegrationTest {
         eventId,
         "account-service",
         "ACCOUNT_AUDIT_INTEGRATION_TEST",
-        Instant.parse("2026-09-24T00:00:00Z"),
+        occurredAt,
         1,
         payloadBytes,
         1,
         digest(payloadBytes.toByteArray()));
+  }
+
+  private static CreateLogEventRequest withOccurredAt(
+      CreateLogEventRequest request, Instant occurredAt) {
+    return auditRequest(
+        request.scope(),
+        request.tenantId(),
+        request.auditEventId(),
+        new String(request.payload().toByteArray(), StandardCharsets.UTF_8),
+        occurredAt);
+  }
+
+  private static void assertDuplicateOf(
+      AccountAuditReceiptDto actual, AccountAuditReceiptDto expected) {
+    assertThat(actual.status()).isEqualTo(AccountAuditReceiptStatus.COMMITTED);
+    assertThat(actual.outcome()).isEqualTo(AccountAuditReceiptOutcome.DUPLICATE);
+    assertThat(actual.receiptId()).isEqualTo(expected.receiptId());
+    assertThat(actual.logEventId()).isEqualTo(expected.logEventId());
+    assertThat(actual.scope()).isEqualTo(expected.scope());
+    assertThat(actual.tenantId()).isEqualTo(expected.tenantId());
+  }
+
+  private static void assertConflictWithOriginal(
+      AccountAuditReceiptDto actual, AccountAuditReceiptDto expected) {
+    assertThat(actual.status()).isEqualTo(AccountAuditReceiptStatus.CONFLICT);
+    assertThat(actual.outcome()).isEqualTo(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT);
+    assertThat(actual.receiptId()).isEqualTo(expected.receiptId());
+    assertThat(actual.logEventId()).isEqualTo(expected.logEventId());
+    assertThat(actual.scope()).isEqualTo(expected.scope());
+    assertThat(actual.tenantId()).isEqualTo(expected.tenantId());
   }
 
   private static String digest(byte[] payload) {

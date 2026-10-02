@@ -28,7 +28,7 @@ The current runtime still uses the shared-HMAC compatibility profile for issuanc
 
 ## Service-Specific Variables
 
-Additional variables configure outbound email delivery and payment behavior:
+Additional variables configure outbound email delivery, payment behavior, and Account's JOIN reconciliation. The reconciliation environment-variable names, defaults, and bounds are maintained in the central [Environment Variables & Secrets Catalog: Account JOIN Reconciliation](../../infrastructure/environment-and-secrets-catalog.md#account-join-reconciliation); the local properties and runtime consequences are summarized below.
 
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
@@ -52,6 +52,19 @@ Additional variables configure outbound email delivery and payment behavior:
 | `FIREMUD_AUTH_SESSION_SAFETY_MARGIN_MS` | Target-state cleanup margin added to each token's remaining lifetime for issued-token registry TTL only; target startup validation requires `0..Long.MAX_VALUE - configured JWT lifetime` | `300000` |
 
 Changing any of the three JWT lifetime variables—`FIREMUD_AUTH_JWT_EXPIRATION_MS`, `FIREMUD_ACCOUNT_TOKENS_PLAYER_BOOTSTRAP_EXPIRATION_MS`, or `FIREMUD_ACCOUNT_TOKENS_CONNECT_TOKEN_EXPIRATION_MS`—changes the `exp` claim only for newly issued JWTs; already issued JWTs retain their existing `exp`. `FIREMUD_ACCOUNT_TOKENS_SESSION_EXPIRATION_MS` is only the current default TTL for legacy session records whose writer omits an explicit lifetime; it does not change JWT `exp`, issued-token-registry retention, or gameplay continuity. The current control-ui, player-bootstrap, and connect-token writers pass their corresponding JWT lifetimes directly, which is implementation drift if target convergence requires one per-token retention rule. `FIREMUD_ACCOUNT_TOKENS_CONNECT_SCOPE_EXPIRATION_MS` separately controls the discovery selector's `connectScopeExpiresAt`; it is not a JWT lifetime, session-record TTL, registry-retention setting, or gameplay-continuity cap. The cleanup margin is applied when new registry records are admitted; it does not change the expiration of existing JWTs or the immutable anchor of an existing gameplay binding. A larger cleanup margin therefore cannot raise the independent gameplay-continuity cap. The separate Account overrides are current runtime controls with target ceilings and startup/preflight proof obligations recorded above; they do not establish target convergence by themselves.
+
+## JOIN Reconciliation
+
+`AccountJoinReconciliationJob` invokes the bounded, readback-only reconciler on the configured fixed delay. The environment variables in the central catalog map to these Account-local Spring properties:
+
+| Spring property | Account-local effect |
+| --------------- | -------------------- |
+| `firemud.account.join-reconciliation.batch-size` | Caps each due-operation readback page. |
+| `firemud.account.join-reconciliation.max-attempts` | Raises a diagnostic threshold for unresolved attempts only. |
+| `firemud.account.join-reconciliation.interval-ms` | Sets the fixed delay between job invocations. |
+| `firemud.account.join-reconciliation.backoff-ms` | Sets the next readback time after an unresolved attempt. |
+
+Reaching `max-attempts` never terminalizes an uncertain `PENDING` operation: exact readback continues with backoff, and attempt count alone is not evidence of commit or absence. Expiry or unavailable readback likewise does not authorize a membership mutation or an invented terminal outcome.
 
 ## Proto Files
 
