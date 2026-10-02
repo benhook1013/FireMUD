@@ -11,7 +11,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -25,14 +24,9 @@ public final class TestGameplayWorldCatalogs {
     return GameplayWorldCatalog.forWorldSupplier(() -> toWorldViews(properties.getWorlds()));
   }
 
-  /**
-   * Test-only catalog seam for cross-service transport fixtures that need a healthy demo route
-   * without claiming that a World-owned initial admission bind occurred.
-   */
+  /** Test-only catalog projection backed by the same durable pointer authority as production. */
   public static final class MutableDefaultDemoCatalog {
     private final GameplayAdmissionPointerAuthorityService pointerAuthority;
-    private final AtomicReference<GameplayAdmissionPointerSnapshot> defaultDemo =
-        new AtomicReference<>();
 
     public MutableDefaultDemoCatalog(GameplayAdmissionPointerAuthorityService pointerAuthority) {
       this.pointerAuthority =
@@ -43,47 +37,8 @@ public final class TestGameplayWorldCatalogs {
       return GameplayWorldCatalog.forWorldSupplier(this::worlds);
     }
 
-    public void useDefaultDemo(long tenantId, long gameInstanceId) {
-      if (tenantId <= 0 || gameInstanceId <= 0) {
-        throw new IllegalArgumentException(
-            "test demo tenant and game instance IDs must be positive");
-      }
-      defaultDemo.set(
-          new GameplayAdmissionPointerSnapshot(
-              "demo",
-              "Demo World",
-              "production",
-              "Live Realm",
-              tenantId,
-              gameInstanceId,
-              1L,
-              true,
-              true,
-              false,
-              "SHARED",
-              "ALLOW_NEW",
-              1L,
-              stableId("realm", tenantId, "demo", "production"),
-              stableId("namespace", tenantId, "demo", "production")));
-    }
-
-    public void clearDefaultDemo() {
-      defaultDemo.set(null);
-    }
-
     private List<GameplayWorldCatalog.WorldView> worlds() {
-      List<GameplayAdmissionPointerSnapshot> pointers =
-          new ArrayList<>(pointerAuthority.listPointers());
-      GameplayAdmissionPointerSnapshot fallback = defaultDemo.get();
-      if (fallback != null
-          && pointers.stream()
-              .noneMatch(
-                  pointer ->
-                      pointer.worldSlug().equals(fallback.worldSlug())
-                          && pointer.realmSlug().equals(fallback.realmSlug()))) {
-        pointers.add(fallback);
-      }
-      return fromPointers(pointers);
+      return fromPointers(pointerAuthority.listPointers());
     }
   }
 
@@ -183,12 +138,6 @@ public final class TestGameplayWorldCatalogs {
         pointer.catalogRevision(),
         pointer.realmId(),
         pointer.playableStateNamespaceId());
-  }
-
-  private static UUID stableId(String kind, long tenantId, String worldSlug, String realmSlug) {
-    return UUID.nameUUIDFromBytes(
-        ("firemud-test-catalog:" + kind + ":" + tenantId + ":" + worldSlug + ":" + realmSlug)
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   private static List<GameplayWorldCatalog.WorldView> toWorldViews(
