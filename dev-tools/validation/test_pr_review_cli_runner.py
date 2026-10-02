@@ -101,6 +101,29 @@ class BoundedAllocationCliParserTests(unittest.TestCase):
         self.assertIsNone(maximum_only.min_additional_completed)
         self.assertEqual(maximum_only.max_additional_completed, 3)
 
+    def test_exact_additional_completed_accepts_only_a_positive_integer(self):
+        common = [
+            "decide",
+            "allocation",
+            "grant",
+            "--pr",
+            "2827",
+            "--channel",
+            "cli",
+            "--head",
+            HEAD,
+            "--reason",
+            "three more completed CLI rounds",
+            "--exact-additional-completed",
+        ]
+
+        args = _parser().parse_args([*common, "3"])
+
+        self.assertEqual(args.exact_additional_completed, 3)
+        for invalid in ("0", "-1", "not-an-integer"):
+            with self.subTest(invalid=invalid), self.assertRaises(SystemExit):
+                _parser().parse_args([*common, invalid])
+
     def test_legacy_cancel_shape_needs_no_cap_replacement(self):
         args = _parser().parse_args(
             [

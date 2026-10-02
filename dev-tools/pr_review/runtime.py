@@ -1684,6 +1684,9 @@ class LiveEvidence:
                     observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
                     observation["trigger_id"] = state.trigger_comment_id
                     observation["response_id"] = state.response_id
+                    observation["state"] = state.state
+                    observation["attributable"] = state.attributed
+                    observation["terminal"] = state.terminal
                 if state.state == "ambiguous" and not operational_only:
                     terminal_observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
                     if terminal_observation is not None:

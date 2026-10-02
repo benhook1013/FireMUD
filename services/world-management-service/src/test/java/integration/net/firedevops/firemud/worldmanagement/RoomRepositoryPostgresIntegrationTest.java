@@ -7,6 +7,7 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import net.firedevops.firemud.worldmanagement.client.EntityManagementClient;
 import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.client.GameSessionClient;
+import net.firedevops.firemud.worldmanagement.client.GrpcGameSessionInitialAdmissionBindProofClient;
 import net.firedevops.firemud.worldmanagement.entity.Region;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.entity.Zone;
@@ -55,6 +56,7 @@ class RoomRepositoryPostgresIntegrationTest {
   @Autowired private DSLContext dsl;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  @MockitoBean private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameDesignClient gameDesignClient;
   @MockitoBean private GameSessionClient gameSessionClient;
