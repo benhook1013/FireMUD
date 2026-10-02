@@ -538,7 +538,7 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void privateRealmsAreNotDisclosedWithoutAuthority() {
+  void realmsBrowseFailsClosedWhenScopeAuthorityIsUnavailable() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =

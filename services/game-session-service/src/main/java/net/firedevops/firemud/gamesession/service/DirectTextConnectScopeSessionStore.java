@@ -158,11 +158,6 @@ public final class DirectTextConnectScopeSessionStore {
             .filter(scope -> scope.expiresAt().toEpochMilli() > nowMillis)
             .map(scope -> storeScope(scope, nowMillis))
             .toList();
-    long expiresAt =
-        storedScopes.stream()
-            .mapToLong(StoredScopedRealm::expiresAtEpochMs)
-            .max()
-            .orElse(now.plus(WORLDS_SNAPSHOT_TTL).toEpochMilli());
     String key = worldIdentityKey(tenantId, worldSlug);
     mutate(
         caller.sessionId(),
@@ -175,10 +170,7 @@ public final class DirectTextConnectScopeSessionStore {
             byWorld.put(key, storedScopes);
           }
           Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
-          realmsByWorld.put(
-              key,
-              new StoredRealmsSnapshot(
-                  tenantId, worldSlug, requestedSelector, "", expiresAt, List.of()));
+          realmsByWorld.remove(key);
           return new LobbyRecord(
               caller.sessionId(),
               caller.accountId(),

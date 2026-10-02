@@ -3,8 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -1117,7 +1117,7 @@ public class PlayCommandHandler {
             response.getTenantId(),
             context.accountId(),
             selectedRealm.tenantId())
-        || !isFreshAuthorityEvaluation(response.getEvaluatedAt())) {
+        || !AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC())) {
       return false;
     }
     if (!response.getMembershipExists()) {
@@ -1147,7 +1147,7 @@ public class PlayCommandHandler {
             response.getAccountId(), response.getTenantId(), context.accountId(), realm.tenantId())
         && world.slug().equals(response.getWorldSlug())
         && realm.slug().equals(response.getRealmSlug())
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
+        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
   }
 
   private boolean isValidEntitlement(
@@ -1155,20 +1155,7 @@ public class PlayCommandHandler {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
-  }
-
-  private boolean isFreshAuthorityEvaluation(String evaluatedAt) {
-    if (!StringUtils.hasText(evaluatedAt)) {
-      return false;
-    }
-    try {
-      Instant evaluated = Instant.parse(evaluatedAt);
-      Instant now = Instant.now();
-      return !evaluated.isAfter(now) && !evaluated.isBefore(now.minusSeconds(15));
-    } catch (DateTimeParseException ex) {
-      return false;
-    }
+        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
   }
 
   private boolean hasMatchingAuthorityIdentity(
