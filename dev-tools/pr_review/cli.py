@@ -409,6 +409,12 @@ def _parser() -> argparse.ArgumentParser:
         help="maximum additional completed attributable results after the decision",
     )
     allocation.add_argument(
+        "--exact-additional-completed",
+        type=_positive_int,
+        metavar="N",
+        help="require exactly N additional completed attributable results after the decision",
+    )
+    allocation.add_argument(
         "--fresh-taper",
         action="store_true",
         help="start a new taper streak at the allocation decision; prior results remain historical",
@@ -1662,6 +1668,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 checkpoint=args.checkpoint,
                 min_additional_completed=args.min_additional_completed,
                 max_additional_completed=args.max_additional_completed,
+                exact_additional_completed=args.exact_additional_completed,
                 fresh_taper=args.fresh_taper,
             ), 0
         if args.decide_command == "stop":
