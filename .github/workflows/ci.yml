@@ -1051,6 +1051,13 @@ jobs:
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresCapturePreservesZeroAndOriginalPositiveReceiptAfterLaterSourceAdvance()' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#concurrentExactPostgresCapturesFromSeparateSocketClientsReturnOneDurableReceipt()' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresCaptureRejectsMalformedAndMissingSourceRequestsWithoutSqlMutation()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capturedLatestCheckpointInstallsAcrossMissedEventsThenOrdinaryDeliveryIsContiguous()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#zeroCheckpointInstallsWithoutEventEvidenceThenAcceptsSequenceOne()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#exactInstallRetryPreservesOriginalReceiptProjectionBytesAndAppliedAt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#concurrentExactInstallersDoNotDuplicateAccountSourceOrCaptureRows()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capturedSourceThatAdvancesBeforeStoreWriteReturnsNoVerifiedReceipt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#sourceAdvanceBetweenRedisWriteAndFinalAccountReadbackWithholdsReceipt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#redisAuthenticationRefusalLeavesCapturedAccountReceiptAndSourceUntouched()' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capture postgres caller "wrong-service"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capture postgres caller "wrong-namespace"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#[1] clientIdentity = "wrong-service"' \

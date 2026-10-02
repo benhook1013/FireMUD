@@ -3,7 +3,16 @@ package crossservice.net.firedevops.firemud.gamesession;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.grpc.CallOptions;
+import io.grpc.Channel;
+import io.grpc.ClientCall;
+import io.grpc.ClientInterceptor;
+import io.grpc.ForwardingClientCall;
 import io.grpc.ManagedChannel;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -11,6 +20,7 @@ import io.grpc.StatusRuntimeException;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.netty.shaded.io.netty.handler.ssl.ClientAuth;
+import io.grpc.stub.AbstractStub;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -27,6 +37,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -43,6 +54,12 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentityInterceptor;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient;
+import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.ProjectionCaptureReceipt;
+import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionRedisContract;
+import net.firedevops.firemud.gamesession.service.IssuerProjectionReconciliationInstaller;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore.ApplyResult;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore.ProjectionSnapshot;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -51,11 +68,16 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -76,6 +98,22 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
   private static final String FIRST_ADVANCE_REQUEST_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   private static final String SECOND_ADVANCE_REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   private static final String NO_SOURCE_CAPTURE_REQUEST_ID = "66666666-6666-4666-8666-666666666666";
+  private static final String RECONCILE_GAP_REQUEST_ID = "77777777-7777-4777-8777-777777777777";
+  private static final String RECONCILE_BASELINE_REQUEST_ID =
+      "77777777-0000-4777-8777-777777777777";
+  private static final String RECONCILE_ZERO_REQUEST_ID = "88888888-8888-4888-8888-888888888888";
+  private static final String RECONCILE_RETRY_REQUEST_ID = "99999999-9999-4999-8999-999999999999";
+  private static final String RECONCILE_CONCURRENT_REQUEST_ID =
+      "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
+  private static final String RECONCILE_STALE_REQUEST_ID = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
+  private static final String RECONCILE_RACE_REQUEST_ID = "cccccccc-3333-4333-8333-cccccccccccc";
+  private static final String RECONCILE_REDIS_REFUSAL_REQUEST_ID =
+      "dddddddd-4444-4444-8444-dddddddddddd";
+  private static final String ORDINARY_EVENT_READ_REQUEST_ID =
+      "eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
+  private static final String COORD_PASSWORD = "issuer-reconciliation-proof-secret";
+  private static final String APPLIED_AT = "2026-10-03T09:30:00Z";
+  private static final ObjectMapper JSON = new ObjectMapper();
   private static final String GAME_SESSION_PEER_URI =
       "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service";
 
@@ -370,6 +408,337 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
     }
   }
 
+  @Test
+  void capturedLatestCheckpointInstallsAcrossMissedEventsThenOrdinaryDeliveryIsContiguous()
+      throws Exception {
+    AccountFixture account = newAccountFixture();
+    account.seedIssuer();
+    AccountIssuerAuthorityEventProducer producer = account.producer();
+    advance(producer, 1L);
+
+    try (InstallationFixture fixture = newInstallationFixture(account, producer)) {
+      IssuerProjectionReconciliationInstaller.Result baseline =
+          fixture.installer().install(RECONCILE_BASELINE_REQUEST_ID, "2026-10-03T09:29:00Z");
+      assertThat(baseline.outcome())
+          .isEqualTo(IssuerProjectionReconciliationInstaller.Outcome.INSTALLED);
+      assertThat(baseline.receipt().orElseThrow().capturedSource().outboxSequence()).isEqualTo("1");
+
+      advance(producer, 2L);
+      advance(producer, 3L);
+      IssuerProjectionReconciliationInstaller.Result installed =
+          fixture.installer().install(RECONCILE_GAP_REQUEST_ID, APPLIED_AT);
+
+      assertThat(installed.outcome())
+          .isEqualTo(IssuerProjectionReconciliationInstaller.Outcome.INSTALLED);
+      var receipt = installed.receipt().orElseThrow();
+      assertThat(receipt.requestId()).isEqualTo(UUID.fromString(RECONCILE_GAP_REQUEST_ID));
+      assertThat(receipt.capturedSource().issuerAuthGeneration()).isEqualTo("4");
+      assertThat(receipt.capturedSource().sourceVersion()).isEqualTo("4");
+      assertThat(receipt.capturedSource().outboxSequence()).isEqualTo("3");
+      assertThat(receipt.capturedSource().latestEvent()).isPresent();
+
+      ProjectionSnapshot installedProjection = receipt.projectionSnapshot();
+      JsonNode installedJson = JSON.readTree(installedProjection.json());
+      assertThat(installedJson.path("lastAppliedIssuerGeneration").asText()).isEqualTo("4");
+      assertThat(installedJson.path("lastAppliedSourceOutboxSequence").asText()).isEqualTo("3");
+      assertThat(installedJson.path("lastAppliedSourceEventId").asText())
+          .isEqualTo(receipt.capturedSource().latestEvent().orElseThrow().eventId());
+      assertThat(installedJson.path("lastAppliedSourceEventDigest").asText())
+          .isEqualTo(receipt.capturedSource().latestEvent().orElseThrow().eventDigest());
+      assertThat(installedJson.path("appliedAt").asText()).isEqualTo(APPLIED_AT);
+      assertRedisExact(fixture.redis(), installedProjection);
+      assertDatabaseState(account, new DatabaseState(1L, 1L, 3L, 2L));
+
+      IssuerGenerationAuthorityEvent fourth = advance(producer, 4L);
+      AccountIssuerAuthorityClient.SourceReadback delivered =
+          fixture.client().readCommittedEvent(ORDINARY_EVENT_READ_REQUEST_ID, "4");
+      assertThat(delivered.sourceSnapshot().outboxSequence()).isEqualTo("4");
+      assertSameEvent(fourth, delivered.requestedEvent().orElseThrow());
+
+      ApplyResult ordinaryEvent = fixture.redis().store().apply(delivered, "2026-10-03T09:31:00Z");
+      assertThat(ordinaryEvent.outcome())
+          .isEqualTo(RedisIssuerAuthorityProjectionStore.Outcome.APPLIED);
+      JsonNode advancedJson = JSON.readTree(ordinaryEvent.snapshot().orElseThrow().json());
+      assertThat(advancedJson.path("lastAppliedSourceOutboxSequence").asText()).isEqualTo("4");
+      assertThat(advancedJson.path("lastAppliedIssuerGeneration").asText()).isEqualTo("5");
+      assertRedisExact(fixture.redis(), ordinaryEvent.snapshot().orElseThrow());
+      assertDatabaseState(account, new DatabaseState(1L, 1L, 4L, 2L));
+    }
+  }
+
+  @Test
+  void zeroCheckpointInstallsWithoutEventEvidenceThenAcceptsSequenceOne() throws Exception {
+    AccountFixture account = newAccountFixture();
+    account.seedIssuer();
+    AccountIssuerAuthorityEventProducer producer = account.producer();
+
+    try (InstallationFixture fixture = newInstallationFixture(account, producer)) {
+      IssuerProjectionReconciliationInstaller.Result installed =
+          fixture.installer().install(RECONCILE_ZERO_REQUEST_ID, APPLIED_AT);
+
+      assertThat(installed.outcome())
+          .isEqualTo(IssuerProjectionReconciliationInstaller.Outcome.INSTALLED);
+      var receipt = installed.receipt().orElseThrow();
+      assertThat(receipt.capturedSource().issuerAuthGeneration()).isEqualTo("1");
+      assertThat(receipt.capturedSource().sourceVersion()).isEqualTo("1");
+      assertThat(receipt.capturedSource().outboxSequence()).isEqualTo("0");
+      assertThat(receipt.capturedSource().latestEvent()).isEmpty();
+      JsonNode zeroJson = JSON.readTree(receipt.projectionSnapshot().json());
+      assertThat(zeroJson.path("lastAppliedIssuerGeneration").asText()).isEqualTo("1");
+      assertThat(zeroJson.path("lastAppliedSourceOutboxSequence").asText()).isEqualTo("0");
+      assertThat(zeroJson.has("lastAppliedSourceEventId")).isFalse();
+      assertThat(zeroJson.has("lastAppliedSourceEventDigest")).isFalse();
+      assertRedisExact(fixture.redis(), receipt.projectionSnapshot());
+      assertDatabaseState(account, new DatabaseState(1L, 0L, 0L, 1L));
+
+      IssuerGenerationAuthorityEvent first = advance(producer, 1L);
+      AccountIssuerAuthorityClient.SourceReadback delivered =
+          fixture.client().readCommittedEvent(ORDINARY_EVENT_READ_REQUEST_ID, "1");
+      assertThat(delivered.sourceSnapshot().outboxSequence()).isEqualTo("1");
+      assertSameEvent(first, delivered.requestedEvent().orElseThrow());
+
+      ApplyResult ordinaryEvent = fixture.redis().store().apply(delivered, "2026-10-03T09:31:00Z");
+      assertThat(ordinaryEvent.outcome())
+          .isEqualTo(RedisIssuerAuthorityProjectionStore.Outcome.APPLIED);
+      JsonNode firstJson = JSON.readTree(ordinaryEvent.snapshot().orElseThrow().json());
+      assertThat(firstJson.path("lastAppliedSourceOutboxSequence").asText()).isEqualTo("1");
+      assertThat(firstJson.path("lastAppliedSourceEventId").asText()).isEqualTo(first.eventId());
+      assertThat(firstJson.path("lastAppliedSourceEventDigest").asText())
+          .isEqualTo(first.eventDigest());
+      assertRedisExact(fixture.redis(), ordinaryEvent.snapshot().orElseThrow());
+      assertDatabaseState(account, new DatabaseState(1L, 1L, 1L, 1L));
+    }
+  }
+
+  @Test
+  void exactInstallRetryPreservesOriginalReceiptProjectionBytesAndAppliedAt() throws Exception {
+    AccountFixture account = newAccountFixture();
+    account.seedIssuer();
+    AccountIssuerAuthorityEventProducer producer = account.producer();
+    advance(producer, 1L);
+
+    try (InstallationFixture fixture = newInstallationFixture(account, producer)) {
+      IssuerProjectionReconciliationInstaller.Result first =
+          fixture.installer().install(RECONCILE_RETRY_REQUEST_ID, APPLIED_AT);
+      assertThat(first.outcome())
+          .isEqualTo(IssuerProjectionReconciliationInstaller.Outcome.INSTALLED);
+      var originalReceipt = first.receipt().orElseThrow();
+      RedisValue originalRedis = fixture.redis().read(originalReceipt.projectionSnapshot().key());
+      DatabaseState committedState = new DatabaseState(1L, 1L, 1L, 1L);
+      assertDatabaseState(account, committedState);
+
+      IssuerProjectionReconciliationInstaller.Result retry =
+          fixture.installer().install(RECONCILE_RETRY_REQUEST_ID, "2026-10-03T09:32:00Z");
+      assertThat(retry.outcome())
+          .isEqualTo(IssuerProjectionReconciliationInstaller.Outcome.REPLAYED);
+      var retriedReceipt = retry.receipt().orElseThrow();
+      assertThat(retriedReceipt.operationId()).isEqualTo(originalReceipt.operationId());
+      assertThat(retriedReceipt.requestId()).isEqualTo(originalReceipt.requestId());
+      assertThat(retriedReceipt.requestDigest()).isEqualTo(originalReceipt.requestDigest());
+      assertThat(retriedReceipt.capturedSource().outboxSequence())
+          .isEqualTo(originalReceipt.capturedSource().outboxSequence());
+      assertThat(retriedReceipt.projectionSnapshot())
+          .isEqualTo(originalReceipt.projectionSnapshot());
+      RedisValue retriedRedis = fixture.redis().read(originalReceipt.projectionSnapshot().key());
+      assertThat(retriedRedis.bytes()).containsExactly(originalRedis.bytes());
+      assertThat(retriedRedis.ttlMillis()).isEqualTo(originalRedis.ttlMillis());
+      assertThat(originalRedis.ttlMillis()).isEqualTo(-1L);
+      assertThat(JSON.readTree(originalRedis.bytes()).path("appliedAt").asText())
+          .isEqualTo(APPLIED_AT);
+      assertDatabaseState(account, committedState);
+    }
+  }
+
+  @Test
+  void concurrentExactInstallersDoNotDuplicateAccountSourceOrCaptureRows() throws Exception {
+    AccountFixture account = newAccountFixture();
+    account.seedIssuer();
+    AccountIssuerAuthorityEventProducer producer = account.producer();
+    advance(producer, 1L);
+
+    try (InstallationFixture fixture = newInstallationFixture(account, producer)) {
+      ExecutorService executor = Executors.newFixedThreadPool(2);
+      try {
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        Future<IssuerProjectionReconciliationInstaller.Result> first =
+            executor.submit(() -> concurrentInstall(fixture.installer(), ready, start));
+        Future<IssuerProjectionReconciliationInstaller.Result> second =
+            executor.submit(() -> concurrentInstall(fixture.installer(), ready, start));
+
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        start.countDown();
+        var firstResult = first.get(15, TimeUnit.SECONDS);
+        var secondResult = second.get(15, TimeUnit.SECONDS);
+        var results = java.util.List.of(firstResult, secondResult);
+
+        assertThat(results.stream().filter(result -> result.receipt().isPresent()).count())
+            .isBetween(1L, 2L);
+        assertThat(
+                results.stream()
+                    .filter(
+                        result ->
+                            result.outcome()
+                                == IssuerProjectionReconciliationInstaller.Outcome.INSTALLED)
+                    .count())
+            .isEqualTo(1L);
+        assertThat(results)
+            .allSatisfy(
+                result ->
+                    assertThat(result.outcome())
+                        .isIn(
+                            IssuerProjectionReconciliationInstaller.Outcome.INSTALLED,
+                            IssuerProjectionReconciliationInstaller.Outcome.REPLAYED,
+                            IssuerProjectionReconciliationInstaller.Outcome.QUARANTINED));
+        var receipts = results.stream().flatMap(result -> result.receipt().stream()).toList();
+        assertThat(
+                receipts.stream()
+                    .map(IssuerProjectionReconciliationInstaller.InstallationReceipt::operationId)
+                    .distinct())
+            .hasSize(1);
+        assertThat(
+                receipts.stream()
+                    .map(IssuerProjectionReconciliationInstaller.InstallationReceipt::requestId)
+                    .distinct())
+            .containsExactly(UUID.fromString(RECONCILE_CONCURRENT_REQUEST_ID));
+        assertThat(
+                receipts.stream()
+                    .map(IssuerProjectionReconciliationInstaller.InstallationReceipt::requestDigest)
+                    .distinct())
+            .hasSize(1);
+        assertDatabaseState(account, new DatabaseState(1L, 1L, 1L, 1L));
+
+        ProjectionSnapshot installedProjection = receipts.get(0).projectionSnapshot();
+        for (IssuerProjectionReconciliationInstaller.InstallationReceipt receipt : receipts) {
+          assertThat(receipt.projectionSnapshot()).isEqualTo(installedProjection);
+        }
+        assertRedisExact(fixture.redis(), installedProjection);
+      } finally {
+        executor.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void capturedSourceThatAdvancesBeforeStoreWriteReturnsNoVerifiedReceipt() throws Exception {
+    AccountFixture account = newAccountFixture();
+    account.seedIssuer();
+    AccountIssuerAuthorityEventProducer producer = account.producer();
+    advance(producer, 1L);
+
+    try (InstallationFixture fixture = newInstallationFixture(account, producer)) {
+      ProjectionCaptureReceipt captured =
+          fixture.client().captureProjection(RECONCILE_STALE_REQUEST_ID);
+      assertThat(captured.capturedSource().outboxSequence()).isEqualTo("1");
+      advance(producer, 2L);
+      DatabaseState sourceAfterAdvance = new DatabaseState(1L, 1L, 2L, 1L);
+
+      IssuerProjectionReconciliationInstaller.Result stale =
+          fixture.installer().install(RECONCILE_STALE_REQUEST_ID, APPLIED_AT);
+      assertThat(stale.outcome())
+          .isEqualTo(IssuerProjectionReconciliationInstaller.Outcome.STALE_SOURCE);
+      assertThat(stale.receipt()).isEmpty();
+      assertThat(fixture.redis().read(projectionKey()).bytes()).isNull();
+      assertThat(fixture.redis().read(projectionKey()).ttlMillis()).isEqualTo(-2L);
+      assertDatabaseState(account, sourceAfterAdvance);
+
+      ProjectionCaptureReceipt exactRetry =
+          fixture.client().captureProjection(RECONCILE_STALE_REQUEST_ID);
+      assertThat(exactRetry.operationUUID()).isEqualTo(captured.operationUUID());
+      assertThat(exactRetry.requestDigest()).isEqualTo(captured.requestDigest());
+      assertThat(exactRetry.capturedSource().outboxSequence()).isEqualTo("1");
+      assertDatabaseState(account, sourceAfterAdvance);
+    }
+  }
+
+  @Test
+  void sourceAdvanceBetweenRedisWriteAndFinalAccountReadbackWithholdsReceipt() throws Exception {
+    AccountFixture account = newAccountFixture();
+    account.seedIssuer();
+    AccountIssuerAuthorityEventProducer producer = account.producer();
+    advance(producer, 1L);
+    AtomicInteger currentReads = new AtomicInteger();
+    BlockingGrpcStubCustomizer sourceAdvanceBeforeSecondRead =
+        interceptorCustomizer(
+            new ClientInterceptor() {
+              @Override
+              public <RequestT, ResponseT> ClientCall<RequestT, ResponseT> interceptCall(
+                  MethodDescriptor<RequestT, ResponseT> method,
+                  CallOptions callOptions,
+                  Channel next) {
+                ClientCall<RequestT, ResponseT> call = next.newCall(method, callOptions);
+                return new ForwardingClientCall.SimpleForwardingClientCall<>(call) {
+                  @Override
+                  public void start(
+                      ClientCall.Listener<ResponseT> responseListener, Metadata headers) {
+                    if ("account.v1.IssuerAuthorityService/ReadIssuerAuthorityForRuntime"
+                            .equals(method.getFullMethodName())
+                        && currentReads.incrementAndGet() == 2) {
+                      advance(producer, 2L);
+                    }
+                    super.start(responseListener, headers);
+                  }
+                };
+              }
+            });
+
+    try (InstallationFixture fixture =
+        newInstallationFixture(account, producer, COORD_PASSWORD, sourceAdvanceBeforeSecondRead)) {
+      IssuerProjectionReconciliationInstaller.Result stale =
+          fixture.installer().install(RECONCILE_RACE_REQUEST_ID, APPLIED_AT);
+
+      assertThat(currentReads.get()).isEqualTo(2);
+      assertThat(stale.outcome())
+          .isEqualTo(IssuerProjectionReconciliationInstaller.Outcome.STALE_SOURCE);
+      assertThat(stale.receipt()).isEmpty();
+      JsonNode retainedProjection = JSON.readTree(fixture.redis().read(projectionKey()).bytes());
+      assertThat(retainedProjection.path("lastAppliedSourceOutboxSequence").asText())
+          .isEqualTo("1");
+      assertThat(retainedProjection.path("lastAppliedIssuerGeneration").asText()).isEqualTo("2");
+      assertThat(retainedProjection.path("appliedAt").asText()).isEqualTo(APPLIED_AT);
+      assertThat(fixture.redis().read(projectionKey()).ttlMillis()).isEqualTo(-1L);
+      assertDatabaseState(account, new DatabaseState(1L, 1L, 2L, 1L));
+      assertThat(producer.readCurrent(ISSUER_ID).outboxSequence()).isEqualTo(2L);
+
+      ProjectionCaptureReceipt original =
+          fixture.client().captureProjection(RECONCILE_RACE_REQUEST_ID);
+      assertThat(original.capturedSource().outboxSequence()).isEqualTo("1");
+      assertDatabaseState(account, new DatabaseState(1L, 1L, 2L, 1L));
+    }
+  }
+
+  @Test
+  void redisAuthenticationRefusalLeavesCapturedAccountReceiptAndSourceUntouched() throws Exception {
+    AccountFixture account = newAccountFixture();
+    account.seedIssuer();
+    AccountIssuerAuthorityEventProducer producer = account.producer();
+    advance(producer, 1L);
+    IssuerAuthoritySnapshot sourceBeforeRefusal = producer.readCurrent(ISSUER_ID);
+
+    try (InstallationFixture fixture =
+        newInstallationFixture(
+            account, producer, "wrong-issuer-proof-password", BlockingGrpcStubCustomizer.noop())) {
+      assertThatThrownBy(
+              () -> fixture.installer().install(RECONCILE_REDIS_REFUSAL_REQUEST_ID, APPLIED_AT))
+          .satisfies(failure -> assertThat(exceptionMessageChain(failure)).contains("WRONGPASS"));
+      DatabaseState capturedSource = new DatabaseState(1L, 1L, 1L, 1L);
+      assertDatabaseState(account, capturedSource);
+      assertThat(producer.readCurrent(ISSUER_ID)).isEqualTo(sourceBeforeRefusal);
+
+      ProjectionCaptureReceipt retained =
+          fixture.client().captureProjection(RECONCILE_REDIS_REFUSAL_REQUEST_ID);
+      assertThat(retained.capturedSource().outboxSequence()).isEqualTo("1");
+      StoredReceipt storedReceipt =
+          account.readReceipt(UUID.fromString(RECONCILE_REDIS_REFUSAL_REQUEST_ID));
+      assertThat(retained.operationUUID()).isEqualTo(storedReceipt.operationId());
+      assertThat(retained.requestDigest())
+          .isEqualTo(HexFormat.of().formatHex(storedReceipt.requestDigest()));
+      assertThat(fixture.redis().read(projectionKey()).bytes()).isNull();
+      assertThat(fixture.redis().read(projectionKey()).ttlMillis()).isEqualTo(-2L);
+      assertDatabaseState(account, capturedSource);
+    }
+  }
+
   private AccountFixture newAccountFixture() {
     String schema = "issuer_authority_grpc_proof_" + UUID.randomUUID().toString().replace("-", "");
     if (schema.length() >= 63) {
@@ -396,6 +765,128 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
         new AccountAuthorityGenerationRepository(transactionDsl);
     AccountAuthorityOutboxRepository outbox = new AccountAuthorityOutboxRepository(transactionDsl);
     return new AccountFixture(generations, outbox, transactionDsl, transactionManager);
+  }
+
+  private InstallationFixture newInstallationFixture(
+      AccountFixture account, AccountIssuerAuthorityEventProducer producer) throws Exception {
+    return newInstallationFixture(
+        account, producer, COORD_PASSWORD, BlockingGrpcStubCustomizer.noop());
+  }
+
+  private InstallationFixture newInstallationFixture(
+      AccountFixture account,
+      AccountIssuerAuthorityEventProducer producer,
+      String redisPassword,
+      BlockingGrpcStubCustomizer stubCustomizer)
+      throws Exception {
+    RedisFixture redis = newRedisFixture(redisPassword);
+    Server server = null;
+    AccountIssuerAuthorityClient client = null;
+    try {
+      server = startServer(producer, account.captureService());
+      client = newClient(server.getPort(), "game-session", stubCustomizer);
+      client.init();
+      return new InstallationFixture(
+          server,
+          client,
+          redis,
+          new IssuerProjectionReconciliationInstaller(client, redis.store()));
+    } catch (Exception failure) {
+      if (client != null) {
+        client.close();
+      }
+      if (server != null) {
+        stop(server);
+      }
+      redis.close();
+      throw failure;
+    }
+  }
+
+  private RedisFixture newRedisFixture(String password) {
+    GenericContainer<?> redisContainer =
+        new GenericContainer<>("redis:7.2-alpine")
+            .withExposedPorts(6379)
+            .withCommand(
+                "redis-server",
+                "--save",
+                "",
+                "--appendonly",
+                "no",
+                "--user",
+                "gamesession_coord_app",
+                "on",
+                ">" + COORD_PASSWORD,
+                "~session:game:auth:issuer-generation:v1:*",
+                "+get",
+                "+set",
+                "+pttl",
+                "+evalsha",
+                "+script|load");
+    redisContainer.start();
+    RedisIssuerAuthorityProjectionStore store =
+        new RedisIssuerAuthorityProjectionStore(
+            NAMESPACE,
+            new RedisIssuerAuthorityProjectionStore.CoordinationEndpoint(
+                redisContainer.getHost(),
+                redisContainer.getMappedPort(6379),
+                "gamesession_coord_app",
+                password),
+            new RedisIssuerAuthorityProjectionStore.CacheRateLimitEndpoint(
+                "redis-cache.test.invalid", 6380));
+    LettuceConnectionFactory adminConnectionFactory = null;
+    try {
+      store.init();
+      adminConnectionFactory =
+          new LettuceConnectionFactory(
+              new RedisStandaloneConfiguration(
+                  redisContainer.getHost(), redisContainer.getMappedPort(6379)));
+      adminConnectionFactory.afterPropertiesSet();
+      StringRedisTemplate adminTemplate = new StringRedisTemplate(adminConnectionFactory);
+      adminTemplate.afterPropertiesSet();
+      return new RedisFixture(redisContainer, store, adminConnectionFactory, adminTemplate);
+    } catch (RuntimeException failure) {
+      store.close();
+      if (adminConnectionFactory != null) {
+        adminConnectionFactory.destroy();
+      }
+      redisContainer.stop();
+      throw failure;
+    }
+  }
+
+  private BlockingGrpcStubCustomizer interceptorCustomizer(ClientInterceptor interceptor) {
+    return new BlockingGrpcStubCustomizer() {
+      @Override
+      public <T extends AbstractStub<T>> T customize(T stub) {
+        return stub.withInterceptors(interceptor);
+      }
+    };
+  }
+
+  private IssuerGenerationAuthorityEvent advance(
+      AccountIssuerAuthorityEventProducer producer, long expectedVersion) {
+    return producer.advance(ISSUER_ID, UUID.randomUUID(), expectedVersion, expectedVersion);
+  }
+
+  private IssuerProjectionReconciliationInstaller.Result concurrentInstall(
+      IssuerProjectionReconciliationInstaller installer, CountDownLatch ready, CountDownLatch start)
+      throws InterruptedException {
+    ready.countDown();
+    if (!start.await(5, TimeUnit.SECONDS)) {
+      throw new IllegalStateException("Concurrent installer did not reach the start gate");
+    }
+    return installer.install(RECONCILE_CONCURRENT_REQUEST_ID, APPLIED_AT);
+  }
+
+  private static String projectionKey() {
+    return IssuerAuthorityProjectionRedisContract.keyForIssuer(ISSUER_ID);
+  }
+
+  private void assertRedisExact(RedisFixture redis, ProjectionSnapshot expected) {
+    RedisValue actual = redis.read(expected.key());
+    assertThat(actual.bytes()).containsExactly(expected.json().getBytes(StandardCharsets.UTF_8));
+    assertThat(actual.ttlMillis()).isEqualTo(-1L);
   }
 
   private static Path accountMigrationDirectory() {
@@ -432,6 +923,11 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
   }
 
   private AccountIssuerAuthorityClient newClient(int port, String clientIdentity) throws Exception {
+    return newClient(port, clientIdentity, BlockingGrpcStubCustomizer.noop());
+  }
+
+  private AccountIssuerAuthorityClient newClient(
+      int port, String clientIdentity, BlockingGrpcStubCustomizer stubCustomizer) throws Exception {
     ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + port);
     CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
@@ -439,12 +935,7 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
     tls.setPrivateKey(certificate(clientIdentity + ".key").toString());
     tls.setCaCert(certificate("ca.crt").toString());
     return new AccountIssuerAuthorityClient(
-        endpoints,
-        tls,
-        new GrpcChannelFactory(),
-        BlockingGrpcStubCustomizer.noop(),
-        NAMESPACE,
-        ISSUER_ID);
+        endpoints, tls, new GrpcChannelFactory(), stubCustomizer, NAMESPACE, ISSUER_ID);
   }
 
   private ManagedChannel newRawClientChannel(int port, String clientIdentity) throws Exception {
@@ -546,6 +1037,18 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
     assertThat(account.databaseState()).isEqualTo(expected);
   }
 
+  private static String exceptionMessageChain(Throwable failure) {
+    StringBuilder messages = new StringBuilder();
+    Throwable current = failure;
+    while (current != null) {
+      if (current.getMessage() != null) {
+        messages.append(current.getMessage()).append('\n');
+      }
+      current = current.getCause();
+    }
+    return messages.toString();
+  }
+
   private static void shutdown(ManagedChannel channel) throws InterruptedException {
     channel.shutdownNow();
     channel.awaitTermination(2, TimeUnit.SECONDS);
@@ -635,4 +1138,53 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
 
   private record StoredReceipt(
       UUID operationId, long outboxSequence, byte[] requestDigest, byte[] eventPayload) {}
+
+  private record RedisValue(byte[] bytes, long ttlMillis) {}
+
+  private record InstallationFixture(
+      Server server,
+      AccountIssuerAuthorityClient client,
+      RedisFixture redis,
+      IssuerProjectionReconciliationInstaller installer)
+      implements AutoCloseable {
+    @Override
+    public void close() throws Exception {
+      try {
+        client.close();
+      } finally {
+        try {
+          redis.close();
+        } finally {
+          stop(server);
+        }
+      }
+    }
+  }
+
+  private record RedisFixture(
+      GenericContainer<?> container,
+      RedisIssuerAuthorityProjectionStore store,
+      LettuceConnectionFactory adminConnectionFactory,
+      StringRedisTemplate adminTemplate)
+      implements AutoCloseable {
+    private RedisValue read(String key) {
+      RedisValue value =
+          adminTemplate.execute(
+              (RedisCallback<RedisValue>)
+                  connection -> {
+                    byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+                    byte[] bytes = connection.stringCommands().get(keyBytes);
+                    long ttlMillis = bytes == null ? -2L : connection.keyCommands().pTtl(keyBytes);
+                    return new RedisValue(bytes, ttlMillis);
+                  });
+      return Objects.requireNonNull(value, "Redis test read returned no result");
+    }
+
+    @Override
+    public void close() {
+      store.close();
+      adminConnectionFactory.destroy();
+      container.stop();
+    }
+  }
 }

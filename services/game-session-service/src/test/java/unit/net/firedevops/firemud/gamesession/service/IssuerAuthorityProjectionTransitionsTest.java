@@ -12,18 +12,21 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient;
+import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.ProjectionCaptureReceipt;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.SourceReadback;
 import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionTransitions;
 import org.junit.jupiter.api.Test;
@@ -345,6 +348,217 @@ class IssuerAuthorityProjectionTransitionsTest {
         .containsEntry("lastAppliedSourceEventId", next.eventId());
   }
 
+  @Test
+  void captureReconciliationBootstrapsZeroAndPositiveSnapshots() throws Exception {
+    CaptureEvidence zero = captureEvidence(ISSUER_ID, "1", "1", "0", null);
+    IssuerAuthorityProjectionTransitions.Mutation zeroMutation =
+        (IssuerAuthorityProjectionTransitions.Mutation)
+            IssuerAuthorityProjectionTransitions.reconcile(
+                null, zero.capture(), zero.current(), "zero-applied-at");
+    assertThat(zeroMutation.kind())
+        .isEqualTo(IssuerAuthorityProjectionTransitions.MutationKind.CAPTURE_RECONCILIATION);
+    assertThat(zeroMutation.nextProjection())
+        .containsEntry("lastAppliedSourceOutboxSequence", "0")
+        .containsEntry("appliedAt", "zero-applied-at")
+        .containsEntry("appliedSourceEvidence", Map.of())
+        .doesNotContainKeys("lastAppliedSourceEventId", "lastAppliedSourceEventDigest");
+
+    IssuerGenerationAuthorityEvent event = event("5", "11", "19", 64, ISSUER_ID);
+    CaptureEvidence positive = captureEvidence(ISSUER_ID, "11", "19", "5", event);
+    IssuerAuthorityProjectionTransitions.Mutation positiveMutation =
+        (IssuerAuthorityProjectionTransitions.Mutation)
+            IssuerAuthorityProjectionTransitions.reconcile(
+                null, positive.capture(), positive.current(), "positive-applied-at");
+    assertThat(positiveMutation.nextProjection())
+        .containsEntry("lastAppliedSourceOutboxSequence", "5")
+        .containsEntry("lastAppliedSourceEventId", event.eventId())
+        .containsEntry("lastAppliedSourceEventDigest", event.eventDigest())
+        .containsEntry("appliedSourceEvidence", Map.of("5", event.canonicalJson()));
+  }
+
+  @Test
+  void captureReconciliationMayJumpAValidBehindProjectionAcrossMissedEvents() throws Exception {
+    IssuerGenerationAuthorityEvent existingEvent = event("1", "2", "3", 65, ISSUER_ID);
+    Map<String, Object> existing = bootstrapProjection("2", "3", "1", existingEvent);
+    IssuerGenerationAuthorityEvent capturedEvent = event("5", "8", "12", 66, ISSUER_ID);
+    CaptureEvidence evidence = captureEvidence(ISSUER_ID, "8", "12", "5", capturedEvent);
+
+    IssuerAuthorityProjectionTransitions.Mutation mutation =
+        (IssuerAuthorityProjectionTransitions.Mutation)
+            IssuerAuthorityProjectionTransitions.reconcile(
+                existing, evidence.capture(), evidence.current(), "reconciled-at");
+
+    assertThat(mutation.kind())
+        .isEqualTo(IssuerAuthorityProjectionTransitions.MutationKind.CAPTURE_RECONCILIATION);
+    assertThat(mutation.expectedProjection()).contains(existing);
+    assertThat(mutation.nextProjection())
+        .containsEntry("lastAppliedSourceOutboxSequence", "5")
+        .containsEntry("lastAppliedIssuerGeneration", "8")
+        .containsEntry("appliedAt", "reconciled-at")
+        .containsEntry("appliedSourceEvidence", Map.of("5", capturedEvent.canonicalJson()));
+  }
+
+  @Test
+  void captureReconciliationExactCheckpointIsNoOpAndPreservesStoredAppliedAt() throws Exception {
+    IssuerGenerationAuthorityEvent currentEvent = event("3", "6", "9", 67, ISSUER_ID);
+    Map<String, Object> existing = bootstrapProjection("6", "9", "3", currentEvent);
+    CaptureEvidence evidence = captureEvidence(ISSUER_ID, "6", "9", "3", currentEvent);
+
+    IssuerAuthorityProjectionTransitions.NoOp noOp =
+        (IssuerAuthorityProjectionTransitions.NoOp)
+            IssuerAuthorityProjectionTransitions.reconcile(
+                existing, evidence.capture(), evidence.current(), "new-retry-time");
+
+    assertThat(noOp.reason())
+        .isEqualTo(IssuerAuthorityProjectionTransitions.NoOpReason.CAPTURE_ALREADY_INSTALLED);
+    assertThat(existing).containsEntry("appliedAt", "stable-time");
+  }
+
+  @Test
+  void captureReconciliationDeniesAheadAndOrdinaryEventGapsRemainDenied() throws Exception {
+    IssuerGenerationAuthorityEvent currentEvent = event("3", "6", "9", 68, ISSUER_ID);
+    Map<String, Object> existing =
+        bootstrapProjection("7", "12", "4", event("4", "7", "12", 69, ISSUER_ID));
+    CaptureEvidence evidence = captureEvidence(ISSUER_ID, "6", "9", "3", currentEvent);
+
+    IssuerAuthorityProjectionTransitions.Quarantine ahead =
+        (IssuerAuthorityProjectionTransitions.Quarantine)
+            IssuerAuthorityProjectionTransitions.reconcile(
+                existing, evidence.capture(), evidence.current(), "ignored");
+    assertThat(ahead.reason())
+        .isEqualTo(IssuerAuthorityProjectionTransitions.QuarantineReason.CAPTURE_PROJECTION_AHEAD);
+
+    IssuerGenerationAuthorityEvent prior = event("1", "2", "3", 70, ISSUER_ID);
+    Map<String, Object> behind = bootstrapProjection("2", "3", "1", prior);
+    IssuerGenerationAuthorityEvent gap = event("3", "4", "5", 71, ISSUER_ID);
+    SourceReadback selectedGap = readback(ISSUER_ID, "4", "5", "3", gap, gap);
+    IssuerAuthorityProjectionTransitions.Quarantine ordinaryGap =
+        (IssuerAuthorityProjectionTransitions.Quarantine)
+            IssuerAuthorityProjectionTransitions.decide(behind, selectedGap, "ignored");
+    assertThat(ordinaryGap.reason())
+        .isEqualTo(IssuerAuthorityProjectionTransitions.QuarantineReason.EVENT_SEQUENCE_GAP);
+  }
+
+  @Test
+  void captureReconciliationRejectsASeparatelyVerifiedReadbackFromAnotherNamespace()
+      throws Exception {
+    CaptureEvidence captureEvidence = captureEvidence(ISSUER_ID, "1", "1", "0", null);
+    SourceReadback otherNamespace = currentReadback("other", ISSUER_ID, "1", "1", "0", null);
+
+    IssuerAuthorityProjectionTransitions.Quarantine decision =
+        (IssuerAuthorityProjectionTransitions.Quarantine)
+            IssuerAuthorityProjectionTransitions.reconcile(
+                null, captureEvidence.capture(), otherNamespace, "stable-time");
+
+    assertThat(decision.reason())
+        .isEqualTo(IssuerAuthorityProjectionTransitions.QuarantineReason.CAPTURE_BINDING_MISMATCH);
+  }
+
+  private static CaptureEvidence captureEvidence(
+      String issuerId,
+      String generation,
+      String sourceVersion,
+      String sequence,
+      IssuerGenerationAuthorityEvent event)
+      throws Exception {
+    return captureEvidence(NAMESPACE, issuerId, generation, sourceVersion, sequence, event);
+  }
+
+  private static CaptureEvidence captureEvidence(
+      String namespace,
+      String issuerId,
+      String generation,
+      String sourceVersion,
+      String sequence,
+      IssuerGenerationAuthorityEvent event)
+      throws Exception {
+    String scope = "issuer/" + issuerId;
+    IssuerAuthoritySourceSnapshot.Builder source =
+        IssuerAuthoritySourceSnapshot.newBuilder()
+            .setIssuerId(issuerId)
+            .setSourceScope(scope)
+            .setOutboxStreamKey(IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + scope)
+            .setIssuerAuthGeneration(generation)
+            .setSourceVersion(sourceVersion)
+            .setOutboxSequence(sequence);
+    if (event != null) {
+      source.setLatestEventCanonicalJson(event.canonicalJson());
+    }
+    IssuerAuthoritySourceSnapshot snapshot = source.build();
+    String caller = "spiffe://firemud/ns/" + namespace + "/sa/game-session-service";
+    String projectionKey = IssuerAuthorityProjectionTransitions.KEY_PREFIX + issuerId;
+    java.util.UUID requestId = java.util.UUID.fromString(QUERY_ID);
+    java.util.UUID operationId = java.util.UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub =
+        mock(IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.captureIssuerProjectionForRuntime(any()))
+        .thenReturn(
+            CaptureIssuerProjectionForRuntimeResponse.newBuilder()
+                .setSchemaVersion("account-auth-issuer-projection-capture/v1")
+                .setTargetNamespace(namespace)
+                .setOperationId(operationId.toString())
+                .setRequestId(requestId.toString())
+                .setIssuerId(issuerId)
+                .setCallerWorkloadIdentity(caller)
+                .setProjectionKey(projectionKey)
+                .setRequestDigestVersion(1)
+                .setRequestDigest(
+                    IssuerProjectionReconciliationRequestDigestV1.digest(
+                        issuerId, caller, projectionKey, requestId))
+                .setCapturedSourceSnapshot(snapshot)
+                .build());
+    when(stub.readIssuerAuthorityForRuntime(any(ReadIssuerAuthorityForRuntimeRequest.class)))
+        .thenReturn(
+            ReadIssuerAuthorityForRuntimeResponse.newBuilder()
+                .setSchemaVersion("account-auth-issuer-source-readback/v1")
+                .setTargetNamespace(namespace)
+                .setRequestId(QUERY_ID)
+                .setSourceSnapshot(snapshot)
+                .build());
+    AccountIssuerAuthorityClient client = newClient(stub, issuerId, namespace);
+    ProjectionCaptureReceipt capture = client.captureProjection(QUERY_ID);
+    SourceReadback current = client.readCurrent(QUERY_ID);
+    return new CaptureEvidence(capture, current);
+  }
+
+  private static SourceReadback currentReadback(
+      String namespace,
+      String issuerId,
+      String generation,
+      String sourceVersion,
+      String sequence,
+      IssuerGenerationAuthorityEvent event)
+      throws Exception {
+    String scope = "issuer/" + issuerId;
+    IssuerAuthoritySourceSnapshot.Builder snapshot =
+        IssuerAuthoritySourceSnapshot.newBuilder()
+            .setIssuerId(issuerId)
+            .setSourceScope(scope)
+            .setOutboxStreamKey(IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + scope)
+            .setIssuerAuthGeneration(generation)
+            .setSourceVersion(sourceVersion)
+            .setOutboxSequence(sequence);
+    if (event != null) {
+      snapshot.setLatestEventCanonicalJson(event.canonicalJson());
+    }
+    ReadIssuerAuthorityForRuntimeResponse response =
+        ReadIssuerAuthorityForRuntimeResponse.newBuilder()
+            .setSchemaVersion("account-auth-issuer-source-readback/v1")
+            .setTargetNamespace(namespace)
+            .setRequestId(QUERY_ID)
+            .setSourceSnapshot(snapshot.build())
+            .build();
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub =
+        mock(IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.readIssuerAuthorityForRuntime(any(ReadIssuerAuthorityForRuntimeRequest.class)))
+        .thenReturn(response);
+    return newClient(stub, issuerId, namespace).readCurrent(QUERY_ID);
+  }
+
+  private record CaptureEvidence(ProjectionCaptureReceipt capture, SourceReadback current) {}
+
   private static Map<String, Object> bootstrapProjection(
       String generation,
       String sourceVersion,
@@ -431,13 +645,21 @@ class IssuerAuthorityProjectionTransitionsTest {
   private static AccountIssuerAuthorityClient newClient(
       IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub, String issuerId)
       throws Exception {
+    return newClient(stub, issuerId, NAMESPACE);
+  }
+
+  private static AccountIssuerAuthorityClient newClient(
+      IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub,
+      String issuerId,
+      String namespace)
+      throws Exception {
     AccountIssuerAuthorityClient client =
         new AccountIssuerAuthorityClient(
             new ServiceEndpointsProperties(),
             mtlsProperties(),
             mock(GrpcChannelFactory.class),
             BlockingGrpcStubCustomizer.noop(),
-            NAMESPACE,
+            namespace,
             issuerId);
     Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     stubField.setAccessible(true);

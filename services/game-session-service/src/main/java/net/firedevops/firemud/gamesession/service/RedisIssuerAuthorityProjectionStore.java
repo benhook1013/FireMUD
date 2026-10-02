@@ -22,6 +22,7 @@ import java.util.Optional;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.redis.contracts.RedisInvocationContract;
 import net.firedevops.firemud.common.redis.contracts.RedisScriptDescriptor;
+import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.ProjectionCaptureReceipt;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.SourceReadback;
 import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionTransitions.Decision;
 import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionTransitions.Mutation;
@@ -148,6 +149,79 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
       }
     }
 
+    return executeDecision(key, observedJson, decision);
+  }
+
+  /**
+   * Installs one captured checkpoint only after validating its exact current Account readback. The
+   * capture path may bridge a locally missed event range but uses this store's same registered
+   * single-key script and exact persistent post-script readback.
+   */
+  public synchronized ApplyResult installCapture(
+      ProjectionCaptureReceipt capture, SourceReadback current, String appliedAt) {
+    requireInitialized();
+    if (capture == null || current == null) {
+      return quarantined("MALFORMED_CAPTURE_EVIDENCE", Optional.empty());
+    }
+    if (!expectedWorkloadNamespace.equals(current.targetNamespace())) {
+      return quarantined("ACCOUNT_NAMESPACE_MISMATCH", Optional.empty());
+    }
+
+    final String key;
+    try {
+      key = IssuerAuthorityProjectionRedisContract.keyForIssuer(capture.issuerId());
+    } catch (IllegalArgumentException malformed) {
+      return quarantined("MALFORMED_CAPTURE_EVIDENCE", Optional.empty());
+    }
+
+    StoredValue observed = readStoredValue(key);
+    if (observed.bytes() != null && observed.ttlMillis() != -1L) {
+      return quarantined("TTL_PRESENT", Optional.empty());
+    }
+
+    final String observedJson;
+    final Decision decision;
+    if (observed.bytes() == null) {
+      observedJson = null;
+      decision = IssuerAuthorityProjectionTransitions.reconcile(null, capture, current, appliedAt);
+    } else {
+      try {
+        observedJson = decodeUtf8(observed.bytes());
+        Map<String, Object> observedProjection = parseProjection(observedJson);
+        decision =
+            IssuerAuthorityProjectionTransitions.reconcile(
+                observedProjection, capture, current, appliedAt);
+      } catch (IOException | IllegalArgumentException malformed) {
+        return quarantined("MALFORMED_STORED_JSON", Optional.empty());
+      }
+    }
+    return executeDecision(key, observedJson, decision);
+  }
+
+  /** Validates a positive result snapshot against the capture and current Account evidence. */
+  boolean verifiesCaptureSnapshot(
+      ProjectionCaptureReceipt capture, SourceReadback current, ProjectionSnapshot snapshot) {
+    if (snapshot == null || capture == null || current == null) {
+      return false;
+    }
+    try {
+      if (!IssuerAuthorityProjectionRedisContract.keyForIssuer(capture.issuerId())
+          .equals(snapshot.key())) {
+        return false;
+      }
+      Map<String, Object> projection = parseProjection(snapshot.json());
+      Decision decision =
+          IssuerAuthorityProjectionTransitions.reconcile(
+              projection, capture, current, "capture-snapshot-validation");
+      return decision instanceof NoOp noOp
+          && noOp.reason()
+              == IssuerAuthorityProjectionTransitions.NoOpReason.CAPTURE_ALREADY_INSTALLED;
+    } catch (IOException | IllegalArgumentException malformed) {
+      return false;
+    }
+  }
+
+  private ApplyResult executeDecision(String key, String observedJson, Decision decision) {
     if (decision instanceof Quarantine quarantine) {
       return quarantined(quarantine.reason().name(), Optional.of(decision));
     }
