@@ -6,6 +6,7 @@ import json
 import pathlib
 import sys
 import threading
+import time
 import unittest
 from collections import deque
 from unittest.mock import patch
@@ -117,11 +118,12 @@ DEFAULT_LOOK_PAYLOAD = object()
 
 
 class FakeWebSocket:
-    def __init__(self, *, look_payload=DEFAULT_LOOK_PAYLOAD):
+    def __init__(self, *, look_payload=DEFAULT_LOOK_PAYLOAD, accepted_value=True):
         self.commands = []
         self.responses = deque()
         self.closed = False
         self.close_observed = False
+        self.accepted_value = accepted_value
         self.look_payload = (
             {
                 "roomId": "R-1021",
@@ -140,7 +142,7 @@ class FakeWebSocket:
         response = {
             "eventType": "command_result",
             "commandType": command_type,
-            "accepted": True,
+            "accepted": self.accepted_value,
         }
         if command_type == "LOOK" and self.look_payload is not None:
             response["outputs"] = [{"payloadType": "look_view", "payload": self.look_payload}]
@@ -162,6 +164,65 @@ class FakeWebSocket:
 
     def close(self):
         self.closed = True
+
+
+class FakeWireSocket:
+    def __init__(self, wire=b"", *, chunk_size=None, trickle_seconds=0):
+        self.wire = bytearray(wire)
+        self.chunk_size = chunk_size
+        self.trickle_seconds = trickle_seconds
+        self.timeout = None
+        self.bytes_read = 0
+        self.sent = []
+        self._closed = False
+        self.shutdown_called = False
+
+    def settimeout(self, timeout):
+        self.timeout = timeout
+
+    def gettimeout(self):
+        return self.timeout
+
+    def recv(self, requested):
+        if self.trickle_seconds:
+            if self.timeout is not None and self.timeout <= self.trickle_seconds:
+                time.sleep(max(0, self.timeout))
+                raise TimeoutError("fake socket timeout")
+            time.sleep(self.trickle_seconds)
+        if not self.wire:
+            if self.timeout is not None:
+                time.sleep(max(0, self.timeout))
+            raise TimeoutError("fake socket timeout")
+        count = min(requested, len(self.wire))
+        if self.chunk_size is not None:
+            count = min(count, self.chunk_size)
+        data = bytes(self.wire[:count])
+        del self.wire[:count]
+        self.bytes_read += count
+        return data
+
+    def send(self, payload):
+        self.sent.append(bytes(payload))
+        return len(payload)
+
+    def shutdown(self, *_args):
+        self.shutdown_called = True
+
+    def close(self):
+        self._closed = True
+
+
+def websocket_frame(opcode, payload=b"", *, final=True):
+    first = (0x80 if final else 0) | opcode
+    payload = bytes(payload)
+    length = len(payload)
+    if length < 126:
+        header = bytes((first, length))
+    elif length < 65_536:
+        header = bytes((first, 126)) + length.to_bytes(2, "big")
+    else:
+        header = bytes((first, 127)) + length.to_bytes(8, "big")
+    return header + payload
 
 
 class LogoutUnavailableWebSocket(FakeWebSocket):
@@ -200,6 +261,139 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         }
         values.update(overrides)
         return MODULE.SmokeConfig(**values)
+
+    def make_bounded_wire_client(self, wire=b"", **socket_options):
+        import websocket
+
+        client_type = MODULE._bounded_websocket_client(websocket)
+        client = client_type()
+        fake_socket = FakeWireSocket(wire, **socket_options)
+        client.sock = fake_socket
+        client.connected = True
+        client.settimeout(1.0)
+        return client, fake_socket
+
+    def test_bounded_wire_client_rejects_advertised_frame_before_payload_read(self):
+        client, fake_socket = self.make_bounded_wire_client(b"\x81\x05hello")
+        with (
+            patch.object(MODULE, "MAX_WEBSOCKET_FRAME_BYTES", 4),
+            self.assertRaises(MODULE._WebSocketReceiveLimitExceeded),
+        ):
+            client.recv()
+        self.assertEqual(fake_socket.bytes_read, 2)
+        self.assertEqual(bytes(fake_socket.wire), b"hello")
+        client.close()
+        self.assertEqual(fake_socket.bytes_read, 2)
+        self.assertTrue(fake_socket._closed)
+
+    def test_bounded_wire_client_rejects_oversized_control_frame_before_payload_read(self):
+        client, fake_socket = self.make_bounded_wire_client(b"\x89\x7e\x00\x7e" + b"x" * 126)
+        with self.assertRaises(MODULE._WebSocketReceiveLimitExceeded):
+            client.recv_data(control_frame=True)
+        self.assertEqual(fake_socket.bytes_read, 4)
+        self.assertEqual(len(fake_socket.wire), 126)
+        client.close()
+        self.assertEqual(fake_socket.bytes_read, 4)
+        self.assertTrue(fake_socket._closed)
+
+    def test_bounded_wire_client_limits_fragmented_message_before_concatenation(self):
+        wire = websocket_frame(0x1, b"12345678", final=False) + websocket_frame(0x0, b"abc", final=True)
+        client, _ = self.make_bounded_wire_client(wire)
+        with (
+            patch.object(MODULE, "MAX_WEBSOCKET_MESSAGE_BYTES", 10),
+            self.assertRaises(MODULE._WebSocketReceiveLimitExceeded),
+        ):
+            client.recv()
+
+    def test_bounded_wire_client_limits_frames_consumed_while_handling_control_frames(self):
+        wire = b"".join(websocket_frame(0x9) for _ in range(3)) + websocket_frame(0x1, b"{}")
+        client, fake_socket = self.make_bounded_wire_client(wire)
+        with (
+            patch.object(MODULE, "MAX_WEBSOCKET_RECEIVE_FRAMES", 2),
+            self.assertRaises(MODULE._WebSocketReceiveLimitExceeded),
+        ):
+            client.recv()
+        self.assertEqual(fake_socket.bytes_read, 6)
+
+    def test_command_wait_limits_unmatched_message_flood(self):
+        payload = json.dumps({"eventType": "unrelated"}).encode()
+        wire = websocket_frame(0x1, payload) * 3
+        client, fake_socket = self.make_bounded_wire_client(wire)
+        with (
+            patch.object(MODULE, "MAX_WEBSOCKET_WAIT_MESSAGES", 2),
+            self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "receive budget exceeded"),
+        ):
+            MODULE._await_command_result(client, "LOGIN", self.config())
+        expected = websocket_frame(0x1, payload) * 2
+        self.assertEqual(fake_socket.bytes_read, len(expected))
+
+    def test_command_wait_limits_aggregate_unmatched_bytes(self):
+        payload = b"not-json!"
+        wire = websocket_frame(0x1, payload) * 3
+        client, fake_socket = self.make_bounded_wire_client(wire)
+        with (
+            patch.object(MODULE, "MAX_WEBSOCKET_WAIT_BYTES", len(payload) + 1),
+            self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "receive budget exceeded"),
+        ):
+            MODULE._await_command_result(client, "LOGIN", self.config())
+        expected = websocket_frame(0x1, payload) * 2
+        self.assertEqual(fake_socket.bytes_read, len(expected))
+
+    def test_close_wait_limits_unrelated_control_frame_flood(self):
+        wire = b"".join(websocket_frame(0x9, b"p") for _ in range(3))
+        client, fake_socket = self.make_bounded_wire_client(wire)
+        with (
+            patch.object(MODULE, "MAX_WEBSOCKET_WAIT_MESSAGES", 2),
+            self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "receive budget exceeded"),
+        ):
+            MODULE._await_websocket_close(client, self.config())
+        expected = b"".join(websocket_frame(0x9, b"p") for _ in range(2))
+        self.assertEqual(fake_socket.bytes_read, len(expected))
+        self.assertEqual(len(fake_socket.sent), 2)
+
+    def test_receive_deadline_is_refreshed_against_trickled_wire_bytes(self):
+        client, fake_socket = self.make_bounded_wire_client(
+            websocket_frame(0x1, b"{}"), chunk_size=1, trickle_seconds=0.02
+        )
+        deadline = time.monotonic() + 0.05
+        client.set_receive_deadline(deadline)
+        started = time.monotonic()
+        with self.assertRaises(Exception) as caught:
+            client.recv()
+        self.assertIn(
+            type(caught.exception).__name__,
+            {"TimeoutError", "WebSocketTimeoutException"},
+        )
+        self.assertLess(time.monotonic() - started, 0.2)
+        self.assertLess(fake_socket.bytes_read, len(websocket_frame(0x1, b"{}")))
+
+    def test_bounded_close_observes_close_opcode_and_timeout(self):
+        close_frame = websocket_frame(0x8, b"\x03\xe8")
+        client, fake_socket = self.make_bounded_wire_client(close_frame)
+        MODULE._await_websocket_close(client, self.config(timeout_seconds=1))
+        self.assertFalse(client.connected)
+        self.assertTrue(any(frame[0] & 0x0F == 0x8 for frame in fake_socket.sent))
+        client.close()
+        self.assertTrue(fake_socket._closed)
+
+        timed_out_client, _ = self.make_bounded_wire_client()
+        with self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "close observation failed"):
+            MODULE._await_websocket_close(
+                timed_out_client,
+                self.config(timeout_seconds=0.02),
+            )
+
+    def test_websocket_cleanup_close_has_an_absolute_deadline(self):
+        client, fake_socket = self.make_bounded_wire_client(
+            websocket_frame(0x1, b"x") * 10,
+            chunk_size=1,
+            trickle_seconds=0.02,
+        )
+        with patch.object(MODULE, "MAX_WEBSOCKET_CLOSE_SECONDS", 0.05):
+            started = time.monotonic()
+            client.close(timeout=None)
+        self.assertLess(time.monotonic() - started, 0.2)
+        self.assertTrue(fake_socket._closed)
 
     def test_default_http_transport_rejects_cross_origin_redirects_for_get_and_post(self):
         with local_http_server() as (base_url, requests):
@@ -551,6 +745,29 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
                 http_request=FakeHttp(),
                 websocket_factory=lambda url, timeout, headers: LogoutUnavailableWebSocket(),
             )
+
+    def test_truthy_non_boolean_command_acceptance_is_rejected(self):
+        for accepted_value in ("false", 1, ["yes"], {"accepted": False}):
+            with (
+                self.subTest(accepted_value=accepted_value),
+                self.assertRaisesRegex(
+                    MODULE.HostedWebSocketPlayableSmokeError,
+                    "LOGIN was rejected",
+                ),
+            ):
+                MODULE.run_smoke(
+                    self.config(),
+                    http_request=FakeHttp(),
+                    websocket_factory=lambda url, timeout, headers, value=accepted_value: FakeWebSocket(
+                        accepted_value=value
+                    ),
+                )
+
+    def test_boolean_true_command_acceptance_is_success(self):
+        client = FakeWebSocket()
+        client.send("LOGIN")
+        parsed = MODULE._await_command_result(client, "LOGIN", self.config())
+        self.assertIs(parsed["accepted"], True)
 
     def test_explicit_logout_opt_in_requires_and_observes_close_frame(self):
         http = FakeHttp()
