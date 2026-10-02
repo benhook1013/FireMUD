@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextResolution;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
@@ -150,7 +151,9 @@ public final class LoginCommandHandler {
         authenticatedAccountId,
         canonicalLoginName,
         authResponse.getAuthToken(),
-        bootstrapGameInstanceId);
+        bootstrapGameInstanceId,
+        null,
+        null);
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.success(),
         List.of(
@@ -256,7 +259,9 @@ public final class LoginCommandHandler {
           verifiedContext.pointerVersion());
       return failure("CONNECT_SCOPE_INVALID", "Connect scope invalid");
     }
-    if (!currentAdmissionPointerMatches(verifiedContext)) {
+    Optional<GameplayAdmissionPointerSnapshot> maybeCurrentPointer =
+        currentAdmissionPointer(verifiedContext);
+    if (maybeCurrentPointer.isEmpty()) {
       clearFailedLoginSessionState(
           numericSessionId,
           verifiedContext.tenantId(),
@@ -273,7 +278,9 @@ public final class LoginCommandHandler {
         verifiedContext.accountId(),
         "first-party:" + verifiedContext.accountId(),
         null,
-        verifiedContext.gameInstanceId());
+        verifiedContext.gameInstanceId(),
+        verifiedContext,
+        maybeCurrentPointer.orElseThrow().stateScope());
     return new LoginCommandHandlingResult(
         CommandEnqueueResult.success(),
         List.of(
@@ -289,7 +296,9 @@ public final class LoginCommandHandler {
       long accountId,
       String loginName,
       String jwt,
-      long bootstrapGameInstanceId) {
+      long bootstrapGameInstanceId,
+      net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedConnectContext,
+      String verifiedPlayableStateScope) {
     if (sessionContextService == null) {
       return;
     }
@@ -302,42 +311,63 @@ public final class LoginCommandHandler {
             ? projectedExisting
             : null;
     boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
+    Optional<SessionContext> reusableBootstrapShell =
+        sameAuthenticatedAccount
+            ? Optional.empty()
+            : reusableBootstrapShell(
+                existing,
+                tenantId,
+                accountId,
+                bootstrapGameInstanceId,
+                verifiedConnectContext,
+                verifiedPlayableStateScope);
     // LOGIN authenticates account identity. Preserve gameplay scope only when both account and
-    // tenant remain unchanged; otherwise start with a fresh authenticated context.
+    // tenant remain unchanged. An unauthenticated shell may retain only a current normalized
+    // bootstrap route; a verified first-party connect context is additionally required to retain
+    // its connect selector. Neither path carries a gameplay binding into LOGIN.
     SessionContext context =
-        !sameAuthenticatedAccount
-            ? new SessionContext(
+        reusableBootstrapShell.isPresent()
+            ? authenticatedBootstrapContext(
                 sessionId,
                 tenantId,
                 accountId,
                 loginName,
-                0L,
-                null,
-                0L,
-                null,
                 jwt,
-                null,
-                bootstrapGameInstanceId)
-            : new SessionContext(
-                sessionId,
-                tenantId,
-                accountId,
-                loginName,
-                existing.characterId(),
-                existing.characterName(),
-                existing.gameInstanceId(),
-                existing.roomInstanceId(),
-                jwt,
-                existing.localeTag(),
-                existing.bootstrapGameInstanceId() > 0
-                    ? existing.bootstrapGameInstanceId()
-                    : bootstrapGameInstanceId,
-                existing.worldSlug(),
-                existing.realmSlug(),
-                existing.pointerVersion(),
-                existing.playableStateScope(),
-                existing.connectScopeId(),
-                existing.connectRequestId());
+                reusableBootstrapShell.orElseThrow(),
+                verifiedConnectContext != null)
+            : !sameAuthenticatedAccount
+                ? new SessionContext(
+                    sessionId,
+                    tenantId,
+                    accountId,
+                    loginName,
+                    0L,
+                    null,
+                    0L,
+                    null,
+                    jwt,
+                    null,
+                    bootstrapGameInstanceId)
+                : new SessionContext(
+                    sessionId,
+                    tenantId,
+                    accountId,
+                    loginName,
+                    existing.characterId(),
+                    existing.characterName(),
+                    existing.gameInstanceId(),
+                    existing.roomInstanceId(),
+                    jwt,
+                    existing.localeTag(),
+                    existing.bootstrapGameInstanceId() > 0
+                        ? existing.bootstrapGameInstanceId()
+                        : bootstrapGameInstanceId,
+                    existing.worldSlug(),
+                    existing.realmSlug(),
+                    existing.pointerVersion(),
+                    existing.playableStateScope(),
+                    existing.connectScopeId(),
+                    existing.connectRequestId());
     if (projectedExisting != null && projectedExisting.accountId() != accountId) {
       gameplayPresenceLifecycleService.clearGameplayBinding(
           projectedExisting, "LOGIN_ACCOUNT_CHANGED");
@@ -353,6 +383,75 @@ public final class LoginCommandHandler {
         context.accountId());
   }
 
+  private Optional<SessionContext> reusableBootstrapShell(
+      SessionContext existing,
+      long tenantId,
+      long accountId,
+      long bootstrapGameInstanceId,
+      net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedConnectContext,
+      String verifiedPlayableStateScope) {
+    if (existing == null
+        || existing.accountId() != 0L
+        || existing.tenantId() != tenantId
+        || existing.bootstrapGameInstanceId() != bootstrapGameInstanceId
+        || existing.hasGameplayBinding()
+        || !GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(existing)) {
+      return Optional.empty();
+    }
+
+    if (verifiedConnectContext == null) {
+      return currentAdmissionPointer(existing)
+          .filter(pointer -> Objects.equals(existing.playableStateScope(), pointer.stateScope()))
+          .map(ignored -> existing);
+    }
+
+    boolean verifiedIdentityAndTargetMatch =
+        verifiedConnectContext.hasCompleteRoutingScope()
+            && verifiedConnectContext.accountId() == accountId
+            && verifiedConnectContext.tenantId() == tenantId
+            && verifiedConnectContext.gameInstanceId() == bootstrapGameInstanceId
+            && Objects.equals(existing.playableStateScope(), verifiedPlayableStateScope)
+            && GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
+                verifiedConnectContext,
+                tenantId,
+                bootstrapGameInstanceId,
+                existing.worldSlug(),
+                existing.realmSlug(),
+                existing.pointerVersion())
+            && Objects.equals(existing.connectScopeId(), verifiedConnectContext.connectScopeId())
+            && Objects.equals(
+                existing.connectRequestId(), verifiedConnectContext.connectRequestId());
+    return verifiedIdentityAndTargetMatch ? Optional.of(existing) : Optional.empty();
+  }
+
+  private SessionContext authenticatedBootstrapContext(
+      long sessionId,
+      long tenantId,
+      long accountId,
+      String loginName,
+      String jwt,
+      SessionContext bootstrapShell,
+      boolean preserveConnectSelector) {
+    return new SessionContext(
+        sessionId,
+        tenantId,
+        accountId,
+        loginName,
+        0L,
+        null,
+        0L,
+        null,
+        jwt,
+        bootstrapShell.localeTag(),
+        bootstrapShell.bootstrapGameInstanceId(),
+        bootstrapShell.worldSlug(),
+        bootstrapShell.realmSlug(),
+        bootstrapShell.pointerVersion(),
+        bootstrapShell.playableStateScope(),
+        preserveConnectSelector ? bootstrapShell.connectScopeId() : null,
+        preserveConnectSelector ? bootstrapShell.connectRequestId() : null);
+  }
+
   private long resolveBootstrapGameInstanceId(long sessionId) {
     return sessionRoutingNormalizationService
         .resolveProjectedSessionContext(Long.toString(sessionId))
@@ -365,16 +464,58 @@ public final class LoginCommandHandler {
         .orElse(0L);
   }
 
-  private boolean currentAdmissionPointerMatches(
+  private Optional<GameplayAdmissionPointerSnapshot> currentAdmissionPointer(
       net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedContext) {
-    return GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
-        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(
-            verifiedContext.tenantId(), verifiedContext.gameInstanceId()),
+    if (verifiedContext == null || !verifiedContext.hasCompleteRoutingScope()) {
+      return Optional.empty();
+    }
+    return currentAdmissionPointer(
         verifiedContext.tenantId(),
         verifiedContext.gameInstanceId(),
         verifiedContext.worldSlug(),
         verifiedContext.realmSlug(),
-        verifiedContext.pointerVersion());
+        verifiedContext.pointerVersion(),
+        null);
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> currentAdmissionPointer(
+      SessionContext bootstrapShell) {
+    if (bootstrapShell == null
+        || !GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(bootstrapShell)) {
+      return Optional.empty();
+    }
+    return currentAdmissionPointer(
+        bootstrapShell.tenantId(),
+        bootstrapShell.bootstrapGameInstanceId(),
+        bootstrapShell.worldSlug(),
+        bootstrapShell.realmSlug(),
+        bootstrapShell.pointerVersion(),
+        bootstrapShell.playableStateScope());
+  }
+
+  private Optional<GameplayAdmissionPointerSnapshot> currentAdmissionPointer(
+      long tenantId,
+      long gameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion,
+      String expectedPlayableStateScope) {
+    List<GameplayAdmissionPointerSnapshot> pointers =
+        gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(tenantId, gameInstanceId);
+    Optional<GameplayAdmissionPointerSnapshot> maybePointer =
+        GameplayAdmissionPointerSnapshots.singularCompletePointer(pointers);
+    return maybePointer.filter(
+        pointer ->
+            GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+                pointers,
+                tenantId,
+                gameInstanceId,
+                worldSlug,
+                realmSlug,
+                pointerVersion,
+                expectedPlayableStateScope != null
+                    ? expectedPlayableStateScope
+                    : pointer.stateScope()));
   }
 
   private void clearFailedLoginSessionState(
