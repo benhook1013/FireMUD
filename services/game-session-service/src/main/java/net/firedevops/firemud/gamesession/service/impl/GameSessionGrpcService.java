@@ -596,6 +596,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ListGameplayRealms", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 

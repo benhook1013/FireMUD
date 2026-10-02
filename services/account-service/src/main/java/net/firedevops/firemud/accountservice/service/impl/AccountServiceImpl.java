@@ -563,6 +563,10 @@ public class AccountServiceImpl implements AccountService {
         || !StringUtils.hasText(request.requestId())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
+    if (request.requestId().length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
+      throw new AuthenticationException(
+          "INVALID_ARGUMENT", "JOIN requestId exceeds the maximum length");
+    }
     String requestId = request.requestId();
     String scopeTokenHash = AccountJoinDigest.tokenHash(request.connectScopeId());
     Optional<JoinOperation> existing = accountJoinOperationRepository.find(requestId);

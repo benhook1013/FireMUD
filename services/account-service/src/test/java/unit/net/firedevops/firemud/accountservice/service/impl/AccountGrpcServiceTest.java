@@ -361,6 +361,28 @@ class AccountGrpcServiceTest {
     Mockito.verifyNoInteractions(accountService);
   }
 
+  @Test
+  void joinRejectsRequestIdLongerThanThePublicContractBeforeCallingAccountService() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    String requestId = "j".repeat(JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH + 1);
+    PlayerExecutionContext playerContext =
+        validPlayerContext().toBuilder().setRequestId(requestId).build();
+    JoinPublicProductionMembershipRequest request =
+        validJoinRequest().toBuilder()
+            .setPlayerContext(playerContext)
+            .setRequestId(requestId)
+            .build();
+    RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
+
+    withPeer(GAME_SESSION_PEER, () -> service.joinPublicProductionMembership(request, observer));
+
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"", "   "})
   void issueDirectTextConnectScopeRejectsBlankRequestIdBeforeServiceCall(String requestId) {

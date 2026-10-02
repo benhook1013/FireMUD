@@ -203,6 +203,13 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      CreateLogEventResponse response =
+          CreateLogEventResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateLogEvent", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 

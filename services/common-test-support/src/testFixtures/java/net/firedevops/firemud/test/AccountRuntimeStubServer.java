@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -219,6 +220,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (caller.getAccountId().isBlank()
         || caller.getTenantId().isBlank()
         || caller.getRealmId().isBlank()
+        || caller.getRequestId().isBlank()
         || caller.getGameInstanceId().isBlank()
         || caller.getPlayableStateNamespaceId().isBlank()
         || caller.getPlayableStateScope().isBlank()
@@ -229,6 +231,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || request.getRealmSlug().isBlank()
         || request.getPlayableStateNamespaceId().isBlank()
         || request.getPlayableStateScope().isBlank()
+        || !isCanonicalUuid(caller.getRealmId())
+        || !isCanonicalUuid(request.getRealmId())
+        || !isCanonicalUuid(caller.getPlayableStateNamespaceId())
+        || !isCanonicalUuid(request.getPlayableStateNamespaceId())
         || !caller.getTenantId().equals(request.getTenantId())
         || !caller.getRealmId().equals(request.getRealmId())
         || !caller.getGameInstanceId().equals(request.getGameInstanceId())
@@ -261,6 +267,17 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
               .build());
     }
     responseObserver.onCompleted();
+  }
+
+  private static boolean isCanonicalUuid(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
+    try {
+      return UUID.fromString(value).toString().equals(value);
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
   }
 
   @Override

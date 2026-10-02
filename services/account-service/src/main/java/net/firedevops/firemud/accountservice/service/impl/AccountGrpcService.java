@@ -160,6 +160,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       requireGameSessionPeer();
       DirectTextCallerContext caller = directTextCaller(request.getPlayerContext());
       String requestId = requireText(request.getRequestId(), "requestId");
+      if (requestId.length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
+        throw new InvalidRequestException("JOIN requestId exceeds the maximum length", null);
+      }
       if (!requestId.equals(caller.requestId())) {
         throw new InvalidRequestException("Player context and JOIN request ID disagree", null);
       }

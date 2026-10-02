@@ -1128,6 +1128,52 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void listGameplayRealmsMapsUnexpectedDependencyFailureToInternalAndCompletes() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenThrow(new IllegalStateException("sensitive authority diagnostic"));
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    AtomicReference<ListGameplayRealmsResponse> response = new AtomicReference<>();
+    AtomicBoolean completed = new AtomicBoolean();
+    service.listGameplayRealms(
+        ListGameplayRealmsRequest.newBuilder().setWorldSlug("demo").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(ListGameplayRealmsResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {
+            completed.set(true);
+          }
+        });
+
+    assertEquals("INTERNAL", response.get().getError().getCode());
+    assertEquals("Internal error", response.get().getError().getMessage());
+    assertTrue(completed.get());
+    assertEquals(0, response.get().getRealmsCount());
+  }
+
+  @Test
   void catalogPolicyRevisionAdvancesIndependentlyFromPointerVersion() {
     GameplayAdmissionPointerRepository pointerRepository =
         Mockito.mock(GameplayAdmissionPointerRepository.class);

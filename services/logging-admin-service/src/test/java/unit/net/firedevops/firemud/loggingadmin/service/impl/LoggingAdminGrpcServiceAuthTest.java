@@ -3,11 +3,14 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
@@ -107,6 +110,49 @@ class LoggingAdminGrpcServiceAuthTest {
     assertEquals(
         AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_UNSPECIFIED,
         ref.get().getOutcome());
+    verifyNoInteractions(logEventService, moderationService);
+  }
+
+  @Test
+  void createLogEventMapsUnexpectedFailureToSanitizedInternalAndCompletes() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
+    Counter internalErrorCounter = Mockito.mock(Counter.class);
+    when(meterRegistry.counter("grpc.app_error", "code", "UNAVAILABLE"))
+        .thenThrow(new IllegalStateException("sensitive meter-registry diagnostic"));
+    when(meterRegistry.counter("grpc.app_error", "code", "INTERNAL"))
+        .thenReturn(internalErrorCounter);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class), logEventService, moderationService, meterRegistry);
+
+    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
+    java.util.concurrent.atomic.AtomicBoolean completed =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    service.createLogEvent(
+        CreateLogEventRequest.newBuilder().setTenantId("1").build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateLogEventResponse value) {
+            ref.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {}
+
+          @Override
+          public void onCompleted() {
+            completed.set(true);
+          }
+        });
+
+    assertNotNull(ref.get());
+    assertEquals("INTERNAL", ref.get().getError().getCode());
+    assertEquals("Internal error", ref.get().getError().getMessage());
+    assertFalse(ref.get().getError().getMessage().contains("sensitive"));
+    assertTrue(completed.get());
     verifyNoInteractions(logEventService, moderationService);
   }
 

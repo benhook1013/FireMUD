@@ -322,8 +322,10 @@ class AccountServiceImplTest {
     retainJoinEvidence(retainedScope, retainedOperation);
     String connectScopeId =
         service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    String requestId = "j".repeat(128);
+    assertEquals(128, requestId.length());
     JoinPublicProductionRequest request =
-        new JoinPublicProductionRequest(connectScopeId, "join-attempt-1");
+        new JoinPublicProductionRequest(connectScopeId, requestId);
 
     JoinPublicProductionResult first =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
@@ -363,7 +365,7 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("tenant"),
             org.mockito.ArgumentMatchers.eq(7L),
             org.mockito.ArgumentMatchers.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION"),
-            org.mockito.ArgumentMatchers.contains("join-attempt-1"));
+            org.mockito.ArgumentMatchers.contains(requestId));
     assertEquals("COMMITTED", retainedOperation.get().status());
 
     AuthenticationException changedDigest =
@@ -374,6 +376,37 @@ class AccountServiceImplTest {
                     bootstrap.bootstrapToken(),
                     new JoinPublicProductionRequest("different-scope", "join-attempt-1")));
     assertEquals("IDEMPOTENCY_CONFLICT", changedDigest.getCode());
+  }
+
+  @Test
+  void joinPublicProductionRejectsRequestIdLongerThan128BeforeIntentLookupOrMutation() {
+    Account account = directTextAccount();
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    String requestId = "j".repeat(129);
+    DirectTextCallerContext baseCaller = directTextCaller();
+    DirectTextCallerContext caller =
+        new DirectTextCallerContext(
+            baseCaller.accountId(),
+            baseCaller.tenantId(),
+            baseCaller.realmId(),
+            baseCaller.playableStateNamespaceId(),
+            baseCaller.playableStateScope(),
+            baseCaller.gameInstanceId(),
+            baseCaller.sessionId(),
+            requestId);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.joinPublicProductionFromGameSession(
+                    caller, new JoinPublicProductionRequest("retained-scope", requestId)));
+
+    assertEquals("INVALID_ARGUMENT", exception.getCode());
+    verifyNoInteractions(
+        accountJoinOperationRepository,
+        accountTenantMembershipRepository,
+        accountAuditOutboxRepository);
   }
 
   @ParameterizedTest

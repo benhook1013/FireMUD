@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.util.List;
 import java.util.Set;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
@@ -14,6 +15,8 @@ import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerCompatibilityTest {
+  private static final String REALM_ID = "8a1df0f1-1b57-465e-9c4b-bb34f8153d31";
+  private static final String NAMESPACE_ID = "2ea958e0-13a2-41d0-9c39-59a96cf31412";
   private static final Set<String> NON_RUNTIME_METHODS =
       Set.of(
           "CreateAccount",
@@ -79,9 +82,9 @@ class AccountRuntimeStubServerCompatibilityTest {
             PlayerExecutionContext.newBuilder()
                 .setAccountId("7")
                 .setTenantId("11")
-                .setRealmId("22")
+                .setRealmId(REALM_ID)
                 .setGameInstanceId("33")
-                .setPlayableStateNamespaceId("namespace-1")
+                .setPlayableStateNamespaceId(NAMESPACE_ID)
                 .setPlayableStateScope("SHARED")
                 .setRequestId("join-request-1")
                 .build();
@@ -92,8 +95,8 @@ class AccountRuntimeStubServerCompatibilityTest {
                     .setTenantId("11")
                     .setWorldSlug("demo")
                     .setRealmSlug("live")
-                    .setRealmId("22")
-                    .setPlayableStateNamespaceId("namespace-1")
+                    .setRealmId(REALM_ID)
+                    .setPlayableStateNamespaceId(NAMESPACE_ID)
                     .setPlayableStateScope("SHARED")
                     .setGameInstanceId("33")
                     .build());
@@ -127,6 +130,68 @@ class AccountRuntimeStubServerCompatibilityTest {
         channel.shutdownNow();
       }
     }
+  }
+
+  @Test
+  void directTextConnectScopeRejectsNoncanonicalIdsAndBlankContextRequestId() throws Exception {
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        IssueDirectTextConnectScopeRequest validRequest = validConnectScopeRequest();
+        List<IssueDirectTextConnectScopeRequest> invalidRequests =
+            List.of(
+                validRequest.toBuilder().setRealmId("22").build(),
+                validRequest.toBuilder()
+                    .setRealmId("22")
+                    .setPlayerContext(validRequest.getPlayerContext().toBuilder().setRealmId("22"))
+                    .build(),
+                validRequest.toBuilder().setPlayableStateNamespaceId("namespace-1").build(),
+                validRequest.toBuilder()
+                    .setPlayableStateNamespaceId("namespace-1")
+                    .setPlayerContext(
+                        validRequest.getPlayerContext().toBuilder()
+                            .setPlayableStateNamespaceId("namespace-1"))
+                    .build(),
+                validRequest.toBuilder()
+                    .setPlayerContext(
+                        validRequest.getPlayerContext().toBuilder().setRequestId("   "))
+                    .build());
+
+        for (IssueDirectTextConnectScopeRequest request : invalidRequests) {
+          var response = stub.issueDirectTextConnectScope(request);
+          assertThat(response.getError().getCode()).isEqualTo("INVALID_ARGUMENT");
+          assertThat(response.getConnectScopeId()).isEmpty();
+        }
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  private static IssueDirectTextConnectScopeRequest validConnectScopeRequest() {
+    PlayerExecutionContext caller =
+        PlayerExecutionContext.newBuilder()
+            .setAccountId("7")
+            .setTenantId("11")
+            .setRealmId(REALM_ID)
+            .setGameInstanceId("33")
+            .setPlayableStateNamespaceId(NAMESPACE_ID)
+            .setPlayableStateScope("SHARED")
+            .setRequestId("join-request-1")
+            .build();
+    return IssueDirectTextConnectScopeRequest.newBuilder()
+        .setPlayerContext(caller)
+        .setTenantId("11")
+        .setWorldSlug("demo")
+        .setRealmSlug("live")
+        .setRealmId(REALM_ID)
+        .setPlayableStateNamespaceId(NAMESPACE_ID)
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId("33")
+        .build();
   }
 
   private static GetTenantMembershipForRuntimeRequest membershipRequest(
