@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CERT_DIR="$(mktemp -d)"
 trap 'rm -rf "$CERT_DIR"' EXIT
+generic_bundle_files=(
+  ca.crt ca.key client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem server.crt server.key
+)
 
 assert_mode() {
   local expected_mode="$1"
@@ -14,6 +17,64 @@ assert_mode() {
     echo "expected mode $expected_mode for $path, got $actual_mode" >&2
     exit 1
   }
+}
+
+copy_generic_bundle() {
+  local source_dir="$1"
+  local target_dir="$2"
+  mkdir -p "$target_dir"
+  for file in "${generic_bundle_files[@]}"; do
+    cp "$source_dir/$file" "$target_dir/$file"
+  done
+}
+
+assert_invalid_existing_bundle_is_preserved() {
+  local bundle_dir="$1"
+  local case_name="$2"
+  local manifest="$CERT_DIR/$case_name.bundle.sha256"
+  local output="$CERT_DIR/$case_name.output"
+  local unmanaged_file="$bundle_dir/unmanaged-local.key"
+  local file
+
+  printf 'unmanaged certificate sentinel\n' >"$unmanaged_file"
+  chmod 640 "$unmanaged_file"
+  for file in "${generic_bundle_files[@]}"; do
+    sha256sum "$bundle_dir/$file"
+  done >"$manifest"
+  sha256sum "$unmanaged_file" >>"$manifest"
+
+  if bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" "$bundle_dir" >"$output" 2>&1; then
+    echo "generate-dev-certs accepted an invalid complete bundle: $case_name" >&2
+    exit 1
+  fi
+  rg -Fq 'no files were changed' "$output" || {
+    echo "generate-dev-certs did not report fail-closed preservation for $case_name" >&2
+    cat "$output" >&2
+    exit 1
+  }
+  sha256sum -c "$manifest" >/dev/null || {
+    echo "generate-dev-certs changed invalid bundle material: $case_name" >&2
+    exit 1
+  }
+
+  if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$bundle_dir" >"$output" 2>&1; then
+    echo "ensure-dev-certs accepted an invalid complete bundle: $case_name" >&2
+    exit 1
+  fi
+  rg -Fq 'no files were changed' "$output" || {
+    echo "ensure-dev-certs did not report fail-closed preservation for $case_name" >&2
+    cat "$output" >&2
+    exit 1
+  }
+  sha256sum -c "$manifest" >/dev/null || {
+    echo "ensure-dev-certs changed invalid bundle material: $case_name" >&2
+    exit 1
+  }
+  [[ "$(<"$unmanaged_file")" == 'unmanaged certificate sentinel' ]] || {
+    echo "an invalid bundle path changed or removed an unmanaged file: $case_name" >&2
+    exit 1
+  }
+  assert_mode 640 "$unmanaged_file"
 }
 
 assert_workload_certificate() {
@@ -67,10 +128,99 @@ for profile in default account-service game-session-service social-groups-servic
   assert_mode 644 "$runtime_dir/$profile/dev-key.pem"
 done
 for workload in account-service game-session-service social-groups-service; do
+  assert_mode 644 "$CERT_DIR/workloads/$workload.crt"
   assert_mode 600 "$CERT_DIR/workloads/$workload.key"
   assert_mode 755 "$runtime_dir/$workload/workloads"
   assert_mode 644 "$runtime_dir/$workload/workloads/$workload.key"
 done
+
+# Unmanaged regular files under workloads/ retain their own bytes and modes;
+# only the three named local Compose identities are normalized by ensure.
+mode_case="$CERT_DIR/unmanaged-workload-modes"
+copy_generic_bundle "$CERT_DIR" "$mode_case"
+mkdir -p "$mode_case/workloads"
+printf 'unmanaged certificate sentinel\n' >"$mode_case/workloads/keep-me.crt"
+printf 'unmanaged key sentinel\n' >"$mode_case/workloads/keep-me.key"
+chmod 711 "$mode_case/workloads/keep-me.crt"
+chmod 640 "$mode_case/workloads/keep-me.key"
+bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$mode_case"
+[[ "$(<"$mode_case/workloads/keep-me.crt")" == 'unmanaged certificate sentinel' \
+  && "$(<"$mode_case/workloads/keep-me.key")" == 'unmanaged key sentinel' ]] || {
+  echo "ensure-dev-certs changed unmanaged workload certificate contents" >&2
+  exit 1
+}
+assert_mode 711 "$mode_case/workloads/keep-me.crt"
+assert_mode 640 "$mode_case/workloads/keep-me.key"
+
+# Complete but unhealthy bundles fail closed through both public entrypoints.
+# Their CA and issued leaves are left byte-for-byte unchanged for deliberate
+# operator diagnosis or full local reissue.
+malformed_case="$CERT_DIR/invalid-malformed-bundle"
+copy_generic_bundle "$CERT_DIR" "$malformed_case"
+printf 'malformed certificate\n' >"$malformed_case/ca.crt"
+assert_invalid_existing_bundle_is_preserved "$malformed_case" malformed
+
+key_mismatch_case="$CERT_DIR/invalid-key-mismatch-bundle"
+copy_generic_bundle "$CERT_DIR" "$key_mismatch_case"
+cp "$CERT_DIR/workloads/account-service.key" "$key_mismatch_case/client.key"
+cp "$key_mismatch_case/client.key" "$key_mismatch_case/dev-key.pem"
+assert_invalid_existing_bundle_is_preserved "$key_mismatch_case" key-mismatch
+
+other_authority="$CERT_DIR/other-authority"
+bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" "$other_authority" >/dev/null
+wrong_issuer_case="$CERT_DIR/invalid-wrong-issuer-bundle"
+copy_generic_bundle "$CERT_DIR" "$wrong_issuer_case"
+for file in server.crt server.key client.crt client.key dev-cert.pem dev-key.pem; do
+  cp "$other_authority/$file" "$wrong_issuer_case/$file"
+done
+assert_invalid_existing_bundle_is_preserved "$wrong_issuer_case" wrong-issuer
+
+expired_case="$CERT_DIR/invalid-expired-bundle"
+copy_generic_bundle "$CERT_DIR" "$expired_case"
+cat >"$expired_case/expired.cnf" <<'EOF'
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = firemud-grpc
+
+[v3_req]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = account-service
+DNS.3 = automation-scripting-service
+DNS.4 = entity-management-service
+DNS.5 = game-design-service
+DNS.6 = game-logic-service
+DNS.7 = game-session-service
+DNS.8 = logging-admin-service
+DNS.9 = social-groups-service
+DNS.10 = spring-cloud-gateway
+DNS.11 = tcp-proxy-service
+DNS.12 = world-management-service
+IP.1 = 127.0.0.1
+EOF
+openssl req -new -key "$expired_case/server.key" -config "$expired_case/expired.cnf" \
+  -out "$expired_case/expired.csr"
+openssl x509 -req -in "$expired_case/expired.csr" -CA "$expired_case/ca.crt" \
+  -CAkey "$expired_case/ca.key" -set_serial 424242 -out "$expired_case/expired.crt" \
+  -days 0 -sha256 -extensions v3_req -extfile "$expired_case/expired.cnf" >/dev/null
+cp "$expired_case/expired.crt" "$expired_case/server.crt"
+cp "$expired_case/expired.crt" "$expired_case/client.crt"
+cp "$expired_case/expired.crt" "$expired_case/dev-cert.pem"
+assert_invalid_existing_bundle_is_preserved "$expired_case" expired
+
+legacy_alias_case="$CERT_DIR/invalid-legacy-alias-bundle"
+copy_generic_bundle "$CERT_DIR" "$legacy_alias_case"
+printf 'wrong legacy alias\n' >"$legacy_alias_case/dev-cert.pem"
+assert_invalid_existing_bundle_is_preserved "$legacy_alias_case" legacy-alias
 
 expected_files=(
   default/ca.crt

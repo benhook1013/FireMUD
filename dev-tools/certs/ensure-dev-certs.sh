@@ -59,17 +59,9 @@ if [[ -d "$RUNTIME_DIR" ]]; then
   done < <(find -P "$RUNTIME_DIR" -mindepth 1 -type l -print0)
 fi
 
-missing=0
-for file in "${required_files[@]}"; do
-  if [[ ! -f "$file" ]]; then
-    missing=1
-    break
-  fi
-done
-
-if [[ "$missing" != "0" ]]; then
-  "$GENERATOR" "$CERT_DIR"
-fi
+# Route complete bundles through the generator's read-only validation path as
+# well as routing missing bundles through its existing generation path.
+"$GENERATOR" "$CERT_DIR"
 chmod 600 "$CERT_DIR/ca.key"
 
 workloads=(account-service game-session-service social-groups-service)
@@ -112,8 +104,10 @@ done
 # per-service runtime projection copied below; the generic generator output
 # remains mode 0600.
 chmod 700 "$WORKLOAD_DIR"
-chmod 644 "$WORKLOAD_DIR"/*.crt
-chmod 600 "$WORKLOAD_DIR"/*.key
+for workload in "${workloads[@]}"; do
+  chmod 644 "$WORKLOAD_DIR/$workload.crt"
+  chmod 600 "$WORKLOAD_DIR/$workload.key"
+done
 
 # Mount only runtime material. Protected callers receive their own leaf, not
 # the other protected services' private keys. No projection includes ca.key.
