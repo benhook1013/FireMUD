@@ -30,7 +30,7 @@ from .state import FindingRoute, ReviewState
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
-_RECORDS_SCHEMA_VERSION = 8
+_RECORDS_SCHEMA_VERSION = 9
 _RECORDS_METADATA_TABLE = "review_records_metadata"
 _RECORDS_TABLES = {
     _RECORDS_METADATA_TABLE,
@@ -110,6 +110,7 @@ class FindingObservation:
     disposition: FindingDisposition = "unresolved"
     detail: str = ""
     target_pr: int | None = None
+    display_severity: str | None = None
 
     def __post_init__(self) -> None:
         _safe_identifier(self.source_finding_key, "source_finding_key", maximum=200)
@@ -126,6 +127,11 @@ class FindingObservation:
             _positive_pr(self.target_pr, "finding target PR")
         if self.disposition != "routed" and self.target_pr is not None:
             raise ReviewRecordsError("only routed findings may set a target PR")
+        if self.display_severity is not None and (
+            not isinstance(self.display_severity, str)
+            or self.display_severity not in {"Critical", "Major", "Minor", "Trivial"}
+        ):
+            raise ReviewRecordsError("finding display severity is invalid")
 
 
 _SECRET_PATTERNS = (
@@ -404,7 +410,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("cannot bootstrap SQLite review records") from exc
 
     def migrate(self) -> None:
-        """Upgrade existing v4/v5/v6 records atomically and fence older state writers.
+        """Upgrade existing v4-v8 records atomically and fence older state writers.
 
         This is an explicit offline cutover operation. It does not read or edit
         the controller's legacy capture directories and is safe to retry after
@@ -426,10 +432,13 @@ class SqliteReviewRecords:
                     self._raise_controller_writer_fence(connection)
                     connection.commit()
                     return
-                if row[0] not in {4, 5, 6, 7}:
+                if row[0] not in {4, 5, 6, 7, 8}:
                     raise ReviewRecordsError(f"unsupported review-records schema version {row[0]}")
                 existing = self._table_names(connection)
-                if row[0] == 7:
+                if row[0] == 8:
+                    added = set()
+                    required = _RECORDS_TABLES
+                elif row[0] == 7:
                     added = {"source_finding_resolution_corrections"}
                     required = _RECORDS_TABLES - added
                 elif row[0] == 6:
@@ -466,7 +475,13 @@ class SqliteReviewRecords:
                     self._create_historical_gap_schema(connection)
                 if row[0] < 7:
                     self._create_source_finding_resolution_schema(connection)
-                self._create_source_finding_resolution_correction_schema(connection)
+                if row[0] < 8:
+                    self._create_source_finding_resolution_correction_schema(connection)
+                connection.execute(
+                    "ALTER TABLE finding_observations ADD COLUMN display_severity TEXT "
+                    "CHECK (display_severity IS NULL OR display_severity IN "
+                    "('Critical', 'Major', 'Minor', 'Trivial'))"
+                )
                 self._raise_controller_writer_fence(connection)
                 connection.execute(
                     "UPDATE review_records_metadata SET records_schema_version = ?, min_writer_build = ? "
@@ -1449,6 +1464,11 @@ class SqliteReviewRecords:
                     "detail": item.detail,
                     "disposition": item.disposition,
                     "target_pr": item.target_pr,
+                    **(
+                        {"display_severity": item.display_severity}
+                        if item.display_severity is not None
+                        else {}
+                    ),
                 }
                 for item in observations
             ],
@@ -1530,8 +1550,8 @@ class SqliteReviewRecords:
                         )
                     connection.execute(
                         "INSERT INTO finding_observations "
-                        "(run_id, finding_id, source_pr, source_channel, title, detail, disposition, route_id) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "(run_id, finding_id, source_pr, source_channel, title, detail, disposition, route_id, "
+                        "display_severity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             run_id,
                             finding_id,
@@ -1541,6 +1561,7 @@ class SqliteReviewRecords:
                             item.detail,
                             item.disposition,
                             route_id,
+                            item.display_severity,
                         ),
                     )
         except ReviewRecordsError:
@@ -2314,6 +2335,11 @@ class SqliteReviewRecords:
                     "detail": item.detail,
                     "disposition": item.disposition,
                     "target_pr": item.target_pr,
+                    **(
+                        {"display_severity": item.display_severity}
+                        if item.display_severity is not None
+                        else {}
+                    ),
                 }
                 for item in observations
             ],
@@ -2383,8 +2409,8 @@ class SqliteReviewRecords:
                             )
                         connection.execute(
                             "INSERT INTO finding_observations "
-                            "(run_id, finding_id, source_pr, source_channel, title, detail, disposition, route_id) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            "(run_id, finding_id, source_pr, source_channel, title, detail, disposition, route_id, "
+                            "display_severity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                             (
                                 run_id,
                                 finding_id,
@@ -2394,6 +2420,7 @@ class SqliteReviewRecords:
                                 item.detail,
                                 item.disposition,
                                 route_id,
+                                item.display_severity,
                             ),
                         )
 
@@ -2788,7 +2815,7 @@ class SqliteReviewRecords:
                     self._observation_record(row)
                     for row in connection.execute(
                         "SELECT o.run_id, o.finding_id, o.source_pr, o.source_channel, f.source_finding_key, "
-                        "o.title, o.detail, o.disposition, o.route_id "
+                        "o.title, o.detail, o.disposition, o.route_id, o.display_severity "
                         "FROM finding_observations o JOIN findings f USING (finding_id) "
                         "WHERE o.source_pr = ? ORDER BY o.run_id, o.finding_id",
                         (pr,),
@@ -3113,6 +3140,9 @@ class SqliteReviewRecords:
                     "routes.updated_at, "
                     "(SELECT o.title FROM finding_observations o JOIN review_runs r USING (run_id) "
                     "WHERE o.finding_id = routes.finding_id "
+                    "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1), "
+                    "(SELECT o.display_severity FROM finding_observations o JOIN review_runs r USING (run_id) "
+                    "WHERE o.finding_id = routes.finding_id "
                     "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1) "
                     "FROM routes JOIN findings USING (finding_id)"
                 )
@@ -3161,6 +3191,7 @@ class SqliteReviewRecords:
                         "created_at": row[7],
                         "updated_at": row[8],
                         "title": row[9],
+                        **({"display_severity": row[10]} if row[3] == "subagent" else {}),
                     }
                     for row in rows
                 ]
@@ -3502,6 +3533,9 @@ class SqliteReviewRecords:
             "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, routes.updated_at, "
             "(SELECT o.title FROM finding_observations o JOIN review_runs r USING (run_id) "
             "WHERE o.finding_id = routes.finding_id "
+            "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1), "
+            "(SELECT o.display_severity FROM finding_observations o JOIN review_runs r USING (run_id) "
+            "WHERE o.finding_id = routes.finding_id "
             "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1) "
             "FROM routes JOIN findings USING (finding_id) "
             "WHERE routes.source_pr = ? OR routes.target_pr = ? ORDER BY routes.source_pr, routes.route_id",
@@ -3561,6 +3595,7 @@ class SqliteReviewRecords:
                     "created_at": row[7],
                     "updated_at": row[8],
                     "title": row[9],
+                    **({"display_severity": row[10]} if row[3] == "subagent" else {}),
                     "target_history": targets,
                     "decisions": decisions,
                     "resolutions": resolutions,
@@ -3673,7 +3708,7 @@ class SqliteReviewRecords:
 
     @staticmethod
     def _observation_record(row: Sequence[Any]) -> dict[str, Any]:
-        return {
+        record = {
             "run_id": row[0],
             "finding_id": row[1],
             "source_pr": row[2],
@@ -3684,6 +3719,9 @@ class SqliteReviewRecords:
             "disposition": row[7],
             "route_id": row[8],
         }
+        if row[3] == "subagent":
+            record["display_severity"] = row[9]
+        return record
 
     @staticmethod
     def _record_route_observation(
@@ -3863,7 +3901,8 @@ class SqliteReviewRecords:
             "run_id TEXT NOT NULL, finding_id TEXT NOT NULL, source_pr INTEGER NOT NULL, source_channel TEXT NOT NULL, "
             "title TEXT NOT NULL, detail TEXT NOT NULL, "
             "disposition TEXT NOT NULL CHECK (disposition IN ('accepted', 'routed', 'rejected', 'unresolved')), "
-            "route_id TEXT, PRIMARY KEY (run_id, finding_id), "
+            "route_id TEXT, display_severity TEXT CHECK (display_severity IS NULL OR display_severity IN "
+            "('Critical', 'Major', 'Minor', 'Trivial')), PRIMARY KEY (run_id, finding_id), "
             "FOREIGN KEY (run_id, source_pr, source_channel) REFERENCES review_runs(run_id, source_pr, channel), "
             "FOREIGN KEY (finding_id, source_pr, source_channel) REFERENCES findings(finding_id, source_pr, source_channel), "
             "FOREIGN KEY (route_id, finding_id) REFERENCES routes(route_id, finding_id))"

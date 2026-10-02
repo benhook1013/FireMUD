@@ -706,6 +706,20 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         with self.assertRaisesRegex(Exception, f"requires writer build {WRITER_BUILD}"):
             old_writer.update(lambda state: state)
 
+    def test_finding_severity_accepts_only_exact_display_labels_or_unspecified(self) -> None:
+        for severity in (None, "Critical", "Major", "Minor", "Trivial"):
+            with self.subTest(severity=severity):
+                self.assertEqual(
+                    FindingObservation("severity-key", "Finding", display_severity=severity).display_severity,
+                    severity,
+                )
+        for severity in ("major", "Blocker", ["Major"], {"label": "Major"}):
+            with self.subTest(severity=severity), self.assertRaisesRegex(
+                ReviewRecordsError,
+                "display severity is invalid",
+            ):
+                FindingObservation("severity-key", "Finding", display_severity=severity)  # type: ignore[arg-type]
+
     def test_archived_json_rejects_non_finite_numbers(self) -> None:
         for kind, content in (
             ("cli_events", '{"type":"finding","score":NaN}\n'),
@@ -1010,6 +1024,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
     def test_v4_upgrade_is_atomic_and_fences_older_writers(self) -> None:
         self.bootstrap()
         with sqlite3.connect(self.database) as connection:
+            connection.execute("ALTER TABLE finding_observations DROP COLUMN display_severity")
             connection.execute("DROP TABLE review_artifacts")
             connection.execute("DROP TABLE review_attempts")
             connection.execute("DROP TABLE source_decision_corrections")
@@ -1030,7 +1045,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             old_writer.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
-                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 8
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 9
             )
 
     def test_v5_upgrade_preserves_attempts_and_fences_previous_writer(self) -> None:
@@ -1038,6 +1053,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.records.start_attempt(attempt_id="run.previous-v5", source_pr=2893, channel="cli")
         self.records.finish_attempt("run.previous-v5", state="rate_limited")
         with sqlite3.connect(self.database) as connection:
+            connection.execute("ALTER TABLE finding_observations DROP COLUMN display_severity")
             connection.execute("DROP TABLE imported_artifacts")
             connection.execute("DROP TABLE provider_origins")
             connection.execute("DROP TABLE historical_gap_artifacts")
@@ -1051,7 +1067,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(self.records.attempt_history(2893)[0]["state"], "rate_limited")
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
-                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 8
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 9
             )
         with self.assertRaisesRegex(Exception, rf"requires writer build {WRITER_BUILD}\b"):
             SqliteStateStore(self.database, writer_build=3).update(lambda state: state)
@@ -2138,6 +2154,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             findings=(self.observation("finding"),),
         )
         with sqlite3.connect(self.database) as connection:
+            connection.execute("ALTER TABLE finding_observations DROP COLUMN display_severity")
             connection.execute("DROP TABLE source_finding_resolutions")
             connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 6 WHERE singleton = 1")
@@ -2153,7 +2170,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 connection.execute(
                     "SELECT records_schema_version FROM review_records_metadata WHERE singleton = 1"
                 ).fetchone()[0],
-                8,
+                9,
             )
             self.assertIsNotNone(
                 connection.execute(
@@ -2162,8 +2179,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )
 
         with (
-            patch.object(sqlite_review_records, "_RECORDS_SCHEMA_VERSION", 7),
-            self.assertRaisesRegex(RecordsSchemaIncompatible, "schema version 8"),
+            patch.object(sqlite_review_records, "_RECORDS_SCHEMA_VERSION", 8),
+            self.assertRaisesRegex(RecordsSchemaIncompatible, "schema version 9"),
         ):
             self.records.record_source_decision(
                 "v6-retained-run",
@@ -2203,6 +2220,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         )
         counts_before = self.records.history(2828)["runs"][0]["counts"]
         with sqlite3.connect(self.database) as connection:
+            connection.execute("ALTER TABLE finding_observations DROP COLUMN display_severity")
             connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 7, min_writer_build = 6")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 6")
@@ -2211,19 +2229,19 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         old_state = SqliteStateStore(self.database, writer_build=6)
         self.records.migrate()
         self.records.migrate()
-        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 7"):
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 8"):
             old_records.history(2828)
-        with self.assertRaisesRegex(StateError, "requires writer build 7"):
+        with self.assertRaisesRegex(StateError, "requires writer build 8"):
             old_state.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
-                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 8
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 9
             )
             self.assertEqual(
-                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0], 7
+                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0], 8
             )
             self.assertEqual(
-                connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 7
+                connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 8
             )
         history = self.records.history(2828)
         self.assertEqual(history["runs"][0]["counts"], counts_before)
@@ -2255,6 +2273,73 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             ),
             "resolved",
         )
+
+    def test_v8_upgrade_adds_nullable_severity_preserves_old_payload_and_fences_build_seven(self) -> None:
+        self.bootstrap()
+        imported = {
+            "run_id": "v8-retained-subagent-run",
+            "source_pr": 2828,
+            "channel": "subagent",
+            "findings": (FindingObservation("v8-retained-finding", "Retained finding"),),
+            "source_decisions": (
+                {
+                    "source_finding_key": "v8-retained-finding",
+                    "decision_id": "v8-retained-decision",
+                    "decision": "rejected",
+                    "actor": "historical reviewer",
+                    "reason": "retained historical decision",
+                    "decided_at": "2026-09-01T00:01:00Z",
+                },
+            ),
+            "started_at": "2026-09-01T00:00:00Z",
+            "finished_at": "2026-09-01T00:01:00Z",
+        }
+        self.records.import_completed_run(**imported)
+        with sqlite3.connect(self.database) as connection:
+            payload_before = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                (imported["run_id"],),
+            ).fetchone()[0]
+            self.assertNotIn("display_severity", payload_before)
+            connection.execute("ALTER TABLE finding_observations DROP COLUMN display_severity")
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 8, min_writer_build = 7")
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 7")
+
+        old_records = SqliteReviewRecords(self.database, writer_build=7)
+        old_state = SqliteStateStore(self.database, writer_build=7)
+        self.assertEqual(old_state.status()["min_writer_build"], 7)
+        self.records.migrate()
+        self.records.migrate()
+
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 8"):
+            old_records.history(2828)
+        with self.assertRaisesRegex(StateError, "requires writer build 8"):
+            old_state.update(lambda state: state)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0],
+                9,
+            )
+            self.assertEqual(
+                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0],
+                8,
+            )
+            self.assertEqual(
+                connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0],
+                8,
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                    (imported["run_id"],),
+                ).fetchone()[0],
+                payload_before,
+            )
+        replay = self.records.import_completed_run(**imported)
+        self.assertTrue(replay["idempotent_replay"])
+        history = self.records.history(2828)
+        self.assertEqual(history["runs"][0]["counts"], {"found": 1, "accepted": 0, "routed": 0})
+        self.assertIsNone(history["findings"][0]["display_severity"])
 
     def test_completed_import_is_atomic_when_a_later_route_conflicts(self) -> None:
         self.bootstrap()
