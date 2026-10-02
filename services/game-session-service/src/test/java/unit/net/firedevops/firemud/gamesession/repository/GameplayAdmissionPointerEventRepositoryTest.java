@@ -37,16 +37,15 @@ class GameplayAdmissionPointerEventRepositoryTest {
       repository.save(historical);
 
       List<GameplayAdmissionPointerEvent> events =
-          repository.findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
-              9L, "demo", "production");
+          repository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(9L, "demo", "production");
 
       assertEquals(2, events.size());
-      assertEquals(12L, events.get(0).getCatalogRevision());
-      assertEquals(realmId, events.get(0).getRealmId());
-      assertEquals(namespaceId, events.get(0).getPlayableStateNamespaceId());
-      assertNull(events.get(1).getCatalogRevision());
-      assertNull(events.get(1).getRealmId());
-      assertNull(events.get(1).getPlayableStateNamespaceId());
+      assertNull(events.get(0).getCatalogRevision());
+      assertNull(events.get(0).getRealmId());
+      assertNull(events.get(0).getPlayableStateNamespaceId());
+      assertEquals(12L, events.get(1).getCatalogRevision());
+      assertEquals(realmId, events.get(1).getRealmId());
+      assertEquals(namespaceId, events.get(1).getPlayableStateNamespaceId());
     }
   }
 

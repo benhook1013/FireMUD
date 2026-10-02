@@ -1453,7 +1453,7 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
         "admission-pointer updates are temporarily disabled until catalog revision "
             + "preconditions are supported",
