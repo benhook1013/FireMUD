@@ -59,6 +59,21 @@ class MutableDefaultDemoCatalogTest {
   }
 
   @Test
+  void selectorForAnotherTenantAlsoOccupiesTheDefaultFallbackSelector() {
+    MutablePointerAuthority authority = new MutablePointerAuthority();
+    TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);
+    fixture.useDefaultDemo(TENANT_ID, BASELINE_GAME_INSTANCE_ID);
+    authority.setPointers(List.of(pointer("demo", "production", TENANT_ID + 1L, 99L, 8L, 12L)));
+
+    GameplayWorldCatalog catalog = fixture.catalog();
+    GameplayWorldCatalog.RealmView realm =
+        catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()).orElseThrow();
+
+    assertThat(realm.tenantId()).isEqualTo(TENANT_ID + 1L);
+    assertThat(realm.gameInstanceId()).isEqualTo(99L);
+  }
+
+  @Test
   void clearingTheFallbackRestoresMissingAuthority() {
     MutablePointerAuthority authority = new MutablePointerAuthority();
     TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);

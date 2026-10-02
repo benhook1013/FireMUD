@@ -13,6 +13,7 @@ import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.RegionRepository;
 import net.firedevops.firemud.worldmanagement.repository.RoomRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -51,6 +52,7 @@ class RoomRepositoryPostgresIntegrationTest {
   @Autowired private RegionRepository regionRepository;
   @Autowired private RoomRepository roomRepository;
   @Autowired private ZoneRepository zoneRepository;
+  @Autowired private DSLContext dsl;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
   @MockitoBean private EntityManagementClient entityManagementClient;
@@ -58,7 +60,8 @@ class RoomRepositoryPostgresIntegrationTest {
   @MockitoBean private GameSessionClient gameSessionClient;
 
   @Test
-  void seededRoomIdentityInsertAdvancesSequenceAndRejectsForeignCollision() {
+  void seededRoomIdentityInsertAdvancesRenamedSequenceAndRejectsForeignCollision() {
+    dsl.execute("ALTER SEQUENCE room_id_seq RENAME TO room_id_seq_fixture_rename");
     Region region = new Region();
     region.setTenantId(TENANT_ID);
     region.setVersionId(VERSION_ID);

@@ -78,8 +78,7 @@ public final class TestGameplayWorldCatalogs {
           && pointers.stream()
               .noneMatch(
                   pointer ->
-                      pointer.tenantId() == fallback.tenantId()
-                          && pointer.worldSlug().equals(fallback.worldSlug())
+                      pointer.worldSlug().equals(fallback.worldSlug())
                           && pointer.realmSlug().equals(fallback.realmSlug()))) {
         pointers.add(fallback);
       }

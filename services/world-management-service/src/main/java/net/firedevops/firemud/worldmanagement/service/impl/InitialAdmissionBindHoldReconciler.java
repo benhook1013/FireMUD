@@ -12,7 +12,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** Automatically reconciles World holds; until a GS adapter is wired, it stays fail-closed. */
+/**
+ * Automatically reconciles World holds and keeps them fenced when owner readback is unavailable.
+ */
 @Component
 public class InitialAdmissionBindHoldReconciler {
   private static final Logger logger =

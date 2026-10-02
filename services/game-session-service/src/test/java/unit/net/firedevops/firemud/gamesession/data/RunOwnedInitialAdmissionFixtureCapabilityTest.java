@@ -7,9 +7,11 @@ import static org.mockito.Mockito.when;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermission;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.util.List;
+import java.util.Set;
 import net.firedevops.firemud.gamesession.data.RunOwnedInitialAdmissionFixtureCapability.CertificatePins;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -70,10 +72,19 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
         Files.writeString(directory.resolve("fixture-capability.json"), validJson());
 
     assertThatThrownBy(
-            () ->
-                RunOwnedInitialAdmissionFixtureCapability.load(
-                    capabilityFile, RUN_ID, PROJECT_NAME, null))
+            () -> RunOwnedInitialAdmissionFixtureCapability.readCapability(capabilityFile))
         .isInstanceOf(RunOwnedInitialAdmissionFixtureCapability.InvalidCapabilityException.class);
+  }
+
+  @Test
+  void readsReadOnlyCapabilityFile(@TempDir Path directory) throws Exception {
+    String json = validJson();
+    Path capabilityFile =
+        Files.writeString(directory.resolve("fixture-capability.json"), json);
+    Files.setPosixFilePermissions(capabilityFile, Set.of(PosixFilePermission.OWNER_READ));
+
+    assertThat(RunOwnedInitialAdmissionFixtureCapability.readCapability(capabilityFile))
+        .isEqualTo(json.getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   @Test

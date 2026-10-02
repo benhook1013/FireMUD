@@ -2,13 +2,11 @@ package net.firedevops.firemud.gamesession.data;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.gamesession.entity.FeatureFlag;
 import net.firedevops.firemud.gamesession.entity.GameManifest;
 import net.firedevops.firemud.gamesession.repository.FeatureFlagRepository;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameManifestRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,7 +19,6 @@ import org.springframework.boot.DefaultApplicationArguments;
 class TestDataSeederTest {
   @Mock GameManifestRepository gameManifestRepository;
   @Mock FeatureFlagRepository featureFlagRepository;
-  @Mock GameInstanceRepository gameInstanceRepository;
 
   private TestDataSeeder seeder;
 
@@ -40,6 +37,5 @@ class TestDataSeederTest {
 
     verify(gameManifestRepository).save(any(GameManifest.class));
     verify(featureFlagRepository).save(any(FeatureFlag.class));
-    verifyNoInteractions(gameInstanceRepository);
   }
 }

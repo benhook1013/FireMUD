@@ -230,16 +230,10 @@ public class InitialAdmissionBindAttemptRepository {
     record.setCreatedAt(toLocalDateTime(now));
     record.setUpdatedAt(toLocalDateTime(now));
     record.store();
-    return findPointerById(record.getId()).orElseThrow();
+    return findPointerById(record.getId().longValue()).orElseThrow();
   }
 
   public Optional<GameplayAdmissionPointer> findPointerById(long pointerId) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
-        .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(pointerId))
-        .fetchOptional(this::toPointer);
-  }
-
-  private Optional<GameplayAdmissionPointer> findPointerById(Long pointerId) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
         .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(pointerId))
         .fetchOptional(this::toPointer);

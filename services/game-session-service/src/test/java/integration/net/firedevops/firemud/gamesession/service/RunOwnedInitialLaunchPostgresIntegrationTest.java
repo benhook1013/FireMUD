@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -61,36 +62,42 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
       long secondId = second.get(15, TimeUnit.SECONDS);
       assertThat(firstId).isEqualTo(secondId);
       assertThat(
-              dsl.fetchValue(
-                  "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
-                      + "AND run_owned_start_request_id = ?",
-                  Integer.class,
-                  TENANT_ID,
-                  REQUEST_ID))
-          .isEqualTo(1);
+              dsl.fetchOne(
+                      "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
+                          + "AND run_owned_start_request_id = ?",
+                      TENANT_ID,
+                      REQUEST_ID)
+                  .get(0, Long.class))
+          .isEqualTo(1L);
       assertThat(
-              dsl.fetchValue(
+              dsl.fetchOne(
                   "SELECT run_owned_start_request_digest FROM game_instances WHERE id = ?",
-                  String.class,
-                  firstId))
+                  firstId)
+                  .get(0, String.class))
           .isEqualTo(REQUEST_DIGEST);
 
       assertThatThrownBy(() -> insertDuplicateIdentity(dsl, firstId + 1L))
-          .isInstanceOf(DataAccessException.class);
+          .isInstanceOf(DataAccessException.class)
+          .satisfies(
+              failure -> {
+                assertThat(sqlState(failure)).isEqualTo("23505");
+                assertThat(
+                        hasCauseMessage(
+                            failure, "game_instances_run_owned_start_request_unique"))
+                    .isTrue();
+              });
 
-      GameInstance ordinaryOne = ordinaryInstance(1001L);
-      GameInstance ordinaryTwo = ordinaryInstance(1002L);
-      repository.save(ordinaryOne);
-      repository.save(ordinaryTwo);
-      assertThat(ordinaryOne.getRunOwnedStartRequestId()).isNull();
-      assertThat(ordinaryTwo.getRunOwnedStartRequestId()).isNull();
+      GameInstance savedOrdinaryOne = repository.save(ordinaryInstance(1001L));
+      GameInstance savedOrdinaryTwo = repository.save(ordinaryInstance(1002L));
+      assertThat(savedOrdinaryOne.getRunOwnedStartRequestId()).isNull();
+      assertThat(savedOrdinaryTwo.getRunOwnedStartRequestId()).isNull();
       assertThat(
-              dsl.fetchValue(
-                  "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
-                      + "AND run_owned_start_request_id IS NULL",
-                  Integer.class,
-                  TENANT_ID))
-          .isEqualTo(2);
+              dsl.fetchOne(
+                      "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
+                          + "AND run_owned_start_request_id IS NULL",
+                      TENANT_ID)
+                  .get(0, Long.class))
+          .isEqualTo(2L);
     }
   }
 
@@ -137,6 +144,24 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
         TENANT_ID,
         REQUEST_ID,
         REQUEST_DIGEST);
+  }
+
+  private static String sqlState(Throwable failure) {
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current instanceof SQLException sqlException) {
+        return sqlException.getSQLState();
+      }
+    }
+    return null;
+  }
+
+  private static boolean hasCauseMessage(Throwable failure, String message) {
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current.getMessage() != null && current.getMessage().contains(message)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static DriverManagerDataSource dataSource() {

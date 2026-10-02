@@ -288,7 +288,7 @@ record RunOwnedInitialAdmissionFixtureCapability(
     }
   }
 
-  private static byte[] readCapability(Path path) {
+  static byte[] readCapability(Path path) {
     if (path == null || !path.isAbsolute()) {
       throw invalidCapability();
     }

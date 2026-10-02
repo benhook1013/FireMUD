@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthor
 import net.firedevops.firemud.gamesession.service.RunOwnedInitialLaunchResult;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
@@ -322,10 +323,44 @@ public final class CrossServiceAppHarness {
       };
     }
 
+    @Bean(name = "gameInstanceServiceImpl")
+    @ConditionalOnProperty(
+        name = "firemud.database.enabled", havingValue = "false", matchIfMissing = true)
+    GameInstanceService gameInstanceServiceImpl() {
+      return stubGameInstanceService();
+    }
+
     @Bean(name = "crossServiceTestGameInstanceService")
     @Primary
+    @ConditionalOnProperty(name = "firemud.database.enabled", havingValue = "true")
     GameInstanceService gameInstanceService(
         @Qualifier("gameInstanceServiceImpl") GameInstanceService actualGameInstanceService) {
+      GameInstanceService stubGameInstanceService = stubGameInstanceService();
+      return new GameInstanceService() {
+        @Override
+        public GameInstanceDto startSession(
+            StartSessionRequest request, boolean replaceExistingFirst) {
+          return stubGameInstanceService.startSession(request, replaceExistingFirst);
+        }
+
+        @Override
+        public GameInstanceDto stopSession(long sessionId) {
+          return stubGameInstanceService.stopSession(sessionId);
+        }
+
+        @Override
+        public GameInstanceDto restartSession(long sessionId) {
+          return stubGameInstanceService.restartSession(sessionId);
+        }
+
+        @Override
+        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
+          return actualGameInstanceService.startRunOwnedInitialLaunch(request);
+        }
+      };
+    }
+
+    private static GameInstanceService stubGameInstanceService() {
       return new GameInstanceService() {
         @Override
         public GameInstanceDto startSession(
@@ -359,7 +394,8 @@ public final class CrossServiceAppHarness {
 
         @Override
         public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
-          return actualGameInstanceService.startRunOwnedInitialLaunch(request);
+          throw new IllegalStateException(
+              "run-owned launch requires a database-enabled test context");
         }
       };
     }

@@ -33,7 +33,7 @@ class InitialAdmissionBindPostgresIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
-  void v8LedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
+  void initialAdmissionLedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
     DriverManagerDataSource dataSource = dataSource();
     Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
     DSLContext dsl =

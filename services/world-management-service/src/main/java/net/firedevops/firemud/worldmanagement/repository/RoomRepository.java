@@ -157,11 +157,34 @@ public class RoomRepository {
   }
 
   private void advanceRoomIdSequence() {
-    dsl.fetchValue(
-        "SELECT setval(pg_get_serial_sequence('room', 'id'), "
+    Record sequenceRecord =
+        dsl.fetchOne("SELECT pg_catalog.pg_get_serial_sequence('room', 'id')");
+    String sequenceName = sequenceRecord == null ? null : sequenceRecord.get(0, String.class);
+    if (sequenceName == null) {
+      throw new IllegalStateException("Room ID sequence could not be resolved");
+    }
+    Record quotedSequenceRecord =
+        dsl.fetchOne(
+            "SELECT pg_catalog.format('%I.%I', sequence_namespace.nspname, sequence_class.relname) "
+                + "FROM pg_catalog.pg_class AS sequence_class "
+                + "JOIN pg_catalog.pg_namespace AS sequence_namespace "
+                + "ON sequence_namespace.oid = sequence_class.relnamespace "
+                + "WHERE sequence_class.oid = ?::pg_catalog.regclass",
+            sequenceName);
+    String quotedSequenceName =
+        quotedSequenceRecord == null
+            ? null
+            : quotedSequenceRecord.get(0, String.class);
+    if (quotedSequenceName == null) {
+      throw new IllegalStateException("Resolved Room ID sequence name is invalid");
+    }
+    dsl.fetchOne(
+        "SELECT pg_catalog.setval(?::pg_catalog.regclass, "
             + "GREATEST(COALESCE((SELECT MAX(id) FROM room), 1), "
-            + "COALESCE((SELECT last_value FROM room_id_seq), 1)), true)",
-        Long.class);
+            + "COALESCE((SELECT last_value FROM "
+            + quotedSequenceName
+            + "), 1)), true)",
+        sequenceName);
   }
 
   private Room toEntity(Record record) {
