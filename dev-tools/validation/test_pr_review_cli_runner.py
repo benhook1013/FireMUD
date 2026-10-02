@@ -317,12 +317,13 @@ def target(
     changed_files=1,
     parent_ref="develop",
     parent_head=PARENT,
+    parent_pr=None,
     candidate_warnings=(),
 ):
     snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=changed_files)
     return ReviewTarget(
         snapshot,
-        EffectiveParent(parent_ref, parent_head),
+        EffectiveParent(parent_ref, parent_head, parent_pr),
         reconciled=reconciled,
         ancestor_links_valid=ancestor_links_valid,
         merge_base=merge_base,
@@ -1168,6 +1169,9 @@ class CliReviewRunnerTests(unittest.TestCase):
             selected = target(
                 reconciled=False,
                 ancestor_links_valid=False,
+                parent_ref="current-parent",
+                parent_head="d" * 40,
+                parent_pr=41,
                 candidate_warnings=("stack reconciliation is PARENT_MOVED",),
             )
             results = []
@@ -1233,6 +1237,8 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(len(counting), 3)
             self.assertTrue(all(row["attributable"] and row["anchored"] for row in counting))
             self.assertTrue(all(row["provisional"] is False for row in counting))
+            self.assertTrue(all(row["parent_identity"] == "develop" for row in counting))
+            self.assertTrue(all(row["parent_head"] == BASE for row in counting))
             self.assertTrue(taper_satisfied(Channel.CLI, counting, required=3))
             for result in results:
                 metadata = json.loads((result.capture_dir / "metadata.json").read_text())
@@ -1241,7 +1247,9 @@ class CliReviewRunnerTests(unittest.TestCase):
                 self.assertEqual(metadata["parent_sha"], BASE)
                 self.assertEqual(metadata["actual_base_ref"], "develop")
                 self.assertEqual(metadata["actual_base_sha"], BASE)
-                self.assertEqual(metadata["configured_parent_sha"], PARENT)
+                self.assertEqual(metadata["configured_parent_sha"], "d" * 40)
+                self.assertEqual(metadata["configured_parent_pr"], 41)
+                self.assertIsNone(metadata["parent_pr"])
 
     def test_force_reason_rejects_long_and_control_text_before_capture(self):
         invalid_reasons = (
@@ -1309,6 +1317,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 ancestor_links_valid=False,
                 parent_ref="current-parent",
                 parent_head="d" * 40,
+                parent_pr=41,
                 candidate_warnings=("stack reconciliation is PARENT_MOVED",),
             )
 
@@ -1339,6 +1348,8 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(metadata["parent_sha"], BASE)
             self.assertEqual(metadata["configured_parent_ref"], "current-parent")
             self.assertEqual(metadata["configured_parent_sha"], "d" * 40)
+            self.assertIsNone(metadata["parent_pr"])
+            self.assertEqual(metadata["configured_parent_pr"], 41)
             self.assertEqual(metadata["candidate_warnings"], ["stack reconciliation is PARENT_MOVED"])
             self.assertTrue(metadata["force_acknowledged"])
             self.assertFalse(any("ancestor" in " ".join(call[0]).lower() for call in commands.calls))

@@ -5124,7 +5124,6 @@ class ReviewController:
         closed_channel_states = {
             policy.ReviewStatus.COMPLETE.value,
             policy.ReviewStatus.HUMAN_STOPPED.value,
-            policy.ReviewStatus.ALLOCATION_EXHAUSTED.value,
             "CAP_AUDITED_STOP",
         }
         closed_allocation_states = {"STOPPED", "CAP_AUDITED_STOP", "CAP_TAPERED"}
@@ -5175,6 +5174,8 @@ class ReviewController:
                             row_allocations[channel] = allocation_view
                         else:
                             row_channels[channel] = "UNRECONCILED"
+                            if allocation_status in {"CAP_EXHAUSTED_PENDING", "CAP_TAPERED_PENDING"}:
+                                row_allocations[channel] = allocation_view
                     for channel, stop_view in self._durable_stop_allocations(state, pr).items():
                         row_channels[channel] = policy.ReviewStatus.HUMAN_STOPPED.value
                         row_allocations[channel] = stop_view

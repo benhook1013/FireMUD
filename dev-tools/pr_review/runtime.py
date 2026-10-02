@@ -24,7 +24,14 @@ from .cli_runner import (
     ReviewTarget,
     run_cli_review,
 )
-from .controller import ControllerError, DefaultGitProvider, HostedAdmissionBusy, ReviewController, StaleReviewTarget
+from .controller import (
+    ControllerError,
+    DefaultGitProvider,
+    GitProvider,
+    HostedAdmissionBusy,
+    ReviewController,
+    StaleReviewTarget,
+)
 from .sqlite_review_records import RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
 from .state import (
     ControllerStateStore,
@@ -2116,11 +2123,13 @@ class HostedRunner:
         live: LiveGitHub,
         state_store: StateStore | ControllerStateStore | None = None,
         records: SqliteReviewRecords | None = None,
+        git: GitProvider | None = None,
     ) -> None:
         self.repo = repo
         self.live = live
         self.state_store = state_store
         self.records = records
+        self.git = git or DefaultGitProvider()
 
     @staticmethod
     def _timestamp(value: str) -> datetime:
@@ -2836,16 +2845,37 @@ class HostedRunner:
                 else:
                     raise ControllerError("existing Hosted trigger has no archivable identity")
             self._assert_latest_manual_trigger_is_tracked(pr, payload)
-            anchor = {
+            configured_queue_anchor = {
                 "pr": pr,
                 "child_head": target.snapshot.head_sha,
                 "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
                 "parent_head": target.parent.head_sha,
                 "merge_base": target.merge_base,
                 "patch_id": target.patch_identity,
-                "actual_base_ref": review_base_ref if force else target.parent.ref_name,
-                "actual_base_sha": before.base_sha,
             }
+            if force:
+                actual_merge_base = self.git.merge_base(before.base_sha, before.head_sha)
+                actual_patch_id = self.git.patch_identity(actual_merge_base, before.head_sha)
+                anchor = {
+                    "pr": pr,
+                    "child_head": before.head_sha,
+                    "parent_identity": (
+                        str(target.parent.pr_number)
+                        if target.parent.pr_number is not None and review_base_ref == target.parent.ref_name
+                        else review_base_ref
+                    ),
+                    "parent_head": before.base_sha,
+                    "merge_base": actual_merge_base,
+                    "patch_id": actual_patch_id,
+                    "actual_base_ref": review_base_ref,
+                    "actual_base_sha": before.base_sha,
+                }
+            else:
+                anchor = {
+                    **configured_queue_anchor,
+                    "actual_base_ref": target.parent.ref_name,
+                    "actual_base_sha": before.base_sha,
+                }
             posting_actor = self._authenticated_login()
             posting_started_at = hosted.utc_now()
             posting = {
@@ -2855,6 +2885,7 @@ class HostedRunner:
                 "pr_number": pr,
                 "head_sha": target.snapshot.head_sha,
                 "anchor": anchor,
+                **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                 "actual_base_ref": review_base_ref,
                 "actual_base_sha": before.base_sha,
                 "posting_started_at": posting_started_at,
@@ -2926,6 +2957,7 @@ class HostedRunner:
                         metadata={
                             "repository": self.repo,
                             "anchor": anchor,
+                            **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                             "actual_base_ref": review_base_ref,
                             "actual_base_sha": before.base_sha,
                             "posting_actor": posting_actor,
@@ -3084,6 +3116,7 @@ class HostedRunner:
                 "trigger_url": normalized["url"],
                 "status": status,
                 "anchor": anchor,
+                **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
                 "actual_base_ref": review_base_ref,
                 "actual_base_sha": before.base_sha,
                 "force_acknowledged": force,
@@ -3103,7 +3136,7 @@ def default_controller(repo: str | None = None) -> ReviewController:
     records = SqliteReviewRecords(sqlite_state_path(store.path)) if store.path.is_dir() else None
     observations = LiveEvidence(selected, live, store, records=records)
     git_provider = DefaultGitProvider()
-    hosted_runner = HostedRunner(selected, live, store, records=records)
+    hosted_runner = HostedRunner(selected, live, store, records=records, git=git_provider)
 
     def cli_adapter(target: ReviewTarget, **kwargs: Any) -> Any:
         return run_cli_review(target, github=live, records=records, **kwargs)

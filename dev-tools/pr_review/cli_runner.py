@@ -1097,9 +1097,14 @@ def run_cli_review(
                     "published_head_sha": child_head,
                     "review_context_sha": review_context_sha,
                     "review_base_sha": review_base_sha,
-                    "parent_pr": target.parent.pr_number,
+                    "parent_pr": (
+                        None
+                        if force and review_base_ref != target.parent.ref_name
+                        else target.parent.pr_number
+                    ),
                     "parent_ref": review_base_ref if force else target.parent.ref_name,
                     "parent_sha": live.base_sha if force else target.parent.head_sha,
+                    "configured_parent_pr": target.parent.pr_number,
                     "configured_parent_ref": target.parent.ref_name,
                     "configured_parent_sha": target.parent.head_sha,
                     "actual_base_ref": review_base_ref,
@@ -1125,9 +1130,14 @@ def run_cli_review(
                     "candidate_sha": candidate_sha,
                     "child_head_sha": candidate_sha,
                     "published_head_sha": child_head,
-                    "parent_pr": str(target.parent.pr_number) if target.parent.pr_number is not None else "",
+                    "parent_pr": (
+                        ""
+                        if force and review_base_ref != target.parent.ref_name
+                        else str(target.parent.pr_number) if target.parent.pr_number is not None else ""
+                    ),
                     "parent_ref": review_base_ref if force else target.parent.ref_name,
                     "parent_sha": live.base_sha if force else target.parent.head_sha,
+                    "configured_parent_pr": str(target.parent.pr_number) if target.parent.pr_number is not None else "",
                     "configured_parent_ref": target.parent.ref_name,
                     "configured_parent_sha": target.parent.head_sha,
                     "actual_base_ref": review_base_ref,

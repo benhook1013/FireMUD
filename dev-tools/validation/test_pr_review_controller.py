@@ -5526,6 +5526,43 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("cli", rows[2]["allocations"])
         self.assertEqual([], evidence.stop_audit_calls)
 
+    def test_status_overview_preserves_pending_cap_when_parent_moves_during_deep_read(self):
+        evidence = {
+            (1, "hosted"): [self.allocation_evidence(checkpoint="bounded-baseline")],
+        }
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_bounded_allocation(
+            cap=1,
+            minimum=1,
+            evidence=evidence,
+            values=values,
+        )
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="cap-result-with-unresolved-finding",
+                accepted=1,
+                source_resolution_status="pending",
+            )
+        )
+        initial_allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(initial_allocation["status"], "CAP_EXHAUSTED_PENDING")
+        self._enable_batch_status(controller, values)
+        original_pull = controller.github.pull_request
+
+        def move_default_base_during_deep_fetch(number):
+            item = original_pull(number)
+            if number == 1:
+                controller.git.heads["develop"] = "9" * 40
+            return item
+
+        controller.github.pull_request = move_default_base_during_deep_fetch
+        row = controller.status_overview()["prs"][0]
+
+        self.assertEqual(row["reconciliation"], "UNRECONCILED")
+        self.assertEqual(row["channels"]["hosted"], "UNRECONCILED")
+        self.assertEqual(row["allocations"]["hosted"]["status"], "CAP_EXHAUSTED_PENDING")
+        self.assertEqual(row["allocations"]["hosted"]["reason"], "cap exhausted; findings pending")
+
     def test_status_overview_reports_divergent_controller_selected_targets(self):
         values, heads = _stacked_prs(3)
         evidence = CountingEvidence()
