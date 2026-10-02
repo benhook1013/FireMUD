@@ -201,7 +201,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "play demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo");
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as demo");
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
@@ -728,8 +728,18 @@ class PlayCommandHandlerTest {
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
-    PlayCommandHandlingResult result =
+    PlayCommandHandlingResult ambiguousDefaultResult =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(ambiguousDefaultResult.commandResult().accepted()).isFalse();
+    assertThat(ambiguousDefaultResult.commandResult().errorCode())
+        .isEqualTo("PLAY_SELECTION_REQUIRED");
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
@@ -907,6 +917,113 @@ class PlayCommandHandlerTest {
         scriptEventPublisher);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"throw", "null"})
+  void playMapsDefaultRealmPointerReadFailureToAuthUnavailableWithoutAdmissionSideEffects(
+      String failureMode) {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    AtomicInteger pointerReads = new AtomicInteger();
+    when(authorityService.listPointers())
+        .thenAnswer(
+            invocation -> {
+              if (pointerReads.getAndIncrement() == 0) {
+                return List.of(admissionPointer(1L));
+              }
+              if ("throw".equals(failureMode)) {
+                throw new IllegalStateException("authority down during default realm resolution");
+              }
+              return null;
+            });
+    PlayCommandHandler authorityBackedHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authorityService),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            connectScopeSessionStore);
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        authorityBackedHandler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE);
+    assertThat(((ErrorOutput) result.outputs().getFirst().payload()).messageKey())
+        .isEqualTo("error.play.authority-unavailable");
+    assertThat(pointerReads).hasValue(2);
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+    Mockito.verify(firstPartyConnectContextRegistry, never())
+        .register(Mockito.anyLong(), Mockito.any());
+    Mockito.verify(firstPartyConnectContextRegistry, never()).unregister(Mockito.anyLong());
+  }
+
+  @Test
+  void playUsesSelectedTenantAuthorityWhenAnotherTenantInWorldHasNoPublicProductionRealm() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .add(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false));
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.empty());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    Mockito.verify(accountClient)
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("22"), Mockito.anyString());
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+  }
+
+  @Test
+  void playStillRejectsSelectedTenantWithoutPublicProductionRealm() {
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .add(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false));
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "maintenance"), "PLAY demo maintenance"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
+  }
+
   @Test
   void playRejectsModerationPolicyDeniedAdmission() {
     SessionContext context =
@@ -1009,6 +1126,49 @@ class PlayCommandHandlerTest {
                 "SHARED"),
             "play_entry",
             "play-spawn:1:2:9007:1");
+  }
+
+  @Test
+  void playWithoutCharacterSelectorShowsPersistedRosterCharacterName() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.empty());
+    when(entityManagementClient.listCharactersByAccount(
+            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            characterRoster(
+                "7001", "Emberline", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as Emberline");
+  }
+
+  @Test
+  void playWithCaseVariedCharacterSelectorShowsPersistedRosterCharacterName() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.empty());
+    when(entityManagementClient.listCharactersByAccount(
+            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            characterRoster(
+                "7001", "Emberline", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "eMbErLiNe"), "PLAY demo eMbErLiNe"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as Emberline");
   }
 
   @Test
@@ -1229,7 +1389,7 @@ class PlayCommandHandlerTest {
             123L,
             "demo@example.com",
             7001L,
-            "demo",
+            "Emberline",
             1L,
             "R-7",
             "jwt-token",
@@ -1240,11 +1400,17 @@ class PlayCommandHandlerTest {
             1L,
             "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(entityManagementClient.listCharactersByAccount(
+            "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
+        .thenReturn(
+            characterRoster(
+                "7001", "Emberline", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as Emberline");
     assertThat(result.reconnectRedrawRecommended()).isTrue();
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
@@ -2122,6 +2288,190 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playCharacterShorthandDoesNotDistinguishHiddenRealmFromUnknownName() {
+    addNonPublicRealmToPublicDemoWorld(false);
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(loggedInUnboundContext()));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipLifecycleState("MISSING")
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+
+    PlayCommandHandlingResult hidden =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "invite-only"), "PLAY demo invite-only"));
+    PlayCommandHandlingResult unknown =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "unlisted"), "PLAY demo unlisted"));
+
+    assertThat(hidden.commandResult()).isEqualTo(unknown.commandResult());
+    assertThat(hidden.outputs()).isEqualTo(unknown.outputs());
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
+  void playHiddenRealmInPublicWorldMasksMembershipDenialLikeUnknownSelection() {
+    addNonPublicRealmToPublicDemoWorld(false);
+    SessionContext context = loggedInUnboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(false)
+                .setGameplayAdmissionAllowed(false)
+                .setMembershipLifecycleState("MISSING")
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+
+    PlayCommandHandlingResult denied =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("demo", "invite-only", "Emberline"),
+                "PLAY demo invite-only Emberline"));
+    PlayCommandHandlingResult unknown =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("demo", "unlisted", "Emberline"),
+                "PLAY demo unlisted Emberline"));
+
+    assertHiddenRealmDenialMatchesUnknownSelection(denied, unknown, "invite-only");
+    Mockito.verify(accountClient)
+        .getTenantMembershipForRuntime(Mockito.eq("123"), Mockito.eq("22"), Mockito.anyString());
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
+  void playUnlistedNonPublicRealmInPublicWorldMasksDeniedGrantLikeUnknownSelection() {
+    addNonPublicRealmToPublicDemoWorld(true);
+    SessionContext context = loggedInUnboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setAccountId("123")
+                .setTenantId("22")
+                .setMembershipExists(true)
+                .setGameplayAdmissionAllowed(true)
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipVersion(1L)
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(evaluatedAtNow())
+                .build());
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq("demo"),
+            Mockito.eq("invite-only"),
+            Mockito.anyString()))
+        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(false).build());
+
+    PlayCommandHandlingResult denied =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("demo", "invite-only", "Emberline"),
+                "PLAY demo invite-only Emberline"));
+    PlayCommandHandlingResult unknown =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("demo", "unlisted", "Emberline"),
+                "PLAY demo unlisted Emberline"));
+
+    assertHiddenRealmDenialMatchesUnknownSelection(denied, unknown, "invite-only");
+    Mockito.verify(accountClient)
+        .getRealmAccessGrantForRuntime(
+            Mockito.eq("123"),
+            Mockito.eq("22"),
+            Mockito.eq("demo"),
+            Mockito.eq("invite-only"),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
+  void playHiddenRealmInPublicWorldDoesNotMaskUnavailableMembershipAuthority() {
+    addNonPublicRealmToPublicDemoWorld(false);
+    SessionContext context = loggedInUnboundContext();
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(
+            GetTenantMembershipForRuntimeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTH_UNAVAILABLE")
+                        .setMessage("Membership authority unavailable")
+                        .build())
+                .build());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("demo", "invite-only", "Emberline"),
+                "PLAY demo invite-only Emberline"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    ErrorOutput error = (ErrorOutput) result.outputs().getFirst().payload();
+    assertThat(error.arguments()).isEmpty();
+    assertThat(error.message()).doesNotContain("invite-only", "51");
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
   void playInvisibleRealmWithDeniedGrantClearsBinding() {
     markPreviewRealmInvisible();
     SessionContext context = previewRealmContext();
@@ -2660,7 +3010,7 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
     assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
-    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo");
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as demo");
     Mockito.verify(sessionContextService)
         .save(
             new SessionContext(
@@ -2771,6 +3121,28 @@ class PlayCommandHandlerTest {
 
   private void markPreviewRealmInvisible() {
     gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setVisible(false);
+  }
+
+  private void addNonPublicRealmToPublicDemoWorld(boolean visible) {
+    GameplayCatalogProperties.Realm hiddenRealm =
+        realm("invite-only", "Invite-only Realm", 22L, 51L, visible, true);
+    hiddenRealm.setPublicProductionRealm(false);
+    gameplayCatalogProperties.getWorlds().getFirst().getRealms().add(hiddenRealm);
+  }
+
+  private void assertHiddenRealmDenialMatchesUnknownSelection(
+      PlayCommandHandlingResult denied, PlayCommandHandlingResult unknown, String hiddenRealmSlug) {
+    assertThat(denied.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    assertThat(unknown.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
+    ErrorOutput error = (ErrorOutput) denied.outputs().getFirst().payload();
+    assertThat(error).isEqualTo(unknown.outputs().getFirst().payload());
+    assertThat(error.message()).doesNotContain(hiddenRealmSlug, "51");
+  }
+
+  private SessionContext loggedInUnboundContext() {
+    return new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
   }
 
   private SessionContext previewRealmContext() {
@@ -2968,7 +3340,7 @@ class PlayCommandHandlerTest {
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
     world.setSlug(slug);
     world.setDisplayName(displayName);
-    world.setRealms(realms);
+    world.setRealms(new ArrayList<>(realms));
     return world;
   }
 

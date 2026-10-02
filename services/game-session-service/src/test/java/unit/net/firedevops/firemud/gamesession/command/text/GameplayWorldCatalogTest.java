@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
@@ -378,6 +379,23 @@ class GameplayWorldCatalogTest {
         .hasValueSatisfying(world -> assertThat(world.slug()).isEqualTo("public-world"));
     assertThat(catalog.resolveWorld("2")).isEmpty();
     assertThat(catalog.resolveWorld("private-world")).isPresent();
+  }
+
+  @Test
+  void browseViewUsesOneWorldSnapshotForDefaultRealmAndCardinalityChecks() {
+    AtomicInteger supplierCalls = new AtomicInteger();
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () ->
+                supplierCalls.getAndIncrement() == 0
+                    ? List.of(worldWithRealm("demo", "production", 7L, true))
+                    : List.of(worldWithRealm("demo", "preview", 7L, false)));
+
+    assertThat(catalog.browseView().worlds())
+        .extracting(
+            net.firedevops.firemud.gamesession.presentation.WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("demo");
+    assertThat(supplierCalls).hasValue(1);
   }
 
   @Test

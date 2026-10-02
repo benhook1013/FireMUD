@@ -13,6 +13,10 @@ refuse_symlink_path() {
   local description="$2"
   local current_path="$path"
 
+  while [[ "$current_path" == */ && "$current_path" != "/" ]]; do
+    current_path="${current_path%/}"
+  done
+
   while [[ "$current_path" != "." && "$current_path" != "/" ]]; do
     [[ ! -L "$current_path" ]] || {
       echo "refusing symlinked $description: $path" >&2
@@ -21,6 +25,48 @@ refuse_symlink_path() {
     current_path="$(dirname -- "$current_path")"
   done
 }
+
+preflight_managed_file() {
+  local path="$1"
+  local description="$2"
+  local link_count
+
+  refuse_symlink_path "$path" "$description"
+  [[ -e "$path" ]] || return 0
+  [[ -f "$path" ]] || {
+    echo "refusing non-regular $description: $path" >&2
+    exit 1
+  }
+  link_count="$(stat -c '%h' -- "$path")"
+  if ((link_count > 1)); then
+    echo "refusing hard-linked $description: $path" >&2
+    exit 1
+  fi
+}
+
+preflight_managed_directory() {
+  local path="$1"
+  local description="$2"
+
+  refuse_symlink_path "$path" "$description"
+  if [[ -e "$path" && ! -d "$path" ]]; then
+    echo "refusing non-directory $description: $path" >&2
+    exit 1
+  fi
+}
+
+certificate_matches_private_key() {
+  local certificate="$1"
+  local private_key="$2"
+  local certificate_public_key private_key_public_key
+
+  certificate_public_key="$(openssl x509 -in "$certificate" -pubkey -noout \
+    | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)" || return 1
+  private_key_public_key="$(openssl pkey -in "$private_key" -pubout -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null)" || return 1
+  [[ -n "$certificate_public_key" && "$certificate_public_key" == "$private_key_public_key" ]]
+}
+
 COMPOSE_MTLS_STAGE_ROOT=""
 COMPOSE_MTLS_STAGE_DIR=""
 
@@ -46,7 +92,7 @@ ensure_compose_mtls_certs() {
     return 1
   fi
 
-  local owner_id authority_dir workloads_dir service
+  local owner_id authority_dir workloads_dir service authority_mode_restored=0
   owner_id="$(id -u)"
   if [[ ! -d "$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED" || -L "$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED" ]]; then
     echo "run-owned smoke ownership directory is unavailable." >&2
@@ -68,28 +114,56 @@ ensure_compose_mtls_certs() {
     echo "Compose mTLS authority path must be a real directory." >&2
     return 1
   fi
-  chmod 700 "$authority_dir"
-  if [[ "$(stat -Lc '%u %a %F' "$authority_dir")" != "$owner_id 700 directory" ]]; then
-    echo "Compose mTLS authority fixture must be an owner-only (0700) directory." >&2
-    return 1
-  fi
+  preflight_managed_directory "$authority_dir" "Compose mTLS authority directory"
+  local authority_file
+  for authority_file in ca.crt ca.key client.crt client.key; do
+    preflight_managed_file "$authority_dir/$authority_file" "Compose mTLS authority material"
+  done
   if [[ ! -f "$authority_dir/ca.crt" || ! -f "$authority_dir/ca.key" || ! -f "$authority_dir/client.crt" || ! -f "$authority_dir/client.key" ]]; then
     if [[ -n "$(find "$authority_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
       echo "Compose mTLS authority fixture is incomplete; refusing to replace existing material." >&2
       return 1
     fi
-    (umask 077; "$GENERATOR" "$authority_dir")
   fi
-  local authority_file
+  if [[ ! -f "$authority_dir/ca.crt" || ! -f "$authority_dir/ca.key" || ! -f "$authority_dir/client.crt" || ! -f "$authority_dir/client.key" ]]; then
+    (umask 077; "$GENERATOR" "$authority_dir")
+    # The generic generator makes the bundle directory container-readable.
+    # Compose authority material must remain private on its first generation too.
+    chmod 700 "$authority_dir"
+    if [[ "$(stat -Lc '%u %a %F' "$authority_dir")" != "$owner_id 700 directory" ]]; then
+      echo "Compose mTLS authority fixture must be an owner-only (0700) directory." >&2
+      return 1
+    fi
+    authority_mode_restored=1
+  fi
   for authority_file in ca.crt ca.key client.crt client.key; do
-    if [[ -L "$authority_dir/$authority_file" || ! -f "$authority_dir/$authority_file" ]]; then
+    preflight_managed_file "$authority_dir/$authority_file" "Compose mTLS authority material"
+    if [[ ! -f "$authority_dir/$authority_file" ]]; then
       echo "Compose mTLS authority fixture is missing a regular $authority_file file." >&2
       return 1
     fi
   done
+  openssl verify -CAfile "$authority_dir/ca.crt" "$authority_dir/client.crt" >/dev/null
+  if ! certificate_matches_private_key "$authority_dir/client.crt" "$authority_dir/client.key"; then
+    echo "Compose mTLS shared client certificate and private key do not match." >&2
+    return 1
+  fi
+  local authority_san_output authority_uri_sans
+  authority_san_output="$(openssl x509 -in "$authority_dir/client.crt" -noout -ext subjectAltName)"
+  authority_uri_sans="$(printf '%s\n' "$authority_san_output" | grep -oE 'URI:[^,[:space:]]+' || true)"
+  if [[ -n "$authority_uri_sans" ]]; then
+    echo "Compose mTLS shared client certificate must not contain a workload URI SAN." >&2
+    return 1
+  fi
+  if ((authority_mode_restored == 0)); then
+    chmod 700 "$authority_dir"
+    if [[ "$(stat -Lc '%u %a %F' "$authority_dir")" != "$owner_id 700 directory" ]]; then
+      echo "Compose mTLS authority fixture must be an owner-only (0700) directory." >&2
+      return 1
+    fi
+  fi
   chmod 600 "$authority_dir/ca.key" "$authority_dir/client.key"
   chmod 644 "$authority_dir/ca.crt" "$authority_dir/client.crt"
-  openssl verify -CAfile "$authority_dir/ca.crt" "$authority_dir/client.crt" >/dev/null
 
   workloads_dir="$requested_root/workloads"
   local -a services=(
@@ -114,7 +188,8 @@ ensure_compose_mtls_certs() {
       if [[ "$service" == account-service \
         || "$service" == game-session-service \
         || "$service" == entity-management-service \
-        || "$service" == social-groups-service ]]; then
+        || "$service" == social-groups-service \
+        || "$service" == world-management-service ]]; then
         "$GENERATOR" --workload \
           "$authority_dir/ca.crt" "$authority_dir/ca.key" \
           "$service_dir/client.crt" "$service_dir/client.key" dev "$service"
@@ -160,6 +235,10 @@ ensure_compose_mtls_certs() {
         return 1
       fi
       openssl verify -CAfile "$service_dir/ca.crt" "$service_dir/client.crt" >/dev/null
+      if ! certificate_matches_private_key "$service_dir/client.crt" "$service_dir/client.key"; then
+        echo "Compose mTLS workload certificate and private key do not match: $service" >&2
+        return 1
+      fi
     done
     local found_service_count=0 entry
     for entry in "$workloads_dir"/*; do
@@ -175,13 +254,23 @@ ensure_compose_mtls_certs() {
       return 1
     fi
     for service in \
-      account-service game-session-service entity-management-service social-groups-service; do
+      account-service game-session-service entity-management-service social-groups-service world-management-service; do
       local san_output uri_sans
       san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
       uri_sans="$(printf '%s\n' "$san_output" | grep -oE 'URI:[^,[:space:]]+' || true)"
       if [[ "$uri_sans" != "URI:spiffe://firemud/ns/dev/sa/$service" \
         || "$san_output" != *"DNS:$service"* ]]; then
         echo "Compose mTLS workload has the wrong SPIFFE identity: $service" >&2
+        return 1
+      fi
+    done
+    for service in \
+      gateway automation-scripting-service game-design-service game-logic-service logging-admin-service tcp-proxy-service; do
+      local san_output uri_sans
+      san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
+      uri_sans="$(printf '%s\n' "$san_output" | grep -oE 'URI:[^,[:space:]]+' || true)"
+      if [[ -n "$uri_sans" ]]; then
+        echo "Compose mTLS shared generic workload must not contain a URI SAN: $service" >&2
         return 1
       fi
     done
@@ -200,27 +289,20 @@ if [[ "${1:-}" == "--compose-mtls" ]]; then
   exit $?
 fi
 
-required_files=(
-  "$CERT_DIR/ca.crt"
-  "$CERT_DIR/ca.key"
-  "$CERT_DIR/client.crt"
-  "$CERT_DIR/client.key"
-  "$CERT_DIR/dev-ca.pem"
-  "$CERT_DIR/dev-cert.pem"
-  "$CERT_DIR/dev-key.pem"
-  "$CERT_DIR/server.crt"
-  "$CERT_DIR/server.key"
+managed_source_files=(
+  ca.crt ca.key ca.srl client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem
+  server.crt server.key server.csr dev-cert.cnf
 )
 
-refuse_symlink_path "$CERT_DIR" "certificate directory"
-for file in "${required_files[@]}"; do
-  refuse_symlink_path "$file" "certificate material"
+preflight_managed_directory "$CERT_DIR" "certificate directory"
+for filename in "${managed_source_files[@]}"; do
+  preflight_managed_file "$CERT_DIR/$filename" "certificate material"
 done
 
-refuse_symlink_path "$WORKLOAD_DIR" "workload certificate directory"
+preflight_managed_directory "$WORKLOAD_DIR" "workload certificate directory"
 for workload in account-service game-session-service social-groups-service; do
-  refuse_symlink_path "$WORKLOAD_DIR/$workload.crt" "workload certificate output"
-  refuse_symlink_path "$WORKLOAD_DIR/$workload.key" "workload private-key output"
+  preflight_managed_file "$WORKLOAD_DIR/$workload.crt" "workload certificate output"
+  preflight_managed_file "$WORKLOAD_DIR/$workload.key" "workload private-key output"
 done
 
 refuse_symlink_path "$RUNTIME_DIR" "local Compose runtime projection"
@@ -251,7 +333,7 @@ workload_certificate_is_valid() {
   local certificate="$WORKLOAD_DIR/$workload.crt"
   local private_key="$WORKLOAD_DIR/$workload.key"
   local expected_uri="spiffe://firemud/ns/$WORKLOAD_NAMESPACE/sa/$workload"
-  local subject_alt_names uri_sans certificate_public_key private_key_public_key
+  local subject_alt_names uri_sans
 
   [[ -f "$certificate" && -f "$private_key" ]] || return 1
   openssl verify -purpose sslclient -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null 2>&1 || return 1
@@ -259,11 +341,7 @@ workload_certificate_is_valid() {
   subject_alt_names="$(openssl x509 -in "$certificate" -noout -ext subjectAltName 2>/dev/null)" || return 1
   uri_sans="$(printf '%s\n' "$subject_alt_names" | grep -oE 'URI:[^,[:space:]]+' || true)"
   [[ "$uri_sans" == "URI:$expected_uri" && "$subject_alt_names" == *"DNS:$workload"* ]] || return 1
-  certificate_public_key="$(openssl x509 -in "$certificate" -pubkey -noout \
-    | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)" || return 1
-  private_key_public_key="$(openssl pkey -in "$private_key" -pubout -outform DER 2>/dev/null \
-    | openssl dgst -sha256 2>/dev/null)" || return 1
-  [[ -n "$certificate_public_key" && "$certificate_public_key" == "$private_key_public_key" ]]
+  certificate_matches_private_key "$certificate" "$private_key"
 }
 
 for workload in "${workloads[@]}"; do

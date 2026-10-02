@@ -58,11 +58,11 @@ public final class GameplayWorldCatalog {
   }
 
   public static GameplayWorldCatalog forWorldViews(List<WorldView> worlds) {
-    return new GameplayWorldCatalog(() -> normalizeWorlds(worlds));
+    return new GameplayWorldCatalog(() -> worlds);
   }
 
   public static GameplayWorldCatalog forWorldSupplier(Supplier<List<WorldView>> worldSupplier) {
-    return new GameplayWorldCatalog(() -> normalizeWorlds(worldSupplier.get()));
+    return new GameplayWorldCatalog(worldSupplier);
   }
 
   public WorldsViewOutput browseView() {
@@ -153,6 +153,9 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
+    if (worldSelector == null || worldSelector.isBlank()) {
+      return Optional.empty();
+    }
     return resolveWorld(worldSelector)
         .map(world -> new RealmBrowseViewOutput(world.slug(), realmEntries(world)));
   }
@@ -248,7 +251,7 @@ public final class GameplayWorldCatalog {
       return resolveWorld(selector, visibleWorlds, visibleWorlds)
           .filter(world -> hasValidPublicProductionRealm(world, catalogState));
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -543,8 +546,9 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
+    CatalogState snapshot = readCatalogState();
     List<RealmView> matches =
-        normalizeWorlds(worldSupplier.get()).stream()
+        snapshot.worlds().stream()
             .flatMap(world -> world.realms().stream())
             .filter(realm -> realm.tenantId() == tenantId)
             .filter(realm -> realm.gameInstanceId() == gameInstanceId)
@@ -553,8 +557,9 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RuntimeRealmTarget> resolveRuntimeTarget(long tenantId, long gameInstanceId) {
+    CatalogState snapshot = readCatalogState();
     List<RuntimeRealmTarget> matches =
-        normalizeWorlds(worldSupplier.get()).stream()
+        snapshot.worlds().stream()
             .flatMap(
                 world ->
                     world.realms().stream()
@@ -619,7 +624,7 @@ public final class GameplayWorldCatalog {
     if (authorityPointerSupplier == null) {
       return visibleWorlds();
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -648,7 +653,7 @@ public final class GameplayWorldCatalog {
       throw new AuthorityPointerUnavailableException(
           "Authoritative public-production realm identity is unavailable");
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -731,29 +736,6 @@ public final class GameplayWorldCatalog {
   private static boolean sameWorld(WorldView expectedWorld, WorldView currentWorld) {
     return Objects.equals(expectedWorld.slug(), currentWorld.slug())
         && Objects.equals(expectedWorld.displayName(), currentWorld.displayName());
-  }
-
-  private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    CatalogState catalogState = readCatalogState();
-    List<WorldView> worlds = discoverableWorlds(catalogState);
-    ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
-    for (WorldView world : worlds) {
-      RealmView defaultRealm = resolveDefaultRealm(world, catalogState).orElseThrow();
-      entries.add(
-          new WorldsViewOutput.WorldEntry(
-              entries.size() + 1,
-              world.slug(),
-              world.displayName(),
-              defaultRealm.requiresCharacterSelection()));
-    }
-    return List.copyOf(entries);
-  }
-
-  private List<WorldView> discoverableWorlds(CatalogState catalogState) {
-    List<WorldView> catalogWorlds = catalogState.worlds();
-    List<WorldView> visibleWorlds =
-        catalogWorlds.stream().filter(this::hasVisibleRealmEntries).toList();
-    return discoverableWorlds(visibleWorlds, catalogState);
   }
 
   private List<WorldView> discoverableWorlds(

@@ -95,7 +95,7 @@ public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
         }
         decodedPath = nextPath;
       } catch (IllegalArgumentException exception) {
-        return path;
+        return decodedPath;
       }
     }
     return decodedPath;

@@ -244,6 +244,54 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void issueDirectTextConnectScopeMapsUnexpectedFailureToRetryableUnavailable() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.issueDirectTextConnectScope(
+                Mockito.any(DirectTextCallerContext.class),
+                Mockito.any(DirectTextJoinTarget.class)))
+        .thenThrow(new IllegalStateException("private backend detail"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<IssueDirectTextConnectScopeResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () -> service.issueDirectTextConnectScope(validScopeRequest(), observer));
+
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+  }
+
+  @Test
+  void joinPublicProductionMembershipMapsUnexpectedFailureToRetryableUnavailable() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(
+            accountService.joinPublicProductionFromGameSession(
+                Mockito.any(DirectTextCallerContext.class),
+                Mockito.any(JoinPublicProductionRequest.class)))
+        .thenThrow(new IllegalStateException("private backend detail"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
+
+    withPeer(
+        GAME_SESSION_PEER,
+        () -> service.joinPublicProductionMembership(validJoinRequest(), observer));
+
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    assertEquals("AUTH_UNAVAILABLE", observer.response().getError().getCode());
+    assertEquals(
+        "Account authority unavailable; retry later", observer.response().getError().getMessage());
+  }
+
+  @Test
   void protectedDirectTextMethodsRejectAbsentWrongSharedAndCrossNamespacePeers() {
     List<GrpcPeerIdentity> rejectedPeers =
         java.util.Arrays.asList(
@@ -315,6 +363,28 @@ class AccountGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", targetObserver.response().getError().getCode());
     assertEquals("INVALID_ARGUMENT", malformedObserver.response().getError().getCode());
     assertEquals("INVALID_ARGUMENT", requestIdObserver.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void joinRejectsRequestIdLongerThanThePublicContractBeforeCallingAccountService() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    String requestId = "j".repeat(JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH + 1);
+    PlayerExecutionContext playerContext =
+        validPlayerContext().toBuilder().setRequestId(requestId).build();
+    JoinPublicProductionMembershipRequest request =
+        validJoinRequest().toBuilder()
+            .setPlayerContext(playerContext)
+            .setRequestId(requestId)
+            .build();
+    RecordingObserver<JoinPublicProductionMembershipResponse> observer = new RecordingObserver<>();
+
+    withPeer(GAME_SESSION_PEER, () -> service.joinPublicProductionMembership(request, observer));
+
+    assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
     Mockito.verifyNoInteractions(accountService);
   }
 

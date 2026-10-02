@@ -223,3 +223,9 @@ Entry format:
   - Context: a Game Session validation run failed a new fixture assertion, but a pipeline ending in `tee` returned exit0 because the shell did not enable `pipefail`.
   - Expected pattern: enable `set -o pipefail` before captured validation pipelines and verify the terminal build result and test reports; a log sink's success is not the validation process's success.
   - Outcome: the failed build was identified from its terminal report, not reported as passing. After the fixture correction, the guarded complete rerun passed; no production check or negative assertion was weakened.
+
+- `2026-10-03`: Assert fresh initialization before testing idempotence
+  - Context: the Compose mTLS certificate contract checked private authority-directory permissions only after running setup twice.
+  - Observation: the second call repaired the first call's incorrect permissions, so the passing contract masked a broken fresh-initialization postcondition.
+  - Expected pattern: assert the first-call postconditions before any verification or idempotence rerun, then separately prove the rerun preserves the valid fixture.
+  - Outcome: setup now restores owner-only authority permissions after generation, and the focused contract independently proves the first-call boundary and repeated-call preservation.

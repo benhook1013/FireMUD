@@ -7,6 +7,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -354,6 +356,30 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   @Test
+  void terminationDoesNotCrossAnUnresolvedInitialAdmissionBindHold() {
+    WorldInstance instance = activeWorldInstance();
+    stubPersistedWorldInstance(instance);
+    when(worldInstanceRepository.hasNonterminalInitialAdmissionBindHold(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return true;
+            });
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertTrue(error.getMessage().startsWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:"));
+    assertEquals("ACTIVE", instance.getStatus());
+    verify(entityManagementClient, org.mockito.Mockito.never())
+        .cleanupRuntimeInstance(anyLong(), anyLong(), anyString());
+    verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+    verify(worldInstanceRepository, org.mockito.Mockito.never()).save(any(WorldInstance.class));
+  }
+
+  @Test
   void terminateWorldInstanceRetriesSameRequestAfterLocalCleanupFailure() {
     WorldInstance instance = activeWorldInstance();
     stubPersistedWorldInstance(instance);
@@ -497,6 +523,8 @@ class WorldLifecycleCommandServiceImplTest {
     terminating.setTerminationRequestId("term-1");
     terminating.setLifecycleEpoch(3L);
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance), Optional.of(terminating));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance), Optional.of(terminating));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
         .thenAnswer(
@@ -665,6 +693,17 @@ class WorldLifecycleCommandServiceImplTest {
                 return Optional.of(initiallyLoaded);
               }
               return Optional.of(copyWorldInstance(persisted.get()));
+            });
+    AtomicBoolean firstLockedFind = new AtomicBoolean(true);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              if (localTransactionActive.get()) {
+                worldInstanceReadInLocalTransaction.set(true);
+              }
+              return firstLockedFind.compareAndSet(true, false)
+                  ? Optional.of(initiallyLoaded)
+                  : Optional.of(copyWorldInstance(persisted.get()));
             });
     when(worldInstanceRepository.save(any(WorldInstance.class)))
         .thenAnswer(

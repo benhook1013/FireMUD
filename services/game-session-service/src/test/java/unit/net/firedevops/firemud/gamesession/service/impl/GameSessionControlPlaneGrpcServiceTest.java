@@ -44,6 +44,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -1324,7 +1325,7 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
         "admission-pointer creation is temporarily disabled until catalog revision and "
             + "stable realm/namespace identity preconditions are supported",
@@ -1378,7 +1379,7 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
         "admission-pointer creation is temporarily disabled until catalog revision and "
             + "stable realm/namespace identity preconditions are supported",
@@ -1452,7 +1453,7 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
         "admission-pointer updates are temporarily disabled until catalog revision "
             + "preconditions are supported",
@@ -1551,7 +1552,7 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     assertEquals(
         "admission-pointer updates are temporarily disabled until catalog revision "
             + "preconditions are supported",
@@ -1720,7 +1721,11 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
+    assertEquals(
+        "prepared cutover is temporarily disabled until catalog revision preconditions, "
+            + "World hold binding, source drain, and durable execution contracts are supported",
+        responseRef.get().getError().getMessage());
     Mockito.verifyNoInteractions(authorityService);
     Mockito.verifyNoInteractions(versionUpgradePreparationService);
     Mockito.verifyNoInteractions(gameInstanceRepository);
@@ -1826,9 +1831,65 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
+    assertEquals(
+        "prepared cutover is temporarily disabled until catalog revision preconditions, "
+            + "World hold binding, source drain, and durable execution contracts are supported",
+        responseRef.get().getError().getMessage());
     Mockito.verifyNoInteractions(authorityService);
     Mockito.verifyNoInteractions(versionUpgradePreparationService);
+  }
+
+  @Test
+  void executePreparedVersionCutoverMapsTruePointerVersionMismatchSeparately() {
+    GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService =
+        Mockito.mock(GameSessionAdmissionPointerControlPlaneService.class);
+    Mockito.doThrow(new AdmissionPointerVersionMismatchException("pointer version changed"))
+        .when(admissionPointerControlPlaneService)
+        .executePreparedVersionCutover(
+            Mockito.eq(1L),
+            Mockito.eq(7L),
+            Mockito.any(ExecutePreparedVersionCutoverRequest.class));
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameSessionControlPlaneGrpcService service =
+        new GameSessionControlPlaneGrpcService(
+            null,
+            null,
+            null,
+            admissionPointerControlPlaneService,
+            null,
+            null,
+            new SimpleMeterRegistry());
+
+    AtomicReference<ExecutePreparedVersionCutoverResponse> responseRef = new AtomicReference<>();
+    service.executePreparedVersionCutover(
+        ExecutePreparedVersionCutoverRequest.newBuilder()
+            .setWorldSlug("demo")
+            .setRealmSlug("production")
+            .setTenantId("1")
+            .setTargetGameInstanceId("7")
+            .setPreparedVersionUpgradeId("pvu-1")
+            .setActorPrincipal("tester")
+            .setReason("cutover")
+            .setControlPlaneRequestId("req-1")
+            .setExpectedPointerVersion(2L)
+            .setExpectedCatalogRevision(1L)
+            .build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ExecutePreparedVersionCutoverResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("pointer version changed", responseRef.get().getError().getMessage());
+    Mockito.verify(admissionPointerControlPlaneService)
+        .executePreparedVersionCutover(
+            Mockito.eq(1L),
+            Mockito.eq(7L),
+            Mockito.any(ExecutePreparedVersionCutoverRequest.class));
+    Mockito.verifyNoMoreInteractions(admissionPointerControlPlaneService);
   }
 
   @Test
@@ -1873,7 +1934,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(2L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("2").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -1901,7 +1962,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(1L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("1").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -1944,7 +2005,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(2L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("2").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -1966,7 +2027,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(0L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("0").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -1975,6 +2036,40 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(authorityService);
+  }
+
+  @Test
+  void listAdmissionPointersRejectsMalformedTenantScopeBeforeAuthorityLookup() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameSessionControlPlaneGrpcService service =
+        admissionPointerControlPlaneService(authorityService);
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+
+    for (String tenantId :
+        List.of(
+            "",
+            " ",
+            "not-a-number",
+            "-1",
+            "9223372036854775808",
+            "550e8400-e29b-41d4-a716-446655440000")) {
+      responseRef.set(null);
+      service.listAdmissionPointers(
+          ListAdmissionPointersRequest.newBuilder().addTenantIds(tenantId).build(),
+          new NoopObserver<>() {
+            @Override
+            public void onNext(ListAdmissionPointersResponse value) {
+              responseRef.set(value);
+            }
+          });
+
+      assertNotNull(responseRef.get());
+      assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    }
+
     Mockito.verifyNoInteractions(authorityService);
   }
 
@@ -1993,7 +2088,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(2L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("2").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -9073,6 +9168,55 @@ class GameSessionControlPlaneGrpcServiceTest {
           invokeAdmissionReadProof(
               service, AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"),
           role);
+    }
+  }
+
+  @Test
+  void getPreparedVersionUpgradeMapsRecognizedPersistenceAvailabilityFailures() {
+    List<RuntimeException> unavailableFailures =
+        List.of(
+            new org.jooq.exception.DataAccessException(
+                "prepared proof database unavailable",
+                new java.sql.SQLException("connection lost", "08006")),
+            new RuntimeException(
+                "wrapped prepared proof timeout",
+                new org.springframework.dao.QueryTimeoutException("query timed out")));
+
+    for (RuntimeException failure : unavailableFailures) {
+      AdmissionReadProofFixture fixture = admissionReadProofFixture();
+      Mockito.when(fixture.preparationService().getPreparedVersionUpgrade(1L, "pvu-1"))
+          .thenThrow(failure);
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
+
+      assertEquals(
+          "AUTHORITY_UNAVAILABLE",
+          invokeAdmissionReadProof(
+              fixture.service(), AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"));
+    }
+  }
+
+  @Test
+  void getPreparedVersionUpgradeKeepsUnexpectedPersistenceFailuresInternal() {
+    List<RuntimeException> unexpectedFailures =
+        List.of(
+            new IllegalStateException("prepared proof mapper failed"),
+            new org.jooq.exception.DataAccessException(
+                "prepared proof integrity failure",
+                new java.sql.SQLException("unique violation", "23505")),
+            new org.jooq.exception.DataAccessException(
+                "prepared proof query failure",
+                new java.sql.SQLException("malformed query", "42601")));
+
+    for (RuntimeException failure : unexpectedFailures) {
+      AdmissionReadProofFixture fixture = admissionReadProofFixture();
+      Mockito.when(fixture.preparationService().getPreparedVersionUpgrade(1L, "pvu-1"))
+          .thenThrow(failure);
+      SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
+
+      assertEquals(
+          "INTERNAL",
+          invokeAdmissionReadProof(
+              fixture.service(), AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"));
     }
   }
 
