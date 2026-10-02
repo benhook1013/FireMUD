@@ -178,6 +178,40 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   }
 
   @Test
+  void upsertPointerRuntimeTargetChangeAdvancesPointerVersionWithoutCatalogRevision() {
+    GameplayAdmissionPointer existing = existingPointer();
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+        .thenReturn(Optional.of(existing));
+    when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    GameplayAdmissionPointerSnapshot snapshot =
+        service.upsertPointer(
+            new GameplayAdmissionPointerMutation(
+                "demo",
+                "Demo World",
+                "production",
+                "Live Realm",
+                1L,
+                8L,
+                true,
+                true,
+                false,
+                "SHARED",
+                "ALLOW_NEW",
+                "tester",
+                "runtime target change",
+                "req-runtime-target",
+                1L,
+                null));
+
+    assertEquals(2L, snapshot.pointerVersion());
+    assertEquals(1L, snapshot.catalogRevision());
+    verify(pointerRepository).save(any(GameplayAdmissionPointer.class));
+    verify(eventRepository).save(any(GameplayAdmissionPointerEvent.class));
+  }
+
+  @Test
   void upsertPointerExactNoOpDoesNotAdvanceOrPersistVersions() {
     GameplayAdmissionPointer existing = existingPointer();
     when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))

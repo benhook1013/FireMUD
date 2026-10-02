@@ -150,8 +150,7 @@ class InitialAdmissionBindHoldServiceImplTest {
     when(holdRepository.markReconciliationRequired(any(), Mockito.eq("GS_OWNER_PENDING"), any()))
         .thenAnswer(invocation -> Optional.of(withStatus(hold, "RECONCILIATION_REQUIRED", 1L)));
 
-    var result =
-        service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.PENDING, false, false, null));
+    var result = service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.PENDING, false, null));
 
     assertEquals("RECONCILIATION_REQUIRED", result.status());
     verify(holdRepository, never())
@@ -168,8 +167,27 @@ class InitialAdmissionBindHoldServiceImplTest {
         .thenAnswer(invocation -> Optional.of(withStatus(hold, "RECONCILIATION_REQUIRED", 1L)));
 
     var result =
+        service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.COMMITTED, true, "c".repeat(64)));
+
+    assertEquals("RECONCILIATION_REQUIRED", result.status());
+    verify(worldInstanceRepository, never())
+        .findByTenantIdAndGameInstanceIdForUpdate(TENANT_ID, GAME_INSTANCE_ID);
+    verify(holdRepository, never())
+        .recordTerminalProof(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void committedReadbackRequiresTheFirstPointerVersionExactly() {
+    InitialAdmissionBindHold hold = pendingHold();
+    when(holdRepository.findByHoldId(HOLD_ID)).thenReturn(Optional.of(hold));
+    when(holdRepository.findByHoldIdForUpdate(HOLD_ID)).thenReturn(Optional.of(hold));
+    when(holdRepository.markReconciliationRequired(
+            any(), Mockito.eq("GS_OWNER_TERMINAL_PROOF_INCOMPLETE"), any()))
+        .thenAnswer(invocation -> Optional.of(withStatus(hold, "RECONCILIATION_REQUIRED", 1L)));
+
+    var result =
         service.reconcileOwnerProof(
-            HOLD_ID, ownerProof(Outcome.COMMITTED, true, true, "c".repeat(64)));
+            HOLD_ID, ownerProof(Outcome.COMMITTED, true, REQUEST_DIGEST, 2L));
 
     assertEquals("RECONCILIATION_REQUIRED", result.status());
     verify(worldInstanceRepository, never())
@@ -202,18 +220,16 @@ class InitialAdmissionBindHoldServiceImplTest {
               InitialAdmissionBindHold committed =
                   withTerminalProof(
                       pending,
-                      ownerProof(Outcome.COMMITTED, true, true, REQUEST_DIGEST),
+                      ownerProof(Outcome.COMMITTED, true, REQUEST_DIGEST),
                       invocation.getArgument(3));
               persisted.set(committed);
               return Optional.of(committed);
             });
 
     var first =
-        service.reconcileOwnerProof(
-            HOLD_ID, ownerProof(Outcome.COMMITTED, true, true, REQUEST_DIGEST));
+        service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.COMMITTED, true, REQUEST_DIGEST));
     var retry =
-        service.reconcileOwnerProof(
-            HOLD_ID, ownerProof(Outcome.COMMITTED, true, true, REQUEST_DIGEST));
+        service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.COMMITTED, true, REQUEST_DIGEST));
 
     assertEquals("COMMITTED", first.status());
     assertEquals(first, retry);
@@ -230,8 +246,7 @@ class InitialAdmissionBindHoldServiceImplTest {
             any(), Mockito.eq("GS_OWNER_TERMINAL_PROOF_INCOMPLETE"), any()))
         .thenAnswer(invocation -> Optional.of(withStatus(pending, "RECONCILIATION_REQUIRED", 1L)));
 
-    var result =
-        service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.ABORTED, false, false, null));
+    var result = service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.ABORTED, false, null));
 
     assertEquals("RECONCILIATION_REQUIRED", result.status());
     verify(holdRepository, never())
@@ -241,7 +256,7 @@ class InitialAdmissionBindHoldServiceImplTest {
   @Test
   void exactAbortedTombstoneDoesNotRequirePriorPointerAbsence() {
     InitialAdmissionBindHold pending = pendingHold();
-    InitialAdmissionBindOwnerProof proof = ownerProof(Outcome.ABORTED, false, true, null);
+    InitialAdmissionBindOwnerProof proof = ownerProof(Outcome.ABORTED, true, null);
     when(holdRepository.findByHoldId(HOLD_ID)).thenReturn(Optional.of(pending));
     when(holdRepository.findByHoldIdForUpdate(HOLD_ID)).thenReturn(Optional.of(pending));
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(
@@ -265,6 +280,36 @@ class InitialAdmissionBindHoldServiceImplTest {
     verify(holdRepository)
         .recordTerminalProof(
             any(), Mockito.eq("ABORTED"), any(), any(), Mockito.isNull(), Mockito.isNull(), any());
+  }
+
+  @Test
+  void repeatedIdenticalOwnerErrorsStillTouchAndRotateBlockedHold() {
+    InitialAdmissionBindHold blocked = withStatus(pendingHold(), "RECONCILIATION_REQUIRED", 1L);
+    when(holdRepository.findByHoldId(HOLD_ID)).thenReturn(Optional.of(blocked));
+    when(holdRepository.markReconciliationRequired(any(), Mockito.eq("GS_OWNER_PENDING"), any()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(withStatus(invocation.getArgument(0), "RECONCILIATION_REQUIRED", 2L)));
+
+    var result = service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.PENDING, false, null));
+
+    assertEquals("RECONCILIATION_REQUIRED", result.status());
+    assertEquals(HOLD_ID, result.holdId());
+    verify(holdRepository).markReconciliationRequired(any(), Mockito.eq("GS_OWNER_PENDING"), any());
+  }
+
+  @Test
+  void lostReconciliationCompareAndSetRaisesStaleError() {
+    when(holdRepository.findByHoldIdForUpdate(HOLD_ID)).thenReturn(Optional.of(pendingHold()));
+    when(holdRepository.markReconciliationRequired(any(), Mockito.eq("GS_OWNER_PENDING"), any()))
+        .thenReturn(Optional.empty());
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () -> service.requireReconciliation(HOLD_ID, "GS_OWNER_PENDING"));
+
+    assertTrue(error.getMessage().startsWith("INITIAL_ADMISSION_BIND_HOLD_STALE:"));
   }
 
   private InitialAdmissionBindHoldRequest request() {
@@ -322,10 +367,13 @@ class InitialAdmissionBindHoldServiceImplTest {
   }
 
   private InitialAdmissionBindOwnerProof ownerProof(
-      Outcome outcome,
-      boolean attemptPointerAbsent,
-      boolean futureCommitPrevented,
-      String auditDigest) {
+      Outcome outcome, boolean futureCommitPrevented, String auditDigest) {
+    return ownerProof(
+        outcome, futureCommitPrevented, auditDigest, outcome == Outcome.COMMITTED ? 1L : 0L);
+  }
+
+  private InitialAdmissionBindOwnerProof ownerProof(
+      Outcome outcome, boolean futureCommitPrevented, String auditDigest, long pointerVersion) {
     return new InitialAdmissionBindOwnerProof(
         outcome,
         HOLD_ID,
@@ -343,9 +391,8 @@ class InitialAdmissionBindHoldServiceImplTest {
         17L,
         "gs-ledger-100",
         outcome == Outcome.COMMITTED ? "audit-100" : null,
-        outcome == Outcome.COMMITTED ? 1L : 0L,
+        pointerVersion,
         auditDigest,
-        attemptPointerAbsent,
         futureCommitPrevented);
   }
 

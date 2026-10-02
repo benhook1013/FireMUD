@@ -2,10 +2,10 @@ package net.firedevops.firemud.gamesession.data;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import net.firedevops.firemud.gamesession.entity.FeatureFlag;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.entity.GameManifest;
 import net.firedevops.firemud.gamesession.repository.FeatureFlagRepository;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
@@ -27,22 +27,19 @@ class TestDataSeederTest {
 
   @BeforeEach
   void setup() {
-    seeder =
-        new TestDataSeeder(gameManifestRepository, featureFlagRepository, gameInstanceRepository);
+    seeder = new TestDataSeeder(gameManifestRepository, featureFlagRepository);
   }
 
   @Test
-  void runSeedsAndReassertsCanonicalRuntimeData() throws Exception {
+  void runSeedsCanonicalNonRuntimeData() throws Exception {
     when(gameManifestRepository.findAll()).thenReturn(java.util.List.of());
     when(featureFlagRepository.findByTenantIdAndName(1L, "double_xp"))
-        .thenReturn(java.util.Optional.empty());
-    when(gameInstanceRepository.findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, 1L, "RUNNING"))
         .thenReturn(java.util.Optional.empty());
 
     seeder.run(new DefaultApplicationArguments(new String[] {}));
 
     verify(gameManifestRepository).save(any(GameManifest.class));
     verify(featureFlagRepository).save(any(FeatureFlag.class));
-    verify(gameInstanceRepository).save(any(GameInstance.class));
+    verifyNoInteractions(gameInstanceRepository);
   }
 }

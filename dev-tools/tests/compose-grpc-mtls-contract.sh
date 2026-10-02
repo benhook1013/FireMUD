@@ -100,6 +100,91 @@ echo "Checking canonical Compose entrypoints."
 mtls_compose="$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"
 rg -Fq 'FIREMUD_GRPC_PLAINTEXT: "false"' "$mtls_compose"
 rg -Fq 'GRPC_SERVER_TLS_ENABLED: "true"' "$mtls_compose"
+python3 - "$mtls_compose" <<'PY'
+import pathlib
+import re
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+for service in ("entity-management-service", "world-management-service", "game-session-service"):
+    headers = [index for index, line in enumerate(lines) if line == f"  {service}:"]
+    assert len(headers) == 1, service
+    start = headers[0]
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].startswith("  ") and not lines[index].startswith("    ")
+        ),
+        len(lines),
+    )
+    block = lines[start + 1 : end]
+    environments = [index for index, line in enumerate(block) if line == "    environment:"]
+    assert len(environments) == 1, service
+    env_start = environments[0]
+    env_end = next(
+        (
+            index
+            for index in range(env_start + 1, len(block))
+            if block[index].startswith("    ") and not block[index].startswith("      ")
+        ),
+        len(block),
+    )
+    environment = block[env_start + 1 : env_end]
+    assert any(
+        re.fullmatch(
+            r"      FIREMUD_GRPC_WORKLOAD_NAMESPACE:\s*[\"']?dev[\"']?\s*(?:#.*)?",
+            line,
+        )
+        for line in environment
+    ), f"{service} must set FIREMUD_GRPC_WORKLOAD_NAMESPACE to dev in its mTLS overlay"
+PY
+python3 - "$mtls_compose" <<'PY'
+import pathlib
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+service_blocks = {}
+for index, line in enumerate(lines):
+    if not line.startswith("  ") or line.startswith("    ") or not line.endswith(":"):
+        continue
+    service = line[2:-1]
+    end = next(
+        (
+            position
+            for position in range(index + 1, len(lines))
+            if lines[position].startswith("  ") and not lines[position].startswith("    ")
+        ),
+        len(lines),
+    )
+    service_blocks[service] = lines[index + 1 : end]
+
+capability_path = "/app/run-owned-initial-admission-capability.json"
+fixture_keys = (
+    "FIREMUD_SMOKE_RUN_ID",
+    "FIREMUD_SMOKE_COMPOSE_PROJECT_NAME",
+    "FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED",
+    "FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH",
+)
+for service, block in service_blocks.items():
+    if service == "game-session-service":
+        for key in fixture_keys:
+            assert any(line.startswith(f"      {key}:") for line in block), key
+        assert any(
+            line == f"      FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: {capability_path}"
+            for line in block
+        )
+        assert any(
+            line == "        source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}"
+            for line in block
+        )
+        assert any(line == f"        target: {capability_path}" for line in block)
+        assert any(line == "        read_only: true" for line in block)
+        assert any(line == "          create_host_path: false" for line in block)
+    else:
+        assert not any(any(key in line for key in fixture_keys) for line in block), service
+        assert not any(capability_path in line for line in block), service
+PY
 rg -Fq 'client-auth: REQUIRE' "$ROOT_DIR/services/world-management-service/src/main/resources/application.yml"
 world_guard="$ROOT_DIR/services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/InitialAdmissionBindWorkloadGuard.java"
 world_grpc="$ROOT_DIR/services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/WorldManagementGrpcService.java"
@@ -146,18 +231,21 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
 
   rendered_config="$TEST_ROOT/compose-config.json"
   FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$fixture_root" SMOKE_IMAGE_TAG=contract \
+    FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH="$TEST_ROOT/config-probe-capability.json" \
+    FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false \
+    FIREMUD_SMOKE_RUN_ID='' FIREMUD_SMOKE_COMPOSE_PROJECT_NAME='' \
     docker compose --env-file "$compose_fixture/.env" \
       -f "$compose_fixture/docker/docker-compose.yml" \
       -f "$compose_fixture/docker/docker-compose.override.yml" \
       -f "$compose_fixture/docker/docker-compose.smoke-images.override.yml" \
       -f "$compose_fixture/docker/docker-compose.grpc-mtls.override.yml" \
       config --format json >"$rendered_config"
-  python3 - "$rendered_config" "$fixture_root" <<'PY'
+  python3 - "$rendered_config" "$fixture_root" "$TEST_ROOT/config-probe-capability.json" <<'PY'
 import json
 import pathlib
 import sys
 
-config_path, cert_root = sys.argv[1:]
+config_path, cert_root, capability_source = sys.argv[1:]
 config = json.loads(pathlib.Path(config_path).read_text(encoding="utf-8"))
 services = config["services"]
 app_names = {
@@ -183,6 +271,20 @@ entity_namespace = services["entity-management-service"]["environment"].get("FIR
 assert entity_namespace == "dev", entity_namespace
 wms_namespace = services["world-management-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
 assert wms_namespace == "dev", wms_namespace
+game_session = services["game-session-service"]
+game_session_environment = game_session["environment"]
+assert game_session_environment.get("FIREMUD_SMOKE_RUN_ID") == ""
+assert game_session_environment.get("FIREMUD_SMOKE_COMPOSE_PROJECT_NAME") == ""
+assert game_session_environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED") == "false"
+capability_path = "/app/run-owned-initial-admission-capability.json"
+assert game_session_environment.get("FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH") == capability_path
+capability_mounts = [mount for mount in game_session.get("volumes", []) if mount.get("target") == capability_path]
+assert len(capability_mounts) == 1, capability_mounts
+assert capability_mounts[0]["source"] == capability_source, capability_mounts[0]
+assert capability_mounts[0].get("read_only") is True
+for name, service in services.items():
+    if name != "game-session-service":
+        assert not any(mount.get("target") == capability_path for mount in service.get("volumes", [])), name
 assert services["account-service"]["image"].endswith(":contract")
 print("Verified Compose mTLS wiring and image-only service configuration.")
 PY

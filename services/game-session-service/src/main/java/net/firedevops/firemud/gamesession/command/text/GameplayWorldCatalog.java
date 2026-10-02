@@ -318,14 +318,24 @@ public final class GameplayWorldCatalog {
       throw new AuthorityPointerUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
     }
+    Set<Long> invalidTenants = new java.util.HashSet<>();
     for (GameplayAdmissionPointerSnapshot pointer : pointers) {
-      if (!hasCompleteAuthorityPointer(pointer)) {
+      if (pointer == null) {
         throw new AuthorityPointerUnavailableException(
-            "Authoritative gameplay pointer is incomplete");
+            "Authoritative gameplay pointer identity is unavailable");
+      }
+      if (pointer.tenantId() <= 0L) {
+        throw new AuthorityPointerUnavailableException(
+            "Authoritative gameplay pointer tenant identity is unavailable");
+      }
+      if (!hasCompleteAuthorityPointer(pointer)) {
+        invalidTenants.add(pointer.tenantId());
       }
     }
-    requireExactlyOneVisiblePublicProductionRealmPerTenant(pointers);
-    return toWorlds(pointers).stream().filter(this::hasVisibleRealmEntries).toList();
+    invalidTenants.addAll(tenantsWithoutExactlyOneVisiblePublicProductionRealm(pointers));
+    List<GameplayAdmissionPointerSnapshot> healthyTenantPointers =
+        pointers.stream().filter(pointer -> !invalidTenants.contains(pointer.tenantId())).toList();
+    return toWorlds(healthyTenantPointers).stream().filter(this::hasVisibleRealmEntries).toList();
   }
 
   /**
@@ -479,7 +489,7 @@ public final class GameplayWorldCatalog {
             .toList());
   }
 
-  private static void requireExactlyOneVisiblePublicProductionRealmPerTenant(
+  private static Set<Long> tenantsWithoutExactlyOneVisiblePublicProductionRealm(
       List<GameplayAdmissionPointerSnapshot> pointers) {
     Set<Long> tenantIds =
         pointers.stream()
@@ -491,12 +501,9 @@ public final class GameplayWorldCatalog {
         publicRealmCounts.merge(pointer.tenantId(), 1L, Long::sum);
       }
     }
-    for (long tenantId : tenantIds) {
-      if (publicRealmCounts.getOrDefault(tenantId, 0L) != 1L) {
-        throw new AuthorityPointerUnavailableException(
-            "Authoritative public-production realm count is invalid for tenant " + tenantId);
-      }
-    }
+    return tenantIds.stream()
+        .filter(tenantId -> publicRealmCounts.getOrDefault(tenantId, 0L) != 1L)
+        .collect(Collectors.toUnmodifiableSet());
   }
 
   private static boolean hasCompleteAuthorityPointer(GameplayAdmissionPointerSnapshot pointer) {

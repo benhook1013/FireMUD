@@ -8,6 +8,7 @@ import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldSe
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +23,7 @@ public class InitialAdmissionBindHoldReconciler {
   private final ObjectProvider<GameSessionInitialAdmissionBindProofClient> proofClientProvider;
   private final Clock clock;
 
+  @Autowired
   public InitialAdmissionBindHoldReconciler(
       InitialAdmissionBindHoldRepository holdRepository,
       InitialAdmissionBindHoldService holdService,
@@ -49,26 +51,37 @@ public class InitialAdmissionBindHoldReconciler {
     }
     GameSessionInitialAdmissionBindProofClient proofClient = proofClientProvider.getIfAvailable();
     for (var hold : holds) {
-      if (proofClient == null) {
-        holdService.requireReconciliation(hold.holdId(), "GS_OWNER_READ_UNAVAILABLE");
-        continue;
-      }
-      if (!hold.diagnosticExpiresAt().isAfter(clock.instant())) {
-        logger.warn(
-            "Initial admission bind hold exceeded its diagnostic age holdId={} tenant={} gameInstanceId={}",
-            hold.holdId(),
-            hold.tenantId(),
-            hold.gameInstanceId());
-      }
       try {
-        holdService.reconcileOwnerProof(hold.holdId(), proofClient.readOwnerProof(hold));
+        reconcileHold(hold, proofClient);
       } catch (RuntimeException exception) {
         logger.warn(
-            "Initial admission bind owner readback failed holdId={} errorType={}",
-            hold.holdId(),
-            exception.getClass().getSimpleName());
-        holdService.requireReconciliation(hold.holdId(), "GS_OWNER_READ_FAILED");
+            "Initial admission bind reconciliation failed holdId={}", hold.holdId(), exception);
       }
+    }
+  }
+
+  private void reconcileHold(
+      net.firedevops.firemud.worldmanagement.entity.InitialAdmissionBindHold hold,
+      GameSessionInitialAdmissionBindProofClient proofClient) {
+    if (proofClient == null) {
+      holdService.requireReconciliation(hold.holdId(), "GS_OWNER_READ_UNAVAILABLE");
+      return;
+    }
+    if (!hold.diagnosticExpiresAt().isAfter(clock.instant())) {
+      logger.warn(
+          "Initial admission bind hold exceeded its diagnostic age holdId={} tenant={} gameInstanceId={}",
+          hold.holdId(),
+          hold.tenantId(),
+          hold.gameInstanceId());
+    }
+    try {
+      holdService.reconcileOwnerProof(hold.holdId(), proofClient.readOwnerProof(hold));
+    } catch (RuntimeException exception) {
+      logger.warn(
+          "Initial admission bind owner readback failed holdId={} errorType={}",
+          hold.holdId(),
+          exception.getClass().getSimpleName());
+      holdService.requireReconciliation(hold.holdId(), "GS_OWNER_READ_FAILED");
     }
   }
 }

@@ -570,7 +570,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void listGameplayWorldsRejectsAnIncompleteAuthorityPointer() {
+  void listGameplayWorldsSuppressesTenantWithIncompleteAuthorityPointer() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot incompleteSnapshot =
@@ -604,7 +604,7 @@ class GameSessionGrpcServiceTest {
 
     ListGameplayWorldsResponse response = listGameplayWorlds(service);
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.getError().getCode());
+    assertFalse(response.hasError());
     assertEquals(0, response.getWorldsCount());
     Mockito.verify(pointerAuthorityService).listPointers();
   }
@@ -657,7 +657,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void gameplayDiscoveryRejectsPublicRealmsAcrossDifferentWorldsForOneTenant() {
+  void gameplayDiscoverySuppressesTenantWithPublicRealmsAcrossDifferentWorlds() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     Mockito.when(pointerAuthorityService.listPointers())
@@ -670,9 +670,9 @@ class GameSessionGrpcServiceTest {
     ListGameplayWorldsResponse worlds = listGameplayWorlds(service);
     ListGameplayRealmsResponse realms = listGameplayRealms(service, "alpha");
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", worlds.getError().getCode());
+    assertFalse(worlds.hasError());
     assertEquals(0, worlds.getWorldsCount());
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", realms.getError().getCode());
+    assertEquals("INVALID_ARGUMENT", realms.getError().getCode());
     assertEquals(0, realms.getRealmsCount());
     Mockito.verify(pointerAuthorityService, Mockito.times(2)).listPointers();
   }
@@ -913,7 +913,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void missingCatalogRevisionFailsClosedForCatalogAndAdmissionPointerReads() {
+  void missingCatalogRevisionIsSuppressedFromBrowseButPointerReadFailsClosed() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);
     FeatureFlagService featureFlagService = Mockito.mock(FeatureFlagService.class);
@@ -973,7 +973,7 @@ class GameSessionGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", realmsRef.get().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", realmsRef.get().getError().getCode());
     assertEquals(0, realmsRef.get().getRealmsCount());
 
     AtomicReference<GetAdmissionPointerResponse> pointerRef = new AtomicReference<>();
@@ -1046,7 +1046,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void missingStableRealmIdentityFailsClosedForCatalogReads() {
+  void missingStableRealmIdentityIsSuppressedFromBrowseButPointerReadFailsClosed() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot missingIdentity =
@@ -1098,7 +1098,7 @@ class GameSessionGrpcServiceTest {
           public void onCompleted() {}
         });
 
-    assertEquals("ADMISSION_POINTER_UNAVAILABLE", response.get().getError().getCode());
+    assertEquals("INVALID_ARGUMENT", response.get().getError().getCode());
     assertEquals(0, response.get().getRealmsCount());
 
     AtomicReference<GetAdmissionPointerResponse> pointerResponse = new AtomicReference<>();

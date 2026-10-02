@@ -24,6 +24,8 @@ import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.RunOwnedInitialLaunchResult;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
@@ -317,9 +319,10 @@ public final class CrossServiceAppHarness {
       };
     }
 
-    @Bean(name = "gameInstanceServiceImpl")
+    @Bean(name = "crossServiceTestGameInstanceService")
     @Primary
-    GameInstanceService gameInstanceService() {
+    GameInstanceService gameInstanceService(
+        @Qualifier("gameInstanceServiceImpl") GameInstanceService actualGameInstanceService) {
       return new GameInstanceService() {
         @Override
         public GameInstanceDto startSession(
@@ -349,6 +352,11 @@ public final class CrossServiceAppHarness {
         public GameInstanceDto restartSession(long sessionId) {
           return new GameInstanceDto(
               sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "RUNNING");
+        }
+
+        @Override
+        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
+          return actualGameInstanceService.startRunOwnedInitialLaunch(request);
         }
       };
     }

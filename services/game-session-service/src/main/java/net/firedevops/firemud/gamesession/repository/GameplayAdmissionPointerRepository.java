@@ -14,6 +14,7 @@ import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerRecord;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
@@ -130,7 +131,7 @@ public class GameplayAdmissionPointerRepository {
     }
     boolean runtimeTargetChanged =
         !Objects.equals(entity.getGameInstanceId(), current.getGameInstanceId());
-    boolean catalogChanged = !catalogPolicyMatches(current, entity);
+    boolean catalogChanged = !GameplayAdmissionCatalogPolicy.matches(current, entity);
     long expectedPointerVersion =
         runtimeTargetChanged
             ? Math.addExact(current.getPointerVersion(), 1L)
@@ -316,20 +317,6 @@ public class GameplayAdmissionPointerRepository {
     record.setLastUpdateReason(entity.getLastUpdateReason());
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
-  }
-
-  private boolean catalogPolicyMatches(
-      GameplayAdmissionPointer current, GameplayAdmissionPointer requested) {
-    return Objects.equals(current.getWorldSlug(), requested.getWorldSlug())
-        && Objects.equals(current.getWorldDisplayName(), requested.getWorldDisplayName())
-        && Objects.equals(current.getRealmSlug(), requested.getRealmSlug())
-        && Objects.equals(current.getRealmDisplayName(), requested.getRealmDisplayName())
-        && current.isVisible() == requested.isVisible()
-        && current.isPublicProductionRealm() == requested.isPublicProductionRealm()
-        && current.isRequiresCharacterSelection() == requested.isRequiresCharacterSelection()
-        && Objects.equals(current.getStateScope(), requested.getStateScope())
-        && Objects.equals(
-            current.getCharacterCreationPolicy(), requested.getCharacterCreationPolicy());
   }
 
   private GameplayAdmissionPointer toEntity(Record record) {

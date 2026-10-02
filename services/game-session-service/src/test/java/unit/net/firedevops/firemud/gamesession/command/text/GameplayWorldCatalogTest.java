@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -85,29 +86,101 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void authoritySnapshotRejectsPublicRealmsAcrossDifferentWorldsForOneTenant() {
+  void authoritySnapshotSuppressesTenantWithMultiplePublicRealmsAndKeepsHealthyTenant() {
     when(authorityService.listPointers())
         .thenReturn(
             List.of(
                 publicPointer("alpha", "Alpha World", 1L, 11L),
-                publicPointer("beta", "Beta World", 1L, 12L)));
+                publicPointer("beta", "Beta World", 1L, 12L),
+                publicPointer("healthy", "Healthy World", 2L, 21L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
-    assertThatThrownBy(catalog::visibleWorldsFromAuthoritySnapshot)
-        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
-        .hasMessageContaining("public-production realm count is invalid");
+    assertThat(catalog.visibleWorldsFromAuthoritySnapshot())
+        .extracting(GameplayWorldCatalog.WorldView::slug)
+        .containsExactly("healthy");
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("alpha")).isEmpty();
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("healthy")).isPresent();
   }
 
   @Test
-  void authoritySnapshotRejectsTenantWithoutVisiblePublicRealm() {
+  void authoritySnapshotSuppressesTenantWithoutPublicRealmAndKeepsHealthyTenant() {
     when(authorityService.listPointers())
         .thenReturn(
-            List.of(pointer("demo", "Demo World", "private", "Private Realm", 1L, 11L, 7L)));
+            List.of(
+                pointer("private", "Private World", "preview", "Preview", 1L, 11L, 7L),
+                publicPointer("healthy", "Healthy World", 2L, 21L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorldsFromAuthoritySnapshot())
+        .extracting(GameplayWorldCatalog.WorldView::slug)
+        .containsExactly("healthy");
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("private")).isEmpty();
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("healthy")).isPresent();
+  }
+
+  @Test
+  void authoritySnapshotSuppressesTenantWithIncompletePointerAndKeepsHealthyTenant() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                publicPointer("invalid", "Invalid World", 1L, 11L),
+                new GameplayAdmissionPointerSnapshot(
+                    "broken",
+                    "Broken World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    12L,
+                    0L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                publicPointer("healthy", "Healthy World", 2L, 21L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.visibleWorldsFromAuthoritySnapshot())
+        .extracting(GameplayWorldCatalog.WorldView::slug)
+        .containsExactly("healthy");
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("invalid")).isEmpty();
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("broken")).isEmpty();
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("healthy")).isPresent();
+  }
+
+  @Test
+  void authoritySnapshotFailsClosedWhenPointerTenantCannotBeIdentified() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                publicPointer("healthy", "Healthy World", 2L, 21L),
+                pointer("unknown", "Unknown Tenant", "production", "Live Realm", 0L, 11L, 1L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
     assertThatThrownBy(catalog::visibleWorldsFromAuthoritySnapshot)
         .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
-        .hasMessageContaining("public-production realm count is invalid");
+        .hasMessageContaining("tenant identity is unavailable");
+  }
+
+  @Test
+  void authoritySnapshotFailsClosedWhenPointerEntryIsNull() {
+    when(authorityService.listPointers())
+        .thenReturn(Arrays.asList(publicPointer("healthy", "Healthy World", 2L, 21L), null));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::visibleWorldsFromAuthoritySnapshot)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .hasMessageContaining("pointer identity is unavailable");
+  }
+
+  @Test
+  void authoritySnapshotFailsClosedWhenPointerListIsUnavailable() {
+    when(authorityService.listPointers()).thenReturn(null);
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::visibleWorldsFromAuthoritySnapshot)
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .hasMessageContaining("pointer list is unavailable");
   }
 
   @Test

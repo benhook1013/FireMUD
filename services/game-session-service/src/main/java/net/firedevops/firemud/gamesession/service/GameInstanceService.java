@@ -11,6 +11,9 @@ public interface GameInstanceService {
 
   GameInstanceDto startSession(StartSessionRequest request, boolean replaceExistingFirst);
 
+  /** Starts or resumes a non-replacing, run-owned local fixture launch. */
+  RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request);
+
   GameInstanceDto stopSession(long sessionId);
 
   GameInstanceDto restartSession(long sessionId);

@@ -208,10 +208,6 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
   private InitialAdmissionBindHoldDto markReconciliationRequired(
       InitialAdmissionBindHold hold, String errorCode) {
     String normalizedErrorCode = normalizeErrorCode(errorCode);
-    if (STATUS_RECONCILIATION_REQUIRED.equals(hold.status())
-        && normalizedErrorCode.equals(hold.reconciliationError())) {
-      return toDto(hold);
-    }
     return holdRepository
         .markReconciliationRequired(hold, normalizedErrorCode, clock.instant())
         .map(this::toDto)
@@ -300,7 +296,7 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
     }
     if (proof.outcome() == InitialAdmissionBindOwnerProof.Outcome.COMMITTED) {
       return proof.expectedNoPriorPointer()
-          && proof.pointerVersion() > 0L
+          && proof.pointerVersion() == 1L
           && proof.pointerAuditId() != null
           && !proof.pointerAuditId().isBlank()
           && hold.requestDigest().equals(proof.pointerAuditRequestDigest());
@@ -382,7 +378,6 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
             nullToEmpty(proof.pointerAuditId()),
             Long.toString(proof.pointerVersion()),
             nullToEmpty(proof.pointerAuditRequestDigest()),
-            Boolean.toString(proof.priorPointerStillAbsent()),
             Boolean.toString(proof.futureCommitPrevented()));
     try {
       return HexFormat.of()

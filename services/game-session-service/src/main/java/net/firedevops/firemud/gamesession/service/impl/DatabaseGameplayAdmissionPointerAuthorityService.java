@@ -10,6 +10,7 @@ import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -86,7 +87,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
     if (pointer.getId() != null
         && runtimeTargetMatches(pointer, mutation)
-        && catalogPolicyMatches(pointer, mutation)) {
+        && GameplayAdmissionCatalogPolicy.matches(pointer, mutation)) {
       return toSnapshot(pointer);
     }
     boolean runtimeTargetChanged =
@@ -201,23 +202,10 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     if (currentRevision == null || currentRevision <= 0L) {
       throw new IllegalStateException("Admission pointer catalog revision is missing or invalid");
     }
-    if (!catalogPolicyMatches(pointer, mutation)) {
+    if (!GameplayAdmissionCatalogPolicy.matches(pointer, mutation)) {
       return Math.addExact(currentRevision, 1L);
     }
     return currentRevision;
-  }
-
-  private boolean catalogPolicyMatches(
-      GameplayAdmissionPointer pointer, GameplayAdmissionPointerMutation mutation) {
-    return Objects.equals(pointer.getWorldSlug(), mutation.worldSlug())
-        && Objects.equals(pointer.getWorldDisplayName(), mutation.worldDisplayName())
-        && Objects.equals(pointer.getRealmSlug(), mutation.realmSlug())
-        && Objects.equals(pointer.getRealmDisplayName(), mutation.realmDisplayName())
-        && pointer.isVisible() == mutation.visible()
-        && pointer.isPublicProductionRealm() == mutation.publicProductionRealm()
-        && pointer.isRequiresCharacterSelection() == mutation.requiresCharacterSelection()
-        && Objects.equals(pointer.getStateScope(), mutation.stateScope())
-        && Objects.equals(pointer.getCharacterCreationPolicy(), mutation.characterCreationPolicy());
   }
 
   private boolean runtimeTargetMatches(
