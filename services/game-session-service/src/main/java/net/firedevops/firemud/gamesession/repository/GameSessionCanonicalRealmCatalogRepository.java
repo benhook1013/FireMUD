@@ -262,6 +262,55 @@ public class GameSessionCanonicalRealmCatalogRepository {
   }
 
   /**
+   * Locks and fully verifies one exact initial public-production catalog row in the caller's owner
+   * transaction. The returned snapshot is produced by the same validation used for committed
+   * catalog reads; callers must compare it with their committed preflight snapshot.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public CanonicalRealmCatalogSnapshot lockExactInitialPublicProduction(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      UUID creationRequestId,
+      long catalogRevision) {
+    requireWritableOwnerTransaction();
+    requireReadSelector(targetNamespace, canonicalTenantId);
+    requireNonNil(realmId, "realmId");
+    requireNonNil(creationRequestId, "creationRequestId");
+    if (catalogRevision != INITIAL_CATALOG_REVISION) {
+      throw new CatalogConflictException(
+          "Initial public-production catalog revision must be exactly one");
+    }
+    Record record =
+        dsl.selectFrom(CATALOG)
+            .where(
+                TARGET_NAMESPACE
+                    .eq(targetNamespace)
+                    .and(CANONICAL_TENANT_ID.eq(canonicalTenantId))
+                    .and(REALM_ID.eq(realmId))
+                    .and(CREATION_REQUEST_ID.eq(creationRequestId))
+                    .and(CATALOG_REVISION.eq(catalogRevision)))
+            .forUpdate()
+            .fetchOne();
+    if (record == null) {
+      throw new InvalidCatalogEvidenceException(
+          "Exact initial public-production catalog row is missing from Game Session owner storage");
+    }
+    CanonicalRealmCatalogSnapshot snapshot = toSnapshot(record);
+    if (!snapshot.visible()
+        || !snapshot.publicProduction()
+        || snapshot.catalogRevision() != INITIAL_CATALOG_REVISION
+        || !snapshot.targetNamespace().equals(targetNamespace)
+        || !snapshot.tenantId().equals(canonicalTenantId)
+        || !snapshot.realmId().equals(realmId)
+        || !snapshot.creationRequestId().equals(creationRequestId)) {
+      throw new InvalidCatalogEvidenceException(
+          "Locked catalog row is not the exact initial public-production authority");
+    }
+    return snapshot;
+  }
+
+  /**
    * Returns the unique visible public-production catalog snapshot, or no authority when absent.
    * Multiple or internally conflicting results fail closed rather than selecting by order.
    */

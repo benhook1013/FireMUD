@@ -5,18 +5,29 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPointerEvent.GAMEPLAY_ADMISSION_POINTER_EVENT;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerEventRecord;
 import org.jooq.DSLContext;
+import org.jooq.Field;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameplayAdmissionPointerEventRepository {
+  private static final Field<Integer> REPRESENTATION_VERSION =
+      DSL.field(DSL.name("representation_version"), Integer.class);
+  private static final int RETAINED_REPRESENTATION_VERSION = 1;
+
   private final DSLContext dsl;
 
   public GameplayAdmissionPointerEventRepository(DSLContext dsl) {
@@ -30,7 +41,8 @@ public class GameplayAdmissionPointerEventRepository {
             GAMEPLAY_ADMISSION_POINTER_EVENT
                 .WORLD_SLUG
                 .eq(worldSlug)
-                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug))
+                .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
             GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
@@ -46,7 +58,8 @@ public class GameplayAdmissionPointerEventRepository {
                 .TENANT_ID
                 .eq(tenantId)
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
-                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug))
+                .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT.desc(),
             GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
@@ -91,7 +104,11 @@ public class GameplayAdmissionPointerEventRepository {
             .set(
                 GAMEPLAY_ADMISSION_POINTER_EVENT.OCCURRED_AT,
                 toLocalDateTime(entity.getOccurredAt()))
-            .where(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.eq(entity.getId()))
+            .where(
+                GAMEPLAY_ADMISSION_POINTER_EVENT
+                    .ID
+                    .eq(entity.getId())
+                    .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
             .execute();
     if (updated != 1) {
       throw new IllegalStateException(
@@ -101,12 +118,75 @@ public class GameplayAdmissionPointerEventRepository {
   }
 
   public void deleteAllInBatch() {
-    dsl.deleteFrom(GAMEPLAY_ADMISSION_POINTER_EVENT).execute();
+    dsl.deleteFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
+        .where(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION))
+        .execute();
+  }
+
+  /** Appends the single canonical CLOSED audit event inside its pointer owner transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public long appendCanonicalClosed(
+      String targetNamespace,
+      UUID canonicalTenantId,
+      UUID realmId,
+      String worldSlug,
+      String realmSlug,
+      long catalogRevision,
+      String actorPrincipal,
+      String reason,
+      UUID requestId,
+      Instant occurredAt) {
+    Objects.requireNonNull(targetNamespace, "targetNamespace");
+    Objects.requireNonNull(canonicalTenantId, "canonicalTenantId");
+    Objects.requireNonNull(realmId, "realmId");
+    Objects.requireNonNull(worldSlug, "worldSlug");
+    Objects.requireNonNull(realmSlug, "realmSlug");
+    Objects.requireNonNull(actorPrincipal, "actorPrincipal");
+    Objects.requireNonNull(reason, "reason");
+    Objects.requireNonNull(requestId, "requestId");
+    Objects.requireNonNull(occurredAt, "occurredAt");
+    if (catalogRevision <= 0L) {
+      throw new IllegalArgumentException("catalogRevision must be positive");
+    }
+    Record inserted =
+        dsl.fetchOne(
+            "INSERT INTO gameplay_admission_pointer_event ("
+                + "world_slug, realm_slug, world_display_name, realm_display_name, tenant_id, "
+                + "game_instance_id, pointer_version, visible, requires_character_selection, "
+                + "state_scope, character_creation_policy, actor_principal, reason, "
+                + "control_plane_request_id, occurred_at, prepared_version_upgrade_id, "
+                + "public_production_realm, representation_version, target_namespace, "
+                + "canonical_tenant_id, realm_id, catalog_revision, admission_state) "
+                + "VALUES (?, ?, NULL, NULL, NULL, NULL, 1, NULL, NULL, NULL, NULL, ?, ?, ?, ?, "
+                + "NULL, NULL, 2, ?, ?, ?, ?, 'CLOSED') RETURNING id",
+            worldSlug,
+            realmSlug,
+            actorPrincipal,
+            reason,
+            requestId.toString(),
+            toLocalDateTime(occurredAt),
+            targetNamespace,
+            canonicalTenantId,
+            realmId,
+            catalogRevision);
+    if (inserted == null) {
+      throw new IllegalStateException(
+          "Canonical CLOSED admission-pointer audit insert returned no id");
+    }
+    Long eventId = inserted.get("id", Long.class);
+    if (eventId == null || eventId <= 0L) {
+      throw new IllegalStateException("Canonical CLOSED admission-pointer event id is invalid");
+    }
+    return eventId;
   }
 
   private GameplayAdmissionPointerEvent findById(Long id) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
-        .where(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.eq(id))
+        .where(
+            GAMEPLAY_ADMISSION_POINTER_EVENT
+                .ID
+                .eq(id)
+                .and(REPRESENTATION_VERSION.eq(RETAINED_REPRESENTATION_VERSION)))
         .fetchOptional(this::toEntity)
         .orElseThrow();
   }

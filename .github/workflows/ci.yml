@@ -1194,16 +1194,16 @@ jobs:
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
           ./gradlew :game-session-service:integrationTest \
-            --tests net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
-            --require-suite net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest \
-            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#persistsExactFreshSelectorsAndSharedNamespaceWithoutChangingRetainedNumericEvidence()' \
-            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#requiresOwnerWriteTransactionRejectsChangedRequestAndDeniesRetainedProvenance()' \
-            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#isolatedCreationAllocatesDistinctRealmLocalNamespacesOutsideSharedRegistry()' \
-            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#concurrentExactCreationRecoversOneDurableRealmAndNamespace()' \
-            --require-case 'net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#freshCatalogAndRetainedAssociationCannotBothAcquireTenantAuthorityInEitherOrder()' \
+            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#persistsExactFreshSelectorsAndSharedNamespaceWithoutChangingRetainedNumericEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#requiresOwnerWriteTransactionRejectsChangedRequestAndDeniesRetainedProvenance()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#isolatedCreationAllocatesDistinctRealmLocalNamespacesOutsideSharedRegistry()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#concurrentExactCreationRecoversOneDurableRealmAndNamespace()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepositoryIntegrationTest#freshCatalogAndRetainedAssociationCannotBothAcquireTenantAuthorityInEitherOrder()' \
             game-session-service
 
       - name: Upload Game Session canonical realm catalog PostgreSQL proof results
@@ -1212,6 +1212,34 @@ jobs:
         with:
           name: game-session-canonical-realm-catalog-postgresql-proof-${{ github.sha }}
           path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionCanonicalRealmCatalogRepositoryIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run Game Session canonical CLOSED pointer PostgreSQL component proof
+        if: ${{ matrix.module == 'game-session-service' }}
+        run: |
+          ./gradlew :game-session-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#commitsCatalogBackedClosedPointerWithoutNumericOrRuntimeAliases()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#exactRetryAndLostResponseReadbackPreserveTheOriginalOutcomeAndEvent()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#changedAuditOrCatalogInputUnderTheSameRequestConflictsWithoutAddingRows()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#concurrentExactCreationLeavesOnePointerEventAndImmutableOutcome()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#rollingBackOwnerTransactionLeavesNoPointerEventOrOutcome()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#committedReadbackRequiresExactOwnerTransactionBoundaries()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#partialPointerCannotCommitWithoutItsAuditAndRequestOutcome()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#retainedNumericReadersRemainIsolatedAndCanonicalMutationGuardsHold()' \
+            game-session-service
+
+      - name: Upload Game Session canonical CLOSED pointer PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-session-canonical-closed-pointer-postgresql-proof-${{ github.sha }}
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 
