@@ -1437,8 +1437,12 @@ jobs:
           room_id="$(jq -er '.lookRoomId | select(type == "string" and length > 0)' "$TELNET_SEMANTIC_OUT")"
           python3 ./dev-tools/hosted/shared/hosted-websocket-playable-smoke.py \
             --gateway-base "https://${PREVIEW_HOSTNAME}" \
+            --auth-base "https://${PREVIEW_HOSTNAME}" \
+            --auth-prefix "/api/account" \
             --websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game" \
             --origin "https://${PREVIEW_HOSTNAME}" \
+            --readiness-url "" \
+            --revoke-url "" \
             --username "$HOSTED_PLAYABLE_EMAIL" \
             --password "$HOSTED_PLAYABLE_PASSWORD" \
             --world "$HOSTED_PLAYABLE_WORLD" \
