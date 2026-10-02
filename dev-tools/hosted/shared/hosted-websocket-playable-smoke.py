@@ -30,6 +30,14 @@ DEFAULT_REALM = "production"
 DEFAULT_AUTH_PREFIX = "/api/account"
 DEFAULT_GATEWAY_BASE = "http://localhost:8080"
 MAX_HTTP_RESPONSE_BYTES = 1_048_576
+MAX_WEBSOCKET_FRAME_BYTES = 1_048_576
+MAX_WEBSOCKET_MESSAGE_BYTES = 1_048_576
+MAX_WEBSOCKET_RECEIVE_FRAMES = 256
+MAX_WEBSOCKET_RECEIVE_BYTES = 2 * 1_048_576
+MAX_WEBSOCKET_WAIT_FRAMES = 1_024
+MAX_WEBSOCKET_WAIT_MESSAGES = 256
+MAX_WEBSOCKET_WAIT_BYTES = 2 * 1_048_576
+MAX_WEBSOCKET_CLOSE_SECONDS = 3.0
 
 
 class HostedWebSocketPlayableSmokeError(RuntimeError):
@@ -65,6 +73,172 @@ class HttpResponse:
 HttpRequest = Callable[[str, str, Any, Mapping[str, str], float], HttpResponse]
 WebSocketFactory = Callable[[str, float, Sequence[str]], Any]
 WEBSOCKET_CLOSE_OPCODE = 0x8
+
+
+class _WebSocketReceiveLimitExceeded(ValueError):
+    """An inbound WebSocket frame or receive budget exceeded its local bound."""
+
+
+def _websocket_payload_size(payload: Any) -> int:
+    if isinstance(payload, bytes):
+        return len(payload)
+    if isinstance(payload, str):
+        return len(payload.encode("utf-8"))
+    return 0
+
+
+def _bounded_websocket_client(websocket: Any) -> type:
+    """Build the smoke-only bounded adapter for the pinned websocket-client API."""
+    # websocket-client 1.9.2 exposes create_connection(class_) but no public
+    # max-frame/message setting. These two private _abnf hooks are intentionally
+    # isolated here; the requirements pin must be reviewed with this adapter.
+    from websocket import _abnf
+
+    class BoundedFrameBuffer(_abnf.frame_buffer):
+        def __init__(
+            self,
+            recv_fn: Callable[[int], bytes],
+            skip_utf8_validation: bool,
+            owner: Any,
+        ):
+            super().__init__(recv_fn, skip_utf8_validation)
+            self.owner = owner
+
+        def recv_length(self) -> None:
+            super().recv_length()
+            if self.header is None or self.length is None:
+                raise _WebSocketReceiveLimitExceeded("incomplete WebSocket frame header")
+            opcode = self.header[4]
+            maximum = 125 if opcode & 0x8 else MAX_WEBSOCKET_FRAME_BYTES
+            try:
+                if self.length > maximum:
+                    raise _WebSocketReceiveLimitExceeded("WebSocket frame exceeds its size limit")
+                self.owner._reserve_inbound_frame(self.length)
+            except _WebSocketReceiveLimitExceeded:
+                self.clear()
+                self.owner._receive_limit_failed = True
+                raise
+
+    class BoundedContinuousFrame(_abnf.continuous_frame):
+        def add(self, frame: Any) -> None:
+            if frame.opcode in (_abnf.ABNF.OPCODE_TEXT, _abnf.ABNF.OPCODE_BINARY):
+                previous_size = len(self.cont_data[1]) if self.cont_data else 0
+                if previous_size + len(frame.data) > MAX_WEBSOCKET_MESSAGE_BYTES:
+                    raise _WebSocketReceiveLimitExceeded("WebSocket message exceeds its size limit")
+            elif frame.opcode == _abnf.ABNF.OPCODE_CONT and self.cont_data:
+                if len(self.cont_data[1]) + len(frame.data) > MAX_WEBSOCKET_MESSAGE_BYTES:
+                    raise _WebSocketReceiveLimitExceeded("WebSocket message exceeds its size limit")
+            super().add(frame)
+
+    class BoundedWebSocket(websocket.WebSocket):
+        def __init__(self, *args: Any, **kwargs: Any):
+            super().__init__(*args, **kwargs)
+            self._receive_deadline: float | None = None
+            self._receive_operation_active = False
+            self._receive_operation_frames = 0
+            self._receive_operation_bytes = 0
+            self._last_receive_usage = (0, 0)
+            self._receive_limit_failed = False
+            self.frame_buffer = BoundedFrameBuffer(
+                self._recv,
+                self.frame_buffer.skip_utf8_validation,
+                self,
+            )
+            self.cont_frame = BoundedContinuousFrame(
+                self.cont_frame.fire_cont_frame,
+                self.cont_frame.skip_utf8_validation,
+            )
+
+        def set_receive_deadline(self, deadline: float | None) -> None:
+            self._receive_deadline = deadline
+
+        def _reserve_inbound_frame(self, payload_bytes: int) -> None:
+            if self._receive_operation_frames + 1 > MAX_WEBSOCKET_RECEIVE_FRAMES:
+                raise _WebSocketReceiveLimitExceeded("WebSocket receive frame budget exceeded")
+            if self._receive_operation_bytes + payload_bytes > MAX_WEBSOCKET_RECEIVE_BYTES:
+                raise _WebSocketReceiveLimitExceeded("WebSocket receive byte budget exceeded")
+            self._receive_operation_frames += 1
+            self._receive_operation_bytes += payload_bytes
+
+        def _begin_receive_operation(self) -> bool:
+            if self._receive_operation_active:
+                return False
+            self._receive_operation_active = True
+            self._receive_operation_frames = 0
+            self._receive_operation_bytes = 0
+            return True
+
+        def _end_receive_operation(self, started: bool) -> None:
+            if started:
+                self._last_receive_usage = (
+                    self._receive_operation_frames,
+                    self._receive_operation_bytes,
+                )
+                self._receive_operation_active = False
+
+        def last_receive_usage(self) -> tuple[int, int]:
+            return self._last_receive_usage
+
+        def _recv(self, bufsize: int) -> bytes:
+            deadline = self._receive_deadline
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("WebSocket receive deadline expired")
+                if self.sock is not None:
+                    self.sock.settimeout(remaining)
+            result = super()._recv(bufsize)
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("WebSocket receive deadline expired")
+            return result
+
+        def recv_frame(self) -> Any:
+            started = self._begin_receive_operation()
+            try:
+                return super().recv_frame()
+            except _WebSocketReceiveLimitExceeded:
+                self._receive_limit_failed = True
+                raise
+            finally:
+                self._end_receive_operation(started)
+
+        def recv_data_frame(self, control_frame: bool = False) -> tuple:
+            started = self._begin_receive_operation()
+            try:
+                return super().recv_data_frame(control_frame)
+            except _WebSocketReceiveLimitExceeded:
+                self._receive_limit_failed = True
+                raise
+            finally:
+                self._end_receive_operation(started)
+
+        def close(
+            self,
+            status: int = 1000,
+            reason: str | bytes = b"",
+            timeout: float | None = 3,
+        ) -> None:
+            if self._receive_limit_failed or not self.connected:
+                self.shutdown()
+                return
+            close_timeout = (
+                MAX_WEBSOCKET_CLOSE_SECONDS
+                if timeout is None
+                else min(max(0.0, float(timeout)), MAX_WEBSOCKET_CLOSE_SECONDS)
+            )
+            previous_deadline = self._receive_deadline
+            self._receive_deadline = time.monotonic() + close_timeout
+            started = self._begin_receive_operation()
+            try:
+                if self.sock is not None:
+                    self.sock.settimeout(close_timeout)
+                super().close(status=status, reason=reason, timeout=close_timeout)
+            finally:
+                self.shutdown()
+                self._receive_deadline = previous_deadline
+                self._end_receive_operation(started)
+
+    return BoundedWebSocket
 
 
 def redact_credentials(value: Any, username: str, password: str) -> str:
@@ -336,14 +510,49 @@ def _connect_context(
     return f"Firemud-Connect-Token={value}", character
 
 
+def _set_receive_deadline(ws: Any, deadline: float) -> None:
+    setter = getattr(ws, "set_receive_deadline", None)
+    if callable(setter):
+        setter(deadline)
+
+
+def _receive_usage(ws: Any, payload: Any) -> tuple[int, int]:
+    getter = getattr(ws, "last_receive_usage", None)
+    usage = getter() if callable(getter) else None
+    if (
+        isinstance(usage, tuple)
+        and len(usage) == 2
+        and all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in usage)
+    ):
+        return usage
+    return 1, _websocket_payload_size(payload)
+
+
 def _await_command_result(ws: Any, command_type: str, config: SmokeConfig) -> dict[str, Any]:
     deadline = time.monotonic() + config.timeout_seconds
+    received_messages = 0
+    received_frames = 0
+    received_bytes = 0
     while time.monotonic() < deadline:
+        if received_messages >= MAX_WEBSOCKET_WAIT_MESSAGES:
+            raise _fail(f"WebSocket receive budget exceeded while waiting for {command_type}", config)
         ws.settimeout(max(0.01, deadline - time.monotonic()))
+        _set_receive_deadline(ws, deadline)
         try:
             payload = ws.recv()
+        except _WebSocketReceiveLimitExceeded as exc:
+            raise _fail(
+                f"WebSocket receive limits exceeded while waiting for {command_type}",
+                config,
+            ) from exc
         except Exception as exc:
             raise _fail(f"WebSocket closed while waiting for {command_type}", config) from exc
+        received_messages += 1
+        frame_count, byte_count = _receive_usage(ws, payload)
+        received_frames += frame_count
+        received_bytes += byte_count
+        if received_frames > MAX_WEBSOCKET_WAIT_FRAMES or received_bytes > MAX_WEBSOCKET_WAIT_BYTES:
+            raise _fail(f"WebSocket receive budget exceeded while waiting for {command_type}", config)
         try:
             parsed = json.loads(payload)
         except (TypeError, json.JSONDecodeError):
@@ -352,7 +561,7 @@ def _await_command_result(ws: Any, command_type: str, config: SmokeConfig) -> di
             continue
         if parsed.get("eventType") != "command_result" or parsed.get("commandType") != command_type:
             continue
-        if not parsed.get("accepted", False):
+        if parsed.get("accepted") is not True:
             raise _fail(f"{command_type} was rejected by the first-party gameplay session", config)
         return parsed
     raise _fail(f"timed out waiting for structured {command_type} result", config)
@@ -388,10 +597,21 @@ def _await_websocket_close(ws: Any, config: SmokeConfig) -> None:
         )
 
     deadline = time.monotonic() + config.timeout_seconds
+    received_messages = 0
+    received_frames = 0
+    received_bytes = 0
     while time.monotonic() < deadline:
+        if received_messages >= MAX_WEBSOCKET_WAIT_MESSAGES:
+            raise _fail("WebSocket receive budget exceeded while waiting for close", config)
         ws.settimeout(max(0.01, deadline - time.monotonic()))
+        _set_receive_deadline(ws, deadline)
         try:
             observation = recv_data(control_frame=True)
+        except _WebSocketReceiveLimitExceeded as exc:
+            raise _fail(
+                "WebSocket receive limits exceeded while waiting for close",
+                config,
+            ) from exc
         except Exception as exc:
             raise _fail(
                 "first-party WSS close observation failed after LOGOUT",
@@ -402,6 +622,12 @@ def _await_websocket_close(ws: Any, config: SmokeConfig) -> None:
                 "first-party WSS close observation returned a malformed frame",
                 config,
             )
+        received_messages += 1
+        frame_count, byte_count = _receive_usage(ws, observation[1])
+        received_frames += frame_count
+        received_bytes += byte_count
+        if received_frames > MAX_WEBSOCKET_WAIT_FRAMES or received_bytes > MAX_WEBSOCKET_WAIT_BYTES:
+            raise _fail("WebSocket receive budget exceeded while waiting for close", config)
         if observation[0] == WEBSOCKET_CLOSE_OPCODE:
             return
 
@@ -515,6 +741,7 @@ def run_smoke(
             import websocket
         except ImportError as exc:
             raise _fail("the websocket-client package is required for WSS smoke", config) from exc
+        bounded_websocket = _bounded_websocket_client(websocket)
 
         def websocket_factory(url: str, timeout: float, headers: Sequence[str]) -> Any:
             # websocket-client emits its own Origin unless the dedicated
@@ -523,6 +750,7 @@ def run_smoke(
             return websocket.create_connection(
                 url,
                 timeout=timeout,
+                class_=bounded_websocket,
                 header=[header for header in headers if not header.lower().startswith("origin:")],
                 origin=config.origin,
             )
