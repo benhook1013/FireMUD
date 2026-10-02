@@ -5727,12 +5727,47 @@ class ReviewController:
             if not exact_replacement or _field(value, "channel") not in (None, selected.value):
                 return False
             if selected == policy.Channel.HOSTED:
-                return self._hosted_active_response_overlaps_cli(
-                    value,
-                    pr,
-                    item.head,
-                    current,
-                    require_response_identity=True,
+                if self._hosted_active_response_overlaps_cli(
+                    value, pr, item.head, current, require_response_identity=True
+                ):
+                    return True
+                trigger_id = _field(value, "trigger_id")
+                checkpoint = _field(value, "checkpoint", "checkpoint_id")
+                observed_head = _field(value, "head", "reviewed_head")
+                return (
+                    _field(value, "state") == "awaiting_response"
+                    and _field(value, "posted") is True
+                    and _field(value, "reason") == "no attributable terminal response"
+                    and _field(value, "held") is True
+                    and _field(value, "active_reservation") is True
+                    and _field(value, "unstable") is not True
+                    and _field(value, "attributable") is True
+                    and _field(value, "terminal") is False
+                    and _field(value, "response_id") is None
+                    and type(_field(value, "pr")) is int
+                    and _field(value, "pr") == pr
+                    and type(trigger_id) is int
+                    and trigger_id > 0
+                    and checkpoint == f"trigger:{trigger_id}"
+                    and isinstance(observed_head, str)
+                    and re.fullmatch(r"[0-9a-fA-F]{40}", observed_head) is not None
+                    and observed_head.casefold() == item.head.casefold()
+                    and not any(
+                        _field(value, flag) is True
+                        for flag in (
+                            "rate_limited",
+                            "terminal_ambiguous",
+                            "unreconciled",
+                            "parent_moved",
+                            "over_ceiling",
+                            "provisional",
+                            "correction",
+                            "non_counting",
+                            "completed",
+                            "actionable",
+                        )
+                    )
+                    and self._hosted_anchor_matches(value, pr, current)
                 )
             return self._active_cli_review_overlaps_hosted(value, pr, current)
 
