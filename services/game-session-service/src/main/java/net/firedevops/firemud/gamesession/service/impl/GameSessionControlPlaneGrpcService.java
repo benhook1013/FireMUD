@@ -1165,6 +1165,16 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
+      if (isPersistenceAvailabilityFailure(ex)) {
+        logger.warn("GetPreparedVersionUpgrade persistence unavailable", ex);
+        GetPreparedVersionUpgradeResponse response =
+            GetPreparedVersionUpgradeResponse.newBuilder()
+                .setError(admissionPointerAuthorityUnavailableError("GetPreparedVersionUpgrade"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       logger.error("GetPreparedVersionUpgrade failed", ex);
       GetPreparedVersionUpgradeResponse response =
           GetPreparedVersionUpgradeResponse.newBuilder()
