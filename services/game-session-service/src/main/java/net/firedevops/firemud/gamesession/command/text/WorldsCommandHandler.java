@@ -643,7 +643,7 @@ public class WorldsCommandHandler {
         scope.playerContext().toBuilder().setRequestId(requestId).build();
     return JoinMembershipResult.response(
         accountClient.joinPublicProductionMembership(
-            playerContext, scope.connectScopeId(), requestId));
+            playerContext, scope.connectScopeId(), requestId, scope.expiresAt()));
   }
 
   private static long worldTenantId(GameplayWorldCatalog.WorldView world) {

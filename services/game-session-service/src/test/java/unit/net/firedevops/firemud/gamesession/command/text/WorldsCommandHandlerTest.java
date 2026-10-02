@@ -139,7 +139,10 @@ class WorldsCommandHandlerTest {
                 .build());
     Mockito.when(
             accountClient.joinPublicProductionMembership(
-                Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
         .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
@@ -175,12 +178,14 @@ class WorldsCommandHandlerTest {
         .joinPublicProductionMembership(
             Mockito.argThat(context -> context.getTenantId().equals("22")),
             Mockito.eq("scope"),
-            Mockito.anyString());
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
     Mockito.verify(accountClient)
         .joinPublicProductionMembership(
             Mockito.argThat(context -> context.getTenantId().equals("33")),
             Mockito.eq("scope"),
-            Mockito.anyString());
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
   }
 
   @Test
@@ -206,6 +211,43 @@ class WorldsCommandHandlerTest {
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "1"))
         .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
     Mockito.verifyNoInteractions(accountClient);
+  }
+
+  @Test
+  void joinForwardsTheRetainedAccountScopeExpiry() {
+    Instant scopeExpiresAt = Instant.ofEpochMilli(Instant.now().plusSeconds(60).toEpochMilli());
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope-with-expiry")
+                .setConnectScopeExpiresAt(scopeExpiresAt.toString())
+                .build());
+    Mockito.when(
+            accountClient.joinPublicProductionMembership(
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.any(),
+            Mockito.eq("scope-with-expiry"),
+            Mockito.anyString(),
+            Mockito.eq(scopeExpiresAt));
   }
 
   @Test
@@ -1603,7 +1645,10 @@ class WorldsCommandHandlerTest {
                 .build());
     Mockito.when(
             accountClient.joinPublicProductionMembership(
-                Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
         .thenReturn(
             JoinPublicProductionMembershipResponse.newBuilder()
                 .setSuccess(false)
@@ -1692,7 +1737,8 @@ class WorldsCommandHandlerTest {
         .isEqualTo(
             WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
     Mockito.verify(accountClient, Mockito.never())
-        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
   }
 
   @Test
