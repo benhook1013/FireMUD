@@ -73,13 +73,14 @@ workload_certificate_is_valid() {
   local certificate="$WORKLOAD_DIR/$workload.crt"
   local private_key="$WORKLOAD_DIR/$workload.key"
   local expected_uri="spiffe://firemud/ns/$WORKLOAD_NAMESPACE/sa/$workload"
-  local subject_alt_names certificate_public_key private_key_public_key
+  local subject_alt_names uri_sans certificate_public_key private_key_public_key
 
   [[ -f "$certificate" && -f "$private_key" ]] || return 1
   openssl verify -purpose sslclient -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null 2>&1 || return 1
   openssl verify -purpose sslserver -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null 2>&1 || return 1
   subject_alt_names="$(openssl x509 -in "$certificate" -noout -ext subjectAltName 2>/dev/null)" || return 1
-  [[ "$subject_alt_names" == *"URI:$expected_uri"* && "$subject_alt_names" == *"DNS:$workload"* ]] || return 1
+  uri_sans="$(printf '%s\n' "$subject_alt_names" | grep -oE 'URI:[^,[:space:]]+' || true)"
+  [[ "$uri_sans" == "URI:$expected_uri" && "$subject_alt_names" == *"DNS:$workload"* ]] || return 1
   certificate_public_key="$(openssl x509 -in "$certificate" -pubkey -noout \
     | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)" || return 1
   private_key_public_key="$(openssl pkey -in "$private_key" -pubout -outform DER 2>/dev/null \

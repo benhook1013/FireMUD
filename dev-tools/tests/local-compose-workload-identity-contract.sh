@@ -81,13 +81,14 @@ assert_workload_certificate() {
   local workload="$1"
   local certificate="$CERT_DIR/local-runtime/$workload/workloads/$workload.crt"
   local private_key="$CERT_DIR/local-runtime/$workload/workloads/$workload.key"
-  local subject_alt_names extended_key_usage expected_uri certificate_public_key private_key_public_key
+  local subject_alt_names uri_sans extended_key_usage expected_uri certificate_public_key private_key_public_key
   expected_uri="spiffe://firemud/ns/local/sa/$workload"
 
   openssl verify -purpose sslclient -CAfile "$CERT_DIR/local-runtime/$workload/ca.crt" "$certificate" >/dev/null
   openssl verify -purpose sslserver -CAfile "$CERT_DIR/local-runtime/$workload/ca.crt" "$certificate" >/dev/null
   subject_alt_names="$(openssl x509 -in "$certificate" -noout -ext subjectAltName)"
-  [[ "$subject_alt_names" == *"URI:$expected_uri"* \
+  uri_sans="$(printf '%s\n' "$subject_alt_names" | grep -oE 'URI:[^,[:space:]]+' || true)"
+  [[ "$uri_sans" == "URI:$expected_uri" \
     && "$subject_alt_names" == *"DNS:$workload"* \
     && "$subject_alt_names" == *"DNS:$workload.local"* \
     && "$subject_alt_names" == *"DNS:$workload.local.svc"* \
@@ -109,6 +110,51 @@ assert_workload_certificate() {
     echo "workload certificate and private key do not match: $workload" >&2
     exit 1
   }
+}
+
+assert_invalid_workload_uri_is_reissued() {
+  local case_name="$1"
+  local subject_alt_name="$2"
+  local certificate="$CERT_DIR/workloads/account-service.crt"
+  local private_key="$CERT_DIR/workloads/account-service.key"
+  local fixture_dir="$CERT_DIR/workload-uri-$case_name"
+  local config="$fixture_dir/extensions.cnf"
+  local request="$fixture_dir/workload.csr"
+  local before_fingerprint after_fingerprint certificate_public_key private_key_public_key
+  mkdir -p "$fixture_dir"
+  openssl req -new -key "$private_key" -subj "/CN=firemud-grpc-account-service" \
+    -out "$request" >/dev/null 2>&1
+  printf '%s\n' \
+    '[leaf]' \
+    'basicConstraints=critical,CA:FALSE' \
+    'keyUsage=critical,digitalSignature,keyEncipherment' \
+    'extendedKeyUsage=serverAuth,clientAuth' \
+    "subjectAltName=$subject_alt_name" \
+    >"$config"
+  openssl x509 -req -in "$request" -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" \
+    -set_serial "0x$(openssl rand -hex 16)" -out "$certificate" -days 30 -sha256 \
+    -extfile "$config" -extensions leaf >/dev/null 2>&1
+
+  # Keep CA trust, both mTLS usages, and key pairing valid so only the URI identity is wrong.
+  openssl verify -purpose sslclient -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null
+  openssl verify -purpose sslserver -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null
+  certificate_public_key="$(openssl x509 -in "$certificate" -pubkey -noout \
+    | openssl pkey -pubin -outform DER | openssl dgst -sha256)"
+  private_key_public_key="$(openssl pkey -in "$private_key" -pubout -outform DER \
+    | openssl dgst -sha256)"
+  [[ "$certificate_public_key" == "$private_key_public_key" ]] || {
+    echo "invalid URI fixture does not match the account-service key: $case_name" >&2
+    exit 1
+  }
+
+  before_fingerprint="$(openssl x509 -in "$certificate" -noout -fingerprint -sha256 | cut -d= -f2)"
+  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$CERT_DIR"
+  after_fingerprint="$(openssl x509 -in "$certificate" -noout -fingerprint -sha256 | cut -d= -f2)"
+  [[ "$after_fingerprint" != "$before_fingerprint" ]] || {
+    echo "ensure-dev-certs retained an incorrect workload URI identity: $case_name" >&2
+    exit 1
+  }
+  assert_workload_certificate account-service
 }
 
 bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$CERT_DIR"
@@ -281,6 +327,15 @@ for workload in account-service game-session-service social-groups-service; do
   }
   seen_certificates[$fingerprint]=1
 done
+
+expected_account_uri="spiffe://firemud/ns/local/sa/account-service"
+account_dns_sans='DNS:account-service,DNS:account-service.local,DNS:account-service.local.svc,DNS:account-service.local.svc.cluster.local'
+assert_invalid_workload_uri_is_reissued \
+  duplicate-uri "URI:$expected_account_uri,URI:spiffe://firemud/ns/local/sa/other,$account_dns_sans"
+assert_invalid_workload_uri_is_reissued \
+  prefix-uri "URI:xURI:$expected_account_uri,$account_dns_sans"
+assert_invalid_workload_uri_is_reissued \
+  suffix-uri "URI:${expected_account_uri}-shadow,$account_dns_sans"
 
 # A malformed or stale local leaf is replaced only after it fails closed
 # identity/issuer/key validation; the generic workload generator remains 0600.

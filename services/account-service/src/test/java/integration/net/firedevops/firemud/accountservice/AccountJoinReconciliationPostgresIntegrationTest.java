@@ -5,6 +5,8 @@ import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -22,6 +24,8 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
+import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
 import net.firedevops.firemud.accountservice.service.AccountJoinReconciliationService;
@@ -38,6 +42,8 @@ import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -84,11 +90,53 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   @Autowired private AccountService accountService;
   @Autowired private AccountJoinReconciliationService reconciliationService;
   @Autowired private AccountJoinOperationRepository joinOperationRepository;
+  @Autowired private AccountConnectScopeRepository connectScopeRepository;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private EntityManagementClient entityManagementClient;
   @MockitoBean private GameSessionClient gameSessionClient;
   @MockitoBean private LoggingAdminClient loggingAdminClient;
   @MockitoBean private JavaMailSender mailSender;
+
+  @Test
+  void reconciliationIntentDefaultUsesUtcForDueReadbackInNonUtcDatabaseSession() {
+    JoinFixture fixture = fixture("active");
+    VerifiedJoinScope scope = connectScopeRepository.find(fixture.connectScopeId()).orElseThrow();
+    String callerBinding = "direct-text-session:" + fixture.caller().sessionId();
+    TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+
+    transaction.executeWithoutResult(
+        status -> {
+          dsl.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+          assertThat(
+                  dsl.resultQuery("SELECT current_setting('TimeZone')").fetchOne(0, String.class))
+              .isEqualTo("Pacific/Auckland");
+
+          LocalDateTime expectedUtcDueTime =
+              dsl.resultQuery("SELECT pg_catalog.timezone('UTC', CURRENT_TIMESTAMP)")
+                  .fetchOne(0, LocalDateTime.class);
+          String intentDigest = AccountJoinDigest.intent(fixture.requestId(), scope, callerBinding);
+          assertThat(
+                  joinOperationRepository.insertIntent(
+                      fixture.requestId(), scope, callerBinding, intentDigest))
+              .isTrue();
+
+          var inserted = joinOperationRepository.find(fixture.requestId()).orElseThrow();
+          assertThat(inserted.nextReconciliationAttemptAt())
+              .isEqualTo(expectedUtcDueTime.toInstant(ZoneOffset.UTC));
+          assertThat(
+                  joinOperationRepository
+                      .findDuePendingReconciliation(
+                          expectedUtcDueTime.toInstant(ZoneOffset.UTC), 20)
+                      .stream()
+                      .map(AccountJoinOperationRepository.JoinOperation::requestId))
+              .contains(fixture.requestId());
+
+          // SET LOCAL and the synthetic intent are both discarded, so no pooled session inherits
+          // the test timezone and no fixture row remains.
+          status.setRollbackOnly();
+        });
+  }
 
   @Test
   void exactPersistedEvidenceRecoversExpiredScopeAndSameRequestRetryWithoutDuplicates() {
