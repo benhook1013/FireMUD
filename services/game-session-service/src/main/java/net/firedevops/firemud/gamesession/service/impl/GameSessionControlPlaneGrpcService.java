@@ -118,6 +118,14 @@ public final class GameSessionControlPlaneGrpcService
     return ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_id");
   }
 
+  private long requireTenantAccess(String tenantId) {
+    long parsedTenantId = parseTenantId(tenantId);
+    if (!SessionContext.hasTenantAccess(parsedTenantId)) {
+      throw new AdminAuthorizationException("Tenant access required");
+    }
+    return parsedTenantId;
+  }
+
   private long parseGameInstanceId(String gameInstanceId) {
     return ControlPlaneRequestParser.parsePositiveLong(gameInstanceId, "game_instance_id");
   }
@@ -229,7 +237,7 @@ public final class GameSessionControlPlaneGrpcService
       ListAdmissionPointerAuditRequest request,
       StreamObserver<ListAdmissionPointerAuditResponse> responseObserver) {
     try {
-      requireAdminRole();
+      requireTenantAccess(request.getTenantId());
       responseObserver.onNext(
           admissionPointerControlPlaneService.listAdmissionPointerAudit(request));
       responseObserver.onCompleted();
@@ -806,8 +814,7 @@ public final class GameSessionControlPlaneGrpcService
       GetGameInstanceRuntimeStateRequest request,
       StreamObserver<GetGameInstanceRuntimeStateResponse> responseObserver) {
     try {
-      requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
+      long tenantId = requireTenantAccess(request.getTenantId());
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
               .setRuntimeState(
@@ -971,10 +978,10 @@ public final class GameSessionControlPlaneGrpcService
       ValidateInstanceCutoverCompatibilityRequest request,
       StreamObserver<ValidateInstanceCutoverCompatibilityResponse> responseObserver) {
     try {
-      requireAdminRole();
+      long tenantId = requireTenantAccess(request.getTenantId());
       responseObserver.onNext(
           versionUpgradeControlPlaneService.validateInstanceCutoverCompatibility(
-              parseTenantId(request.getTenantId()),
+              tenantId,
               parseGameInstanceId(request.getSourceGameInstanceId()),
               parseGameInstanceId(request.getTargetVersionId())));
       responseObserver.onCompleted();
@@ -1048,10 +1055,10 @@ public final class GameSessionControlPlaneGrpcService
       GetPreparedVersionUpgradeRequest request,
       StreamObserver<GetPreparedVersionUpgradeResponse> responseObserver) {
     try {
-      requireAdminRole();
+      long tenantId = requireTenantAccess(request.getTenantId());
       responseObserver.onNext(
           versionUpgradeControlPlaneService.getPreparedVersionUpgrade(
-              parseTenantId(request.getTenantId()), request.getPreparationId()));
+              tenantId, request.getPreparationId()));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       GetPreparedVersionUpgradeResponse response =
