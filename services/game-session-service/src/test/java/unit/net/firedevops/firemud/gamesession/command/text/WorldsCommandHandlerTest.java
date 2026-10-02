@@ -42,7 +42,8 @@ class WorldsCommandHandlerTest {
   private final WorldsCommandHandler handler =
       new WorldsCommandHandler(
           TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-          entityManagementClient);
+          Mockito.mock(AccountClient.class),
+          DirectTextConnectScopeSessionStore.inMemoryForTest());
 
   @Test
   void browseViewReturnsStructuredWorldList() {
@@ -240,7 +241,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -276,7 +276,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldA, worldB)),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -347,7 +346,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -380,7 +378,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -445,7 +442,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -534,7 +530,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -575,7 +570,8 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
-            entityManagementClient);
+            Mockito.mock(AccountClient.class),
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     RealmBrowseViewOutput response = localHandler.browseRealms("demo").orElseThrow();
 
@@ -864,7 +860,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             new GameplayWorldCatalog(authorityService),
-            entityManagementClient,
             Mockito.mock(AccountClient.class),
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -946,7 +941,6 @@ class WorldsCommandHandlerTest {
           new WorldsCommandHandler(
               GameplayWorldCatalog.forWorldViews(
                   List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(incomplete)))),
-              entityManagementClient,
               accountClient,
               DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -1080,10 +1074,7 @@ class WorldsCommandHandlerTest {
         .thenReturn(publicEntitlement(false));
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            TestGameplayWorldCatalogs.fromProperties(properties),
-            entityManagementClient,
-            accountClient,
-            scopeStore);
+            TestGameplayWorldCatalogs.fromProperties(properties), accountClient, scopeStore);
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "private-only"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -1199,10 +1190,7 @@ class WorldsCommandHandlerTest {
         .thenReturn(publicEntitlement(false));
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            TestGameplayWorldCatalogs.fromProperties(properties),
-            entityManagementClient,
-            accountClient,
-            scopeStore);
+            TestGameplayWorldCatalogs.fromProperties(properties), accountClient, scopeStore);
 
     assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", null))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
@@ -1265,7 +1253,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             TestGameplayWorldCatalogs.fromProperties(publicWorldWithPrivateRealm()),
-            entityManagementClient,
             accountClient,
             scopeStore);
 
@@ -1520,7 +1507,6 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(
                 List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(realm)))),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -1571,7 +1557,6 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(
                 List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(realm)))),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -1610,7 +1595,6 @@ class WorldsCommandHandlerTest {
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(
                 List.of(new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(realm)))),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -1677,10 +1661,7 @@ class WorldsCommandHandlerTest {
                 .build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            catalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     localHandler.browseView("7", Optional.of(authenticatedSession()));
     assertThat(localHandler.browseRealms(authenticatedSession(), "1"))
@@ -1743,7 +1724,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldSupplier(worlds::get),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -1814,10 +1794,7 @@ class WorldsCommandHandlerTest {
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            catalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
         .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
@@ -1869,7 +1846,6 @@ class WorldsCommandHandlerTest {
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             new GameplayWorldCatalog(authorityService),
-            entityManagementClient,
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
@@ -1896,7 +1872,6 @@ class WorldsCommandHandlerTest {
       GameplayCatalogProperties properties, AccountClient accountClient) {
     return new WorldsCommandHandler(
         TestGameplayWorldCatalogs.fromProperties(properties),
-        entityManagementClient,
         accountClient,
         DirectTextConnectScopeSessionStore.inMemoryForTest());
   }
@@ -2185,7 +2160,11 @@ class WorldsCommandHandlerTest {
                             false,
                             "ISOLATED",
                             "ALLOW_NEW")))));
-    WorldsCommandHandler localHandler = new WorldsCommandHandler(catalog, entityManagementClient);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog,
+            Mockito.mock(AccountClient.class),
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     assertThat(localHandler.browseView().worlds())
         .extracting("slug")
@@ -2216,7 +2195,11 @@ class WorldsCommandHandlerTest {
                             false,
                             "ISOLATED",
                             "ALLOW_NEW")))));
-    WorldsCommandHandler localHandler = new WorldsCommandHandler(catalog, entityManagementClient);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog,
+            Mockito.mock(AccountClient.class),
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(
@@ -2262,7 +2245,11 @@ class WorldsCommandHandlerTest {
                             false,
                             "ISOLATED",
                             "ALLOW_NEW")))));
-    WorldsCommandHandler localHandler = new WorldsCommandHandler(catalog, entityManagementClient);
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog,
+            Mockito.mock(AccountClient.class),
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
 
@@ -2309,10 +2296,7 @@ class WorldsCommandHandlerTest {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            catalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            catalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     assertThat(localHandler.browseCharacters(authenticatedSession(), "mixed-world", "secret"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidRealm("mixed-world"));
