@@ -1111,8 +1111,6 @@ class LiveEvidence:
         checkpoint: evidence.Checkpoint,
         response_id: int | None,
         response_duration_seconds: int | None,
-        repo: str,
-        pr_number: int,
         captured_head: str,
         record: dict[str, Any],
         payload: dict[str, Any],
@@ -1184,14 +1182,7 @@ class LiveEvidence:
             next_trigger,
         )
         finished_only = hosted.finished_reply_without_findings(
-            payload,
-            captured_head,
-            trigger_at,
-            response_id,
-            next_trigger,
-            record,
-            repo=repo,
-            pr_number=pr_number,
+            payload, captured_head, trigger_at, response_id, next_trigger
         )
         if legacy_summary is None and provider_summary is None and not finished_only:
             return None
@@ -1238,8 +1229,6 @@ class LiveEvidence:
                         checkpoint,
                         state.response_id,
                         state.duration_seconds,
-                        self.repo,
-                        pr,
                         captured_head,
                         record,
                         payload,
@@ -1684,9 +1673,6 @@ class LiveEvidence:
                     observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
                     observation["trigger_id"] = state.trigger_comment_id
                     observation["response_id"] = state.response_id
-                    observation["state"] = state.state
-                    observation["attributable"] = state.attributed
-                    observation["terminal"] = state.terminal
                 if state.state == "ambiguous" and not operational_only:
                     terminal_observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
                     if terminal_observation is not None:

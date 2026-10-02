@@ -5607,7 +5607,6 @@ class ReviewController:
         checkpoint: str | None = None,
         min_additional_completed: int | None = None,
         max_additional_completed: int | None = None,
-        exact_additional_completed: int | None = None,
         fresh_taper: bool = False,
     ) -> dict[str, Any]:
         """Grant, replace, or cancel a one-result or bounded review allocation."""
@@ -5624,22 +5623,6 @@ class ReviewController:
             raise ControllerError("fresh taper selection must be boolean")
         if checkpoint is not None and (not isinstance(checkpoint, str) or not checkpoint.strip()):
             raise ControllerError("allocation baseline checkpoint must be a non-empty immutable identity")
-        if exact_additional_completed is not None and (
-            isinstance(exact_additional_completed, bool)
-            or not isinstance(exact_additional_completed, int)
-            or exact_additional_completed <= 0
-        ):
-            raise ControllerError("exact additional completed reviews must be a positive integer")
-        if exact_additional_completed is not None and (
-            min_additional_completed is not None or max_additional_completed is not None
-        ):
-            raise ControllerError("exact additional completed reviews cannot be combined with minimum or maximum")
-        if exact_additional_completed is not None and fresh_taper:
-            raise ControllerError("exact additional completed reviews preserve the existing taper")
-        exact_replacement = exact_additional_completed is not None
-        if exact_replacement:
-            min_additional_completed = exact_additional_completed
-            max_additional_completed = exact_additional_completed
         if min_additional_completed is not None and (
             isinstance(min_additional_completed, bool)
             or not isinstance(min_additional_completed, int)
@@ -5723,26 +5706,10 @@ class ReviewController:
                 and self._hosted_anchor_matches(value, pr, current)
             )
 
-        def exact_in_flight_request(value: Any) -> bool:
-            if not exact_replacement or _field(value, "channel") not in (None, selected.value):
-                return False
-            if selected == policy.Channel.HOSTED:
-                return self._hosted_active_response_overlaps_cli(
-                    value,
-                    pr,
-                    item.head,
-                    current,
-                    require_response_identity=True,
-                )
-            return self._active_cli_review_overlaps_hosted(value, pr, current)
-
-        def permitted_in_flight_request(value: Any) -> bool:
-            return exact_in_flight_request(value) if exact_replacement else provable_posted_hosted_request(value)
-
         stop_evidence_checked = False
         if (
             bounded_replacement
-            and not any(permitted_in_flight_request(value) for value in history)
+            and not any(provable_posted_hosted_request(value) for value in history)
             and (
                 prior_taper_complete
                 or any(
@@ -5782,7 +5749,7 @@ class ReviewController:
                     and target.pr == pr
                     and target.status == policy.ReviewStatus.JUDGMENT_REQUIRED
                 ):
-                    if not fresh_taper and not exact_replacement:
+                    if not fresh_taper:
                         raise ControllerError(
                             "bounded Hosted allocation after a judgment-required taper must explicitly reopen fresh taper"
                         )
@@ -5802,12 +5769,12 @@ class ReviewController:
                     bounded_replacement
                     and target.pr == pr
                     and target.status == policy.ReviewStatus.HELD
-                    and any(permitted_in_flight_request(value) for value in history)
+                    and any(provable_posted_hosted_request(value) for value in history)
                 ):
                     raise
         elif bounded_replacement:
             assert previous is not None
-            if previous.stop_basis is not None and not exact_replacement:
+            if previous.stop_basis is not None:
                 raise ControllerError("a stopped allocation cannot be renewed")
             if self._head_repository_problem(item):
                 raise ControllerError(f"PR #{pr} has an unsupported head repository")
@@ -5831,12 +5798,10 @@ class ReviewController:
                 _field(value, flag) is True
                 for flag in ("held", "unstable", "rate_limited", "unreconciled", "parent_moved", "over_ceiling")
             ) and _field(value, "head", "reviewed_head") in (None, "", item.head)
-            if blocked and not permitted_in_flight_request(value):
+            if blocked and not provable_posted_hosted_request(value):
                 raise ControllerError("current review evidence is blocked; allocation cannot be promised")
         baseline = tuple(
-            _field(value, "checkpoint", "checkpoint_id")
-            for value in history
-            if _field(value, "correction") is not True and not exact_in_flight_request(value)
+            _field(value, "checkpoint", "checkpoint_id") for value in history if _field(value, "correction") is not True
         )
         if any(not isinstance(value, str) or not value for value in baseline):
             raise ControllerError("existing review evidence lacks a checkpoint identity")
