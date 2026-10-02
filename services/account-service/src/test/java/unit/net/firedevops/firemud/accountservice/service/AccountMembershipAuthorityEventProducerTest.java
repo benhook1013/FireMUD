@@ -202,4 +202,59 @@ class AccountMembershipAuthorityEventProducerTest {
         membershipRepository,
         roleSnapshotRepository);
   }
+
+  @Test
+  void existingRuntimeSnapshotRequiresOwnerTransactionBeforeIdentityReads() {
+    AccountJoinOperationRepository joinOperationRepository =
+        mock(AccountJoinOperationRepository.class);
+    AccountMembershipPairAuthorityRepository pairAuthorityRepository =
+        mock(AccountMembershipPairAuthorityRepository.class);
+    AccountRepository accountRepository = mock(AccountRepository.class);
+    AccountTenantIdentityResolver tenantIdentityResolver =
+        mock(AccountTenantIdentityResolver.class);
+    FreshTenantIdentityAssociationRepository freshAssociationRepository =
+        mock(FreshTenantIdentityAssociationRepository.class);
+    AccountAuthorityGenerationRepository authorityGenerationRepository =
+        mock(AccountAuthorityGenerationRepository.class);
+    AccountAuthorityOutboxRepository authorityOutboxRepository =
+        mock(AccountAuthorityOutboxRepository.class);
+    AccountMembershipTransitionReceiptRepository transitionReceiptRepository =
+        mock(AccountMembershipTransitionReceiptRepository.class);
+    AccountTenantMembershipRepository membershipRepository =
+        mock(AccountTenantMembershipRepository.class);
+    AccountTenantMembershipRoleSnapshotRepository roleSnapshotRepository =
+        mock(AccountTenantMembershipRoleSnapshotRepository.class);
+    AccountMembershipAuthorityEventProducer producer =
+        new AccountMembershipAuthorityEventProducer(
+            joinOperationRepository,
+            pairAuthorityRepository,
+            accountRepository,
+            tenantIdentityResolver,
+            freshAssociationRepository,
+            authorityGenerationRepository,
+            authorityOutboxRepository,
+            mock(AccountPasswordResetOperationRepository.class),
+            mock(AccountLogoutAllOperationRepository.class),
+            transitionReceiptRepository,
+            membershipRepository,
+            roleSnapshotRepository);
+
+    assertThatThrownBy(
+            () ->
+                producer.readExistingRuntimeMembershipSnapshot(
+                    UUID.randomUUID(), UUID.randomUUID()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
+    verifyNoInteractions(
+        joinOperationRepository,
+        pairAuthorityRepository,
+        accountRepository,
+        tenantIdentityResolver,
+        freshAssociationRepository,
+        authorityGenerationRepository,
+        authorityOutboxRepository,
+        transitionReceiptRepository,
+        membershipRepository,
+        roleSnapshotRepository);
+  }
 }

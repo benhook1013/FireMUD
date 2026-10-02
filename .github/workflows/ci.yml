@@ -1410,6 +1410,7 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#postJoinSnapshotCarriesCurrentCompositeSourcesWithoutRewritingMembershipEvent()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#membershipSourceReaderReadsRetainedInactiveRetryAndReactivationWithoutMutation()' \
             account-service
 
       - name: Upload Account current recipient source composition PostgreSQL proof
@@ -1513,7 +1514,19 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadUsesFreshUuidAssociationWithoutInventingRetainedAlias()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadRejectsUnmappedTenantUuidWithoutEnrollment()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#strictExistingMembershipReadDeniesFreshAssociationWithoutEnrollmentOrMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#membershipSourceReaderRejectsAmbientAccountTransaction()' \
             account-service
+
+      - name: Upload Account existing-only membership source PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-existing-membership-source-postgresql-proof-${{ github.sha }}
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountFreshUuidMembershipSnapshotIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: 🔎 Verify Game Session PostgreSQL proof case
         if: ${{ matrix.module == 'game-session-service' }}
