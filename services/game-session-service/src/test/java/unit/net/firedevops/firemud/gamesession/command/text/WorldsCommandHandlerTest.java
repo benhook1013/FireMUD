@@ -2054,6 +2054,14 @@ class WorldsCommandHandlerTest {
         .isEqualTo(
             WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
     Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+
+    Mockito.clearInvocations(accountClient, entityManagementClient);
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isEqualTo(WorldsCommandHandler.RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
+        .isEqualTo(
+            WorldsCommandHandler.CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
   private WorldsCommandHandler authenticatedHandler(

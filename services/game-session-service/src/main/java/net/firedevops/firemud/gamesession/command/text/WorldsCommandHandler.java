@@ -118,6 +118,8 @@ public class WorldsCommandHandler {
       catalogSnapshot = worldCatalog.readDiscoverySnapshot();
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
@@ -755,6 +757,8 @@ public class WorldsCommandHandler {
       catalogSnapshot = worldCatalog.readDiscoverySnapshot();
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);

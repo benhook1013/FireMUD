@@ -364,6 +364,24 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void authorityWorldResolutionUsesReadOutageClassificationBeforeSnapshotValidation() {
+    when(authorityService.listPointers())
+        .thenThrow(new IllegalStateException("authority down"))
+        .thenReturn(null)
+        .thenReturn(
+            List.of(pointer("demo", "Demo World", "production", "Live Realm", 0L, 11L, 1L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(() -> catalog.resolveWorldFromAuthoritySnapshot("demo"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+    assertThatThrownBy(() -> catalog.resolveWorldFromAuthoritySnapshot("demo"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+    assertThatThrownBy(() -> catalog.resolveWorldFromAuthoritySnapshot("demo"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class)
+        .isNotInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+  }
+
+  @Test
   void publicProductionCardinalityKeepsReadOutageDistinctFromMalformedSnapshot() {
     when(authorityService.listPointers())
         .thenThrow(new IllegalStateException("authority down"))

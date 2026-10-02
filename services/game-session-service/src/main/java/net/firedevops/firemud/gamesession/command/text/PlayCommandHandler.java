@@ -231,6 +231,8 @@ public class PlayCommandHandler {
             null,
             null,
             ex);
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return admissionPointerUnavailableFailure(tenantTag, null);
       }
       WorldSelectorResolution worldSelection =
           resolvePlayWorld(context, requestedSelection.worldSelector(), currentCatalog);

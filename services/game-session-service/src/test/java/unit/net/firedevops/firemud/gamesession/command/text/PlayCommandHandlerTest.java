@@ -919,6 +919,64 @@ class PlayCommandHandlerTest {
         scriptEventPublisher);
   }
 
+  @Test
+  void playMapsMalformedDiscoveryPointerToAdmissionPointerUnavailableWithoutSideEffects() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    0L,
+                    11L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    1L,
+                    UUID.randomUUID(),
+                    UUID.randomUUID())));
+    PlayCommandHandler authorityBackedHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authorityService),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            connectScopeSessionStore);
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        authorityBackedHandler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"throw", "null"})
   void playMapsDefaultRealmPointerReadFailureToAuthUnavailableWithoutAdmissionSideEffects(

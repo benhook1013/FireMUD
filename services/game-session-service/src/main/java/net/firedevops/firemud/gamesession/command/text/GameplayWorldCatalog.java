@@ -991,8 +991,13 @@ public final class GameplayWorldCatalog {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
     }
+    return readAuthorityPointers(authorityPointerSupplier);
+  }
+
+  private static List<GameplayAdmissionPointerSnapshot> readAuthorityPointers(
+      Supplier<List<GameplayAdmissionPointerSnapshot>> pointerSupplier) {
     try {
-      List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
+      List<GameplayAdmissionPointerSnapshot> pointers = pointerSupplier.get();
       if (pointers == null) {
         throw new AuthorityPointerReadUnavailableException(
             "Authoritative gameplay pointer list is unavailable");
@@ -1213,20 +1218,11 @@ public final class GameplayWorldCatalog {
   private static List<GameplayAdmissionPointerSnapshot> loadAuthorityPointers(
       GameplayAdmissionPointerAuthorityService authorityService) {
     Objects.requireNonNull(authorityService, "authorityService must not be null");
-    List<GameplayAdmissionPointerSnapshot> pointers = authorityService.listPointers();
-    if (pointers == null) {
-      throw new AuthorityPointerReadUnavailableException(
-          "Authoritative gameplay pointer list is unavailable");
-    }
-    return validateAuthoritySnapshot(pointers);
+    return validateAuthoritySnapshot(readAuthorityPointers(authorityService::listPointers));
   }
 
   private List<GameplayAdmissionPointerSnapshot> loadAuthorityPointers() {
-    if (authorityPointerSupplier == null) {
-      throw new AuthorityPointerUnavailableException(
-          "Authoritative gameplay pointer list is unavailable");
-    }
-    return validateAuthoritySnapshot(authorityPointerSupplier.get());
+    return validateAuthoritySnapshot(readAuthorityPointers());
   }
 
   private static List<GameplayAdmissionPointerSnapshot> validateAuthoritySnapshot(
