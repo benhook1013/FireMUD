@@ -204,7 +204,7 @@ class AutomationScriptingGrpcServiceTest {
   }
 
   @Test
-  void getDraftDesignDigestRejectsPatchDigestThatOmitsBaseVersion() {
+  void getDraftDesignDigestRejectsUnsupportedPatchScopeWithValidBaseBinding() {
     PingService pingService = Mockito.mock(PingService.class);
     ScriptDefinitionService scriptService = Mockito.mock(ScriptDefinitionService.class);
     ScriptDesignDigestService scriptDesignDigestService =
