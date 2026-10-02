@@ -293,13 +293,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
       return;
     }
     long currentPointerVersion =
-        pointer.getId() == null
-            ? 0L
-            : pointer.getPointerVersion() == null ? -1L : pointer.getPointerVersion();
+        pointer.getPointerVersion() == null ? -1L : pointer.getPointerVersion();
     long currentCatalogRevision =
-        pointer.getId() == null
-            ? 0L
-            : pointer.getCatalogRevision() == null ? -1L : pointer.getCatalogRevision();
+        pointer.getCatalogRevision() == null ? -1L : pointer.getCatalogRevision();
     if (!isPositive(expectedPointerVersion)
         || !isPositive(expectedCatalogRevision)
         || currentPointerVersion != expectedPointerVersion

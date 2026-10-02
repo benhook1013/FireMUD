@@ -182,3 +182,9 @@ Entry format:
   - Context: a Game Session validation run failed a new fixture assertion, but a pipeline ending in `tee` returned exit0 because the shell did not enable `pipefail`.
   - Expected pattern: enable `set -o pipefail` before captured validation pipelines and verify the terminal build result and test reports; a log sink's success is not the validation process's success.
   - Outcome: the failed build was identified from its terminal report, not reported as passing. After the fixture correction, the guarded complete rerun passed; no production check or negative assertion was weakened.
+
+- `2026-10-03`: Native process handles may be scoped to the launching agent
+  - Context: Gameplay tried to transfer an already-running full CLI command's native process handle to a read-only sentinel.
+  - Observation: the sentinel received `Unknown process id`, while the launching agent could still read the same live process. Shared filesystem access did not imply shared process-handle access; the review was neither restarted nor canceled.
+  - Expected pattern: retain an existing native process wait in its launching agent. For delegated external waits, let the sentinel launch its own canonical read-only waiter for the exact durable trigger or CI run; never retry the evidence-producing operation merely because a handle is unavailable in another agent.
+  - Current status: the launching Gameplay agent retained the live CLI wait. Whether cross-agent process handles are supported in other execution environments is unverified.

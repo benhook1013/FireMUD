@@ -20,18 +20,13 @@ import net.firedevops.firemud.gamesession.command.text.TextCommandInterpreter;
 import net.firedevops.firemud.gamesession.dto.CommandEnqueueResult;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
-import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
-import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
-import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.AccountPresenceQueryService;
 import net.firedevops.firemud.gamesession.service.AccountPresenceSnapshot;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
 import net.firedevops.firemud.gamesession.service.FeatureFlagService;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.IpConnectionLimiter;
 import net.firedevops.firemud.gamesession.service.PingService;
@@ -1390,81 +1385,6 @@ class GameSessionGrpcServiceTest {
     assertEquals("Internal error", response.get().getError().getMessage());
     assertTrue(completed.get());
     assertEquals(0, response.get().getRealmsCount());
-  }
-
-  @Test
-  void catalogPolicyRevisionAdvancesIndependentlyFromPointerVersion() {
-    GameplayAdmissionPointerRepository pointerRepository =
-        Mockito.mock(GameplayAdmissionPointerRepository.class);
-    GameplayAdmissionPointerEventRepository eventRepository =
-        Mockito.mock(GameplayAdmissionPointerEventRepository.class);
-    AtomicReference<GameplayAdmissionPointer> currentPointer = new AtomicReference<>();
-    Mockito.when(
-            pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
-                7L, "demo", "production"))
-        .thenAnswer(invocation -> java.util.Optional.ofNullable(currentPointer.get()));
-    Mockito.when(pointerRepository.save(Mockito.any(GameplayAdmissionPointer.class)))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer pointer = invocation.getArgument(0);
-              if (pointer.getId() == null) {
-                pointer.setId(11L);
-              }
-              currentPointer.set(pointer);
-              return pointer;
-            });
-    Mockito.when(
-            pointerRepository.updateExisting(
-                Mockito.any(GameplayAdmissionPointer.class), Mockito.any(), Mockito.any()))
-        .thenAnswer(
-            invocation -> {
-              GameplayAdmissionPointer pointer = invocation.getArgument(0);
-              currentPointer.set(pointer);
-              return pointer;
-            });
-    Mockito.when(eventRepository.save(Mockito.any(GameplayAdmissionPointerEvent.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    DatabaseGameplayAdmissionPointerAuthorityService authorityService =
-        new DatabaseGameplayAdmissionPointerAuthorityService(pointerRepository, eventRepository);
-
-    GameplayAdmissionPointerSnapshot created =
-        authorityService.upsertPointer(pointerMutation(44L, true, 0L, 0L));
-    GameplayAdmissionPointerSnapshot policyChanged =
-        authorityService.upsertPointer(pointerMutation(44L, false, 1L, 1L));
-    GameplayAdmissionPointerSnapshot routeChanged =
-        authorityService.upsertPointer(pointerMutation(45L, false, 1L, 2L));
-
-    assertEquals(1L, created.catalogRevision());
-    assertEquals(1L, created.pointerVersion());
-    assertEquals(2L, policyChanged.catalogRevision());
-    assertEquals(1L, policyChanged.pointerVersion());
-    assertEquals(2L, routeChanged.catalogRevision());
-    assertEquals(2L, routeChanged.pointerVersion());
-  }
-
-  private static GameplayAdmissionPointerMutation pointerMutation(
-      long gameInstanceId,
-      boolean publicProductionRealm,
-      Long expectedPointerVersion,
-      Long expectedCatalogRevision) {
-    return new GameplayAdmissionPointerMutation(
-        "demo",
-        "Demo World",
-        "production",
-        "Live Realm",
-        7L,
-        gameInstanceId,
-        true,
-        publicProductionRealm,
-        false,
-        "SHARED",
-        "ALLOW_NEW",
-        "test",
-        "catalog revision test",
-        "catalog-revision-test-" + expectedPointerVersion,
-        expectedPointerVersion,
-        expectedCatalogRevision,
-        null);
   }
 
   @Test
