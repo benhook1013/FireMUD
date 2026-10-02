@@ -743,6 +743,12 @@ public class PlayCommandHandler {
           authorityUnavailableFailure(
               tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
     }
+    if (AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+        && !response.getAccountId().equals(context.accountId())) {
+      return Optional.of(
+          worldAccessDeniedFailure(
+              context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
+    }
     if (!isSafeMembershipAuthorityResponse(
         response, context, selectedRealm, canonicalTenantId, requestId)) {
       return Optional.of(
@@ -1252,6 +1258,7 @@ public class PlayCommandHandler {
         || !StringUtils.hasText(response.getTenantId())
         || !StringUtils.hasText(response.getEvaluatedAt())
         || !AccountIds.isCanonicalNonNilUuid(response.getAccountId())
+        || !response.getAccountId().equals(context.accountId())
         || !isCanonicalUuid(response.getTenantId())
         || !response.getTenantId().equals(canonicalTenantId)
         || !response.getRequestAccountId().equals(context.accountId())

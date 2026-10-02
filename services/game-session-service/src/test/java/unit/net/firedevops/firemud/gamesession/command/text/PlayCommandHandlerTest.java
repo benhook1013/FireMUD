@@ -2079,6 +2079,60 @@ class PlayCommandHandlerTest {
     Mockito.verify(sessionContextService).save(Mockito.any(SessionContext.class));
   }
 
+  @Test
+  void playRejectsValidMembershipRecipientCarrierForDifferentAuthenticatedAccount() {
+    SessionContext context = unboundContext();
+    String differentAccountId = "30000000-0000-4000-8000-000000000003";
+    var otherAccountCarrier =
+        currentMembershipCarrierAfterAuthorityAdvances("logout-all", differentAccountId).toBuilder()
+            .setRequestAccountId(PLAYER_ACCOUNT_ID)
+            .build();
+    String membershipStream =
+        ACCOUNT_AUTHORITY_STREAM_PREFIX
+            + "membership/"
+            + differentAccountId
+            + "/"
+            + CANONICAL_TENANT_UUID;
+    var membershipEvent =
+        MembershipAuthorityEventV1Codec.verify(
+            authoritySource(otherAccountCarrier, membershipStream).getCanonicalEventJson());
+    var accountEvent =
+        AccountLogoutAllAuthorityEventV1Codec.verify(
+            authoritySource(
+                    otherAccountCarrier,
+                    ACCOUNT_AUTHORITY_STREAM_PREFIX + "account/" + differentAccountId)
+                .getCanonicalEventJson());
+    assertThat(otherAccountCarrier.getAccountId()).isEqualTo(differentAccountId);
+    assertThat(otherAccountCarrier.getRequestAccountId()).isEqualTo(context.accountId());
+    assertThat(otherAccountCarrier.getRequestTenantId()).isEqualTo(CANONICAL_TENANT_UUID);
+    assertThat(otherAccountCarrier.getOutboxSourceEvidenceCount()).isEqualTo(4);
+    assertThat(membershipEvent.accountId()).isEqualTo(differentAccountId);
+    assertThat(membershipEvent.sourceScope())
+        .isEqualTo("membership/" + differentAccountId + "/" + CANONICAL_TENANT_UUID);
+    assertThat(accountEvent.accountId()).isEqualTo(differentAccountId);
+
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation ->
+                net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                    .echoRequestId(otherAccountCarrier, invocation.getArgument(0)));
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verifyNoInteractions(
+        entityManagementClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        moderationPolicyClient,
+        scriptEventPublisher);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"missing", "changed", "scope", "ahead", "unknown-field"})
   void playRejectsMalformedCurrentRecipientEvidenceBeforeGameplayMutation(String defect) {
@@ -3197,18 +3251,19 @@ class PlayCommandHandlerTest {
 
   private static GetTenantMembershipForRuntimeResponse
       currentMembershipCarrierAfterAuthorityAdvances(String accountCutoffType) {
+    return currentMembershipCarrierAfterAuthorityAdvances(accountCutoffType, PLAYER_ACCOUNT_ID);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse
+      currentMembershipCarrierAfterAuthorityAdvances(String accountCutoffType, String accountId) {
     var earlierMembership =
         freshMembership(
             net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                PLAYER_ACCOUNT_ID, 22L, "1"));
-    String accountStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "account/" + PLAYER_ACCOUNT_ID;
+                accountId, 22L, "1"));
+    String accountStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "account/" + accountId;
     String issuerStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "issuer/" + ACCOUNT_AUTHORITY_ISSUER;
     String membershipStream =
-        ACCOUNT_AUTHORITY_STREAM_PREFIX
-            + "membership/"
-            + PLAYER_ACCOUNT_ID
-            + "/"
-            + CANONICAL_TENANT_UUID;
+        ACCOUNT_AUTHORITY_STREAM_PREFIX + "membership/" + accountId + "/" + CANONICAL_TENANT_UUID;
     String tenantStream = ACCOUNT_AUTHORITY_STREAM_PREFIX + "tenant/" + CANONICAL_TENANT_UUID;
 
     var issuerEvent =
@@ -3224,7 +3279,7 @@ class PlayCommandHandlerTest {
                 Map.entry("outboxSequence", "1"),
                 Map.entry("issuerAuthGeneration", "2"),
                 Map.entry("sourceVersion", "2")));
-    var accountEvidence = currentAccountCutoffEvidence(accountCutoffType, accountStream);
+    var accountEvidence = currentAccountCutoffEvidence(accountCutoffType, accountStream, accountId);
     var tenantEvent =
         TenantGenerationAuthorityEventV1Codec.seal(
             Map.ofEntries(
@@ -3245,7 +3300,7 @@ class PlayCommandHandlerTest {
             earlierMembership,
             ACCOUNT_AUTHORITY_STREAM_PREFIX
                 + "membership/"
-                + PLAYER_ACCOUNT_ID
+                + accountId
                 + "/"
                 + CANONICAL_TENANT_UUID);
 
@@ -3281,9 +3336,9 @@ class PlayCommandHandlerTest {
   }
 
   private static RuntimeOutboxSourceEvidence currentAccountCutoffEvidence(
-      String accountCutoffType, String accountStream) {
+      String accountCutoffType, String accountStream, String accountId) {
     String requestId = "b5a70a16-15df-4bfa-9568-7f28ce0fd7f6";
-    String sourceScope = "account/" + PLAYER_ACCOUNT_ID;
+    String sourceScope = "account/" + accountId;
     Map<String, Object> preimage =
         Map.ofEntries(
             Map.entry(
@@ -3302,7 +3357,7 @@ class PlayCommandHandlerTest {
                     ? "account-logout-all-event-v1:" + requestId
                     : "account-password-reset-event-v1:" + requestId),
             Map.entry("requestId", requestId),
-            Map.entry("accountId", PLAYER_ACCOUNT_ID),
+            Map.entry("accountId", accountId),
             Map.entry("sourceScope", sourceScope),
             Map.entry("outboxStreamKey", accountStream),
             Map.entry("outboxSequence", "1"),

@@ -306,7 +306,7 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
         Objects.requireNonNull(
             dsl.resultQuery(
                     "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-                    "current-authority-" + suffix,
+                    "ca-" + suffix,
                     "current-authority-" + suffix + "@example.com",
                     "test-hash")
                 .fetchOne(0, Long.class));
