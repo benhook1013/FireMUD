@@ -105,9 +105,11 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     boolean runtimeTargetChanged =
         pointer.getId() == null || !runtimeTargetMatches(pointer, mutation);
     long nextPointerVersion =
-        pointer.getId() == null || runtimeTargetChanged
-            ? pointer.getId() == null ? 1L : Math.addExact(pointer.getPointerVersion(), 1L)
-            : pointer.getPointerVersion();
+        pointer.getId() == null
+            ? 1L
+            : runtimeTargetChanged
+                ? Math.addExact(pointer.getPointerVersion(), 1L)
+                : pointer.getPointerVersion();
     long nextCatalogRevision = nextCatalogRevision(pointer, mutation);
     pointer.setWorldSlug(mutation.worldSlug());
     pointer.setWorldDisplayName(mutation.worldDisplayName());
@@ -128,7 +130,11 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
       pointer.setCreatedAt(now);
     }
     pointer.setUpdatedAt(now);
-    GameplayAdmissionPointer saved = pointerRepository.save(pointer);
+    GameplayAdmissionPointer saved =
+        pointer.getId() == null
+            ? pointerRepository.save(pointer)
+            : pointerRepository.updateExisting(
+                pointer, mutation.expectedPointerVersion(), mutation.expectedCatalogRevision());
 
     GameplayAdmissionPointerEvent event = new GameplayAdmissionPointerEvent();
     event.setWorldSlug(saved.getWorldSlug());

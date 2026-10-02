@@ -610,8 +610,12 @@ public final class GameSessionGrpcService
           gameplayAdmissionPointerAuthorityService
               .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
-      if (realm.visible() && realm.publicProductionRealm()) {
-        gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
+      if (realm.visible()) {
+        if (realm.publicProductionRealm()) {
+          gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
+        } else {
+          gameplayWorldCatalog.requireHealthyVisiblePrivateRealm(realm);
+        }
       }
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()

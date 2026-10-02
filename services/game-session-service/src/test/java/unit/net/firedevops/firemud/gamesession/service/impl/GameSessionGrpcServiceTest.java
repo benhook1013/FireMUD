@@ -714,18 +714,19 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void privateAdmissionDoesNotRequirePublicRealmCardinalityLookup() {
+  void privateAdmissionRequiresAndUsesHealthyTenantCatalog() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot privateRealm =
         authorityPointer("private", "preview", 7L, 66L, true, false);
+    GameplayAdmissionPointerSnapshot publicRealm =
+        authorityPointer("demo", "live", 7L, 44L, true, true);
     Mockito.when(pointerAuthorityService.findPointer(7L, "private", "preview"))
         .thenReturn(java.util.Optional.of(privateRealm));
+    Mockito.when(pointerAuthorityService.listPointersByTenant(7L))
+        .thenReturn(List.of(privateRealm, publicRealm));
     Mockito.when(pointerAuthorityService.listPointers())
-        .thenReturn(
-            List.of(
-                authorityPointer("alpha", "live", 7L, 44L, true, true),
-                authorityPointer("beta", "live", 7L, 55L, true, true)));
+        .thenReturn(List.of(publicRealm, authorityPointer("beta", "live", 8L, 55L, true, true)));
     GameSessionGrpcService service = catalogService(pointerAuthorityService);
     AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();
 
@@ -752,6 +753,7 @@ class GameSessionGrpcServiceTest {
 
     assertFalse(response.get().hasError());
     assertEquals("66", response.get().getAdmissionPointer().getGameInstanceId());
+    Mockito.verify(pointerAuthorityService).listPointersByTenant(7L);
     Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
   }
 
