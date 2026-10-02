@@ -249,6 +249,18 @@ def _parser() -> argparse.ArgumentParser:
     source_correct_resolution.add_argument("--corrected-at")
     records_database(source_correct_resolution)
 
+    source_set_severity = source_subcommands.add_parser(
+        "set-severity", help="set display severity on one exact recorded source finding"
+    )
+    source_set_severity.add_argument("--run-id", required=True)
+    source_set_severity.add_argument("--finding-key", required=True)
+    source_set_severity.add_argument(
+        "--severity",
+        required=True,
+        choices=("Critical", "Major", "Minor", "Trivial"),
+    )
+    records_database(source_set_severity)
+
     cli_decisions = record_commands.add_parser(
         "cli-decision", help="record one captured CLI finding decision without a TSV file"
     )
@@ -293,7 +305,10 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="JSON",
-        help="one bounded finding object with title, decision, reason and optional detail/target_pr/key",
+        help=(
+            "one bounded finding object with title, exact Critical/Major/Minor/Trivial severity, decision, "
+            "reason and optional detail/target_pr/key"
+        ),
     )
     records_database(subagent_complete)
     subagent_fail = subagent_commands.add_parser("fail", help="record a failed pass without review credit")
@@ -767,10 +782,13 @@ def _subagent_findings(
             item = json.loads(raw, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_json_constant)
         except (ValueError, TypeError) as exc:
             raise CliError(f"subagent finding {index} is not valid JSON") from exc
-        if not isinstance(item, dict) or not {"title", "decision", "reason"} <= item.keys():
-            raise CliError(f"subagent finding {index} needs title, decision, and reason")
-        if item.keys() - {"key", "title", "detail", "decision", "reason", "target_pr"}:
+        if not isinstance(item, dict) or not {"title", "severity", "decision", "reason"} <= item.keys():
+            raise CliError(f"subagent finding {index} needs title, severity, decision, and reason")
+        if item.keys() - {"key", "title", "detail", "severity", "decision", "reason", "target_pr"}:
             raise CliError(f"subagent finding {index} contains unsupported fields")
+        severity = item["severity"]
+        if not isinstance(severity, str) or severity not in {"Critical", "Major", "Minor", "Trivial"}:
+            raise CliError(f"subagent finding {index} has an invalid severity")
         decision = item["decision"]
         if decision not in {"accepted", "routed", "rejected"}:
             raise CliError(f"subagent finding {index} has an invalid decision")
@@ -779,7 +797,12 @@ def _subagent_findings(
             raise CliError(f"subagent finding {index} has an invalid target PR")
         key = item.get("key", f"subagent:{run_id}:finding:{index}")
         observations.append(
-            FindingObservation(source_finding_key=key, title=item["title"], detail=item.get("detail", ""))
+            FindingObservation(
+                source_finding_key=key,
+                title=item["title"],
+                detail=item.get("detail", ""),
+                display_severity=severity,
+            )
         )
         digest = hashlib.sha256(f"{run_id}\0{key}".encode()).hexdigest()
         decisions.append(
@@ -1044,6 +1067,12 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 reason=args.reason,
                 proof_note=args.proof_note,
                 corrected_at=args.corrected_at,
+            )
+        elif args.source_command == "set-severity":
+            result = store.set_source_severity(
+                args.run_id,
+                args.finding_key,
+                severity=args.severity,
             )
         else:
             result = store.record_source_resolution(
