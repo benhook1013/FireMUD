@@ -1542,6 +1542,8 @@ def _archived_completed_thread_bodies(
     repo: str,
     pr_number: int,
     head: str,
+    response_id: int,
+    response_created_at: datetime,
     record: Mapping[str, Any] | None,
     current_record_path: str | Path | None,
 ) -> dict[int, tuple[str, str]]:
@@ -1559,28 +1561,32 @@ def _archived_completed_thread_bodies(
         or type(trigger_id) is not int
         or trigger_id <= 0
         or trigger_at is None
+        or type(response_id) is not int
+        or response_id <= 0
         or not isinstance(record.get("head_sha"), str)
         or record["head_sha"].casefold() != head.casefold()
     ):
         return {}
 
-    selected_record = Path(current_record_path) if current_record_path is not None else default_trigger_record_path(
-        repo, pr_number
-    )
-    if selected_record.is_symlink():
-        return {}
-    common = _trigger_record_common_for_path(selected_record, repo, pr_number)
-    if common is None:
-        return {}
-    selected_state = state_path(common)
-    if selected_state.is_symlink() or not selected_state.is_dir():
-        return {}
-    database = sqlite_state_path(selected_state)
     try:
+        selected_record = (
+            Path(current_record_path)
+            if current_record_path is not None
+            else default_trigger_record_path(repo, pr_number)
+        )
+        if selected_record.is_symlink():
+            return {}
+        common = _trigger_record_common_for_path(selected_record, repo, pr_number)
+        if common is None:
+            return {}
+        selected_state = state_path(common)
+        if selected_state.is_symlink() or not selected_state.is_dir():
+            return {}
+        database = sqlite_state_path(selected_state)
         database_stat = database.stat(follow_symlinks=False)
-    except FileNotFoundError:
-        return {}
-    if database.is_symlink() or not stat.S_ISREG(database_stat.st_mode):
+        if database.is_symlink() or not stat.S_ISREG(database_stat.st_mode):
+            return {}
+    except (OSError, TypeError, ValueError):
         return {}
 
     try:
@@ -1589,14 +1595,80 @@ def _archived_completed_thread_bodies(
         attempt_history = records.attempt_history(pr_number)
         current_history = [item for item in attempt_history if item.get("attempt_id") == current_attempt_id]
         current_head = current_attempt.get("candidate_sha")
+        request_metadata = current_attempt.get("metadata")
+        current_row = current_history[0] if len(current_history) == 1 else None
+        current_started_at = parse_timestamp(current_attempt.get("started_at"))
+        current_state = current_attempt.get("state")
+        current_trigger_id = current_row.get("trigger_id") if current_row is not None else None
+        current_response_id = current_row.get("provider_review_id") if current_row is not None else None
+        current_finished_at = parse_timestamp(current_attempt.get("finished_at"))
         if (
             current_attempt.get("source_pr") != pr_number
             or current_attempt.get("channel") != "hosted"
             or not isinstance(current_head, str)
             or current_head.casefold() != head.casefold()
-            or len(current_history) != 1
-            or current_history[0].get("trigger_id") != str(trigger_id)
+            or not isinstance(request_metadata, dict)
+            or not isinstance(request_metadata.get("repository"), str)
+            or request_metadata["repository"].casefold() != repo.casefold()
+            or not isinstance(response_created_at, datetime)
+            or current_started_at is None
+            or current_started_at > trigger_at
+            or current_row is None
+            or current_row.get("state") != current_state
+            or current_row.get("started_at") != current_attempt.get("started_at")
+            or current_row.get("finished_at") != current_attempt.get("finished_at")
         ):
+            return {}
+
+        if current_state == "started":
+            if (
+                current_trigger_id not in (None, str(trigger_id))
+                or current_response_id is not None
+                or current_finished_at is not None
+            ):
+                return {}
+            if records.attempt_artifacts(current_attempt_id):
+                return {}
+        elif current_state == "completed":
+            if (
+                current_trigger_id != str(trigger_id)
+                or current_response_id != str(response_id)
+                or current_finished_at is None
+                or current_finished_at < response_created_at
+                or current_attempt.get("run_id") != current_attempt_id
+            ):
+                return {}
+            try:
+                current_artifacts = records.attempt_artifacts(current_attempt_id)
+                if not {"hosted_review", "hosted_comments", "metadata"} <= current_artifacts.keys():
+                    return {}
+                current_metadata = json.loads(current_artifacts["metadata"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {}
+            current_observed_at = (
+                parse_timestamp(current_metadata.get("observed_at")) if isinstance(current_metadata, dict) else None
+            )
+            if (
+                not isinstance(current_metadata, dict)
+                or current_metadata.get("state") != "completed"
+                or current_metadata.get("terminal") is not True
+                or current_metadata.get("attributable") is not True
+                or not isinstance(current_metadata.get("repository"), str)
+                or current_metadata["repository"].casefold() != repo.casefold()
+                or current_metadata.get("pull_request") != pr_number
+                or not isinstance(current_metadata.get("head_sha"), str)
+                or current_metadata["head_sha"].casefold() != head.casefold()
+                or type(current_metadata.get("trigger_id")) is not int
+                or str(current_metadata["trigger_id"]) != str(trigger_id)
+                or type(current_metadata.get("response_id")) is not int
+                or str(current_metadata["response_id"]) != str(response_id)
+                or current_observed_at is None
+                or current_observed_at != current_finished_at
+            ):
+                return {}
+        else:
+            # A terminal ambiguous or failed capture cannot be retroactively
+            # promoted by a later change in the public GitHub response.
             return {}
 
         candidates: dict[int, list[tuple[str, str]]] = {}
@@ -1611,6 +1683,7 @@ def _archived_completed_thread_bodies(
                 or not EXACT_SHA.fullmatch(candidate_head)
                 or started_at is None
                 or finished_at is None
+                or started_at > finished_at
                 or finished_at >= trigger_at
             ):
                 continue
@@ -1685,6 +1758,7 @@ def _archived_completed_thread_bodies(
             review_submitted_at = parse_timestamp(matching_reviews[0].get("submittedAt"))
             if (
                 archived_trigger_at is None
+                or archived_trigger_at < started_at
                 or archived_trigger_at > finished_at
                 or review_submitted_at is None
                 or review_submitted_at < archived_trigger_at
@@ -1729,6 +1803,7 @@ def _addressed_thread_update_matches_archive(
     head: str,
     after: datetime,
     before: datetime | None,
+    response_id: int,
     archived_bodies: Mapping[int, tuple[str, str]],
 ) -> bool:
     """Accept only the exact known addressed footer appended to an archived finding."""
@@ -1752,6 +1827,8 @@ def _addressed_thread_update_matches_archive(
         or updated is None
         or updated <= after
         or (before is not None and updated >= before)
+        or type(response_id) is not int
+        or response_id <= 0
     ):
         return False
     annotation = _ADDRESSED_COMMIT_ANNOTATION.search(body)
@@ -2148,13 +2225,17 @@ def finished_reply_without_findings(
                                 repo,
                                 pr_number,
                                 head,
+                                response_id,
+                                created,
                                 record,
                                 current_record_path,
                             )
                             if isinstance(repo, str) and type(pr_number) is int and pr_number > 0
                             else {}
                         )
-                    if _addressed_thread_update_matches_archive(item, head, after, before, archived_bodies):
+                    if _addressed_thread_update_matches_archive(
+                        item, head, after, before, response_id, archived_bodies
+                    ):
                         continue
                 return False
     return True

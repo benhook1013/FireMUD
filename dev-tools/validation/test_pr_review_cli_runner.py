@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
+from pr_review import cli as cli_module
 from pr_review import cli_attempts, cli_runner, evidence, github, hosted
 from pr_review.cli import _parser, _render
 from pr_review.cli_runner import (
@@ -123,6 +124,32 @@ class BoundedAllocationCliParserTests(unittest.TestCase):
         for invalid in ("0", "-1", "not-an-integer"):
             with self.subTest(invalid=invalid), self.assertRaises(SystemExit):
                 _parser().parse_args([*common, invalid])
+
+    def test_exact_additional_completed_rejects_min_or_max_before_dispatch(self):
+        common = [
+            "decide",
+            "allocation",
+            "grant",
+            "--pr",
+            "2827",
+            "--channel",
+            "cli",
+            "--head",
+            HEAD,
+            "--reason",
+            "exact additional review count",
+        ]
+        self.assertEqual(
+            _parser().parse_args(
+                [*common, "--min-additional-completed", "1", "--max-additional-completed", "4"]
+            ).min_additional_completed,
+            1,
+        )
+        for bound in ("--min-additional-completed", "--max-additional-completed"):
+            with self.subTest(bound=bound), patch.object(cli_module, "_dispatch") as dispatch:
+                with self.assertRaises(SystemExit):
+                    cli_module.main([*common, "--exact-additional-completed", "3", bound, "2"])
+                dispatch.assert_not_called()
 
     def test_legacy_cancel_shape_needs_no_cap_replacement(self):
         args = _parser().parse_args(

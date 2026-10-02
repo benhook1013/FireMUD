@@ -438,6 +438,7 @@ def _import_reply_only_hosted_checkpoint(
             captured_head,
             record,
             hosted_payload,
+            path,
         )
         if proof is None:
             raise ProviderImportError("Hosted reply has no exact trigger-window zero-finding proof")
