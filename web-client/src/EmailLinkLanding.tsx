@@ -85,6 +85,8 @@ export default function EmailLinkLanding({ route }: EmailLinkLandingProps) {
                   New password
                   <input
                     autoComplete="new-password"
+                    maxLength={100}
+                    minLength={6}
                     name="newPassword"
                     onChange={(event) => setPassword(event.target.value)}
                     required

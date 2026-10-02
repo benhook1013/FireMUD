@@ -262,6 +262,8 @@ components:
           type: string
         newPassword:
           type: string
+          minLength: 6
+          maxLength: 100
       required: [token, newPassword]
     UsernameRecoveryRequest:
       type: object

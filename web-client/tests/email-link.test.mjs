@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   captureEmailLinkLanding,
@@ -6,6 +7,52 @@ import {
   emailLinkFailureMessage,
   EmailLinkCompletionError,
 } from '../src/emailLinkLanding.ts';
+
+test('format check and fix cover the same source and test globs', async () => {
+  const { scripts } = JSON.parse(
+    await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  );
+  const getGlobs = (command) =>
+    Array.from(command.matchAll(/"([^"]+)"/g), (match) => match[1]);
+  const expectedGlobs = ['src/**/*.{ts,tsx}', 'tests/**/*.mjs'];
+
+  assert.deepEqual(getGlobs(scripts.format), expectedGlobs);
+  assert.deepEqual(getGlobs(scripts['format:fix']), expectedGlobs);
+});
+
+test('reset form and API schema retain the Account password bounds', async () => {
+  const form = await readFile(
+    new URL('../src/EmailLinkLanding.tsx', import.meta.url),
+    'utf8'
+  );
+  const dto = await readFile(
+    new URL(
+      '../../services/account-service/src/main/java/net/firedevops/firemud/accountservice/dto/CompletePasswordResetRequest.java',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  const schema = await readFile(
+    new URL(
+      '../../services/account-service/src/main/resources/openapi.yaml',
+      import.meta.url
+    ),
+    'utf8'
+  );
+  assert.match(dto, /@Size\(min = 6, max = 100\) String newPassword/);
+  assert.match(
+    form,
+    /<input\b[^>]*maxLength=\{100\}[^>]*minLength=\{6\}[^>]*name="newPassword"/
+  );
+  const resetSchema = schema
+    .split('    CompletePasswordResetRequest:')[1]
+    ?.split('    UsernameRecoveryRequest:')[0];
+  assert.ok(resetSchema, 'CompletePasswordResetRequest must exist');
+  assert.match(
+    resetSchema,
+    /newPassword:\s+type: string\s+minLength: 6\s+maxLength: 100/
+  );
+});
 
 test('verification GET captures a fragment token without dispatching an API mutation', () => {
   const changes = [];
