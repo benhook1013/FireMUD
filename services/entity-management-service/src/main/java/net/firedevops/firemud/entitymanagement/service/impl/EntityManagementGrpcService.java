@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.stream.Collectors;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.GameplaySessionAttestationClaims;
@@ -408,6 +409,22 @@ public class EntityManagementGrpcService
         PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD);
   }
 
+  private void requireListCharactersByAccountCaller() {
+    if (publicationReadGuard == null) {
+      throw new AdminAuthorizationException(
+          "ListCharactersByAccount authorization is not configured");
+    }
+    GrpcPeerIdentity peerIdentity = GrpcPeerIdentity.current();
+    if (peerIdentity == null
+        || !peerIdentity.isInNamespace(publicationReadGuard.trustedNamespace())
+        || !(peerIdentity.isService("account-service")
+            || peerIdentity.isService("game-session-service"))
+        || SessionContext.hasAuthenticatedCallerContext()) {
+      throw new AdminAuthorizationException(
+          "ListCharactersByAccount requires only the authenticated Account or Game Session workload peer identity");
+    }
+  }
+
   @Override
   @Timed(value = "entityGrpc.validateEntityTemplateReference")
   public void validateEntityTemplateReference(
@@ -533,6 +550,7 @@ public class EntityManagementGrpcService
       ListCharactersByAccountRequest request,
       StreamObserver<ListCharactersByAccountResponse> responseObserver) {
     try {
+      requireListCharactersByAccountCaller();
       long tenantId = requireTenantId(request.getTenantId());
       long accountId = RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
       var characters =
@@ -548,6 +566,19 @@ public class EntityManagementGrpcService
               .collect(Collectors.toList());
       ListCharactersByAccountResponse response =
           ListCharactersByAccountResponse.newBuilder().addAllCharacters(characters).build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdminAuthorizationException ex) {
+      ListCharactersByAccountResponse response =
+          ListCharactersByAccountResponse.newBuilder()
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "ListCharactersByAccount",
+                      "PERMISSION_DENIED",
+                      ex.getMessage()))
+              .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (NumberFormatException ex) {

@@ -446,7 +446,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setConnectScopeId("opaque-account-scope")
                 .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
                 .build());
-    when(accountClient.joinPublicProductionMembership(Mockito.any(), Mockito.any(), Mockito.any()))
+    when(accountClient.joinPublicProductionMembership(
+            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(Instant.class)))
         .thenReturn(
             JoinPublicProductionMembershipResponse.newBuilder()
                 .setSuccess(false)
@@ -534,7 +535,10 @@ class WorldsTextCommandDispatchHandlerTest {
         org.mockito.ArgumentCaptor.forClass(String.class);
     Mockito.verify(accountClient, Mockito.times(3))
         .joinPublicProductionMembership(
-            joinContextCaptor.capture(), scopeIdCaptor.capture(), requestIdCaptor.capture());
+            joinContextCaptor.capture(),
+            scopeIdCaptor.capture(),
+            requestIdCaptor.capture(),
+            Mockito.any(Instant.class));
     List<net.firedevops.firemud.shared.v1.PlayerExecutionContext> joinContexts =
         joinContextCaptor.getAllValues();
     List<String> scopeIds = scopeIdCaptor.getAllValues();
@@ -600,7 +604,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setConnectScopeId("opaque-account-scope-2")
                 .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
                 .build());
-    when(accountClient.joinPublicProductionMembership(Mockito.any(), Mockito.any(), Mockito.any()))
+    when(accountClient.joinPublicProductionMembership(
+            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(Instant.class)))
         .thenReturn(
             JoinPublicProductionMembershipResponse.newBuilder()
                 .setSuccess(false)
@@ -838,7 +843,8 @@ class WorldsTextCommandDispatchHandlerTest {
                 .setConnectScopeId("opaque-account-scope")
                 .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
                 .build());
-    when(accountClient.joinPublicProductionMembership(Mockito.any(), Mockito.any(), Mockito.any()))
+    when(accountClient.joinPublicProductionMembership(
+            Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(Instant.class)))
         .thenReturn(
             JoinPublicProductionMembershipResponse.newBuilder()
                 .setSuccess(success)

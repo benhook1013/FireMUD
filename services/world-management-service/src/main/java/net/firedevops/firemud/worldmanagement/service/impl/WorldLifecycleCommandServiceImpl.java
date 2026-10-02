@@ -351,7 +351,7 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       worldInstance.setTerminationRequestId(terminationRequestId);
       worldInstance.setFailureReason(normalizeBlank(reason));
       worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
-      worldInstance = worldInstanceRepository.save(worldInstance);
+      worldInstanceRepository.save(worldInstance);
     } else if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
       if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
         throw new IllegalArgumentException(
@@ -370,10 +370,21 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
       throw new IllegalArgumentException(
           cleanupResponse.getError().getCode() + ": " + cleanupResponse.getError().getMessage());
     }
-    WorldInstance finalWorldInstance = worldInstance;
     WorldInstanceLifecycleSnapshotDto terminatedSnapshot =
         executeLocalTermination(
             () -> {
+              WorldInstance finalWorldInstance = requireWorldInstance(tenantId, gameInstanceId);
+              if (!terminationRequestId.equals(finalWorldInstance.getTerminationRequestId())) {
+                throw new IllegalArgumentException(
+                    "INVALID_WORLD_INSTANCE_STATE: world instance termination request changed before finalization");
+              }
+              if (STATUS_TERMINATED.equals(finalWorldInstance.getStatus())) {
+                return snapshot(finalWorldInstance);
+              }
+              if (!STATUS_TERMINATING.equals(finalWorldInstance.getStatus())) {
+                throw new IllegalArgumentException(
+                    "INVALID_WORLD_INSTANCE_STATE: world instance is not terminating during finalization");
+              }
               cleanupWorldRuntimeState(tenantId, gameInstanceId);
               finalWorldInstance.setStatus(STATUS_TERMINATED);
               finalWorldInstance.setLifecycleEpoch(finalWorldInstance.getLifecycleEpoch() + 1L);

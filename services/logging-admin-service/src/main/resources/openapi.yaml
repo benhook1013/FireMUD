@@ -1767,6 +1767,12 @@ paths:
                     $ref: '#/components/schemas/GameInstanceRuntimeStateDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Current admission-pointer authority or required pointer identity is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers/version-upgrades/{tenantId}/{preparationId}:
     get:
       summary: Read a prepared version-upgrade proof (live read)

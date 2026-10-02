@@ -863,6 +863,29 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void localizedLogoutUnavailableErrorUsesFrenchRegionalLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr-FR",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "LOGOUT_UNAVAILABLE",
+                "Logout is temporarily unavailable. Please try again.",
+                "error.logout.unavailable",
+                java.util.Map.of()));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "ERROR LOGOUT_UNAVAILABLE La déconnexion est temporairement indisponible. Veuillez réessayer.");
+  }
+
+  @Test
   void publicJoinOutcomesRenderCurrentGuidanceAndPolicyDenial() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(

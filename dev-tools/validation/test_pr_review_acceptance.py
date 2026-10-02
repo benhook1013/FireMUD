@@ -10,6 +10,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -19,6 +21,7 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli, state
 from pr_review.acceptance import AcceptanceFixtureError, FixtureReviewAdapter, load
+from pr_review.sqlite_store import SqliteStateStore
 
 BASE = "a" * 40
 HEAD_1 = "b" * 40
@@ -153,6 +156,24 @@ class AcceptanceCliTest(unittest.TestCase):
             check=False,
         )
 
+    def run_sqlite_cli(self, fixture: Path, isolated: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        command = [
+            "--acceptance-fixture",
+            str(fixture),
+            "--state-path",
+            str(isolated),
+            *args,
+        ]
+        stdout = StringIO()
+        stderr = StringIO()
+        with (
+            patch("pr_review.acceptance.state.StateStore", SqliteStateStore),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            returncode = cli.main(command)
+        return subprocess.CompletedProcess(command, returncode, stdout.getvalue(), stderr.getvalue())
+
     def test_allocation_handoff_subcommand_is_removed_in_favor_of_stop(self):
         stop = cli._parser().parse_args(
             ["decide", "stop", "--pr", "1", "--channel", "hosted", "--reason", "human judgment"]
@@ -160,8 +181,19 @@ class AcceptanceCliTest(unittest.TestCase):
         self.assertEqual(stop.decide_command, "stop")
         with self.assertRaises(SystemExit):
             cli._parser().parse_args(
-                ["decide", "allocation", "handoff", "--pr", "1", "--channel", "hosted", "--head", HEAD_1,
-                 "--reason", "legacy handoff"]
+                [
+                    "decide",
+                    "allocation",
+                    "handoff",
+                    "--pr",
+                    "1",
+                    "--channel",
+                    "hosted",
+                    "--head",
+                    HEAD_1,
+                    "--reason",
+                    "legacy handoff",
+                ]
             )
 
     def test_structured_routes_are_queryable_and_dispositions_close_target_work(self):
@@ -171,8 +203,20 @@ class AcceptanceCliTest(unittest.TestCase):
             isolated = root / "state.json"
             fixture.write_text(json.dumps(fixture_payload()), encoding="utf-8")
             common = [
-                "decide", "route", "open", "--source-pr", "2828", "--channel", "hosted",
-                "--review", "901", "--finding", "thread-77", "--target-pr", "2879", "--json",
+                "decide",
+                "route",
+                "open",
+                "--source-pr",
+                "2828",
+                "--channel",
+                "hosted",
+                "--review",
+                "901",
+                "--finding",
+                "thread-77",
+                "--target-pr",
+                "2879",
+                "--json",
             ]
             first = self.run_cli(
                 fixture,
@@ -233,19 +277,25 @@ class AcceptanceCliTest(unittest.TestCase):
             repository="fixture/firemud",
             store=SimpleNamespace(load=lambda: SimpleNamespace(summary_dispositions=())),
             status=lambda: {
-                "prs": [{
-                    "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
-                    "reconciliation": "COHERENT", "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
-                    "allocations": {"hosted": {"status": "EXHAUSTED_PENDING", "reason": "handoff pending"}},
-                }]
+                "prs": [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "base": "develop",
+                        "parent_head": BASE,
+                        "reconciliation": "COHERENT",
+                        "channels": {"hosted": "COMPLETE", "cli": "COMPLETE"},
+                        "allocations": {"hosted": {"status": "EXHAUSTED_PENDING", "reason": "handoff pending"}},
+                    }
+                ]
             },
         )
         controller.status_for_pr = lambda _pr: controller.status()
         args = cli._parser().parse_args(["status", "--pr", "1", "--json"])
-        with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
-            "pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))
-        ), patch(
-            "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
+        with (
+            patch("pr_review.cli._controller", return_value=(controller, None)),
+            patch("pr_review.cli.status_module.status", return_value=json.loads(json.dumps(report))),
+            patch("pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
         ):
             result, code = cli._dispatch(args)
 
@@ -255,16 +305,23 @@ class AcceptanceCliTest(unittest.TestCase):
 
         def stopped_status(obligations=()):
             controller.status = lambda: {
-                "prs": [{
-                    "pr": 1, "head": HEAD_1, "base": "develop", "parent_head": BASE,
-                    "reconciliation": "COHERENT", "channels": {"hosted": "HUMAN_STOPPED", "cli": "COMPLETE"},
-                    "allocations": {"hosted": {"status": "STOPPED", "reason": "human decision"}},
-                    "review_obligations": {"hosted": list(obligations)},
-                }]
+                "prs": [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "base": "develop",
+                        "parent_head": BASE,
+                        "reconciliation": "COHERENT",
+                        "channels": {"hosted": "HUMAN_STOPPED", "cli": "COMPLETE"},
+                        "allocations": {"hosted": {"status": "STOPPED", "reason": "human decision"}},
+                        "review_obligations": {"hosted": list(obligations)},
+                    }
+                ]
             }
             controller.status_for_pr = lambda _pr: controller.status()
-            with patch("pr_review.cli._controller", return_value=(controller, None)), patch(
-                "pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})
+            with (
+                patch("pr_review.cli._controller", return_value=(controller, None)),
+                patch("pr_review.cli._read_record_incoming_routes", return_value=([], {"status": "not_bootstrapped"})),
             ):
                 return cli._dispatch(args)
 
@@ -402,9 +459,7 @@ class AcceptanceCliTest(unittest.TestCase):
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
             self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
-            command = (
-                "run", "cli", "--expect-pr", "1", "--allow-unreconciled", "--reason", "one isolated discovery"
-            )
+            command = ("run", "cli", "--expect-pr", "1", "--allow-unreconciled", "--reason", "one isolated discovery")
             first = self.run_cli(fixture, isolated, *command)
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertIn("provisional=True", first.stdout)
@@ -466,7 +521,9 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
             before_transition = self.run_cli(fixture, isolated, "status", "--json")
             self.assertEqual(before_transition.returncode, 0, before_transition.stderr)
-            self.assertEqual(before_transition and json.loads(before_transition.stdout)["prs"][0]["reconciliation"], "PARENT_MOVED")
+            self.assertEqual(
+                before_transition and json.loads(before_transition.stdout)["prs"][0]["reconciliation"], "PARENT_MOVED"
+            )
 
             transition = self.run_cli(
                 fixture,
@@ -746,9 +803,7 @@ class AcceptanceCliTest(unittest.TestCase):
             decision = json.loads(result.stdout)
             self.assertEqual(decision["retirement"]["retired_missing_hosted_fingerprints"], [fingerprint])
             status = json.loads(self.run_cli(fixture, isolated, "status", "--json").stdout)
-            self.assertEqual(
-                status["legacy_transitions"][-1]["retired_hosted_fingerprints"], [fingerprint]
-            )
+            self.assertEqual(status["legacy_transitions"][-1]["retired_hosted_fingerprints"], [fingerprint])
 
             payload["evidence"]["1"]["hosted"].append(legacy_hosted)
             fixture.write_text(json.dumps(payload), encoding="utf-8")
@@ -897,9 +952,7 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertIn("unavailable in acceptance fixture mode", result.stderr)
             fixture_common = root / "fixture-git-common"
             fixture_request_lock = fixture_common / "firemud" / "hosted" / "fixture_firemud" / "pr-1" / "request.lock"
-            canonical_request_lock = (
-                state.state_path().parent / "hosted" / "fixture_firemud" / "pr-1" / "request.lock"
-            )
+            canonical_request_lock = state.state_path().parent / "hosted" / "fixture_firemud" / "pr-1" / "request.lock"
             self.assertFalse(fixture_request_lock.exists())
             self.assertFalse(canonical_request_lock.exists())
 
@@ -996,8 +1049,19 @@ class AcceptanceCliTest(unittest.TestCase):
             fixture.write_text(json.dumps(payload), encoding="utf-8")
             self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
             grant = self.run_cli(
-                fixture, isolated, "decide", "allocation", "grant", "--pr", "1", "--channel", "hosted",
-                "--head", HEAD_1, "--reason", "nonterminal result sequence",
+                fixture,
+                isolated,
+                "decide",
+                "allocation",
+                "grant",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "nonterminal result sequence",
             )
             self.assertEqual(grant.returncode, 0, grant.stderr)
             for expected in ("rate_limited", "partial", "stale", "duplicate"):
@@ -1006,9 +1070,7 @@ class AcceptanceCliTest(unittest.TestCase):
                 self.assertIn(f"result={expected}", result.stdout)
                 shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
                 self.assertEqual(shown.returncode, 0, shown.stderr)
-                self.assertEqual(
-                    json.loads(shown.stdout)["prs"][0]["allocations"]["hosted"]["status"], "PROMISED"
-                )
+                self.assertEqual(json.loads(shown.stdout)["prs"][0]["allocations"]["hosted"]["status"], "PROMISED")
             sidecar = json.loads((root / "state.json.fixture-evidence.json").read_text(encoding="utf-8"))
             self.assertEqual(sidecar["result_positions"]["1:hosted"], 4)
             self.assertEqual(sidecar["evidence"], [])
@@ -1072,8 +1134,19 @@ class AcceptanceCliTest(unittest.TestCase):
             fixture.write_text(json.dumps(payload), encoding="utf-8")
             self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
             grant = self.run_cli(
-                fixture, isolated, "decide", "allocation", "grant", "--pr", "1", "--channel", "hosted",
-                "--head", HEAD_1, "--reason", "one review then handoff",
+                fixture,
+                isolated,
+                "decide",
+                "allocation",
+                "grant",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--reason",
+                "one review then handoff",
             )
             self.assertEqual(grant.returncode, 0, grant.stderr)
             first = self.run_cli(fixture, isolated, "run", "hosted", "--expect-pr", "1")
@@ -1085,9 +1158,20 @@ class AcceptanceCliTest(unittest.TestCase):
             ]
             fixture.write_text(json.dumps(held), encoding="utf-8")
             stopped = self.run_cli(
-                fixture, isolated, "decide", "stop", "--pr", "1", "--channel", "hosted",
-                "--head", HEAD_1, "--checkpoint", "allocated-dry",
-                "--reason", "stop future review discovery while retaining this thread",
+                fixture,
+                isolated,
+                "decide",
+                "stop",
+                "--pr",
+                "1",
+                "--channel",
+                "hosted",
+                "--head",
+                HEAD_1,
+                "--checkpoint",
+                "allocated-dry",
+                "--reason",
+                "stop future review discovery while retaining this thread",
             )
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
             shown = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
@@ -1118,7 +1202,7 @@ class AcceptanceCliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = root / "fixture.json"
-            isolated = root / "state.json"
+            isolated = root / "state.sqlite3"
             payload = fixture_payload()
             payload["evidence"]["1"]["hosted"] = [
                 {
@@ -1151,9 +1235,9 @@ class AcceptanceCliTest(unittest.TestCase):
                 },
             ]
             fixture.write_text(json.dumps(payload), encoding="utf-8")
-            self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
+            self.assertEqual(self.run_sqlite_cli(fixture, isolated, "stack", "set", "1", "2").returncode, 0)
 
-            stopped = self.run_cli(
+            stopped = self.run_sqlite_cli(
                 fixture,
                 isolated,
                 "decide",
@@ -1173,7 +1257,7 @@ class AcceptanceCliTest(unittest.TestCase):
 
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
             self.assertEqual(json.loads(stopped.stdout)["stop_basis"], "direct_human")
-            status = self.run_cli(fixture, isolated, "status", "--pr", "1", "--json")
+            status = self.run_sqlite_cli(fixture, isolated, "status", "--pr", "1", "--json")
             self.assertEqual(status.returncode, 0, status.stderr)
             self.assertEqual(json.loads(status.stdout)["prs"][0]["channels"]["hosted"], "HUMAN_STOPPED")
 

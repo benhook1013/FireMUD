@@ -54,7 +54,7 @@ public record EnvironmentIdentityPlan(
             .keySet()
             .equals(expectedGrpcWorkloadIdentityRoles)) {
       throw new IllegalArgumentException(
-          "gRPC publication certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
+          "gRPC workload-identity certificate, runtime Secret, and source Secret maps must contain exactly the supported roles");
     }
   }
 

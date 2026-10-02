@@ -85,9 +85,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(FindingRoute.from_dict(serialized).target_history, ())
 
         for malformed in (None, "2879", {"target": 2879}, 2879):
-            with self.subTest(target_history=malformed), self.assertRaisesRegex(
-                StateError, "outside its schema"
-            ):
+            with self.subTest(target_history=malformed), self.assertRaisesRegex(StateError, "outside its schema"):
                 FindingRoute.from_dict({**route.to_dict(), "target_history": malformed})
 
     def test_open_route_merge_deduplicates_observations_and_rejects_conflicting_targets(self):
@@ -405,6 +403,43 @@ class ReviewStateStackTest(unittest.TestCase):
             self.assertNotIn("base_tip", json.dumps(document))
             self.assertNotIn("evidence", json.dumps(document))
 
+    def test_json_store_reads_direct_human_stop_but_refuses_to_write_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "firemud" / "pr-review-stack.json"
+            path.parent.mkdir(parents=True)
+            allocation = ReviewAllocation(
+                pr=2849,
+                channel="hosted",
+                head="a" * 40,
+                parent_identity="develop",
+                parent_head="b" * 40,
+                merge_base="c" * 40,
+                patch_id="current-patch",
+                baseline_checkpoints=(),
+                reason="human stopped further review discovery",
+                stop_basis="direct_human",
+                stop_checkpoint="review-2849",
+                stop_reviewed_head="d" * 40,
+                stop_reviewed_patch_id="reviewed-patch",
+                stop_head="a" * 40,
+                stop_parent_identity="develop",
+                stop_parent_head="b" * 40,
+                stop_merge_base=None,
+                stop_patch_id="current-patch",
+                stop_reason="human stopped further review discovery",
+            )
+            state = ReviewState(ordered_prs=(2849,), allocations={"2849:hosted": allocation})
+            path.write_text(json.dumps(state.to_dict()), encoding="utf-8")
+            store = StateStore(path)
+            original_bytes = path.read_bytes()
+
+            self.assertEqual(store.load(), state)
+            with self.assertRaisesRegex(StateError, "requires compatible SQLite"):
+                store.update(lambda _current: state)
+
+            self.assertEqual(path.read_bytes(), original_bytes)
+            self.assertEqual(list(path.parent.glob(f".{path.name}.*")), [])
+
     def test_legacy_transition_round_trips_exact_anchor_and_fingerprints(self):
         transition = LegacyEvidenceTransition(
             2818,
@@ -443,8 +478,11 @@ class ReviewStateStackTest(unittest.TestCase):
             {"summary_dispositions": [{}]},
         )
         for malformed in malformed_states:
-            with self.subTest(malformed=malformed), self.assertRaisesRegex(
-                StateError, "(policy overrides|policy override records|malformed private records)"
+            with (
+                self.subTest(malformed=malformed),
+                self.assertRaisesRegex(
+                    StateError, "(policy overrides|policy override records|malformed private records)"
+                ),
             ):
                 ReviewState.from_dict({"schema_version": 1, **malformed})
 
@@ -578,7 +616,9 @@ class ReviewStateStackTest(unittest.TestCase):
             ReviewState(
                 routes=(legacy_route,),
                 summary_dispositions=(dataclasses.replace(disposition, route_ids=(legacy_route.route_id,)),),
-            ).routes[0].source_finding,
+            )
+            .routes[0]
+            .source_finding,
             "outside_diff:2:workitem-base",
         )
 
@@ -705,11 +745,11 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(completion_status(state, Channel.CLI, (matching,)), ReviewStatus.COMPLETE)
         legacy = ReviewState(
             ordered_prs=(1,),
-            policy_overrides={
-                "1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="c", reason="legacy")
-            },
+            policy_overrides={"1:cli": PolicyOverride(cli_zero_useful=1, head="h", checkpoint="c", reason="legacy")},
         )
-        self.assertEqual(completion_status(legacy, Channel.CLI, (dataclasses.replace(current, patch_id=None),)), ReviewStatus.READY)
+        self.assertEqual(
+            completion_status(legacy, Channel.CLI, (dataclasses.replace(current, patch_id=None),)), ReviewStatus.READY
+        )
 
     def test_git_common_dir_bounds_subprocess_and_translates_timeout(self):
         timeout = state_module.subprocess.TimeoutExpired("git rev-parse --git-common-dir", 30)
@@ -984,12 +1024,24 @@ class ReviewStateStackTest(unittest.TestCase):
         state = ReviewState(ordered_prs=(1,))
         history = (
             Evidence(
-                1, "old", "c1", completed=True, attributable=True, anchored=True,
-                corrected_state=True, lineage_proven_to_next=True,
+                1,
+                "old",
+                "c1",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=True,
+                lineage_proven_to_next=True,
             ),
             Evidence(
-                1, "old", "c2", completed=True, attributable=True, anchored=True,
-                corrected_state=True, lineage_proven_to_next=True,
+                1,
+                "old",
+                "c2",
+                completed=True,
+                attributable=True,
+                anchored=True,
+                corrected_state=True,
+                lineage_proven_to_next=True,
             ),
             Evidence(1, "new", "c3", completed=True, attributable=True, anchored=True, corrected_state=True),
         )
@@ -1340,7 +1392,10 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertTrue(
             taper_satisfied(
                 Channel.CLI,
-                (*history, Evidence(1, "new", "c5", completed=True, attributable=True, anchored=True, corrected_state=True)),
+                (
+                    *history,
+                    Evidence(1, "new", "c5", completed=True, attributable=True, anchored=True, corrected_state=True),
+                ),
                 3,
             )
         )
@@ -1472,9 +1527,7 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertEqual(select_review_target(state, Channel.CLI, (1,), {1: history}).status, ReviewStatus.READY)
 
     def test_non_counting_history_does_not_hide_reconciliation_blockers(self):
-        history = (
-            Evidence(1, "h", "legacy", completed=True, attributable=True, non_counting=True),
-        )
+        history = (Evidence(1, "h", "legacy", completed=True, attributable=True, non_counting=True),)
         state = ReviewState(ordered_prs=(1,))
 
         self.assertEqual(

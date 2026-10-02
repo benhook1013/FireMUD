@@ -5,10 +5,12 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
@@ -363,9 +365,9 @@ public class PlayCommandHandler {
         Optional<PlayCommandHandlingResult> authorityFailure =
             validateRuntimeAdmission(context, selectedWorld, selectedRealm, selectedTenantTag, 0L);
         if (authorityFailure.isPresent()) {
-          PlayCommandHandlingResult failure = authorityFailure.orElseThrow();
+          PlayCommandHandlingResult admissionFailure = authorityFailure.orElseThrow();
           if (!gameplayWorldCatalog.isPubliclyDiscoverable(currentCatalog, selectedWorld)
-              && isDefinitivePrivateWorldDenial(failure)) {
+              && isDefinitivePrivateWorldDenial(admissionFailure)) {
             return failure(
                 GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
                 GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
@@ -376,30 +378,17 @@ public class PlayCommandHandler {
                 null,
                 null);
           }
-          return failure;
+          return admissionFailure;
         }
+
         if (selectedRealm.requiresCharacterSelection() && !StringUtils.hasText(character)) {
-          return failure(
-              "PLAY_SELECTION_REQUIRED",
-              characterSelectionMessage(selectedWorld, selectedRealm),
-              "error.play.character-selection-required",
-              Map.of(
-                  "worldSlug",
-                  selectedWorld.slug(),
-                  "realmSlug",
-                  selectedRealm.slug(),
-                  "playUsage",
-                  playUsage(selectedWorld, selectedRealm),
-                  "charsUsage",
-                  charsUsage(selectedWorld, selectedRealm)),
-              selectedTenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              null,
-              null);
+          return characterSelectionRequiredFailure(selectedWorld, selectedRealm, selectedTenantTag);
         }
         ResolvedCharacter resolvedCharacter;
         try {
           resolvedCharacter = resolveCharacter(context, selectedRealm, character);
+        } catch (CharacterSelectionRequiredException ex) {
+          return characterSelectionRequiredFailure(selectedWorld, selectedRealm, selectedTenantTag);
         } catch (IllegalStateException ex) {
           return characterIdentityUnavailableFailure(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), character, ex);
@@ -624,7 +613,7 @@ public class PlayCommandHandler {
     }
 
     List<Character> roster = response.getCharactersList();
-    java.util.Set<Long> characterIds = new java.util.HashSet<>();
+    Set<Long> characterIds = new HashSet<>();
     for (Character character : roster) {
       long characterId = requireResolvedCharacterId(character.getId());
       if (!Long.toString(selectedRealm.tenantId()).equals(character.getTenantId())
@@ -647,7 +636,7 @@ public class PlayCommandHandler {
                           normalizeName(character.getName()), normalizeName(requestedCharacter)))
               .toList();
       if (matches.size() != 1) {
-        throw new IllegalStateException(
+        throw new CharacterSelectionRequiredException(
             matches.isEmpty()
                 ? "Selected character is not present in the authenticated account roster"
                 : "Selected character is ambiguous in the authenticated account roster");
@@ -655,7 +644,7 @@ public class PlayCommandHandler {
       selected = matches.getFirst();
     } else {
       if (roster.size() != 1) {
-        throw new IllegalStateException(
+        throw new CharacterSelectionRequiredException(
             "PLAY without a character requires exactly one current account character");
       }
       selected = roster.getFirst();
@@ -1425,6 +1414,29 @@ public class PlayCommandHandler {
         + " first.";
   }
 
+  private PlayCommandHandlingResult characterSelectionRequiredFailure(
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm,
+      String tenantTag) {
+    return failure(
+        GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+        characterSelectionMessage(selectedWorld, selectedRealm),
+        "error.play.character-selection-required",
+        Map.of(
+            "worldSlug",
+            selectedWorld.slug(),
+            "realmSlug",
+            selectedRealm.slug(),
+            "playUsage",
+            playUsage(selectedWorld, selectedRealm),
+            "charsUsage",
+            charsUsage(selectedWorld, selectedRealm)),
+        tenantTag,
+        Long.toString(selectedRealm.gameInstanceId()),
+        null,
+        null);
+  }
+
   private String displaySelection(String world, String realm) {
     if (!StringUtils.hasText(realm)
         || gameplayWorldCatalog
@@ -1457,6 +1469,14 @@ public class PlayCommandHandler {
 
   private record ResolvedCharacter(long id, String name) {}
 
+  private static final class CharacterSelectionRequiredException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private CharacterSelectionRequiredException(String message) {
+      super(message);
+    }
+  }
+
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
       String requestedWorldSlug,
@@ -1466,18 +1486,17 @@ public class PlayCommandHandler {
       long requestedCharacterId,
       String tenantTag,
       String reason) {
-    boolean selectedTenantMatchesContext = hasMatchingTenantId(tenantTag, context.tenantId());
     boolean sameGameplayIdentity =
-        selectedTenantMatchesContext
+        Long.toString(context.tenantId()).equals(tenantTag)
             && context.gameInstanceId() == requestedGameInstanceId
-            && context.characterId() == requestedCharacterId;
+            && (requestedCharacterId > 0
+                ? context.characterId() == requestedCharacterId
+                : context.hasGameplayBinding());
     boolean sameVisibleRealm =
-        selectedTenantMatchesContext
+        Long.toString(context.tenantId()).equals(tenantTag)
             && sameSlug(context.worldSlug(), requestedWorldSlug)
             && sameSlug(context.realmSlug(), requestedRealmSlug);
-    boolean sameRuntimeTarget =
-        selectedTenantMatchesContext && context.gameInstanceId() == requestedGameInstanceId;
-    if (!sameGameplayIdentity && !sameVisibleRealm && !sameRuntimeTarget) {
+    if (!sameGameplayIdentity && !sameVisibleRealm) {
       return;
     }
     meterRegistry.counter(RESUME_DENIED_METRIC, "reason", reason).increment();

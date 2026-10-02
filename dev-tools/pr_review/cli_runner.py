@@ -448,6 +448,21 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _write_cli_lock_owner(lock_handle: Any, run_id: str) -> None:
+    lock_handle.seek(0)
+    lock_handle.truncate()
+    lock_handle.write(f"run_id={run_id}\n")
+    lock_handle.flush()
+    os.fsync(lock_handle.fileno())
+
+
+def _clear_cli_lock_owner(lock_handle: Any) -> None:
+    lock_handle.seek(0)
+    lock_handle.truncate()
+    lock_handle.flush()
+    os.fsync(lock_handle.fileno())
+
+
 def _write_capture_complete_marker(capture_dir: Path) -> None:
     """Durably mark the capture after all provider output and metadata are written."""
     for name in (
@@ -871,6 +886,7 @@ def run_cli_review(
     # private metadata, not in the human-facing marker.
     run_id = f"run.{uuid.uuid4().hex}"
     capture_dir = capture_root / run_id
+    reservation_saved = False
     attempt_started = False
     attempt_finished = False
     provider_result_saved = False
@@ -889,6 +905,10 @@ def run_cli_review(
         hosted_lock_acquired = False
         temp_root: Path | None = None
         try:
+            try:
+                _write_cli_lock_owner(lock_handle, run_id)
+            except OSError as error:
+                raise ReviewRunnerError("could not persist active CLI run owner marker") from error
             repository = target.repository or str(getattr(github, "repo", "unknown/unknown"))
             hosted_record_path = hosted.default_trigger_record_path(
                 repository, target.snapshot.number, common=common_dir
@@ -1050,6 +1070,7 @@ def run_cli_review(
                 )
                 metadata: dict[str, Any] = {
                     "run_id": run_id,
+                    "repository": target.repository or str(getattr(github, "repo", "unknown/unknown")),
                     "kind": "cli",
                     "capture_completion_marker": "capture-complete",
                     "pull_request": target.snapshot.number,
@@ -1093,17 +1114,21 @@ def run_cli_review(
                 }
 
                 def reserve() -> None:
+                    nonlocal reservation_saved
                     (capture_dir / "metadata").write_text(
                         "".join(f"{key}={value}\n" for key, value in legacy_metadata.items()),
                         encoding="utf-8",
                     )
                     os.chmod(capture_dir / "metadata", 0o600)
                     _atomic_json(capture_dir / "metadata.json", metadata)
+                    reservation_saved = True
 
                 if admit is None:
                     reserve()
                 else:
                     admit(reserve)
+                if not reservation_saved:
+                    raise ReviewRunnerError("CLI admission callback returned without reserving the candidate")
                 records_warning = None
                 if records is not None:
                     attempt_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1341,11 +1366,21 @@ def run_cli_review(
                         add_note(f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
-            if hosted_lock_handle is not None:
-                if hosted_lock_acquired:
-                    fcntl.flock(hosted_lock_handle.fileno(), fcntl.LOCK_UN)
-                hosted_lock_handle.close()
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            try:
+                if hosted_lock_handle is not None:
+                    if hosted_lock_acquired:
+                        fcntl.flock(hosted_lock_handle.fileno(), fcntl.LOCK_UN)
+                    hosted_lock_handle.close()
+            finally:
+                try:
+                    _clear_cli_lock_owner(lock_handle)
+                except OSError:
+                    # The owner marker is advisory cleanup. Preserve the
+                    # completed provider result or primary failure, while
+                    # still releasing the repository-wide execution lock.
+                    pass
+                finally:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def target_from_resolver(resolver: ReviewTargetResolver, expected_pr: int | None = None) -> ReviewTarget:

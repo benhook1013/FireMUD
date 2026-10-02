@@ -75,7 +75,11 @@ case "$SMOKE_MINIO_LOCAL_ONLY" in
     echo "SMOKE_MINIO_LOCAL_ONLY must be boolean true/false; refusing to run." >&2
     exit 1
     ;;
-esac
+  esac
+
+# The proof's mTLS profile must be last so it supersedes the ordinary local
+# plaintext override and all image/MinIO-specific overlays.
+COMPOSE_FILES+=( -f "$DOCKER_DIR/docker-compose.grpc-mtls.override.yml" )
 
 if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" && "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" != "true" ]]; then
   for image_ref_and_id in "$SMOKE_MINIO_SERVER_IMAGE|$SMOKE_MINIO_SERVER_IMAGE_ID" \
@@ -186,7 +190,8 @@ upsert_env_var "$DOCKER_ENV_FILE" "SMOKE_IMAGE_TAG" "$SMOKE_IMAGE_TAG"
 
 if [[ "$SMOKE_MINIO_LOCAL_ONLY" == "true" ]]; then
   COMPOSE_CONFIG_FILE="$(mktemp)"
-  docker compose "${COMPOSE_FILES[@]}" config --format json >"$COMPOSE_CONFIG_FILE"
+  FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only \
+    docker compose "${COMPOSE_FILES[@]}" config --format json >"$COMPOSE_CONFIG_FILE"
   python3 - "$COMPOSE_CONFIG_FILE" "$SMOKE_MINIO_SERVER_IMAGE" "$SMOKE_MINIO_CLIENT_IMAGE" <<'PY'
 import json
 import sys
@@ -206,14 +211,16 @@ for service_name, image_ref in expected.items():
 print("Verified PR-local MinIO Compose image tags and pull policies.")
 PY
 else
-  docker compose "${COMPOSE_FILES[@]}" config >/dev/null
+  FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only \
+    docker compose "${COMPOSE_FILES[@]}" config >/dev/null
 fi
 if [[ "${SMOKE_COMPOSE_CONFIG_ONLY:-false}" == "true" ]]; then
   exit 0
 fi
 claim_run_owned_compose_project
+export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
+bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
-bash "$ENSURE_CERTS_SCRIPT"
 compose_up_with_retry
 bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
 
