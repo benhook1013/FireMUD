@@ -10,6 +10,7 @@ import java.util.UUID;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -298,30 +299,8 @@ public class AccountIssuerProjectionReconciliationRepository {
      */
     public static String requestDigestFor(
         String issuerId, String callerWorkloadIdentity, String projectionKey, UUID requestId) {
-      requireText(issuerId, "issuer ID", 512);
-      requireText(callerWorkloadIdentity, "caller workload identity", 512);
-      requireText(projectionKey, "projection key", 2048);
-      requireRequestId(requestId);
-      String[] fields = {
-        "issuer-projection-reconciliation-request/v1",
-        "ISSUER_PROJECTION_SNAPSHOT_CAPTURE",
-        issuerId,
-        callerWorkloadIdentity,
-        projectionKey,
-        requestId.toString()
-      };
-      try {
-        java.io.ByteArrayOutputStream framed = new java.io.ByteArrayOutputStream();
-        for (String field : fields) {
-          byte[] bytes = field.getBytes(StandardCharsets.UTF_8);
-          framed.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
-          framed.write(':');
-          framed.writeBytes(bytes);
-        }
-        return HEX.formatHex(MessageDigest.getInstance("SHA-256").digest(framed.toByteArray()));
-      } catch (java.security.NoSuchAlgorithmException unavailable) {
-        throw new IllegalStateException("SHA-256 is unavailable", unavailable);
-      }
+      return IssuerProjectionReconciliationRequestDigestV1.digest(
+          issuerId, callerWorkloadIdentity, projectionKey, requestId);
     }
   }
 

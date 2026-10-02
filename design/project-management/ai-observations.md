@@ -262,3 +262,8 @@ Entry format:
   - Context: the projection helpers' Spring Redis script convenience path can fall back from `EVALSHA` to raw `EVAL`. Giving the isolated fixture both commands masked the difference from the canonical owner-helper `SCRIPT LOAD`/`EVALSHA` grant.
   - Outcome: the Account and issuer candidates use verified registered bytes, check the identity returned by `SCRIPT LOAD`, and invoke `EVALSHA` directly without fallback or a blind retry. Isolated Redis proof denies raw `EVAL`; local database/Redis skips still require executed runner evidence.
   - Expected pattern: inspect convenience-API recovery behavior against the exact command grant, and test the forbidden command as well as the positive registered-helper path. Do not widen ACLs just to accommodate an implicit fallback.
+
+- `2026-10-03`: Preserve the exact external run identifier in watcher assignments
+  - Context: two bounded CI sentinels inspected a shortened or mistyped run identifier instead of the supplied full identifier and reported HTTP 404. That was not evidence that the authorized run was inaccessible or nonexistent.
+  - Outcome: direct same-task corrections restored observation of the intended runs. The current run37030807027 is visible; its earlier lookup of37007080727 supplied no validation evidence. No repository or CI mutation was needed.
+  - Expected pattern: copy the complete identifier from the assigned run URL, verify the returned run identifier and head SHA before attribution, and include the actually inspected identifier in a lookup-failure report. Do not escalate a mistyped-ID lookup as a platform-access failure or silently substitute a different run.

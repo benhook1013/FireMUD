@@ -10,6 +10,8 @@ option java_multiple_files = true;
 service IssuerAuthorityService {
   rpc ReadIssuerAuthorityForRuntime(ReadIssuerAuthorityForRuntimeRequest)
       returns (ReadIssuerAuthorityForRuntimeResponse);
+  rpc CaptureIssuerProjectionForRuntime(CaptureIssuerProjectionForRuntimeRequest)
+      returns (CaptureIssuerProjectionForRuntimeResponse);
 }
 
 message ReadIssuerAuthorityForRuntimeRequest {
@@ -37,4 +39,22 @@ message ReadIssuerAuthorityForRuntimeResponse {
   IssuerAuthoritySourceSnapshot source_snapshot = 4;
   // Present exactly when the request selected a positive historical sequence.
   optional string requested_event_canonical_json = 5;
+}
+
+message CaptureIssuerProjectionForRuntimeRequest {
+  string issuer_id = 1;
+  string request_id = 2;
+}
+
+message CaptureIssuerProjectionForRuntimeResponse {
+  string schema_version = 1;
+  string target_namespace = 2;
+  string operation_id = 3;
+  string request_id = 4;
+  string issuer_id = 5;
+  string caller_workload_identity = 6;
+  string projection_key = 7;
+  uint32 request_digest_version = 8;
+  string request_digest = 9;
+  IssuerAuthoritySourceSnapshot captured_source_snapshot = 10;
 }

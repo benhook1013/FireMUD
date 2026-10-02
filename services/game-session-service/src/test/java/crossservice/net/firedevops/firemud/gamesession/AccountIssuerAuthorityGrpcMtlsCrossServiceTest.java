@@ -28,16 +28,19 @@ import java.security.cert.X509Certificate;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository.Receipt;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityGrpcService;
+import net.firedevops.firemud.accountservice.service.AccountIssuerProjectionReconciliationService;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -52,7 +55,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-/** Physical mutual-TLS proof for the deliberately unwired issuer-source readback handoff. */
+/** Physical mutual-TLS proof for the deliberately unwired issuer-source readback and capture. */
 class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
   @TempDir private Path tempDir;
 
@@ -60,6 +63,8 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
 
   private static final String NAMESPACE = "test";
   private static final String ISSUER_ID = "https://account.example.test/issuer";
+  private static final String GAME_SESSION_PEER_URI =
+      "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service";
   private static final String SOURCE_SCOPE = "issuer/" + ISSUER_ID;
   private static final String STREAM_KEY =
       IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + SOURCE_SCOPE;
@@ -67,6 +72,9 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
   private static final String HISTORICAL_EVENT_REQUEST_ID = "22222222-2222-4222-8222-222222222222";
   private static final String CURRENT_READ_REQUEST_ID = "33333333-3333-4333-8333-333333333333";
   private static final String HISTORICAL_READ_REQUEST_ID = "44444444-4444-4444-8444-444444444444";
+  private static final String ZERO_CAPTURE_REQUEST_ID = "55555555-5555-4555-8555-555555555555";
+  private static final String POSITIVE_CAPTURE_REQUEST_ID = "66666666-6666-4666-8666-666666666666";
+  private static final String CAPTURE_EVENT_REQUEST_ID = "77777777-7777-4777-8777-777777777777";
 
   @Test
   void exactWorkloadIdentitiesCarryCurrentAndHistoricalReadbacksOverSocketMtls() throws Exception {
@@ -99,6 +107,74 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
     }
   }
 
+  @Test
+  void exactWorkloadIdentitiesCarryZeroAndPositiveCaptureReceiptsOverSocketMtls() throws Exception {
+    AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
+    AccountIssuerProjectionReconciliationService captureService =
+        mock(AccountIssuerProjectionReconciliationService.class);
+    UUID zeroRequestId = UUID.fromString(ZERO_CAPTURE_REQUEST_ID);
+    UUID positiveRequestId = UUID.fromString(POSITIVE_CAPTURE_REQUEST_ID);
+    IssuerAuthoritySnapshot zeroSource =
+        new IssuerAuthoritySnapshot(ISSUER_ID, 1L, 1L, STREAM_KEY, 0L, Optional.empty());
+    IssuerGenerationAuthorityEvent positiveEvent = event(CAPTURE_EVENT_REQUEST_ID, 4L, 7L, 9L);
+    IssuerAuthoritySnapshot positiveSource =
+        new IssuerAuthoritySnapshot(ISSUER_ID, 7L, 9L, STREAM_KEY, 4L, Optional.of(positiveEvent));
+    Receipt zeroReceipt =
+        captureReceipt(
+            UUID.fromString("88888888-8888-4888-8888-888888888888"), zeroRequestId, zeroSource);
+    Receipt positiveReceipt =
+        captureReceipt(
+            UUID.fromString("99999999-9999-4999-8999-999999999999"),
+            positiveRequestId,
+            positiveSource);
+    when(captureService.capture(ISSUER_ID, GAME_SESSION_PEER_URI, zeroRequestId))
+        .thenReturn(zeroReceipt);
+    when(captureService.capture(ISSUER_ID, GAME_SESSION_PEER_URI, positiveRequestId))
+        .thenReturn(positiveReceipt);
+
+    Server server = startServer("account", producer, captureService);
+    try (AccountIssuerAuthorityClient client = newClient(server.getPort(), "game-session")) {
+      client.init();
+
+      AccountIssuerAuthorityClient.ProjectionCaptureReceipt zero =
+          client.captureProjection(ZERO_CAPTURE_REQUEST_ID);
+      AccountIssuerAuthorityClient.ProjectionCaptureReceipt positive =
+          client.captureProjection(POSITIVE_CAPTURE_REQUEST_ID);
+
+      assertThat(zero.operationUUID()).isEqualTo(zeroReceipt.operationId());
+      assertThat(zero.requestUUID()).isEqualTo(zeroRequestId);
+      assertThat(zero.issuerId()).isEqualTo(ISSUER_ID);
+      assertThat(zero.callerWorkloadIdentity()).isEqualTo(GAME_SESSION_PEER_URI);
+      assertThat(zero.projectionKey())
+          .isEqualTo("session:game:auth:issuer-generation:v1:" + ISSUER_ID);
+      assertThat(zero.requestDigestVersion()).isEqualTo(1);
+      assertThat(zero.requestDigest()).isEqualTo(zeroReceipt.requestDigest());
+      assertThat(zero.capturedSource().outboxSequence()).isEqualTo("0");
+      assertThat(zero.capturedSource().latestEvent()).isEmpty();
+
+      assertThat(positive.operationUUID()).isEqualTo(positiveReceipt.operationId());
+      assertThat(positive.requestUUID()).isEqualTo(positiveRequestId);
+      assertThat(positive.issuerId()).isEqualTo(ISSUER_ID);
+      assertThat(positive.callerWorkloadIdentity()).isEqualTo(GAME_SESSION_PEER_URI);
+      assertThat(positive.projectionKey())
+          .isEqualTo("session:game:auth:issuer-generation:v1:" + ISSUER_ID);
+      assertThat(positive.requestDigestVersion()).isEqualTo(1);
+      assertThat(positive.requestDigest()).isEqualTo(positiveReceipt.requestDigest());
+      assertThat(positive.capturedSource().issuerAuthGeneration()).isEqualTo("7");
+      assertThat(positive.capturedSource().sourceVersion()).isEqualTo("9");
+      assertThat(positive.capturedSource().outboxSequence()).isEqualTo("4");
+      assertThat(positive.capturedSource().latestEvent()).isPresent();
+      assertThat(positive.capturedSource().latestEvent().orElseThrow().canonicalJson())
+          .isEqualTo(positiveEvent.canonicalJson());
+
+      verify(captureService).capture(ISSUER_ID, GAME_SESSION_PEER_URI, zeroRequestId);
+      verify(captureService).capture(ISSUER_ID, GAME_SESSION_PEER_URI, positiveRequestId);
+      verifyNoInteractions(producer);
+    } finally {
+      stop(server);
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"wrong-service", "wrong-namespace"})
   void trustedButWrongGameSessionPeerIsDeniedBeforeProducerAccess(String clientIdentity)
@@ -120,10 +196,35 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
     }
   }
 
+  @ParameterizedTest(name = "capture caller {0}")
+  @ValueSource(strings = {"wrong-service", "wrong-namespace"})
+  void trustedButWrongGameSessionPeerIsDeniedBeforeCaptureOrSourceAccess(String clientIdentity)
+      throws Exception {
+    AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
+    AccountIssuerProjectionReconciliationService captureService =
+        mock(AccountIssuerProjectionReconciliationService.class);
+    Server server = startServer("account", producer, captureService);
+    try (AccountIssuerAuthorityClient client = newClient(server.getPort(), clientIdentity)) {
+      client.init();
+
+      assertThatThrownBy(() -> client.captureProjection(ZERO_CAPTURE_REQUEST_ID))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+      verifyNoInteractions(captureService, producer);
+    } finally {
+      stop(server);
+    }
+  }
+
   @Test
   void missingClientCertificateFailsTheRequiredTlsHandshakeBeforeProducerAccess() throws Exception {
     AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
-    Server server = startServer("account", producer);
+    AccountIssuerProjectionReconciliationService captureService =
+        mock(AccountIssuerProjectionReconciliationService.class);
+    Server server = startServer("account", producer, captureService);
     SSLContext trustOnlyClientContext = trustOnlyClientContext();
     try {
       Throwable handshakeFailure =
@@ -161,6 +262,7 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
           .as("failure must identify client-certificate rejection: %s", describe(handshakeFailure))
           .isTrue();
       verifyNoInteractions(producer);
+      verifyNoInteractions(captureService);
     } finally {
       stop(server);
     }
@@ -187,6 +289,39 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
     }
   }
 
+  @ParameterizedTest(name = "capture server {0}")
+  @ValueSource(strings = {"game-session", "wrong-account-namespace"})
+  void wrongAccountServerIdentityCannotReturnATypedCaptureReceipt(String serverIdentity)
+      throws Exception {
+    AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
+    AccountIssuerProjectionReconciliationService captureService =
+        mock(AccountIssuerProjectionReconciliationService.class);
+    UUID requestId = UUID.fromString(ZERO_CAPTURE_REQUEST_ID);
+    IssuerAuthoritySnapshot capturedSource =
+        new IssuerAuthoritySnapshot(ISSUER_ID, 1L, 1L, STREAM_KEY, 0L, Optional.empty());
+    when(captureService.capture(ISSUER_ID, GAME_SESSION_PEER_URI, requestId))
+        .thenReturn(
+            captureReceipt(
+                UUID.fromString("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+                requestId,
+                capturedSource));
+    Server server = startServer(serverIdentity, producer, captureService);
+    try (AccountIssuerAuthorityClient client = newClient(server.getPort(), "game-session")) {
+      client.init();
+
+      assertThatThrownBy(() -> client.captureProjection(ZERO_CAPTURE_REQUEST_ID))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.UNAUTHENTICATED));
+      verify(captureService).capture(ISSUER_ID, GAME_SESSION_PEER_URI, requestId);
+      verifyNoInteractions(producer);
+    } finally {
+      stop(server);
+    }
+  }
+
   private static AccountIssuerAuthorityEventProducer producerWithPositiveReadbacks() {
     AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
     IssuerGenerationAuthorityEvent latest = event(CURRENT_EVENT_REQUEST_ID, 2L, 3L, 3L);
@@ -197,6 +332,20 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
     when(producer.readCommittedEvent(ISSUER_ID, 1L))
         .thenReturn(new IssuerAuthorityEventReadback(current, selected));
     return producer;
+  }
+
+  private static Receipt captureReceipt(
+      UUID operationId, UUID requestId, IssuerAuthoritySnapshot capturedSource) {
+    String projectionKey = "session:game:auth:issuer-generation:v1:" + ISSUER_ID;
+    return new Receipt(
+        operationId,
+        requestId,
+        ISSUER_ID,
+        GAME_SESSION_PEER_URI,
+        projectionKey,
+        1,
+        Receipt.requestDigestFor(ISSUER_ID, GAME_SESSION_PEER_URI, projectionKey, requestId),
+        capturedSource);
   }
 
   private AccountIssuerAuthorityClient newClient(int port, String clientIdentity) throws Exception {
@@ -217,6 +366,15 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
 
   private Server startServer(String serverIdentity, AccountIssuerAuthorityEventProducer producer)
       throws Exception {
+    return startServer(
+        serverIdentity, producer, mock(AccountIssuerProjectionReconciliationService.class));
+  }
+
+  private Server startServer(
+      String serverIdentity,
+      AccountIssuerAuthorityEventProducer producer,
+      AccountIssuerProjectionReconciliationService captureService)
+      throws Exception {
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .sslContext(
             GrpcSslContexts.forServer(
@@ -227,7 +385,7 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
                 .build())
         .addService(
             ServerInterceptors.intercept(
-                new AccountIssuerAuthorityGrpcService(producer, NAMESPACE),
+                new AccountIssuerAuthorityGrpcService(producer, captureService, NAMESPACE),
                 new GrpcPeerIdentityInterceptor()))
         .build()
         .start();

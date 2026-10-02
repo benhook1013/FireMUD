@@ -7,12 +7,15 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -27,7 +30,9 @@ public final class AccountIssuerAuthorityClient
         IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final String READBACK_SCHEMA_VERSION = "account-auth-issuer-source-readback/v1";
+  private static final String CAPTURE_SCHEMA_VERSION = "account-auth-issuer-projection-capture/v1";
   private static final String EVENT_ID_PREFIX = "account-issuer-authority-event-v1:";
+  private static final String PROJECTION_KEY_PREFIX = "session:game:auth:issuer-generation:v1:";
 
   private final String workloadNamespace;
   private final String expectedIssuerId;
@@ -103,6 +108,29 @@ public final class AccountIssuerAuthorityClient
     return read(requestId, requestedSequence);
   }
 
+  /**
+   * Captures Account's immutable issuer-projection reconciliation receipt. A receipt is historical
+   * source evidence only; this method does not install or authorize a Game Session projection.
+   */
+  public ProjectionCaptureReceipt captureProjection(String canonicalRequestId) {
+    UUID requestId = parseCanonicalNonNilUuid(canonicalRequestId, "request ID");
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub currentStub = stub();
+    if (currentStub == null) {
+      throw new IllegalStateException("Account issuer authority client is not initialized");
+    }
+
+    CaptureIssuerProjectionForRuntimeRequest request =
+        CaptureIssuerProjectionForRuntimeRequest.newBuilder()
+            .setIssuerId(expectedIssuerId)
+            .setRequestId(requestId.toString())
+            .build();
+    CaptureIssuerProjectionForRuntimeResponse response =
+        currentStub
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .captureIssuerProjectionForRuntime(request);
+    return verifyCaptureResponse(response, requestId);
+  }
+
   private SourceReadback read(UUID requestId, BigInteger requestedSequence) {
     IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub currentStub = stub();
     if (currentStub == null) {
@@ -145,55 +173,11 @@ public final class AccountIssuerAuthorityClient
       throw invalidResponse("response schema, namespace, or request echo changed");
     }
 
-    IssuerAuthoritySourceSnapshot wireSnapshot = response.getSourceSnapshot();
-    if (!wireSnapshot.getUnknownFields().asMap().isEmpty()) {
-      throw invalidResponse("source snapshot contains unsupported fields");
-    }
-    if (!expectedIssuerId.equals(wireSnapshot.getIssuerId())) {
-      throw invalidResponse("source snapshot issuer identity changed");
-    }
-
-    String sourceScope = "issuer/" + expectedIssuerId;
-    String streamKey = IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + sourceScope;
-    if (!sourceScope.equals(wireSnapshot.getSourceScope())
-        || !streamKey.equals(wireSnapshot.getOutboxStreamKey())) {
-      throw invalidResponse("source snapshot scope or stream changed");
-    }
-
-    BigInteger generation =
-        parseResponsePositiveDecimal(
-            wireSnapshot.getIssuerAuthGeneration(), "issuer auth generation");
-    BigInteger sourceVersion =
-        parseResponsePositiveDecimal(wireSnapshot.getSourceVersion(), "source version");
-    BigInteger currentSequence =
-        parseNonnegativeDecimal(wireSnapshot.getOutboxSequence(), "outbox sequence");
-    IssuerGenerationAuthorityEvent latestEvent = null;
-    if (currentSequence.signum() == 0) {
-      if (!BigInteger.ONE.equals(generation)
-          || !BigInteger.ONE.equals(sourceVersion)
-          || wireSnapshot.hasLatestEventCanonicalJson()) {
-        throw invalidResponse("zero checkpoint is not the proved positive source baseline");
-      }
-    } else {
-      if (!wireSnapshot.hasLatestEventCanonicalJson()) {
-        throw invalidResponse("positive checkpoint has no complete latest event");
-      }
-      latestEvent =
-          verifyEvent(
-              wireSnapshot.getLatestEventCanonicalJson(),
-              "latest source event",
-              expectedIssuerId,
-              sourceScope,
-              streamKey);
-      if (!currentSequence.equals(
-              parseResponsePositiveDecimal(latestEvent.outboxSequence(), "event sequence"))
-          || !generation.equals(
-              parseResponsePositiveDecimal(latestEvent.issuerAuthGeneration(), "event generation"))
-          || !sourceVersion.equals(
-              parseResponsePositiveDecimal(latestEvent.sourceVersion(), "event source version"))) {
-        throw invalidResponse("latest event does not match the complete source checkpoint");
-      }
-    }
+    SourceSnapshot snapshot = verifySnapshot(response.getSourceSnapshot());
+    BigInteger generation = new BigInteger(snapshot.issuerAuthGeneration());
+    BigInteger sourceVersion = new BigInteger(snapshot.sourceVersion());
+    BigInteger currentSequence = new BigInteger(snapshot.outboxSequence());
+    IssuerGenerationAuthorityEvent latestEvent = snapshot.latestEvent().orElse(null);
 
     IssuerGenerationAuthorityEvent requestedEvent = null;
     if (requestedSequence != null) {
@@ -205,8 +189,8 @@ public final class AccountIssuerAuthorityClient
               response.getRequestedEventCanonicalJson(),
               "requested historical event",
               expectedIssuerId,
-              sourceScope,
-              streamKey);
+              snapshot.sourceScope(),
+              snapshot.outboxStreamKey());
       BigInteger selectedEventSequence =
           parseResponsePositiveDecimal(requestedEvent.outboxSequence(), "requested event sequence");
       BigInteger selectedGeneration =
@@ -229,16 +213,121 @@ public final class AccountIssuerAuthorityClient
       }
     }
 
-    SourceSnapshot snapshot =
-        new SourceSnapshot(
-            expectedIssuerId,
-            sourceScope,
-            streamKey,
-            generation.toString(),
-            sourceVersion.toString(),
-            currentSequence.toString(),
-            latestEvent);
     return new SourceReadback(requestId.toString(), workloadNamespace, snapshot, requestedEvent);
+  }
+
+  private ProjectionCaptureReceipt verifyCaptureResponse(
+      CaptureIssuerProjectionForRuntimeResponse response, UUID requestId) {
+    if (response == null) {
+      throw invalidCaptureResponse("response is absent");
+    }
+    if (!response.getUnknownFields().asMap().isEmpty()) {
+      throw invalidCaptureResponse("response contains unsupported fields");
+    }
+
+    UUID operationUUID;
+    try {
+      operationUUID = parseCanonicalNonNilUuid(response.getOperationId(), "operation ID");
+    } catch (IllegalArgumentException exception) {
+      throw invalidCaptureResponse("operation ID is not a canonical non-nil UUID", exception);
+    }
+
+    String callerWorkloadIdentity = expectedGameSessionWorkloadIdentity();
+    String expectedProjectionKey = PROJECTION_KEY_PREFIX + expectedIssuerId;
+    String expectedRequestDigest =
+        IssuerProjectionReconciliationRequestDigestV1.digest(
+            expectedIssuerId, callerWorkloadIdentity, expectedProjectionKey, requestId);
+    if (!CAPTURE_SCHEMA_VERSION.equals(response.getSchemaVersion())
+        || !workloadNamespace.equals(response.getTargetNamespace())
+        || !requestId.toString().equals(response.getRequestId())
+        || !expectedIssuerId.equals(response.getIssuerId())
+        || !callerWorkloadIdentity.equals(response.getCallerWorkloadIdentity())
+        || !expectedProjectionKey.equals(response.getProjectionKey())
+        || response.getRequestDigestVersion() != 1
+        || !expectedRequestDigest.equals(response.getRequestDigest())) {
+      throw invalidCaptureResponse("schema, identity, binding, or request digest changed");
+    }
+    if (!response.hasCapturedSourceSnapshot()) {
+      throw invalidCaptureResponse("captured source snapshot is absent");
+    }
+
+    SourceSnapshot capturedSource = verifySnapshot(response.getCapturedSourceSnapshot());
+    return new ProjectionCaptureReceipt(
+        operationUUID,
+        requestId,
+        expectedIssuerId,
+        callerWorkloadIdentity,
+        expectedProjectionKey,
+        response.getRequestDigestVersion(),
+        expectedRequestDigest,
+        capturedSource);
+  }
+
+  /** Validates the complete issuer source snapshot without fabricating a read RPC envelope. */
+  private SourceSnapshot verifySnapshot(IssuerAuthoritySourceSnapshot wireSnapshot) {
+    if (wireSnapshot == null) {
+      throw invalidResponse("source snapshot is absent");
+    }
+    if (!wireSnapshot.getUnknownFields().asMap().isEmpty()) {
+      throw invalidResponse("source snapshot contains unsupported fields");
+    }
+    if (!expectedIssuerId.equals(wireSnapshot.getIssuerId())) {
+      throw invalidResponse("source snapshot issuer identity changed");
+    }
+
+    String sourceScope = "issuer/" + expectedIssuerId;
+    String streamKey = IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + sourceScope;
+    if (!sourceScope.equals(wireSnapshot.getSourceScope())
+        || !streamKey.equals(wireSnapshot.getOutboxStreamKey())) {
+      throw invalidResponse("source snapshot scope or stream changed");
+    }
+
+    BigInteger generation =
+        parseResponsePositiveDecimal(
+            wireSnapshot.getIssuerAuthGeneration(), "issuer auth generation");
+    BigInteger sourceVersion =
+        parseResponsePositiveDecimal(wireSnapshot.getSourceVersion(), "source version");
+    BigInteger sequence =
+        parseNonnegativeDecimal(wireSnapshot.getOutboxSequence(), "outbox sequence");
+    IssuerGenerationAuthorityEvent latestEvent = null;
+    if (sequence.signum() == 0) {
+      if (!BigInteger.ONE.equals(generation)
+          || !BigInteger.ONE.equals(sourceVersion)
+          || wireSnapshot.hasLatestEventCanonicalJson()) {
+        throw invalidResponse("zero checkpoint is not the proved positive source baseline");
+      }
+    } else {
+      if (!wireSnapshot.hasLatestEventCanonicalJson()) {
+        throw invalidResponse("positive checkpoint has no complete latest event");
+      }
+      latestEvent =
+          verifyEvent(
+              wireSnapshot.getLatestEventCanonicalJson(),
+              "latest source event",
+              expectedIssuerId,
+              sourceScope,
+              streamKey);
+      if (!sequence.equals(
+              parseResponsePositiveDecimal(latestEvent.outboxSequence(), "event sequence"))
+          || !generation.equals(
+              parseResponsePositiveDecimal(latestEvent.issuerAuthGeneration(), "event generation"))
+          || !sourceVersion.equals(
+              parseResponsePositiveDecimal(latestEvent.sourceVersion(), "event source version"))) {
+        throw invalidResponse("latest event does not match the complete source checkpoint");
+      }
+    }
+    return new SourceSnapshot(
+        expectedIssuerId,
+        sourceScope,
+        streamKey,
+        generation.toString(),
+        sourceVersion.toString(),
+        sequence.toString(),
+        latestEvent);
+  }
+
+  private String expectedGameSessionWorkloadIdentity() {
+    return "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-session-service";
   }
 
   private static IssuerGenerationAuthorityEvent verifyEvent(
@@ -309,6 +398,16 @@ public final class AccountIssuerAuthorityClient
 
   private static IllegalStateException invalidResponse(String message) {
     return new IllegalStateException("Account issuer authority response " + message);
+  }
+
+  private static IllegalStateException invalidCaptureResponse(String message) {
+    return new IllegalStateException("Account issuer projection capture response " + message);
+  }
+
+  private static IllegalStateException invalidCaptureResponse(
+      String message, IllegalArgumentException cause) {
+    return new IllegalStateException(
+        "Account issuer projection capture response " + message, cause);
   }
 
   private static CommonGrpcClientProperties requireGameSessionMtls(
@@ -429,6 +528,69 @@ public final class AccountIssuerAuthorityClient
 
     public Optional<IssuerGenerationAuthorityEvent> requestedEvent() {
       return Optional.ofNullable(requestedEvent);
+    }
+  }
+
+  /** Immutable authenticated Account capture receipt; it is not projection-install authority. */
+  public static final class ProjectionCaptureReceipt {
+    private final UUID operationUUID;
+    private final UUID requestUUID;
+    private final String issuerId;
+    private final String callerWorkloadIdentity;
+    private final String projectionKey;
+    private final int requestDigestVersion;
+    private final String requestDigest;
+    private final SourceSnapshot capturedSource;
+
+    private ProjectionCaptureReceipt(
+        UUID operationUUID,
+        UUID requestUUID,
+        String issuerId,
+        String callerWorkloadIdentity,
+        String projectionKey,
+        int requestDigestVersion,
+        String requestDigest,
+        SourceSnapshot capturedSource) {
+      this.operationUUID = operationUUID;
+      this.requestUUID = requestUUID;
+      this.issuerId = issuerId;
+      this.callerWorkloadIdentity = callerWorkloadIdentity;
+      this.projectionKey = projectionKey;
+      this.requestDigestVersion = requestDigestVersion;
+      this.requestDigest = requestDigest;
+      this.capturedSource = capturedSource;
+    }
+
+    public UUID operationUUID() {
+      return operationUUID;
+    }
+
+    public UUID requestUUID() {
+      return requestUUID;
+    }
+
+    public String issuerId() {
+      return issuerId;
+    }
+
+    public String callerWorkloadIdentity() {
+      return callerWorkloadIdentity;
+    }
+
+    public String projectionKey() {
+      return projectionKey;
+    }
+
+    public int requestDigestVersion() {
+      return requestDigestVersion;
+    }
+
+    public String requestDigest() {
+      return requestDigest;
+    }
+
+    public SourceSnapshot capturedSource() {
+      return capturedSource;
     }
   }
 }

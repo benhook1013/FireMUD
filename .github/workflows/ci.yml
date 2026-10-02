@@ -1017,6 +1017,11 @@ jobs:
             --strict \
             --require-suite crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#exactWorkloadIdentitiesCarryCurrentAndHistoricalReadbacksOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#exactWorkloadIdentitiesCarryZeroAndPositiveCaptureReceiptsOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture caller "wrong-service"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture caller "wrong-namespace"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture server "game-session"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture server "wrong-account-namespace"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#missingClientCertificateFailsTheRequiredTlsHandshakeBeforeProducerAccess()' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#[1] clientIdentity = "wrong-service"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#[2] clientIdentity = "wrong-namespace"' \
@@ -1043,6 +1048,11 @@ jobs:
             --strict \
             --require-suite crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresIssuerSourceReturnsBootstrapCurrentAndHistoricalEvidenceOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresCapturePreservesZeroAndOriginalPositiveReceiptAfterLaterSourceAdvance()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#concurrentExactPostgresCapturesFromSeparateSocketClientsReturnOneDurableReceipt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresCaptureRejectsMalformedAndMissingSourceRequestsWithoutSqlMutation()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capture postgres caller "wrong-service"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capture postgres caller "wrong-namespace"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#[1] clientIdentity = "wrong-service"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#[2] clientIdentity = "wrong-namespace"' \
             game-session-service

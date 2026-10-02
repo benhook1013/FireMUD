@@ -8,14 +8,19 @@ import java.sql.SQLTransientException;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
+import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository.Receipt;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.springframework.dao.TransientDataAccessException;
 
@@ -32,15 +37,24 @@ public final class AccountIssuerAuthorityGrpcService
   private static final String EVENT_STREAM_PREFIX = "account:auth-authority:v1:";
   private static final String EVENT_ID_PREFIX = "account-issuer-authority-event-v1:";
   private static final String READBACK_SCHEMA_VERSION = "account-auth-issuer-source-readback/v1";
+  private static final String CAPTURE_SCHEMA_VERSION = "account-auth-issuer-projection-capture/v1";
+  private static final String PROJECTION_KEY_PREFIX = "session:game:auth:issuer-generation:v1:";
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final AccountIssuerAuthorityEventProducer producer;
+  private final AccountIssuerProjectionReconciliationService captureService;
 
   private final String workloadNamespace;
   private final String expectedGameSessionPeerUri;
 
   public AccountIssuerAuthorityGrpcService(
-      AccountIssuerAuthorityEventProducer producer, String workloadNamespace) {
+      AccountIssuerAuthorityEventProducer producer,
+      AccountIssuerProjectionReconciliationService captureService,
+      String workloadNamespace) {
     this.producer = Objects.requireNonNull(producer, "issuer authority producer is required");
+    this.captureService =
+        Objects.requireNonNull(
+            captureService, "issuer projection reconciliation service is required");
     if (workloadNamespace == null || workloadNamespace.isBlank()) {
       throw new IllegalArgumentException("Account workload namespace is required");
     }
@@ -53,6 +67,54 @@ public final class AccountIssuerAuthorityGrpcService
                 () -> new IllegalArgumentException("Account workload namespace is invalid"));
     this.workloadNamespace = expectedPeer.namespace();
     this.expectedGameSessionPeerUri = expectedPeer.uri();
+  }
+
+  @Override
+  public void captureIssuerProjectionForRuntime(
+      CaptureIssuerProjectionForRuntimeRequest request,
+      StreamObserver<CaptureIssuerProjectionForRuntimeResponse> responseObserver) {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer == null || !expectedGameSessionPeerUri.equals(peer.uri())) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Verified Game Session workload identity is required")
+              .asRuntimeException());
+      return;
+    }
+
+    final CaptureSelection selection;
+    try {
+      selection = validateCaptureRequest(request);
+    } catch (InvalidRequestException invalidRequest) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Issuer projection capture request is invalid")
+              .asRuntimeException());
+      return;
+    }
+
+    final CaptureIssuerProjectionForRuntimeResponse response;
+    try {
+      Receipt receipt =
+          captureService.capture(selection.issuerId(), peer.uri(), selection.requestId());
+      response = encodeCapture(selection, peer.uri(), receipt);
+    } catch (RuntimeException captureFailure) {
+      Status.Code code = captureFailureCode(captureFailure);
+      String description =
+          switch (code) {
+            case INVALID_ARGUMENT -> "Issuer projection capture request is invalid";
+            case ALREADY_EXISTS -> "Issuer projection capture request conflicts with its receipt";
+            case PERMISSION_DENIED -> "Verified Game Session workload identity is required";
+            case UNAVAILABLE -> "Issuer projection source is temporarily unavailable";
+            default -> "Issuer projection receipt is unavailable or contradictory";
+          };
+      responseObserver.onError(
+          Status.fromCode(code).withDescription(description).asRuntimeException());
+      return;
+    }
+
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -157,7 +219,7 @@ public final class AccountIssuerAuthorityGrpcService
       currentSnapshot = producer.readCurrent(selection.issuerId());
     }
 
-    validateCurrentSnapshot(currentSnapshot, selection.issuerId());
+    validateSourceSnapshot(currentSnapshot, selection.issuerId());
     if (selection.requestedSequence().isPresent()) {
       validateHistoricalEvent(
           requestedEvent, currentSnapshot, selection.requestedSequence().orElseThrow());
@@ -187,7 +249,84 @@ public final class AccountIssuerAuthorityGrpcService
     return response.build();
   }
 
-  private static void validateCurrentSnapshot(IssuerAuthoritySnapshot snapshot, String issuerId) {
+  private CaptureSelection validateCaptureRequest(
+      CaptureIssuerProjectionForRuntimeRequest request) {
+    if (request == null || !request.getUnknownFields().asMap().isEmpty()) {
+      throw new InvalidRequestException();
+    }
+    if (request.getIssuerId().isBlank()) {
+      throw new InvalidRequestException();
+    }
+
+    UUID requestId;
+    try {
+      requestId = UUID.fromString(request.getRequestId());
+    } catch (IllegalArgumentException malformed) {
+      throw new InvalidRequestException();
+    }
+    if (NIL_UUID.equals(requestId) || !requestId.toString().equals(request.getRequestId())) {
+      throw new InvalidRequestException();
+    }
+    return new CaptureSelection(request.getIssuerId(), requestId);
+  }
+
+  private CaptureIssuerProjectionForRuntimeResponse encodeCapture(
+      CaptureSelection selection, String callerIdentity, Receipt receipt) {
+    if (receipt == null
+        || receipt.operationId() == null
+        || NIL_UUID.equals(receipt.operationId())
+        || !selection.requestId().equals(receipt.requestId())
+        || !selection.issuerId().equals(receipt.issuerId())
+        || !callerIdentity.equals(receipt.callerWorkloadIdentity())
+        || !(PROJECTION_KEY_PREFIX + selection.issuerId()).equals(receipt.projectionKey())
+        || receipt.requestDigestVersion()
+            != IssuerProjectionReconciliationRequestDigestV1.VERSION) {
+      throw new IllegalStateException(
+          "Issuer projection receipt bindings are incomplete or mismatched");
+    }
+
+    String expectedDigest =
+        IssuerProjectionReconciliationRequestDigestV1.digest(
+            selection.issuerId(),
+            callerIdentity,
+            PROJECTION_KEY_PREFIX + selection.issuerId(),
+            selection.requestId());
+    if (!expectedDigest.equals(receipt.requestDigest())) {
+      throw new IllegalStateException("Issuer projection receipt digest is mismatched");
+    }
+
+    IssuerAuthoritySnapshot captured = receipt.capturedSource();
+    validateSourceSnapshot(captured, selection.issuerId());
+    return CaptureIssuerProjectionForRuntimeResponse.newBuilder()
+        .setSchemaVersion(CAPTURE_SCHEMA_VERSION)
+        .setTargetNamespace(workloadNamespace)
+        .setOperationId(receipt.operationId().toString())
+        .setRequestId(selection.requestId().toString())
+        .setIssuerId(receipt.issuerId())
+        .setCallerWorkloadIdentity(receipt.callerWorkloadIdentity())
+        .setProjectionKey(receipt.projectionKey())
+        .setRequestDigestVersion(receipt.requestDigestVersion())
+        .setRequestDigest(receipt.requestDigest())
+        .setCapturedSourceSnapshot(encodeSourceSnapshot(captured))
+        .build();
+  }
+
+  private IssuerAuthoritySourceSnapshot encodeSourceSnapshot(IssuerAuthoritySnapshot source) {
+    IssuerAuthoritySourceSnapshot.Builder snapshotResponse =
+        IssuerAuthoritySourceSnapshot.newBuilder()
+            .setIssuerId(source.issuerId())
+            .setSourceScope(SOURCE_SCOPE_PREFIX + source.issuerId())
+            .setOutboxStreamKey(source.outboxStreamKey())
+            .setIssuerAuthGeneration(Long.toString(source.issuerAuthGeneration()))
+            .setSourceVersion(Long.toString(source.sourceVersion()))
+            .setOutboxSequence(Long.toString(source.outboxSequence()));
+    source
+        .latestEvent()
+        .ifPresent(event -> snapshotResponse.setLatestEventCanonicalJson(event.canonicalJson()));
+    return snapshotResponse.build();
+  }
+
+  private static void validateSourceSnapshot(IssuerAuthoritySnapshot snapshot, String issuerId) {
     if (snapshot == null
         || !issuerId.equals(snapshot.issuerId())
         || snapshot.issuerAuthGeneration() <= 0L
@@ -302,6 +441,20 @@ public final class AccountIssuerAuthorityGrpcService
     return Status.Code.FAILED_PRECONDITION;
   }
 
+  private static Status.Code captureFailureCode(Throwable failure) {
+    if (isExactIssuerMismatch(failure)) {
+      return Status.Code.INVALID_ARGUMENT;
+    }
+    if (failure
+        instanceof AccountIssuerProjectionReconciliationRepository.IdempotencyConflictException) {
+      return Status.Code.ALREADY_EXISTS;
+    }
+    if (failure instanceof SecurityException) {
+      return Status.Code.PERMISSION_DENIED;
+    }
+    return sourceFailureCode(failure);
+  }
+
   private static boolean isExactIssuerMismatch(Throwable failure) {
     return failure instanceof AccountIssuerAuthorityEventProducer.IssuerMismatchException;
   }
@@ -312,6 +465,13 @@ public final class AccountIssuerAuthorityGrpcService
       Objects.requireNonNull(issuerId, "issuerId");
       Objects.requireNonNull(requestId, "requestId");
       Objects.requireNonNull(requestedSequence, "requestedSequence");
+    }
+  }
+
+  private record CaptureSelection(String issuerId, UUID requestId) {
+    private CaptureSelection {
+      Objects.requireNonNull(issuerId, "issuerId");
+      Objects.requireNonNull(requestId, "requestId");
     }
   }
 

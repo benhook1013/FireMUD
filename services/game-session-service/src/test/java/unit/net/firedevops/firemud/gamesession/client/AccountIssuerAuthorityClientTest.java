@@ -28,12 +28,15 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLSession;
+import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -52,7 +55,12 @@ class AccountIssuerAuthorityClientTest {
   private static final UUID REQUEST_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
   private static final UUID EVENT_REQUEST_ID =
       UUID.fromString("22222222-2222-4222-8222-222222222222");
+  private static final UUID OPERATION_ID = UUID.fromString("33333333-3333-4333-8333-333333333333");
   private static final String LARGE_COUNTER = "922337203685477580812345678901234567890";
+  private static final String CAPTURE_CALLER =
+      "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service";
+  private static final String CAPTURE_PROJECTION_KEY =
+      "session:game:auth:issuer-generation:v1:" + ISSUER_ID;
 
   @Test
   void currentReadVerifiesAndReturnsTheSequenceZeroPositiveBaseline() throws Exception {
@@ -149,6 +157,209 @@ class AccountIssuerAuthorityClientTest {
   }
 
   @Test
+  void captureRequestUsesOnlyIssuerAndStableRequestAndReturnsTypedZeroBaseline() throws Exception {
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub = mockStub();
+    when(stub.captureIssuerProjectionForRuntime(any()))
+        .thenReturn(captureResponse(REQUEST_ID, OPERATION_ID, sourceSnapshot("1", "1", "0", null)));
+    AccountIssuerAuthorityClient client = newClient(stub);
+
+    AccountIssuerAuthorityClient.ProjectionCaptureReceipt receipt =
+        client.captureProjection(REQUEST_ID.toString());
+
+    assertThat(receipt.operationUUID()).isEqualTo(OPERATION_ID);
+    assertThat(receipt.requestUUID()).isEqualTo(REQUEST_ID);
+    assertThat(receipt.issuerId()).isEqualTo(ISSUER_ID);
+    assertThat(receipt.callerWorkloadIdentity()).isEqualTo(CAPTURE_CALLER);
+    assertThat(receipt.projectionKey()).isEqualTo(CAPTURE_PROJECTION_KEY);
+    assertThat(receipt.requestDigestVersion()).isEqualTo(1);
+    assertThat(receipt.requestDigest())
+        .isEqualTo(
+            IssuerProjectionReconciliationRequestDigestV1.digest(
+                ISSUER_ID, CAPTURE_CALLER, CAPTURE_PROJECTION_KEY, REQUEST_ID));
+    assertThat(receipt.capturedSource().issuerAuthGeneration()).isEqualTo("1");
+    assertThat(receipt.capturedSource().sourceVersion()).isEqualTo("1");
+    assertThat(receipt.capturedSource().outboxSequence()).isEqualTo("0");
+    assertThat(receipt.capturedSource().latestEvent()).isEmpty();
+
+    ArgumentCaptor<CaptureIssuerProjectionForRuntimeRequest> requestCaptor =
+        ArgumentCaptor.forClass(CaptureIssuerProjectionForRuntimeRequest.class);
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verify(stub).captureIssuerProjectionForRuntime(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getIssuerId()).isEqualTo(ISSUER_ID);
+    assertThat(requestCaptor.getValue().getRequestId()).isEqualTo(REQUEST_ID.toString());
+    assertThat(requestCaptor.getValue().getAllFields()).hasSize(2);
+  }
+
+  @Test
+  void captureVerifiesSharedAsciiDigestVectorAndLargeIndependentSourceCounters() throws Exception {
+    String namespace = "account-unit";
+    String issuerId = "https://account.example.test/issuer";
+    UUID requestId = UUID.fromString("a3a69671-8149-4d97-86f8-25a2582fdd68");
+    UUID operationId = UUID.fromString("4ed42a0f-80e4-44db-8f4e-16c70e2c70a3");
+    String caller = "spiffe://firemud/ns/account-unit/sa/game-session-service";
+    String projectionKey = "session:game:auth:issuer-generation:v1:" + issuerId;
+    String digest = "240027543295dc990703ec833578b423f1cdc51e91333d8b58c91d6c5f571d15";
+    String generation = LARGE_COUNTER + "1";
+    String sourceVersion = LARGE_COUNTER + "2";
+    String sequence = LARGE_COUNTER + "3";
+    IssuerGenerationAuthorityEvent event =
+        event(sequence, generation, sourceVersion, EVENT_REQUEST_ID, issuerId);
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub = mockStub();
+    when(stub.captureIssuerProjectionForRuntime(any()))
+        .thenReturn(
+            captureResponse(
+                namespace,
+                issuerId,
+                requestId,
+                operationId,
+                caller,
+                projectionKey,
+                1,
+                digest,
+                sourceSnapshot(
+                    issuerId, generation, sourceVersion, sequence, event.canonicalJson())));
+    AccountIssuerAuthorityClient client = newClient(stub, namespace, issuerId);
+
+    AccountIssuerAuthorityClient.ProjectionCaptureReceipt receipt =
+        client.captureProjection(requestId.toString());
+
+    assertThat(receipt.requestDigest()).isEqualTo(digest);
+    assertThat(receipt.capturedSource().issuerAuthGeneration()).isEqualTo(generation);
+    assertThat(receipt.capturedSource().sourceVersion()).isEqualTo(sourceVersion);
+    assertThat(receipt.capturedSource().outboxSequence()).isEqualTo(sequence);
+    assertLatestEvent(receipt.capturedSource().latestEvent().orElseThrow(), event);
+  }
+
+  @Test
+  void exactCaptureRetryReturnsItsUnchangedHistoricalSnapshot() throws Exception {
+    IssuerGenerationAuthorityEvent historical = event("3", "7", "9", EVENT_REQUEST_ID);
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub = mockStub();
+    when(stub.captureIssuerProjectionForRuntime(any()))
+        .thenReturn(
+            captureResponse(
+                REQUEST_ID,
+                OPERATION_ID,
+                sourceSnapshot("7", "9", "3", historical.canonicalJson())));
+    AccountIssuerAuthorityClient client = newClient(stub);
+
+    AccountIssuerAuthorityClient.ProjectionCaptureReceipt receipt =
+        client.captureProjection(REQUEST_ID.toString());
+
+    assertThat(receipt.operationUUID()).isEqualTo(OPERATION_ID);
+    assertThat(receipt.capturedSource().outboxSequence()).isEqualTo("3");
+    assertLatestEvent(receipt.capturedSource().latestEvent().orElseThrow(), historical);
+    verify(stub).captureIssuerProjectionForRuntime(any());
+  }
+
+  @Test
+  void rejectsCaptureResponseBindingSnapshotEventAndUnknownFieldDeviations() throws Exception {
+    IssuerAuthoritySourceSnapshot baseline = sourceSnapshot("1", "1", "0", null);
+    CaptureIssuerProjectionForRuntimeResponse valid =
+        captureResponse(REQUEST_ID, OPERATION_ID, baseline);
+    assertCaptureRejected(null);
+    assertCaptureRejected(valid.toBuilder().setSchemaVersion("other").build());
+    assertCaptureRejected(valid.toBuilder().setTargetNamespace("other").build());
+    assertCaptureRejected(valid.toBuilder().setRequestId(EVENT_REQUEST_ID.toString()).build());
+    assertCaptureRejected(valid.toBuilder().setOperationId("not-a-uuid").build());
+    assertCaptureRejected(
+        valid.toBuilder().setOperationId("00000000-0000-0000-0000-000000000000").build());
+    assertCaptureRejected(valid.toBuilder().setIssuerId("other").build());
+    assertCaptureRejected(valid.toBuilder().setCallerWorkloadIdentity("other").build());
+    assertCaptureRejected(valid.toBuilder().setProjectionKey("other").build());
+    assertCaptureRejected(valid.toBuilder().setRequestDigestVersion(2).build());
+    assertCaptureRejected(valid.toBuilder().setRequestDigest("0".repeat(64)).build());
+    assertCaptureRejected(valid.toBuilder().clearCapturedSourceSnapshot().build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setUnknownFields(
+                UnknownFieldSet.newBuilder()
+                    .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                    .build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(baseline.toBuilder().setIssuerId("other").build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(baseline.toBuilder().setSourceScope("issuer/other").build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(baseline.toBuilder().setOutboxStreamKey("other").build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(baseline.toBuilder().setIssuerAuthGeneration("01").build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(baseline.toBuilder().setSourceVersion("0").build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(baseline.toBuilder().setOutboxSequence("00").build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(baseline.toBuilder().setLatestEventCanonicalJson("").build())
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(
+                baseline.toBuilder()
+                    .setUnknownFields(
+                        UnknownFieldSet.newBuilder()
+                            .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+                            .build())
+                    .build())
+            .build());
+
+    IssuerGenerationAuthorityEvent latest = event("1", "2", "2", EVENT_REQUEST_ID);
+    assertCaptureRejected(
+        valid.toBuilder().setCapturedSourceSnapshot(sourceSnapshot("2", "2", "1", null)).build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(sourceSnapshot("3", "2", "1", latest.canonicalJson()))
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(sourceSnapshot("2", "3", "1", latest.canonicalJson()))
+            .build());
+    assertCaptureRejected(
+        valid.toBuilder()
+            .setCapturedSourceSnapshot(
+                sourceSnapshot(
+                    "2",
+                    "2",
+                    "1",
+                    latest
+                        .canonicalJson()
+                        .replace(
+                            "\"eventDigest\":\"sha256:",
+                            "\"unexpected\":true,\"eventDigest\":\"sha256:")))
+            .build());
+  }
+
+  @Test
+  void unavailableCaptureStatusPropagatesOnceWithoutReplacementIdentityOrRetry() throws Exception {
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub = mockStub();
+    StatusRuntimeException unavailable =
+        new StatusRuntimeException(Status.UNAVAILABLE.withDescription("Account unavailable"));
+    when(stub.captureIssuerProjectionForRuntime(any())).thenThrow(unavailable);
+    AccountIssuerAuthorityClient client = newClient(stub);
+
+    assertThatThrownBy(() -> client.captureProjection(REQUEST_ID.toString())).isSameAs(unavailable);
+
+    ArgumentCaptor<CaptureIssuerProjectionForRuntimeRequest> requestCaptor =
+        ArgumentCaptor.forClass(CaptureIssuerProjectionForRuntimeRequest.class);
+    verify(stub).withDeadlineAfter(5L, TimeUnit.SECONDS);
+    verify(stub).captureIssuerProjectionForRuntime(requestCaptor.capture());
+    assertThat(requestCaptor.getValue().getRequestId()).isEqualTo(REQUEST_ID.toString());
+    verify(stub, never()).withDeadlineAfter(10L, TimeUnit.SECONDS);
+  }
+
+  @Test
   void rejectsMalformedRequestIdentityOrNoncanonicalHistoricalSelectorBeforeStubUse() {
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     AccountIssuerAuthorityClient client = newClientWithoutStub(channelFactory);
@@ -162,6 +373,8 @@ class AccountIssuerAuthorityClientTest {
       assertThatThrownBy(() -> client.readCurrent(invalid))
           .isInstanceOf(IllegalArgumentException.class);
       assertThatThrownBy(() -> client.readCommittedEvent(invalid, "1"))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> client.captureProjection(invalid))
           .isInstanceOf(IllegalArgumentException.class);
     }
     for (String invalid : List.of("", "0", "00", "01", "+1", "-1", "1.0", " 1")) {
@@ -420,7 +633,26 @@ class AccountIssuerAuthorityClientTest {
           .isInstanceOf(StatusRuntimeException.class)
           .extracting(exception -> ((StatusRuntimeException) exception).getStatus().getCode())
           .isEqualTo(Status.Code.UNAUTHENTICATED);
+      assertThatThrownBy(
+              () ->
+                  stub.captureIssuerProjectionForRuntime(
+                      CaptureIssuerProjectionForRuntimeRequest.newBuilder()
+                          .setIssuerId(ISSUER_ID)
+                          .setRequestId(REQUEST_ID.toString())
+                          .build()))
+          .isInstanceOf(StatusRuntimeException.class)
+          .extracting(exception -> ((StatusRuntimeException) exception).getStatus().getCode())
+          .isEqualTo(Status.Code.UNAUTHENTICATED);
     }
+  }
+
+  private static void assertCaptureRejected(CaptureIssuerProjectionForRuntimeResponse response)
+      throws Exception {
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub = mockStub();
+    when(stub.captureIssuerProjectionForRuntime(any())).thenReturn(response);
+    AccountIssuerAuthorityClient client = newClient(stub);
+    assertThatThrownBy(() -> client.captureProjection(REQUEST_ID.toString()))
+        .isInstanceOf(IllegalStateException.class);
   }
 
   private static void assertCurrentRejected(ReadIssuerAuthorityForRuntimeResponse response)
@@ -443,7 +675,22 @@ class AccountIssuerAuthorityClientTest {
 
   private static AccountIssuerAuthorityClient newClient(
       IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub) throws Exception {
-    AccountIssuerAuthorityClient client = newClientWithoutStub(mock(GrpcChannelFactory.class));
+    return newClient(stub, NAMESPACE, ISSUER_ID);
+  }
+
+  private static AccountIssuerAuthorityClient newClient(
+      IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub,
+      String namespace,
+      String issuerId)
+      throws Exception {
+    AccountIssuerAuthorityClient client =
+        new AccountIssuerAuthorityClient(
+            new ServiceEndpointsProperties(),
+            mtlsProperties(),
+            mock(GrpcChannelFactory.class),
+            BlockingGrpcStubCustomizer.noop(),
+            namespace,
+            issuerId);
     Field stubField = AbstractReloadingBlockingGrpcClient.class.getDeclaredField("stub");
     stubField.setAccessible(true);
     stubField.set(client, stub);
@@ -488,6 +735,17 @@ class AccountIssuerAuthorityClientTest {
       String sequence,
       String latestEvent,
       String requestedEvent) {
+    ReadIssuerAuthorityForRuntimeResponse.Builder response =
+        envelope()
+            .setSourceSnapshot(sourceSnapshot(generation, sourceVersion, sequence, latestEvent));
+    if (requestedEvent != null) {
+      response.setRequestedEventCanonicalJson(requestedEvent);
+    }
+    return response.build();
+  }
+
+  private static IssuerAuthoritySourceSnapshot sourceSnapshot(
+      String generation, String sourceVersion, String sequence, String latestEvent) {
     IssuerAuthoritySourceSnapshot.Builder snapshot =
         IssuerAuthoritySourceSnapshot.newBuilder()
             .setIssuerId(ISSUER_ID)
@@ -499,12 +757,67 @@ class AccountIssuerAuthorityClientTest {
     if (latestEvent != null) {
       snapshot.setLatestEventCanonicalJson(latestEvent);
     }
-    ReadIssuerAuthorityForRuntimeResponse.Builder response =
-        envelope().setSourceSnapshot(snapshot.build());
-    if (requestedEvent != null) {
-      response.setRequestedEventCanonicalJson(requestedEvent);
+    return snapshot.build();
+  }
+
+  private static IssuerAuthoritySourceSnapshot sourceSnapshot(
+      String issuerId,
+      String generation,
+      String sourceVersion,
+      String sequence,
+      String latestEvent) {
+    String scope = "issuer/" + issuerId;
+    IssuerAuthoritySourceSnapshot.Builder snapshot =
+        IssuerAuthoritySourceSnapshot.newBuilder()
+            .setIssuerId(issuerId)
+            .setSourceScope(scope)
+            .setOutboxStreamKey(IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + scope)
+            .setIssuerAuthGeneration(generation)
+            .setSourceVersion(sourceVersion)
+            .setOutboxSequence(sequence);
+    if (latestEvent != null) {
+      snapshot.setLatestEventCanonicalJson(latestEvent);
     }
-    return response.build();
+    return snapshot.build();
+  }
+
+  private static CaptureIssuerProjectionForRuntimeResponse captureResponse(
+      UUID requestId, UUID operationId, IssuerAuthoritySourceSnapshot sourceSnapshot) {
+    return captureResponse(
+        NAMESPACE,
+        ISSUER_ID,
+        requestId,
+        operationId,
+        CAPTURE_CALLER,
+        CAPTURE_PROJECTION_KEY,
+        1,
+        IssuerProjectionReconciliationRequestDigestV1.digest(
+            ISSUER_ID, CAPTURE_CALLER, CAPTURE_PROJECTION_KEY, requestId),
+        sourceSnapshot);
+  }
+
+  private static CaptureIssuerProjectionForRuntimeResponse captureResponse(
+      String namespace,
+      String issuerId,
+      UUID requestId,
+      UUID operationId,
+      String caller,
+      String projectionKey,
+      int digestVersion,
+      String digest,
+      IssuerAuthoritySourceSnapshot sourceSnapshot) {
+    return CaptureIssuerProjectionForRuntimeResponse.newBuilder()
+        .setSchemaVersion("account-auth-issuer-projection-capture/v1")
+        .setTargetNamespace(namespace)
+        .setOperationId(operationId.toString())
+        .setRequestId(requestId.toString())
+        .setIssuerId(issuerId)
+        .setCallerWorkloadIdentity(caller)
+        .setProjectionKey(projectionKey)
+        .setRequestDigestVersion(digestVersion)
+        .setRequestDigest(digest)
+        .setCapturedSourceSnapshot(sourceSnapshot)
+        .build();
   }
 
   private static ReadIssuerAuthorityForRuntimeResponse.Builder envelope() {
