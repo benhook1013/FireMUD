@@ -616,8 +616,14 @@ public class AccountServiceImpl implements AccountService {
     }
 
     try {
-      return joinTransactionTemplate.execute(
-          transactionStatus -> executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      JoinAttemptOutcome outcome =
+          joinTransactionTemplate.execute(
+              transactionStatus ->
+                  executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      if (outcome.terminalOperation() != null) {
+        return replayTerminalJoinSafely(outcome.terminalOperation(), callerBinding, retained);
+      }
+      return outcome.result();
     } catch (AuthenticationException ex) {
       if ("IDEMPOTENCY_CONFLICT".equals(ex.getCode())) {
         throw ex;
@@ -630,12 +636,7 @@ public class AccountServiceImpl implements AccountService {
         JoinOperation operation = outcomeReadback.orElseThrow();
         requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
         if (!"PENDING".equals(operation.status())) {
-          try {
-            return joinTransactionTemplate.execute(
-                transactionStatus -> replayTerminalJoin(operation, callerBinding, retained));
-          } catch (RuntimeException policyCheckFailure) {
-            return joinRetryFailure(retained, "AUTH_UNAVAILABLE");
-          }
+          return replayTerminalJoinSafely(operation, callerBinding, retained);
         }
         recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
       }
@@ -644,7 +645,7 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult executeJoinAttempt(
+  private JoinAttemptOutcome executeJoinAttempt(
       long accountId, String callerBinding, String requestId, VerifiedJoinScope scope) {
     accountJoinOperationRepository.lockAccount(accountId);
     JoinOperation operation =
@@ -654,9 +655,18 @@ public class AccountServiceImpl implements AccountService {
     requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
 
     if (!"PENDING".equals(operation.status())) {
-      return replayTerminalJoin(operation, callerBinding, scope);
+      return JoinAttemptOutcome.terminal(operation);
     }
+    return JoinAttemptOutcome.result(
+        executePendingJoinAttempt(accountId, callerBinding, requestId, scope, operation));
+  }
 
+  private JoinPublicProductionResult executePendingJoinAttempt(
+      long accountId,
+      String callerBinding,
+      String requestId,
+      VerifiedJoinScope scope,
+      JoinOperation operation) {
     if (isConnectScopeExpired(scope)) {
       return failedJoin(requestId, scope, "CONNECT_SCOPE_INVALID");
     }
@@ -846,6 +856,15 @@ public class AccountServiceImpl implements AccountService {
       return joinRetryFailure(scope, "IDEMPOTENCY_CONFLICT");
     }
     return resultFromJoinOperation(operation, true);
+  }
+
+  private JoinPublicProductionResult replayTerminalJoinSafely(
+      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    try {
+      return replayTerminalJoin(operation, callerBinding, scope);
+    } catch (RuntimeException policyCheckFailure) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
   }
 
   private JoinPublicProductionResult joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
@@ -1039,6 +1058,17 @@ public class AccountServiceImpl implements AccountService {
       Long entitlementVersion,
       boolean gameplayAvailable,
       String failureCode) {}
+
+  private record JoinAttemptOutcome(
+      JoinPublicProductionResult result, JoinOperation terminalOperation) {
+    private static JoinAttemptOutcome result(JoinPublicProductionResult result) {
+      return new JoinAttemptOutcome(result, null);
+    }
+
+    private static JoinAttemptOutcome terminal(JoinOperation operation) {
+      return new JoinAttemptOutcome(null, operation);
+    }
+  }
 
   private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> rows =

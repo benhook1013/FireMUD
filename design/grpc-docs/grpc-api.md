@@ -1086,8 +1086,8 @@ exact catalog/pointer evidence. Account re-resolves the target before issuance.
 | account_id | [string](#string) |  |  |
 | tenant_id | [string](#string) |  |  |
 | membership_id | [string](#string) |  |  |
-| membership_version | [int64](#int64) |  |  |
-| membership_authority_generation | [int64](#int64) |  |  |
+| membership_version | [uint64](#uint64) |  |  |
+| membership_authority_generation | [uint64](#uint64) |  |  |
 | replayed | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 

@@ -137,6 +137,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountId.clear();
+    connectScopesById.clear();
   }
 
   @Override
@@ -231,6 +232,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || request.getRealmSlug().isBlank()
         || request.getPlayableStateNamespaceId().isBlank()
         || request.getPlayableStateScope().isBlank()
+        || request.getCatalogRevision() <= 0
+        || request.getPointerVersion() <= 0
         || !isCanonicalUuid(caller.getRealmId())
         || !isCanonicalUuid(request.getRealmId())
         || !isCanonicalUuid(caller.getPlayableStateNamespaceId())
@@ -291,6 +294,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || !request.getRequestId().equals(caller.getRequestId())
         || caller.getAccountId().isBlank()
         || caller.getTenantId().isBlank()
+        || caller.getSessionId().isBlank()
         || scope == null
         || !scope.expiresAt().isAfter(Instant.now())
         || !scope.accountId().equals(caller.getAccountId())

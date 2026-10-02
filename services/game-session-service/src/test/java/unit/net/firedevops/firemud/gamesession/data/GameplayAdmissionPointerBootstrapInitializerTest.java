@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -16,7 +15,6 @@ import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRep
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.DefaultApplicationArguments;
@@ -36,14 +34,13 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   }
 
   @Test
-  void runKeepsAdmissionClosedForValidDefaultSeedsWhenAuthorityStoreIsEmpty() throws Exception {
+  void runKeepsAdmissionClosedWithoutPointerWritesOrBootstrapLockWhenStoreIsEmpty()
+      throws Exception {
     when(pointerRepository.count()).thenReturn(0L);
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
-    InOrder bootstrapOrder = inOrder(pointerRepository);
-    bootstrapOrder.verify(pointerRepository).lockForBootstrap();
-    bootstrapOrder.verify(pointerRepository).count();
+    verify(pointerRepository).count();
     verifyNoMoreInteractions(pointerRepository);
   }
 
@@ -67,7 +64,6 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
 
-    verify(pointerRepository).lockForBootstrap();
     verify(pointerRepository).count();
     verifyNoMoreInteractions(pointerRepository);
   }
@@ -189,7 +185,8 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   }
 
   @Test
-  void runKeepsAdmissionClosedForValidSeedsAcrossTenants() throws Exception {
+  void runKeepsAdmissionClosedForValidSeedsAcrossTenantsWithoutPointerWritesOrBootstrapLock()
+      throws Exception {
     when(pointerRepository.count()).thenReturn(0L);
     properties.setPointers(
         List.of(
@@ -197,7 +194,6 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
             pointerSeed("demo", "Other Demo", "production", "Live Realm", 2L, 1L, true, true)));
 
     initializer.run(new DefaultApplicationArguments(new String[] {}));
-    verify(pointerRepository).lockForBootstrap();
     verify(pointerRepository).count();
     verifyNoMoreInteractions(pointerRepository);
   }
@@ -247,9 +243,7 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
             () -> initializer.run(new DefaultApplicationArguments(new String[] {})));
 
     assertEquals(expectedMessage, error.getMessage());
-    InOrder bootstrapOrder = inOrder(pointerRepository);
-    bootstrapOrder.verify(pointerRepository).lockForBootstrap();
-    bootstrapOrder.verify(pointerRepository).count();
+    verify(pointerRepository).count();
     verifyNoMoreInteractions(pointerRepository);
   }
 }

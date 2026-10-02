@@ -7,14 +7,21 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
 import org.jooq.DSLContext;
+import org.jooq.RecordContext;
+import org.jooq.RecordListener;
 import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
+import org.jooq.impl.DefaultConfiguration;
+import org.jooq.impl.DefaultRecordListenerProvider;
 import org.jooq.tools.jdbc.MockConnection;
 import org.jooq.tools.jdbc.MockDataProvider;
 import org.jooq.tools.jdbc.MockResult;
@@ -80,6 +87,48 @@ class AccountAuditOutboxRepositoryTest {
     assertThat(createdOrder).isGreaterThan(retryOrder);
     assertThat(eventOrder).isGreaterThan(createdOrder);
     assertThat(sql).contains("fetch next ? rows only");
+  }
+
+  @Test
+  void appendStoresRetryTimeAsTheSameUtcLocalDateTimeAsOccurredAt() {
+    AtomicReference<String> executedSql = new AtomicReference<>();
+    AtomicReference<LocalDateTime> storedOccurredAt = new AtomicReference<>();
+    AtomicReference<LocalDateTime> storedNextAttemptAt = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          String sql = context.sql().toLowerCase(Locale.ROOT);
+          if (sql.stripLeading().startsWith("insert") && sql.contains("account_audit_outbox")) {
+            executedSql.set(sql);
+          }
+          Result<AccountAuditOutboxRecord> rows =
+              DSL.using(SQLDialect.POSTGRES).newResult(ACCOUNT_AUDIT_OUTBOX);
+          return new MockResult[] {new MockResult(1, rows)};
+        };
+    RecordListener recordListener =
+        new RecordListener() {
+          @Override
+          public void storeStart(RecordContext context) {
+            if (context.record() instanceof AccountAuditOutboxRecord record) {
+              storedOccurredAt.set(record.getOccurredAt());
+              storedNextAttemptAt.set(record.getNextAttemptAt());
+            }
+          }
+        };
+    DSLContext dsl =
+        DSL.using(
+            new DefaultConfiguration()
+                .set(new MockConnection(provider))
+                .set(SQLDialect.POSTGRES)
+                .set(new DefaultRecordListenerProvider(recordListener)));
+
+    AccountAuditEnvelope envelope =
+        new AccountAuditOutboxRepository(dsl)
+            .append(EVENT_ID, "platform", null, "ACCOUNT_REGISTERED", "{}");
+
+    assertThat(executedSql.get()).contains("occurred_at", "next_attempt_at");
+    LocalDateTime expectedUtc = LocalDateTime.ofInstant(envelope.occurredAt(), ZoneOffset.UTC);
+    assertThat(storedOccurredAt.get()).isEqualTo(expectedUtc);
+    assertThat(storedNextAttemptAt.get()).isEqualTo(expectedUtc);
   }
 
   @Test

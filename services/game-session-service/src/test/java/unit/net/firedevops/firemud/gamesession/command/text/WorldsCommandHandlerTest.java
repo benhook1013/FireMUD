@@ -27,6 +27,12 @@ class WorldsCommandHandlerTest {
 
   @Test
   void browseViewReturnsStructuredWorldList() {
+    GameplayCatalogProperties.World demoWorld = world("demo", 22L, 1L, false);
+    demoWorld.setDisplayName("Demo World");
+    GameplayCatalogProperties.World sandboxWorld = world("sandbox", 23L, 2L, true);
+    sandboxWorld.setDisplayName("Builder Sandbox");
+    gameplayCatalogProperties.setWorlds(List.of(demoWorld, sandboxWorld));
+
     WorldsViewOutput response = handler.browseView();
 
     assertThat(response.worlds()).hasSize(2);
@@ -70,7 +76,7 @@ class WorldsCommandHandlerTest {
   @Test
   void browseCharactersReturnsStructuredCharacterList() {
     gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+        List.of(world("demo", 22L, 1L, false), world("sandbox", 23L, 2L, true)));
     Mockito.when(
             entityManagementClient.listCharactersByAccount(
                 "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -79,8 +85,11 @@ class WorldsCommandHandlerTest {
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
+                        .setTenantId("22")
+                        .setAccountId("123")
                         .setName("Emberline")
                         .setLevel(12)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
 
@@ -99,6 +108,8 @@ class WorldsCommandHandlerTest {
     assertThat(output.characterCreationPolicy()).isEqualTo("ALLOW_NEW");
     assertThat(output.characters()).hasSize(1);
     assertThat(output.characters().get(0).characterName()).isEqualTo("Emberline");
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -125,8 +136,11 @@ class WorldsCommandHandlerTest {
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("8001")
+                        .setTenantId("22")
+                        .setAccountId("123")
                         .setName("Forkline")
                         .setLevel(5)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                         .build())
                 .build());
 
@@ -144,6 +158,9 @@ class WorldsCommandHandlerTest {
     assertThat(output.characters())
         .extracting(CharacterBrowseViewOutput.CharacterEntry::characterName)
         .containsExactly("Forkline");
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
   }
 
   @Test
@@ -179,6 +196,7 @@ class WorldsCommandHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);

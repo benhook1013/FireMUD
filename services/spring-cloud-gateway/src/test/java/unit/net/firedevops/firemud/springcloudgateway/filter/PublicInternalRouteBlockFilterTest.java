@@ -353,6 +353,11 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void handlesMalformedPercentEncodingRemainingAfterMaximumDecodePasses() {
+    assertAllowed(HttpMethod.POST, "/api/account/auth/bootstrap/%2525252525252525");
+  }
+
+  @Test
   void allowsOtherAccountAuthRoutesAndNonPostJoinPath() {
     assertAllowed(HttpMethod.POST, "/api/account/auth/player-bootstrap");
     assertAllowed(HttpMethod.POST, "/api/account/auth/connect-token");

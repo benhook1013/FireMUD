@@ -9,6 +9,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.impl.GameSessionAdmissionPointerControlPlaneService.AdmissionPointerMutationPreconditionException;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
@@ -597,6 +598,13 @@ public final class GameSessionControlPlaneGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, "CUTOVER_PREPARATION_INVALID", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdmissionPointerMutationPreconditionException ex) {
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "FAILED_PRECONDITION", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();

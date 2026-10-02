@@ -21,6 +21,12 @@ import org.springframework.stereotype.Service;
 
 @Service
 final class GameSessionAdmissionPointerControlPlaneService {
+  static final class AdmissionPointerMutationPreconditionException extends RuntimeException {
+    AdmissionPointerMutationPreconditionException(String message) {
+      super(message);
+    }
+  }
+
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
@@ -82,11 +88,11 @@ final class GameSessionAdmissionPointerControlPlaneService {
             .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
             .orElse(null);
     if (currentPointer != null) {
-      throw new AdmissionPointerVersionMismatchException(
+      throw new AdmissionPointerMutationPreconditionException(
           "admission-pointer updates are temporarily disabled until catalog revision "
               + "preconditions are supported");
     }
-    throw new AdmissionPointerVersionMismatchException(
+    throw new AdmissionPointerMutationPreconditionException(
         "admission-pointer creation is temporarily disabled until catalog revision and "
             + "stable realm/namespace identity preconditions are supported");
   }

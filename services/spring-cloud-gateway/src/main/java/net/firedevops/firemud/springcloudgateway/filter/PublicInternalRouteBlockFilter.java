@@ -98,6 +98,11 @@ public class PublicInternalRouteBlockFilter implements WebFilter, Ordered {
         return path;
       }
     }
+    try {
+      URLDecoder.decode(decodedPath.replace("+", "%2B"), StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException exception) {
+      return path;
+    }
     return decodedPath;
   }
 

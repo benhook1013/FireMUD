@@ -44,6 +44,7 @@ public class AccountAuditOutboxRepository {
     row.setProducerService("account-service");
     row.setEventType(eventType);
     row.setOccurredAt(toLocalDateTime(occurredAt));
+    row.setNextAttemptAt(toLocalDateTime(occurredAt));
     row.setSchemaVersion(1);
     row.setPayloadDigestVersion(1);
     row.setPayloadDigest(digest);

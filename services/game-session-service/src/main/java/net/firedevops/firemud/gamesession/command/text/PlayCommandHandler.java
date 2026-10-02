@@ -186,9 +186,6 @@ public class PlayCommandHandler {
       }
 
       GameplayWorldCatalog.WorldView selectedWorld = maybeWorld.get();
-      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(selectedWorld)) {
-        return admissionPointerUnavailableFailure(tenantTag, null);
-      }
       FirstPartyConnectContextResolution connectContextResolution =
           FirstPartyConnectContextResolution.resolve(
               context.sessionId(), context, firstPartyConnectContextRegistry);

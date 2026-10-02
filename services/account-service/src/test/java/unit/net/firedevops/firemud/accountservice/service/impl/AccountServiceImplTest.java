@@ -329,8 +329,33 @@ class AccountServiceImplTest {
 
     JoinPublicProductionResult first =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+    var committedOperation = retainedOperation.get();
+    org.mockito.Mockito.clearInvocations(transactionManager, gameSessionClient);
     JoinPublicProductionResult retried =
         service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    var normalReplayOrder = org.mockito.Mockito.inOrder(transactionManager, gameSessionClient);
+    normalReplayOrder
+        .verify(transactionManager)
+        .getTransaction(org.mockito.ArgumentMatchers.any(TransactionDefinition.class));
+    normalReplayOrder.verify(transactionManager).commit(org.mockito.ArgumentMatchers.any());
+    normalReplayOrder.verify(gameSessionClient).listGameplayRealms("demo");
+
+    org.mockito.Mockito.doThrow(
+            new DataAccessResourceFailureException("terminal operation lock read failed"))
+        .when(accountJoinOperationRepository)
+        .findForUpdate(requestId);
+    org.mockito.Mockito.clearInvocations(transactionManager, gameSessionClient);
+    JoinPublicProductionResult readbackReplay =
+        service.joinPublicProduction(bootstrap.bootstrapToken(), request);
+
+    var readbackReplayOrder = org.mockito.Mockito.inOrder(transactionManager, gameSessionClient);
+    readbackReplayOrder
+        .verify(transactionManager)
+        .getTransaction(org.mockito.ArgumentMatchers.any(TransactionDefinition.class));
+    readbackReplayOrder.verify(transactionManager).rollback(org.mockito.ArgumentMatchers.any());
+    readbackReplayOrder.verify(gameSessionClient).listGameplayRealms("demo");
+
     ConnectTokenResult onboardingToken =
         service.issueConnectToken(
             bootstrap.bootstrapToken(),
@@ -342,6 +367,9 @@ class AccountServiceImplTest {
     assertEquals(1L, first.membershipVersion());
     assertTrue(retried.success());
     assertTrue(retried.replayed());
+    assertTrue(readbackReplay.success());
+    assertTrue(readbackReplay.replayed());
+    assertEquals(committedOperation, retainedOperation.get());
     assertNotNull(onboardingToken.connectToken());
     assertEquals(REALM_ID, retainedScope.get().realmId().toString());
     assertEquals(
@@ -357,7 +385,26 @@ class AccountServiceImplTest {
             false));
     org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.times(1))
         .save(org.mockito.ArgumentMatchers.any(AccountTenantMembership.class));
-    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(2))
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.times(1))
+        .bindPolicyEvidence(
+            org.mockito.ArgumentMatchers.eq(requestId),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.eq(true));
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.times(1))
+        .finish(
+            org.mockito.ArgumentMatchers.eq(requestId),
+            org.mockito.ArgumentMatchers.eq("COMMITTED"),
+            org.mockito.ArgumentMatchers.eq("JOINED"),
+            org.mockito.ArgumentMatchers.eq(701L),
+            org.mockito.ArgumentMatchers.eq(1L),
+            org.mockito.ArgumentMatchers.eq(1L));
+    org.mockito.Mockito.verify(accountJoinOperationRepository, org.mockito.Mockito.never())
+        .recordAttemptFailure(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
+    org.mockito.Mockito.verify(subscriptionRepository, org.mockito.Mockito.times(3))
         .findByTenantIdForUpdate(7L);
     org.mockito.Mockito.verify(accountAuditOutboxRepository, org.mockito.Mockito.times(1))
         .append(

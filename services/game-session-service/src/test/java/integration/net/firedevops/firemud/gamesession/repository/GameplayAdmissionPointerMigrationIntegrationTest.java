@@ -162,15 +162,21 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
   }
 
   private static UUID realmId(DSLContext dsl, long pointerId) {
-    return dsl.fetchOne("SELECT realm_id FROM gameplay_admission_pointer WHERE id = ?", pointerId)
-        .get("realm_id", UUID.class);
+    return pointerRecord(dsl, pointerId).get("realm_id", UUID.class);
   }
 
   private static UUID namespaceId(DSLContext dsl, long pointerId) {
-    return dsl.fetchOne(
-            "SELECT playable_state_namespace_id FROM gameplay_admission_pointer WHERE id = ?",
-            pointerId)
-        .get("playable_state_namespace_id", UUID.class);
+    return pointerRecord(dsl, pointerId).get("playable_state_namespace_id", UUID.class);
+  }
+
+  private static Record pointerRecord(DSLContext dsl, long pointerId) {
+    Record pointer =
+        dsl.fetchOne("SELECT * FROM gameplay_admission_pointer WHERE id = ?", pointerId);
+    if (pointer == null) {
+      throw new IllegalStateException(
+          "Expected gameplay admission pointer row to exist: id=" + pointerId);
+    }
+    return pointer;
   }
 
   private static List<GameplayWorldCatalog.WorldView> worldViewsFromDatabase(DSLContext dsl) {
