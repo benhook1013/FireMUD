@@ -220,6 +220,34 @@ def _import_one(
             )
         if matching_attempts:
             attempt = matching_attempts[0]
+            if checkpoint.type == "Hosted" and attempt["state"] == "ambiguous" and attempt["run_id"] is None:
+                # A reply may be edited to completion after the first immutable
+                # observation. Retain that observation and append only the
+                # canonical, independently verified reply-only source import.
+                with tempfile.TemporaryDirectory(prefix="pr-review-late-reply-") as scratch:
+                    probe = _clone_records(records, Path(scratch) / "records.sqlite3")
+                    verified = import_checkpoint(probe)
+                    metadata = json.loads(verified.get("archive_artifacts", {}).get("metadata", "{}"))
+                trigger = metadata.get("trigger_record", {})
+                attempt_repo = records.attempt(attempt["attempt_id"])["metadata"].get("repository")
+                proof = metadata.get("zero_reply_proof", {})
+                if (
+                    metadata.get("capture_format") != "firemud-hosted-trigger-reply/v1"
+                    or metadata.get("repository") != repo.casefold()
+                    or not isinstance(attempt_repo, str)
+                    or attempt_repo.casefold() != repo.casefold()
+                    or metadata.get("pull_request") != pr_number
+                    or trigger.get("head_sha") != attempt["candidate_sha"]
+                    or proof.get("commit_id") != attempt["candidate_sha"]
+                    or str(metadata.get("trigger_id")) != attempt["trigger_id"]
+                    or str(metadata.get("response_id")) != attempt["provider_review_id"]
+                    or trigger.get("sqlite_attempt_id") != attempt["attempt_id"]
+                    or attempt["checkpoint_id"] not in (None, str(checkpoint.comment_id))
+                    or verified.get("counts") != {"found": 0, "accepted": 0, "routed": 0}
+                ):
+                    raise SqliteRecordsRepairError("late Hosted reply conflicts with its immutable ambiguous attempt")
+                imported = import_checkpoint(records)
+                return imported, _provider_id(checkpoint, imported)
             if attempt["state"] != "completed" or attempt["run_id"] != attempt["attempt_id"]:
                 raise SqliteRecordsRepairError(
                     "matching provider attempt is not linked to its exact completed source run"

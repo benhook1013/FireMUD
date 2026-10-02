@@ -181,6 +181,27 @@ class ReviewStateStackTest(unittest.TestCase):
         self.assertIsNone(restored.baseline_checkpoint)
         self.assertEqual(restored.min_additional_completed, 2)
 
+    def test_human_allowance_roundtrips_unavailable_git_audit_facts(self):
+        allocation = ReviewAllocation(
+            pr=2827,
+            channel="cli",
+            head="a" * 40,
+            parent_identity="develop",
+            parent_head="b" * 40,
+            merge_base=None,
+            patch_id=None,
+            baseline_checkpoints=(),
+            reason="human requires exactly two more completed reviews",
+            min_additional_completed=2,
+            max_additional_completed=2,
+        )
+        self.assertEqual(ReviewAllocation.from_dict(allocation.to_dict()), allocation)
+        for changed in ({"max_additional_completed": 3}, {"min_additional_completed": None}):
+            with self.subTest(changed=changed):
+                restored = ReviewAllocation.from_dict({**allocation.to_dict(), **changed})
+                self.assertIsNone(restored.merge_base)
+                self.assertIsNone(restored.patch_id)
+
     def test_bounded_review_allocation_rejects_missing_baseline_or_invalid_cap(self):
         base = {
             "pr": 2827,
