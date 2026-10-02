@@ -257,3 +257,8 @@ Entry format:
   - Context: an Account outbox investigation initially treated a missing stream head with retained events as a possible runtime gap. Reading V33's immediate foreign key, immutable-event guards and unconditional head-delete rejection disproved that state under the intact schema.
   - Outcome: the unnecessary local query and unit changes were removed before publication. Focused PostgreSQL tests instead exercise rejected deletion with unchanged evidence and exact-stream isolation without synthesizing authority; local Docker absence still requires executed runner proof.
   - Expected pattern: inspect the complete owning migration before accepting a repository-level failure premise. Do not disable constraints or invent corrupted fixtures to justify a runtime repair; distinguish actual invariant proof from recovery for a separately specified corruption model.
+
+- `2026-10-03`: Script convenience APIs can widen a deliberately narrow Redis grant
+  - Context: the projection helpers' Spring Redis script convenience path can fall back from `EVALSHA` to raw `EVAL`. Giving the isolated fixture both commands masked the difference from the canonical owner-helper `SCRIPT LOAD`/`EVALSHA` grant.
+  - Outcome: the Account and issuer candidates use verified registered bytes, check the identity returned by `SCRIPT LOAD`, and invoke `EVALSHA` directly without fallback or a blind retry. Isolated Redis proof denies raw `EVAL`; local database/Redis skips still require executed runner evidence.
+  - Expected pattern: inspect convenience-API recovery behavior against the exact command grant, and test the forbidden command as well as the positive registered-helper path. Do not widen ACLs just to accommodate an implicit fallback.

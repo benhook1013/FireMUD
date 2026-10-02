@@ -1124,6 +1124,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#staleExpectedBytesAreNonMutatingThroughTheRegisteredOwnerScript()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#unknownOrDuplicateJsonFieldsQuarantineWithoutChangingBytesOrTtl()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#expiringProjectionIsQuarantinedWithoutChangingItsBytesOrExpiration()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#ownerPrincipalCannotInvokeEvalDirectly()' \
             game-session-service
 
       - name: Upload registered issuer projection Redis proof results
@@ -1266,6 +1267,30 @@ jobs:
         with:
           name: account-logout-all-source-postgresql-proof-${{ github.sha }}
           path: services/account-service/build/test-results/integrationTest/TEST-*AccountLogoutAllAuthorityProducerPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify Account generation projection PostgreSQL and Redis proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#installsPristineAccountBaselineFromCurrentDurableSourceAndReadsItBackExactly()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#accountCoordinationPrincipalCannotInvokeEvalDirectly()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#projectsActualPasswordResetAndLogoutAllCheckpointsWithoutRewritingSqlHistory()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#unknownAccountCannotSynthesizeProjectionOrChangeSourceRows()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#malformedExpiringAndAheadRedisValuesAreNeverOverwritten()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#staleSourceCandidateCannotReplaceAProjectionFromANewerAccountCommit()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#absentProjectionRacingAnAccountAdvanceReturnsSourceChanged()' \
+            account-service
+
+      - name: Upload Account generation projection PostgreSQL and Redis proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-generation-projection-postgresql-redis-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountGenerationProjectionPostgresRedisIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 

@@ -3,12 +3,20 @@ package unit.net.firedevops.firemud.gamesession.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
@@ -21,9 +29,21 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.SourceReadback;
+import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionRedisContract;
 import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore.ProjectionSnapshot;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisKeyCommands;
+import org.springframework.data.redis.connection.RedisScriptingCommands;
+import org.springframework.data.redis.connection.RedisStringCommands;
+import org.springframework.data.redis.connection.ReturnType;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class RedisIssuerAuthorityProjectionStoreTest {
   private static final String COORD_PASSWORD = "coordination-secret";
@@ -75,6 +95,98 @@ class RedisIssuerAuthorityProjectionStoreTest {
   }
 
   @Test
+  void appliesWithTheExactRegisteredScriptLoadedThenExecutedByEvalSha() throws Exception {
+    byte[] resourceBytes = scriptBytes();
+    String expectedSha1 = sha1(resourceBytes);
+    assertThat(sha256(resourceBytes))
+        .isEqualTo(IssuerAuthorityProjectionRedisContract.descriptor().sha256());
+
+    RedisConnection connection = mock(RedisConnection.class);
+    RedisStringCommands stringCommands = mock(RedisStringCommands.class);
+    RedisKeyCommands keyCommands = mock(RedisKeyCommands.class);
+    RedisScriptingCommands scriptingCommands = mock(RedisScriptingCommands.class);
+    when(connection.stringCommands()).thenReturn(stringCommands);
+    when(connection.keyCommands()).thenReturn(keyCommands);
+    when(connection.scriptingCommands()).thenReturn(scriptingCommands);
+    when(stringCommands.get(any(byte[].class))).thenReturn(null);
+    AtomicReference<byte[]> loadedScript = new AtomicReference<>();
+    AtomicReference<byte[][]> evalShaArguments = new AtomicReference<>();
+    when(scriptingCommands.scriptLoad(any(byte[].class)))
+        .thenAnswer(
+            invocation -> {
+              byte[] script = invocation.getArgument(0);
+              loadedScript.set(script.clone());
+              return sha1(script);
+            });
+    when(scriptingCommands.evalSha(
+            eq(expectedSha1), eq(ReturnType.VALUE), eq(1), any(byte[][].class)))
+        .thenAnswer(
+            invocation -> {
+              evalShaArguments.set((byte[][]) invocation.getRawArguments()[3]);
+              return "APPLIED".getBytes(StandardCharsets.US_ASCII);
+            });
+
+    RedisIssuerAuthorityProjectionStore store = storeWithConnection(connection);
+    try {
+      var result = store.apply(sourceReadback("test"), "stable-time");
+
+      assertThat(result.outcome()).isEqualTo(RedisIssuerAuthorityProjectionStore.Outcome.APPLIED);
+      ProjectionSnapshot projection = result.snapshot().orElseThrow();
+      InOrder order = inOrder(scriptingCommands);
+      order.verify(scriptingCommands).scriptLoad(any(byte[].class));
+      order
+          .verify(scriptingCommands)
+          .evalSha(eq(expectedSha1), eq(ReturnType.VALUE), eq(1), any(byte[][].class));
+      assertThat(loadedScript.get()).containsExactly(resourceBytes);
+      byte[][] invocationArguments = evalShaArguments.get();
+      assertThat(new String(invocationArguments[0], StandardCharsets.UTF_8))
+          .isEqualTo(projection.key());
+      assertThat(new String(invocationArguments[1], StandardCharsets.US_ASCII)).isEqualTo("ABSENT");
+      assertThat(new String(invocationArguments[2], StandardCharsets.UTF_8)).isEmpty();
+      assertThat(new String(invocationArguments[3], StandardCharsets.UTF_8))
+          .isEqualTo(projection.json());
+      verifyNoMoreInteractions(scriptingCommands);
+    } finally {
+      store.close();
+    }
+  }
+
+  @Test
+  void noscriptFromEvalShaPropagatesWithoutEvalFallback() throws Exception {
+    byte[] resourceBytes = scriptBytes();
+    String expectedSha1 = sha1(resourceBytes);
+    RedisConnection connection = mock(RedisConnection.class);
+    RedisStringCommands stringCommands = mock(RedisStringCommands.class);
+    RedisKeyCommands keyCommands = mock(RedisKeyCommands.class);
+    RedisScriptingCommands scriptingCommands = mock(RedisScriptingCommands.class);
+    when(connection.stringCommands()).thenReturn(stringCommands);
+    when(connection.keyCommands()).thenReturn(keyCommands);
+    when(connection.scriptingCommands()).thenReturn(scriptingCommands);
+    when(stringCommands.get(any(byte[].class))).thenReturn(null);
+    when(scriptingCommands.scriptLoad(any(byte[].class))).thenReturn(expectedSha1);
+    DataAccessResourceFailureException noScript =
+        new DataAccessResourceFailureException("NOSCRIPT No matching script. Please use EVAL.");
+    when(scriptingCommands.evalSha(
+            eq(expectedSha1), eq(ReturnType.VALUE), eq(1), any(byte[][].class)))
+        .thenThrow(noScript);
+
+    RedisIssuerAuthorityProjectionStore store = storeWithConnection(connection);
+    try {
+      assertThatThrownBy(() -> store.apply(sourceReadback("test"), "stable-time"))
+          .isSameAs(noScript);
+
+      InOrder order = inOrder(scriptingCommands);
+      order.verify(scriptingCommands).scriptLoad(any(byte[].class));
+      order
+          .verify(scriptingCommands)
+          .evalSha(eq(expectedSha1), eq(ReturnType.VALUE), eq(1), any(byte[][].class));
+      verifyNoMoreInteractions(scriptingCommands);
+    } finally {
+      store.close();
+    }
+  }
+
+  @Test
   void wrongSourceNamespaceIsRejectedBeforeAnyRedisCommand() throws Exception {
     RedisIssuerAuthorityProjectionStore store =
         new RedisIssuerAuthorityProjectionStore(
@@ -113,6 +225,45 @@ class RedisIssuerAuthorityProjectionStoreTest {
       String host, int port) {
     return new RedisIssuerAuthorityProjectionStore.CoordinationEndpoint(
         host, port, "gamesession_coord_app", COORD_PASSWORD);
+  }
+
+  private static RedisIssuerAuthorityProjectionStore storeWithConnection(RedisConnection connection)
+      throws Exception {
+    RedisIssuerAuthorityProjectionStore store =
+        new RedisIssuerAuthorityProjectionStore(
+            "test",
+            coordination("127.0.0.1", 1),
+            new RedisIssuerAuthorityProjectionStore.CacheRateLimitEndpoint("127.0.0.1", 2));
+    store.init();
+    StringRedisTemplate template = mock(StringRedisTemplate.class);
+    doAnswer(
+            invocation -> {
+              RedisCallback<?> callback = invocation.getArgument(0);
+              return callback.doInRedis(connection);
+            })
+        .when(template)
+        .execute(any(RedisCallback.class));
+    Field templateField =
+        RedisIssuerAuthorityProjectionStore.class.getDeclaredField("redisTemplate");
+    templateField.setAccessible(true);
+    templateField.set(store, template);
+    return store;
+  }
+
+  private static String sha1(byte[] script) throws NoSuchAlgorithmException {
+    return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
+  }
+
+  private static String sha256(byte[] script) throws NoSuchAlgorithmException {
+    return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(script));
+  }
+
+  private static byte[] scriptBytes() throws Exception {
+    try (var input =
+        new ClassPathResource(IssuerAuthorityProjectionRedisContract.RESOURCE_PATH)
+            .getInputStream()) {
+      return input.readAllBytes();
+    }
   }
 
   private static SourceReadback sourceReadback(String targetNamespace) throws Exception {

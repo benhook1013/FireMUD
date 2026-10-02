@@ -15,7 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -31,11 +30,11 @@ import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionTrans
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.ReturnType;
 import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 /** Explicitly owned, unwired Coordination Redis store for the derived issuer projection. */
 public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable {
@@ -45,8 +44,9 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
           .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
           .enable(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
   private static final TypeReference<Map<String, Object>> OBJECT_MAP = new TypeReference<>() {};
-  private static final DefaultRedisScript<String> CAS_SCRIPT = casScript();
-  private static final byte[] CAS_SCRIPT_SHA256 = scriptDigest();
+  private static final byte[] CAS_SCRIPT_BYTES = scriptBytes();
+  private static final String CAS_SCRIPT_SHA1 = scriptSha1(CAS_SCRIPT_BYTES);
+  private static final byte[] CAS_SCRIPT_SHA256 = scriptSha256(CAS_SCRIPT_BYTES);
   private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(3);
 
   private final String expectedWorkloadNamespace;
@@ -238,8 +238,31 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
       throw new IllegalStateException(
           "issuer projection invocation is not its registered owner contract");
     }
+    byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
+    byte[] expectedModeBytes = expectedMode.getBytes(StandardCharsets.US_ASCII);
+    byte[] expectedBytesUtf8 = expectedBytes.getBytes(StandardCharsets.UTF_8);
+    byte[] candidateBytesUtf8 = candidateBytes.getBytes(StandardCharsets.UTF_8);
     return redisTemplate.execute(
-        CAS_SCRIPT, List.of(key), expectedMode, expectedBytes, candidateBytes);
+        (RedisCallback<String>)
+            connection -> {
+              String loadedSha = connection.scriptingCommands().scriptLoad(CAS_SCRIPT_BYTES);
+              if (!CAS_SCRIPT_SHA1.equals(loadedSha)) {
+                throw new IllegalStateException(
+                    "Redis loaded a different issuer authority projection script");
+              }
+              Object result =
+                  connection
+                      .scriptingCommands()
+                      .evalSha(
+                          loadedSha,
+                          ReturnType.VALUE,
+                          1,
+                          keyBytes,
+                          expectedModeBytes,
+                          expectedBytesUtf8,
+                          candidateBytesUtf8);
+              return decodeScriptResult(result);
+            });
   }
 
   private StoredValue readStoredValue(String key) {
@@ -274,6 +297,30 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
         .toString();
   }
 
+  private static String decodeScriptResult(Object result) {
+    if (result instanceof byte[] bytes) {
+      try {
+        return StandardCharsets.US_ASCII
+            .newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+            .toString();
+      } catch (CharacterCodingException malformed) {
+        throw new IllegalStateException(
+            "Registered issuer projection script returned non-ASCII", malformed);
+      }
+    }
+    if (result instanceof String text) {
+      return text;
+    }
+    if (result == null) {
+      return null;
+    }
+    throw new IllegalStateException(
+        "Registered issuer projection script returned an unsupported result type");
+  }
+
   private void requireInitialized() {
     if (closed || redisTemplate == null) {
       throw new IllegalStateException("issuer projection store requires explicit init()");
@@ -300,21 +347,28 @@ public final class RedisIssuerAuthorityProjectionStore implements AutoCloseable 
     return normalized;
   }
 
-  private static DefaultRedisScript<String> casScript() {
-    DefaultRedisScript<String> script = new DefaultRedisScript<>();
-    script.setLocation(new ClassPathResource(IssuerAuthorityProjectionRedisContract.RESOURCE_PATH));
-    script.setResultType(String.class);
-    return script;
-  }
-
-  private static byte[] scriptDigest() {
+  private static byte[] scriptBytes() {
     try (var input =
         new ClassPathResource(IssuerAuthorityProjectionRedisContract.RESOURCE_PATH)
             .getInputStream()) {
-      byte[] bytes = input.readAllBytes();
-      return MessageDigest.getInstance("SHA-256").digest(bytes);
+      return input.readAllBytes();
     } catch (IOException exception) {
       throw new ExceptionInInitializerError(exception);
+    }
+  }
+
+  private static String scriptSha1(byte[] scriptBytes) {
+    try {
+      return java.util.HexFormat.of()
+          .formatHex(MessageDigest.getInstance("SHA-1").digest(scriptBytes));
+    } catch (NoSuchAlgorithmException exception) {
+      throw new ExceptionInInitializerError(exception);
+    }
+  }
+
+  private static byte[] scriptSha256(byte[] scriptBytes) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(scriptBytes);
     } catch (NoSuchAlgorithmException exception) {
       throw new ExceptionInInitializerError(exception);
     }

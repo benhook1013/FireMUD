@@ -1,6 +1,7 @@
 package integration.net.firedevops.firemud.gamesession;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -8,6 +9,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,8 +39,11 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
+import org.springframework.data.redis.connection.ReturnType;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
+import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.RedisScript;
 import org.testcontainers.containers.GenericContainer;
@@ -77,15 +82,15 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
               "+get",
               "+set",
               "+pttl",
-              "+eval",
               "+evalsha",
-              "+script|exists",
               "+script|load");
 
   private String issuerId;
   private RedisIssuerAuthorityProjectionStore store;
   private LettuceConnectionFactory adminConnectionFactory;
   private StringRedisTemplate adminTemplate;
+  private LettuceConnectionFactory ownerConnectionFactory;
+  private StringRedisTemplate ownerTemplate;
 
   @BeforeEach
   void startOwnerStoreAndTestOnlyAdminReadback() {
@@ -108,6 +113,15 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
     adminConnectionFactory.afterPropertiesSet();
     adminTemplate = new StringRedisTemplate(adminConnectionFactory);
     adminTemplate.afterPropertiesSet();
+
+    RedisStandaloneConfiguration ownerConfiguration =
+        new RedisStandaloneConfiguration(redis.getHost(), redis.getMappedPort(6379));
+    ownerConfiguration.setUsername("gamesession_coord_app");
+    ownerConfiguration.setPassword(RedisPassword.of(COORD_PASSWORD));
+    ownerConnectionFactory = new LettuceConnectionFactory(ownerConfiguration);
+    ownerConnectionFactory.afterPropertiesSet();
+    ownerTemplate = new StringRedisTemplate(ownerConnectionFactory);
+    ownerTemplate.afterPropertiesSet();
   }
 
   @AfterEach
@@ -118,6 +132,25 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
     if (adminConnectionFactory != null) {
       adminConnectionFactory.destroy();
     }
+    if (ownerConnectionFactory != null) {
+      ownerConnectionFactory.destroy();
+    }
+  }
+
+  @Test
+  void ownerPrincipalCannotInvokeEvalDirectly() {
+    assertThatThrownBy(
+            () ->
+                ownerTemplate.execute(
+                    (RedisCallback<Object>)
+                        connection ->
+                            connection
+                                .scriptingCommands()
+                                .eval(
+                                    "return 1".getBytes(StandardCharsets.UTF_8),
+                                    ReturnType.INTEGER,
+                                    0)))
+        .satisfies(failure -> assertThat(exceptionMessageChain(failure)).contains("NOPERM"));
   }
 
   @Test
@@ -356,5 +389,15 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
     tls.setPrivateKey("certs/game-session-client.key");
     tls.setCaCert("certs/account-ca.crt");
     return tls;
+  }
+
+  private static String exceptionMessageChain(Throwable failure) {
+    StringBuilder messages = new StringBuilder();
+    for (Throwable current = failure; current != null; current = current.getCause()) {
+      if (current.getMessage() != null) {
+        messages.append(current.getMessage()).append('\n');
+      }
+    }
+    return messages.toString();
   }
 }
