@@ -20,14 +20,15 @@ class MutableDefaultDemoCatalogTest {
   private static final long BASELINE_GAME_INSTANCE_ID = 73L;
 
   @Test
-  void defaultDemoIsAbsentUntilTheTestBaselineIsEnabled() {
+  void defaultDemoIsAbsentUntilPersistedPointerAuthorityContainsIt() {
     MutablePointerAuthority authority = new MutablePointerAuthority();
     TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);
     GameplayWorldCatalog catalog = fixture.catalog();
 
     assertThat(catalog.resolveWorld("demo")).isEmpty();
 
-    fixture.useDefaultDemo(TENANT_ID, BASELINE_GAME_INSTANCE_ID);
+    authority.setPointers(
+        List.of(pointer("demo", "production", TENANT_ID, BASELINE_GAME_INSTANCE_ID, 1L, 1L)));
 
     GameplayWorldCatalog.RealmView realm =
         catalog.resolveDefaultRealm(catalog.resolveWorld("demo").orElseThrow()).orElseThrow();
@@ -41,10 +42,9 @@ class MutableDefaultDemoCatalogTest {
   }
 
   @Test
-  void persistedMatchingPointerTakesPrecedenceOverTheBaselineFallback() {
+  void persistedPointerIsTheOnlySourceForTheDefaultDemoRoute() {
     MutablePointerAuthority authority = new MutablePointerAuthority();
     TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);
-    fixture.useDefaultDemo(TENANT_ID, BASELINE_GAME_INSTANCE_ID);
     authority.setPointers(List.of(pointer("demo", "production", TENANT_ID, 99L, 8L, 12L)));
 
     GameplayWorldCatalog.RealmView realm =
@@ -59,10 +59,9 @@ class MutableDefaultDemoCatalogTest {
   }
 
   @Test
-  void selectorForAnotherTenantAlsoOccupiesTheDefaultFallbackSelector() {
+  void selectorForAnotherTenantIsNotReplacedByASyntheticDefaultRoute() {
     MutablePointerAuthority authority = new MutablePointerAuthority();
     TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);
-    fixture.useDefaultDemo(TENANT_ID, BASELINE_GAME_INSTANCE_ID);
     authority.setPointers(List.of(pointer("demo", "production", TENANT_ID + 1L, 99L, 8L, 12L)));
 
     GameplayWorldCatalog catalog = fixture.catalog();
@@ -74,22 +73,17 @@ class MutableDefaultDemoCatalogTest {
   }
 
   @Test
-  void clearingTheFallbackRestoresMissingAuthority() {
+  void missingPersistedAuthorityRemainsMissing() {
     MutablePointerAuthority authority = new MutablePointerAuthority();
     TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);
-    fixture.useDefaultDemo(TENANT_ID, BASELINE_GAME_INSTANCE_ID);
-    assertThat(fixture.catalog().resolveWorld("demo")).isPresent();
-
-    fixture.clearDefaultDemo();
 
     assertThat(fixture.catalog().resolveWorld("demo")).isEmpty();
   }
 
   @Test
-  void incompletePersistedPointerIsNotReplacedByTheFallback() {
+  void incompletePersistedPointerFailsClosed() {
     MutablePointerAuthority authority = new MutablePointerAuthority();
     TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);
-    fixture.useDefaultDemo(TENANT_ID, BASELINE_GAME_INSTANCE_ID);
     authority.setPointers(
         List.of(
             new GameplayAdmissionPointerSnapshot(
@@ -113,11 +107,13 @@ class MutableDefaultDemoCatalogTest {
   }
 
   @Test
-  void ambiguousPersistedPublicAuthorityIsNotHiddenByTheFallback() {
+  void ambiguousPersistedPublicAuthorityFailsClosed() {
     MutablePointerAuthority authority = new MutablePointerAuthority();
     TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture = fixture(authority);
-    fixture.useDefaultDemo(TENANT_ID, BASELINE_GAME_INSTANCE_ID);
-    authority.setPointers(List.of(pointer("other", "production", TENANT_ID, 99L, 8L, 12L)));
+    authority.setPointers(
+        List.of(
+            pointer("demo", "production", TENANT_ID, 99L, 8L, 12L),
+            pointer("other", "production", TENANT_ID, 100L, 1L, 3L)));
 
     assertThatThrownBy(() -> fixture.catalog().resolveWorld("demo"))
         .isInstanceOf(IllegalArgumentException.class)
