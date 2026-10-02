@@ -24,7 +24,7 @@ class GameplayAdmissionPointerRepositoryTest {
   void tenantScopedListFiltersRowsInTheDatabaseBeforeMapping() throws Exception {
     try (Connection connection =
         DriverManager.getConnection(
-            "jdbc:h2:mem:gameplay-pointer-tenant-list;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+            "jdbc:h2:mem:gameplay-pointer-tenant-list-by-tenant;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
       DSLContext dsl = DSL.using(connection, SQLDialect.H2);
       createSchema(dsl);
       GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
@@ -90,7 +90,7 @@ class GameplayAdmissionPointerRepositoryTest {
   void tenantScopedPointerListExcludesOtherTenants() throws Exception {
     try (Connection connection =
         DriverManager.getConnection(
-            "jdbc:h2:mem:gameplay-pointer-tenant-list;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+            "jdbc:h2:mem:gameplay-pointer-tenant-list-in;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
       DSLContext dsl = DSL.using(connection, SQLDialect.H2);
       createSchema(dsl);
       GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);

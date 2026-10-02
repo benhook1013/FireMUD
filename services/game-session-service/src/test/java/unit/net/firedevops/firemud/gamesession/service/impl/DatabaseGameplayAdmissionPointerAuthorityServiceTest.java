@@ -220,7 +220,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   @Test
   void upsertPointerRuntimeTargetChangeAdvancesPointerVersionWithoutCatalogRevision() {
     GameplayAdmissionPointer existing = existingPointer();
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            1L, "demo", "production"))
         .thenReturn(Optional.of(existing));
     when(pointerRepository.updateExisting(any(GameplayAdmissionPointer.class), any(), any()))
         .thenAnswer(invocation -> invocation.getArgument(0));
@@ -516,7 +517,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   void catalogPolicyRevisionAdvancesIndependentlyFromPointerVersion() {
     java.util.concurrent.atomic.AtomicReference<GameplayAdmissionPointer> currentPointer =
         new java.util.concurrent.atomic.AtomicReference<>();
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            7L, "demo", "production"))
         .thenAnswer(invocation -> Optional.ofNullable(currentPointer.get()));
     when(pointerRepository.save(any(GameplayAdmissionPointer.class)))
         .thenAnswer(
@@ -557,7 +559,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   void concurrentSameTransitionWinnerPreventsDuplicateAuditForStaleExpectedRevisions() {
     GameplayAdmissionPointer winnerRead = existingPointerForTenant(7L);
     GameplayAdmissionPointer staleRead = existingPointerForTenant(7L);
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            7L, "demo", "production"))
         .thenReturn(Optional.of(winnerRead), Optional.of(staleRead));
     java.util.concurrent.atomic.AtomicReference<GameplayAdmissionPointer> current =
         new java.util.concurrent.atomic.AtomicReference<>(existingPointerForTenant(7L));
@@ -604,7 +607,8 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   void existingPointerMutationRequiresMatchingCatalogRevisionEvenForNoOp() {
     GameplayAdmissionPointer existing = existingPointer();
     existing.setTenantId(7L);
-    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production"))
+    when(pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
+            7L, "demo", "production"))
         .thenReturn(Optional.of(existing));
 
     assertThrows(

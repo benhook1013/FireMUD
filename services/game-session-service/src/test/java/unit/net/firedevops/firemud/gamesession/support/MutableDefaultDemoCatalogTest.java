@@ -171,9 +171,7 @@ class MutableDefaultDemoCatalogTest {
 
     @Override
     public List<GameplayAdmissionPointerSnapshot> listPointersForTenants(List<Long> tenantIds) {
-      return pointers.stream()
-          .filter(pointer -> tenantIds.contains(pointer.tenantId()))
-          .toList();
+      return pointers.stream().filter(pointer -> tenantIds.contains(pointer.tenantId())).toList();
     }
 
     @Override
