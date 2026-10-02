@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.service.impl;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -271,7 +270,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
   }
 
   private void rejectPreparedCutoverUntilCatalogRevisionPreconditionsAreSupported() {
-    throw new AdmissionPointerVersionMismatchException(
+    throw new AdmissionPointerMutationPreconditionException(
         "prepared cutover is temporarily disabled until catalog revision preconditions "
             + "are supported");
   }

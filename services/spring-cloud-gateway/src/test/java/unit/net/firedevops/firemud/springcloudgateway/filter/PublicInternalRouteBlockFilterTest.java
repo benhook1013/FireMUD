@@ -353,6 +353,11 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void blocksBootstrapJoinWhenMalformedSuffixFollowsSuccessfullyDecodedSegment() {
+    assertBlockedPost("/api/account/auth/bootstrap/%6Aoin;x=%25ZZ");
+  }
+
+  @Test
   void handlesMalformedPercentEncodingRemainingAfterMaximumDecodePasses() {
     assertAllowed(HttpMethod.POST, "/api/account/auth/bootstrap/%2525252525252525");
   }

@@ -22,6 +22,8 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
+import net.firedevops.firemud.accountservice.service.AccountAuditDeliveryJob;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -31,6 +33,7 @@ import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
+import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
@@ -104,6 +107,57 @@ class LoggingAdminClientTest {
     LoggingAdminClient client = newClient(stub);
 
     assertThrows(IllegalStateException.class, () -> client.deliver(validEnvelope()));
+  }
+
+  @Test
+  void receiverErrorKeepsAuditPendingAndOmitsFreeFormErrorDetails() throws Exception {
+    var stub = mockStub();
+    when(stub.createLogEvent(any()))
+        .thenReturn(
+            CreateLogEventResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("INVALID_EVENT")
+                        .setMessage("sensitive receiver detail"))
+                .build());
+    LoggingAdminClient client = newClient(stub);
+    AccountAuditEnvelope envelope = validEnvelope();
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> client.deliver(envelope));
+
+    assertEquals("Account audit receiver returned error code INVALID_EVENT", failure.getMessage());
+    assertFalse(failure.getMessage().contains("sensitive receiver detail"));
+
+    AccountAuditOutboxRepository outbox = mock(AccountAuditOutboxRepository.class);
+    when(outbox.pending(org.mockito.ArgumentMatchers.eq(50), any(Instant.class)))
+        .thenReturn(java.util.List.of(envelope));
+    new AccountAuditDeliveryJob(outbox, client).deliverPending();
+
+    verify(outbox).recordAttempt(envelope.auditEventId());
+    verify(outbox, never())
+        .markDelivered(any(), any(), any(), org.mockito.ArgumentMatchers.anyBoolean());
+  }
+
+  @Test
+  void deliverSanitizesMalformedReceiverErrorCode() throws Exception {
+    var stub = mockStub();
+    when(stub.createLogEvent(any()))
+        .thenReturn(
+            CreateLogEventResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("INVALID_EVENT\nprivate")
+                        .setMessage("sensitive receiver detail"))
+                .build());
+    LoggingAdminClient client = newClient(stub);
+
+    IllegalStateException failure =
+        assertThrows(IllegalStateException.class, () -> client.deliver(validEnvelope()));
+
+    assertEquals("Account audit receiver returned error code UNKNOWN", failure.getMessage());
+    assertFalse(failure.getMessage().contains("sensitive receiver detail"));
+    assertFalse(failure.getMessage().contains("private"));
   }
 
   @Test

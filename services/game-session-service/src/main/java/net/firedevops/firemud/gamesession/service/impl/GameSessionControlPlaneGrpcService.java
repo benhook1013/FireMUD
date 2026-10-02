@@ -663,6 +663,13 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AdmissionPointerMutationPreconditionException ex) {
+      ExecutePreparedVersionCutoverResponse response =
+          ExecutePreparedVersionCutoverResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "FAILED_PRECONDITION", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (AdmissionPointerVersionMismatchException ex) {
       ExecutePreparedVersionCutoverResponse response =
           ExecutePreparedVersionCutoverResponse.newBuilder()

@@ -32,6 +32,7 @@ class ExpiredConnectScopeCleanupJobTest {
     verifyNoMoreInteractions(repository);
     assertThat(deletedCount(meters)).isEqualTo(5);
     assertThat(failureCount(meters)).isZero();
+    assertThat(capSaturationCount(meters)).isZero();
   }
 
   @Test
@@ -47,6 +48,7 @@ class ExpiredConnectScopeCleanupJobTest {
     verifyNoMoreInteractions(repository);
     assertThat(deletedCount(meters)).isZero();
     assertThat(failureCount(meters)).isZero();
+    assertThat(capSaturationCount(meters)).isZero();
   }
 
   @Test
@@ -62,23 +64,25 @@ class ExpiredConnectScopeCleanupJobTest {
     verifyNoMoreInteractions(repository);
     assertThat(deletedCount(meters)).isEqualTo(10);
     assertThat(failureCount(meters)).isZero();
+    assertThat(capSaturationCount(meters)).isEqualTo(1);
   }
 
   @Test
   void cleanupKeepsEarlierCountsAndRecordsFailureWhenLaterBatchThrows() {
     AccountConnectScopeRepository repository = mock(AccountConnectScopeRepository.class);
     when(repository.deleteExpiredUnreferenced(any(Instant.class), eq(2)))
-        .thenReturn(2)
+        .thenReturn(2, 2, 2, 2)
         .thenThrow(new IllegalStateException("private repository detail"));
     SimpleMeterRegistry meters = new SimpleMeterRegistry();
     ExpiredConnectScopeCleanupJob job = newJob(repository, meters, 2);
 
     job.cleanupExpiredConnectScopes();
 
-    verify(repository, times(2)).deleteExpiredUnreferenced(any(Instant.class), eq(2));
+    verify(repository, times(5)).deleteExpiredUnreferenced(any(Instant.class), eq(2));
     verifyNoMoreInteractions(repository);
-    assertThat(deletedCount(meters)).isEqualTo(2);
+    assertThat(deletedCount(meters)).isEqualTo(8);
     assertThat(failureCount(meters)).isEqualTo(1);
+    assertThat(capSaturationCount(meters)).isZero();
   }
 
   private static ExpiredConnectScopeCleanupJob newJob(
@@ -92,5 +96,9 @@ class ExpiredConnectScopeCleanupJobTest {
 
   private static double failureCount(SimpleMeterRegistry meters) {
     return meters.get("account.connect_scopes.cleanup.failure").counter().count();
+  }
+
+  private static double capSaturationCount(SimpleMeterRegistry meters) {
+    return meters.get("account.connect_scopes.cleanup.cap_saturation").counter().count();
   }
 }

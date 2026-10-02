@@ -44,6 +44,7 @@ import net.firedevops.firemud.gamesession.repository.RemoteFollowupRepository;
 import net.firedevops.firemud.gamesession.repository.RemoteFollowupResultRepository;
 import net.firedevops.firemud.gamesession.repository.RuntimeRegionStatusRepository;
 import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
+import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
@@ -1513,29 +1514,31 @@ class GameSessionControlPlaneGrpcServiceTest {
           }
         });
 
-    assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
+    assertEquals("FAILED_PRECONDITION", responseRef.get().getError().getCode());
     Mockito.verifyNoInteractions(authorityService);
     Mockito.verifyNoInteractions(versionUpgradePreparationService);
     Mockito.verifyNoInteractions(gameInstanceRepository);
   }
 
   @Test
-  void
-      executePreparedVersionCutoverReturnsPointerVersionMismatchWhenCatalogPreconditionsAreUnsupported() {
-    GameplayAdmissionPointerAuthorityService authorityService =
-        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    VersionUpgradePreparationService versionUpgradePreparationService =
-        Mockito.mock(VersionUpgradePreparationService.class);
+  void executePreparedVersionCutoverMapsTruePointerVersionMismatchSeparately() {
+    GameSessionAdmissionPointerControlPlaneService admissionPointerControlPlaneService =
+        Mockito.mock(GameSessionAdmissionPointerControlPlaneService.class);
+    Mockito.doThrow(new AdmissionPointerVersionMismatchException("pointer version changed"))
+        .when(admissionPointerControlPlaneService)
+        .executePreparedVersionCutover(
+            Mockito.eq(1L),
+            Mockito.eq(7L),
+            Mockito.any(ExecutePreparedVersionCutoverRequest.class));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
-        controlPlaneService(
-            Mockito.mock(GameInstanceRepository.class),
-            Mockito.mock(GameplayCommandRepository.class),
-            Mockito.mock(RuntimeRegionStatusRepository.class),
-            authorityService,
-            Mockito.mock(InstanceCutoverCompatibilityService.class),
-            versionUpgradePreparationService,
-            Mockito.mock(TickService.class),
+        new GameSessionControlPlaneGrpcService(
+            null,
+            null,
+            null,
+            admissionPointerControlPlaneService,
+            null,
+            null,
             new SimpleMeterRegistry());
 
     AtomicReference<ExecutePreparedVersionCutoverResponse> responseRef = new AtomicReference<>();
@@ -1559,8 +1562,13 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("POINTER_VERSION_MISMATCH", responseRef.get().getError().getCode());
-    Mockito.verifyNoInteractions(authorityService);
-    Mockito.verifyNoInteractions(versionUpgradePreparationService);
+    assertEquals("pointer version changed", responseRef.get().getError().getMessage());
+    Mockito.verify(admissionPointerControlPlaneService)
+        .executePreparedVersionCutover(
+            Mockito.eq(1L),
+            Mockito.eq(7L),
+            Mockito.any(ExecutePreparedVersionCutoverRequest.class));
+    Mockito.verifyNoMoreInteractions(admissionPointerControlPlaneService);
   }
 
   @Test

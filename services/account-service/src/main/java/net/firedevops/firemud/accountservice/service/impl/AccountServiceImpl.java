@@ -98,6 +98,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -387,7 +388,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
@@ -492,7 +493,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.direct_text_connect_scope")
   public DirectTextJoinScope issueDirectTextConnectScope(
       DirectTextCallerContext caller, DirectTextJoinTarget target) {

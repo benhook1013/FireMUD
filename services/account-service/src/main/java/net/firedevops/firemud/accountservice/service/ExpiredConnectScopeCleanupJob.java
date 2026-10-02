@@ -31,6 +31,7 @@ public class ExpiredConnectScopeCleanupJob {
   private final int batchSize;
   private final Counter deleted;
   private final Counter failures;
+  private final Counter capSaturations;
 
   public ExpiredConnectScopeCleanupJob(
       AccountConnectScopeRepository connectScopeRepository,
@@ -55,6 +56,10 @@ public class ExpiredConnectScopeCleanupJob {
         Counter.builder("account.connect_scopes.cleanup.failure")
             .description("Account connect-scope cleanup failures")
             .register(meterRegistry);
+    this.capSaturations =
+        Counter.builder("account.connect_scopes.cleanup.cap_saturation")
+            .description("Cleanup runs that consume every full batch up to the per-run cap")
+            .register(meterRegistry);
   }
 
   @Timed(value = "account.connect_scopes.cleanup")
@@ -64,12 +69,20 @@ public class ExpiredConnectScopeCleanupJob {
   public void cleanupExpiredConnectScopes() {
     Instant capturedNow = Instant.now();
     try {
+      boolean allBatchesFull = true;
       for (int batch = 0; batch < MAX_BATCHES_PER_RUN; batch++) {
         int removed = connectScopeRepository.deleteExpiredUnreferenced(capturedNow, batchSize);
         deleted.increment(removed);
         if (removed < batchSize) {
+          allBatchesFull = false;
           break;
         }
+        if (removed != batchSize) {
+          allBatchesFull = false;
+        }
+      }
+      if (allBatchesFull) {
+        capSaturations.increment();
       }
     } catch (RuntimeException ex) {
       failures.increment();

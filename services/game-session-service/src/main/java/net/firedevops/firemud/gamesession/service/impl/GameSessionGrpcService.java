@@ -571,7 +571,7 @@ public final class GameSessionGrpcService
           ListGameplayRealmsResponse.newBuilder().addAllRealms(realms).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (CatalogRevisionUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException ex) {
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(
@@ -646,7 +646,7 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (CatalogRevisionUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException ex) {
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setError(
@@ -855,7 +855,7 @@ public final class GameSessionGrpcService
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {
     if (identity == null) {
-      throw new CatalogRevisionUnavailableException(
+      throw new AuthorityProjectionUnavailableException(
           "Authoritative gameplay " + fieldName + " is missing");
     }
     return identity.toString();
@@ -863,14 +863,14 @@ public final class GameSessionGrpcService
 
   private static long requireCatalogRevision(long catalogRevision) {
     if (catalogRevision <= 0L) {
-      throw new CatalogRevisionUnavailableException(
+      throw new AuthorityProjectionUnavailableException(
           "Authoritative gameplay catalog revision is missing or invalid");
     }
     return catalogRevision;
   }
 
-  private static final class CatalogRevisionUnavailableException extends RuntimeException {
-    private CatalogRevisionUnavailableException(String message) {
+  private static final class AuthorityProjectionUnavailableException extends RuntimeException {
+    private AuthorityProjectionUnavailableException(String message) {
       super(message);
     }
   }

@@ -100,6 +100,13 @@ public class LoggingAdminClient
     }
     CreateLogEventResponse response =
         stub().withDeadlineAfter(5, TimeUnit.SECONDS).createLogEvent(builder.build());
+    if (response.hasError()) {
+      String errorCode = response.getError().getCode();
+      if (errorCode == null || !errorCode.matches("[A-Z][A-Z0-9_]{0,63}")) {
+        errorCode = "UNKNOWN";
+      }
+      throw new IllegalStateException("Account audit receiver returned error code " + errorCode);
+    }
     if (!response.getAuditEventId().equals(envelope.auditEventId().toString())
         || !response.getPayloadDigest().equals(envelope.payloadDigest())
         || response.getSchemaVersion() != envelope.schemaVersion()

@@ -85,6 +85,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 
 class AccountServiceImplTest {
@@ -2185,6 +2187,27 @@ class AccountServiceImplTest {
 
     assertEquals(1, realms.size());
     assertEquals("production", realms.getFirst().realmSlug());
+  }
+
+  @Test
+  void bootstrapRealmDiscoveryAndDirectTextScopeIssuanceSuspendIncomingTransactions()
+      throws NoSuchMethodException {
+    Transactional listRealms =
+        AccountServiceImpl.class
+            .getMethod("listBootstrapRealms", String.class, String.class)
+            .getAnnotation(Transactional.class);
+    Transactional issueDirectTextScope =
+        AccountServiceImpl.class
+            .getMethod(
+                "issueDirectTextConnectScope",
+                DirectTextCallerContext.class,
+                DirectTextJoinTarget.class)
+            .getAnnotation(Transactional.class);
+
+    assertNotNull(listRealms);
+    assertNotNull(issueDirectTextScope);
+    assertEquals(Propagation.NOT_SUPPORTED, listRealms.propagation());
+    assertEquals(Propagation.NOT_SUPPORTED, issueDirectTextScope.propagation());
   }
 
   @Test
