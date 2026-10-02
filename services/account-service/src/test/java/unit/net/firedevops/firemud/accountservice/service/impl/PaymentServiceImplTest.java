@@ -66,13 +66,12 @@ class PaymentServiceImplTest {
   }
 
   @Test
-  void createSubscriptionFailsForWrongTenant() {
-    Account account = new Account();
-    account.setId(1L);
-    when(membershipRepository.existsByAccountIdAndTenantId(1L, 2L)).thenReturn(false);
-    when(accountRepository.findById(1L)).thenReturn(Optional.of(account));
+  void createSubscriptionFailsBeforeCheckingMembershipOrMutatingAnything() {
+    IllegalStateException error =
+        assertThrows(IllegalStateException.class, () -> service.createSubscription(2L, 1L, "plan"));
 
-    assertThrows(IllegalArgumentException.class, () -> service.createSubscription(2L, 1L, "plan"));
+    assertEquals("Subscription creation is unavailable", error.getMessage());
+    verifyNoInteractions(accountRepository, membershipRepository, txRepo, subRepo, stripeClient);
   }
 
   @Test

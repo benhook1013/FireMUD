@@ -39,6 +39,7 @@ import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AccountLifecycleException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
+import net.firedevops.firemud.common.EmailCanonicalization;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
@@ -125,10 +126,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
       net.firedevops.firemud.accountservice.dto.AuthenticationResult result =
-          accountService.authenticateForGameplay(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getEmail(),
-              request.getPassword());
+          accountService.authenticateForGameplay(request.getEmail(), request.getPassword());
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
@@ -166,8 +164,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       RequestEmailLoginOtpRequest request,
       StreamObserver<RequestEmailLoginOtpResponse> responseObserver) {
     try {
-      accountService.requestEmailLoginOtp(
-          requirePositiveRequestId(request.getTenantId(), "tenantId"), request.getEmail());
+      accountService.requestEmailLoginOtp(requireEmail(request.getEmail()));
       responseObserver.onNext(RequestEmailLoginOtpResponse.newBuilder().setAccepted(true).build());
     } catch (InvalidRequestException ex) {
       responseObserver.onNext(
@@ -183,11 +180,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   public void verifyEmailLoginOtp(
       VerifyEmailLoginOtpRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     try {
-      var result =
-          accountService.verifyEmailLoginOtp(
-              requirePositiveRequestId(request.getTenantId(), "tenantId"),
-              request.getEmail(),
-              request.getCode());
+      var result = accountService.verifyEmailLoginOtp(request.getEmail(), request.getCode());
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
@@ -319,6 +312,13 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
           GetTenantEntitlementsForRuntimeResponse.newBuilder()
               .setError(
                   appError("GetTenantEntitlementsForRuntime", "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AuthenticationException ex) {
+      GetTenantEntitlementsForRuntimeResponse response =
+          GetTenantEntitlementsForRuntimeResponse.newBuilder()
+              .setError(appError("GetTenantEntitlementsForRuntime", ex.getCode(), ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -732,6 +732,14 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
   private long requirePositiveRequestId(String value, String fieldName) {
     try {
       return RequestIdValidation.requirePositiveLong(value, fieldName);
+    } catch (IllegalArgumentException ex) {
+      throw new InvalidRequestException(ex.getMessage(), ex);
+    }
+  }
+
+  private String requireEmail(String value) {
+    try {
+      return EmailCanonicalization.normalize(value);
     } catch (IllegalArgumentException ex) {
       throw new InvalidRequestException(ex.getMessage(), ex);
     }

@@ -20,6 +20,7 @@ import net.firedevops.firemud.accountservice.dto.BootstrapWorldDto;
 import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenRequest;
 import net.firedevops.firemud.accountservice.dto.ConnectTokenResult;
+import net.firedevops.firemud.accountservice.dto.EmailVerificationRequest;
 import net.firedevops.firemud.accountservice.dto.LoginRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
@@ -247,8 +248,7 @@ class AuthControllerTest {
 
   @Test
   void requestEmailVerificationReturnsSuccess() throws Exception {
-    net.firedevops.firemud.accountservice.dto.AccountIdRequest req =
-        new net.firedevops.firemud.accountservice.dto.AccountIdRequest(2L);
+    EmailVerificationRequest req = new EmailVerificationRequest("demo@example.com");
 
     mockMvc
         .perform(
@@ -257,12 +257,13 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"));
+
+    org.mockito.Mockito.verify(accountService).requestEmailVerification("demo@example.com");
   }
 
   @Test
-  void requestEmailVerificationRejectsZeroAccountIdBeforeDispatch() throws Exception {
-    net.firedevops.firemud.accountservice.dto.AccountIdRequest req =
-        new net.firedevops.firemud.accountservice.dto.AccountIdRequest(0L);
+  void requestEmailVerificationRejectsInvalidEmailBeforeDispatch() throws Exception {
+    EmailVerificationRequest req = new EmailVerificationRequest("not-an-email");
 
     mockMvc
         .perform(
@@ -270,8 +271,7 @@ class AuthControllerTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req)))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"));
 
     verifyNoInteractions(accountService);
   }

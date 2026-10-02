@@ -38,7 +38,7 @@ These recovered manifests are starting review prompts, not frozen inventories or
 
 ### 1A
 
-Unit 1A's substantive boundary is the following 17 identity, membership, entitlement, billing, and hosted-terms sources:
+Unit 1A's substantive boundary is the following 28 identity, membership, entitlement, billing, and hosted-terms sources:
 
 1. `design/architecture/service-responsibility-matrix.md`
 2. `design/architecture/system-architecture-overview.md`
@@ -51,12 +51,23 @@ Unit 1A's substantive boundary is the following 17 identity, membership, entitle
 9. `design/product/requirements.md`
 10. `design/project-management/implementation-tracking/player-access-and-session.md`
 11. `design/architecture/decisions/adr-0021-staged-player-authentication-and-gameplay-binding.md`
-12. `design/architecture/decisions/adr-0025-explicit-open-enrollment-membership.md`
-13. `design/architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md`
-14. `design/architecture/decisions/adr-0028-differentiated-entitlement-freshness.md`
-15. `design/architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md`
-16. `design/architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md`
-17. `design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md`
+12. `design/architecture/decisions/adr-0022-account-authority-and-gameplay-session-ownership.md`
+13. `design/architecture/decisions/adr-0025-explicit-open-enrollment-membership.md`
+14. `design/architecture/decisions/adr-0026-global-roles-do-not-grant-gameplay-authority.md`
+15. `design/architecture/decisions/adr-0028-differentiated-entitlement-freshness.md`
+16. `design/architecture/decisions/adr-0030-risk-based-active-session-revocation.md`
+17. `design/architecture/decisions/adr-0040-account-global-control-login-and-explicit-tenant-selection.md`
+18. `design/architecture/decisions/adr-0041-shared-tenant-infrastructure-with-full-environment-isolation-gate.md`
+19. `design/architecture/decisions/adr-0042-global-account-and-tenant-scoped-game-relationships.md`
+20. `design/architecture/decisions/adr-0043-global-account-lifecycle-and-bounded-erasure-workflow.md`
+21. `design/architecture/decisions/adr-0044-account-owned-payment-instruments-with-explicit-subscription-binding.md`
+22. `design/architecture/decisions/adr-0045-ordinary-login-factors-and-https-sensitive-action-step-up.md`
+23. `design/architecture/decisions/adr-0049-optional-provider-specific-external-identity-linking.md`
+24. `design/architecture/decisions/adr-0050-versioned-export-retention-and-erasure-policy.md`
+25. `design/architecture/decisions/adr-0143-stripe-v1-hosting-billing-and-deferred-creator-monetization.md`
+26. `design/architecture/decisions/adr-0179-firemud-managed-creator-commerce-boundary.md`
+27. `design/architecture/decisions/adr-0180-account-owned-hosted-terms-acceptance-gate.md`
+28. `design/architecture/decisions/adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md`
 
 Review Account's sole authority for global identity, credentials, explicit membership, entitlement, Creator Party and terms evidence; account-global versus tenant-scoped records; public versus private/playtest access; strict and continuity entitlement freshness; authentication path separation; role versus gameplay authority; hosted creator mutation currentness; changed-terms decline and prior-rights continuity; and payment evidence versus runtime entitlement. Unit 1A consumes 5A token/authority primitives and hands gameplay binding to 1B and operator reference execution to 6C. Refresh for material 5A, 6C, 1B, 5B/5D, 3A, or billing/provider changes. Repository licence/terms files remain legal-policy handoffs rather than technical authority sources.
 

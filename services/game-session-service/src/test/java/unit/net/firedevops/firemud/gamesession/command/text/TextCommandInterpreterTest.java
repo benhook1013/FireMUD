@@ -157,7 +157,7 @@ class TextCommandInterpreterTest {
   void setUp() {
     sessionContextService.save(bootstrapShell(1L, 1L));
     meterRegistry.clear();
-    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+    when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder()
                 .setAuthToken("auth-token")
@@ -359,7 +359,6 @@ class TextCommandInterpreterTest {
             sessionContextService,
             sessionAuthenticationService,
             accountClient,
-            commandService,
             firstPartyConnectContextRegistry,
             sessionRoutingNormalizationService(),
             pointerAuthorityService,
@@ -407,8 +406,11 @@ class TextCommandInterpreterTest {
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
-                        .setName("Emberline")
+                        .setTenantId("22")
+                        .setAccountId("123")
+                        .setName("demo")
                         .setLevel(12)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
     WorldsCommandHandler worldsHandler =
@@ -538,7 +540,7 @@ class TextCommandInterpreterTest {
         interpreter.interpret("1", "CHARS demo", false);
 
     assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("CHARS demo", interpretation).contains("Emberline"));
+    assertTrue(renderedResponse("CHARS demo", interpretation).contains("1) demo [lvl 12]"));
     assertTrue(
         renderedResponse("CHARS demo", interpretation)
             .contains("Realm state: shared, creation: allow_new"));
@@ -972,13 +974,14 @@ class TextCommandInterpreterTest {
 
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
-    assertEquals("OK PLAY Entered world: demo\ndemo> ", renderedResponse("PLAY demo", play));
+    assertEquals(
+        "OK PLAY Entered world: demo as demo\ndemo> ", renderedResponse("PLAY demo", play));
     assertTrue(look.commandResult().accepted());
     assertEquals(
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         look.outputs().stream().map(PlayerOutput::kind).toList());
     assertTrue(((LookViewOutput) look.outputs().get(0).payload()).includeLongDescription());
-    verify(commandService).enqueue("1", "LOGIN demo@example.com swordfish", false);
+    verify(commandService, never()).enqueue("1", "LOGIN demo@example.com swordfish", false);
     verify(commandService).enqueue("1", "LOOK", false);
   }
 

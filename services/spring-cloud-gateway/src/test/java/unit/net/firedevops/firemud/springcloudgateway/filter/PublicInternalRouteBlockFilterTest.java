@@ -2,8 +2,10 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.URI;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
@@ -80,6 +82,55 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void blocksInternalSubtreeWithMatrixParametersOnRouteSegments() {
+    assertBlockedPath("/api;version=1/account;version=1/internal;version=1/runtime");
+  }
+
+  @Test
+  void blocksBareInternalAndActuatorRoots() {
+    assertBlockedPath("/api/account/internal");
+    assertBlockedPath("/api/account/actuator");
+  }
+
+  @Test
+  void blocksBareInternalAndActuatorRootsWithTrailingSeparators() {
+    assertBlockedPath("/api/account/internal/");
+    assertBlockedPath("/api/account/actuator/");
+    assertBlockedPath("/api;version=1/account;version=1/internal;version=1/");
+    assertBlockedPath("/api//account///actuator//");
+  }
+
+  @Test
+  void blocksActuatorSubtreeWithMatrixParametersOnRouteSegments() {
+    assertBlockedPath("/api;version=1/account;version=1/actuator;version=1/health");
+  }
+
+  @Test
+  void blocksInternalSubtreeWithRepeatedSeparators() {
+    assertBlockedPath("/api//account///internal//runtime");
+  }
+
+  @Test
+  void blocksInternalSubtreeWithEncodedCanonicalSegments() {
+    assertBlockedPath("/%61pi/%61ccount/%69nternal/runtime");
+  }
+
+  @Test
+  void blocksInternalSubtreeWhenGatewayHasContextPath() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/gateway/api/account/internal/runtime")
+                .contextPath("/gateway")
+                .build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
   void blocksActuatorSubtreeUnderPublicAccountFamily() {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
@@ -144,6 +195,138 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void blocksUnavailableExternalAccountLinkRoute() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/account/accounts/42/external").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void blocksExternalAccountRouteWithMatrixParameterOnAccountId() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/account/accounts/42;provider=steam/external").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void blocksExternalAccountRouteWithMatrixParameterOnExternalSegment() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/account/accounts/42/external;provider=steam").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void blocksExternalAccountRouteWithMatrixParametersOnEverySegment() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post(
+                    "/api;probe/account;probe/accounts;probe/42;probe/external;probe")
+                .build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void blocksExternalAccountRouteWithDuplicateSeparatorBeforeAccountId() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/account/accounts//42/external").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void blocksExternalAccountRouteWithDuplicateSeparatorBeforeExternal() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/account/accounts/42//external").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void blocksExternalAccountRouteWithTrailingSeparator() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/account/accounts/42/external/").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void allowsExternalAccountRouteWithAdditionalSegment() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.post("/api/account/accounts/42/external/extra").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).isNull();
+  }
+
+  @Test
+  void allowsSupportedAccountSiblingRoute() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/api/account/accounts/42/export").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).isNull();
+  }
+
+  @Test
+  void allowsInternalNamedSubtreeOutsidePublicApiPrefix() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/private/account/internal/status").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).isNull();
+  }
+
+  @Test
   void allowsNormalPublicApiRoute() {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/api/account/auth/login").build());
@@ -153,6 +336,12 @@ class PublicInternalRouteBlockFilterTest {
 
     assertThat(chainCalled).isTrue();
     assertThat(exchange.getResponse().getStatusCode()).isNull();
+  }
+
+  @Test
+  void allowsSiblingPathsOfBlockedServiceLocalRoots() {
+    assertAllowedPath("/api/account/internalized/runtime");
+    assertAllowedPath("/api/account/actuatorial/health");
   }
 
   @Test
@@ -172,5 +361,29 @@ class PublicInternalRouteBlockFilterTest {
       chainCalled.set(true);
       return Mono.empty();
     };
+  }
+
+  private void assertBlockedPath(String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.method(HttpMethod.GET, URI.create(path)).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  private void assertAllowedPath(String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.method(HttpMethod.GET, URI.create(path)).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).isNull();
   }
 }

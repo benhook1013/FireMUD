@@ -1,9 +1,13 @@
 package net.firedevops.firemud.accountservice.client;
 
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
@@ -22,6 +26,12 @@ import org.springframework.stereotype.Component;
 public class GameSessionClient
     extends AbstractReloadingBlockingGrpcClient<
         GameSessionServiceGrpc.GameSessionServiceBlockingStub> {
+  private static final long CALL_DEADLINE_SECONDS = 5L;
+  private static final String ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE =
+      "Gameplay routing authority unavailable; retry later";
+  private static final String ADMISSION_POINTER_UNAVAILABLE_MESSAGE =
+      "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry";
+
   public GameSessionClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
@@ -53,40 +63,80 @@ public class GameSessionClient
   }
 
   public List<GameplayWorld> listGameplayWorlds() {
-    var response = stub().listGameplayWorlds(ListGameplayWorldsRequest.getDefaultInstance());
-    if (response.hasError()) {
-      throw new IllegalStateException(
-          "Gameplay world discovery failed: " + response.getError().getCode());
+    try {
+      var response = callStub().listGameplayWorlds(ListGameplayWorldsRequest.getDefaultInstance());
+      if (response.hasError()) {
+        throw discoveryFailure("Gameplay world discovery failed", response.getError().getCode());
+      }
+      return response.getWorldsList();
+    } catch (StatusRuntimeException ex) {
+      throw routingAuthorityUnavailable(ex);
     }
-    return response.getWorldsList();
   }
 
   public List<GameplayRealm> listGameplayRealms(String worldSlug) {
-    var response =
-        stub()
-            .listGameplayRealms(
-                ListGameplayRealmsRequest.newBuilder().setWorldSlug(worldSlug).build());
-    if (response.hasError()) {
-      throw new IllegalStateException(
-          "Gameplay realm discovery failed: " + response.getError().getCode());
+    try {
+      var response =
+          callStub()
+              .listGameplayRealms(
+                  ListGameplayRealmsRequest.newBuilder().setWorldSlug(worldSlug).build());
+      if (response.hasError()) {
+        throw discoveryFailure("Gameplay realm discovery failed", response.getError().getCode());
+      }
+      return response.getRealmsList();
+    } catch (StatusRuntimeException ex) {
+      throw routingAuthorityUnavailable(ex);
     }
-    return response.getRealmsList();
   }
 
   public GameplayAdmissionPointer getAdmissionPointer(
       long tenantId, String worldSlug, String realmSlug) {
-    var response =
-        stub()
-            .getAdmissionPointer(
-                GetAdmissionPointerRequest.newBuilder()
-                    .setTenantId(Long.toString(tenantId))
-                    .setRealmSlug(realmSlug)
-                    .setWorldSlug(worldSlug)
-                    .build());
-    if (response.hasError()) {
-      throw new IllegalStateException(
-          "Admission pointer lookup failed: " + response.getError().getCode());
+    try {
+      var response =
+          callStub()
+              .getAdmissionPointer(
+                  GetAdmissionPointerRequest.newBuilder()
+                      .setTenantId(Long.toString(tenantId))
+                      .setRealmSlug(realmSlug)
+                      .setWorldSlug(worldSlug)
+                      .build());
+      if (response.hasError()) {
+        String code = response.getError().getCode();
+        if ("INTERNAL".equals(code)
+            || "UNAVAILABLE".equals(code)
+            || "DEADLINE_EXCEEDED".equals(code)) {
+          throw new AuthenticationException(
+              "AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
+        }
+        if ("INVALID_ARGUMENT".equals(code) || "NOT_FOUND".equals(code)) {
+          throw new AuthenticationException(
+              "ADMISSION_POINTER_UNAVAILABLE", ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
+        }
+        throw new IllegalStateException("Admission pointer lookup failed: " + code);
+      }
+      return response.getAdmissionPointer();
+    } catch (StatusRuntimeException ex) {
+      throw routingAuthorityUnavailable(ex);
     }
-    return response.getAdmissionPointer();
+  }
+
+  private GameSessionServiceGrpc.GameSessionServiceBlockingStub callStub() {
+    return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+  }
+
+  private static RuntimeException discoveryFailure(String operation, String code) {
+    if ("INTERNAL".equals(code) || "UNAVAILABLE".equals(code) || "DEADLINE_EXCEEDED".equals(code)) {
+      return new AuthenticationException("AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
+    }
+    return new IllegalStateException(operation + ": " + code);
+  }
+
+  private static RuntimeException routingAuthorityUnavailable(StatusRuntimeException ex) {
+    Status.Code code = ex.getStatus().getCode();
+    if (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
+      return ex;
+    }
+    return new AuthenticationException(
+        "AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE, ex);
   }
 }
