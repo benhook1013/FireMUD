@@ -1,9 +1,12 @@
 package net.firedevops.firemud.gamesession.service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 public interface GameplayAdmissionPointerAuthorityService {
+  record PointerAuditKey(long tenantId, String worldSlug, String realmSlug) {}
+
   List<GameplayAdmissionPointerSnapshot> listPointers();
 
   List<GameplayAdmissionPointerSnapshot> listPointersForTenants(List<Long> tenantIds);
@@ -22,4 +25,7 @@ public interface GameplayAdmissionPointerAuthorityService {
 
   Optional<GameplayAdmissionPointerAuditEntry> findLatestPointerAudit(
       long tenantId, String worldSlug, String realmSlug);
+
+  Map<PointerAuditKey, GameplayAdmissionPointerAuditEntry> findLatestPointerAudits(
+      List<PointerAuditKey> keys);
 }

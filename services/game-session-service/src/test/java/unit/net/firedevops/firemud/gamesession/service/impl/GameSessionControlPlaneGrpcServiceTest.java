@@ -47,6 +47,7 @@ import net.firedevops.firemud.gamesession.repository.ScriptPinMutationResult;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.InstanceCutoverCompatibilityService;
 import net.firedevops.firemud.gamesession.service.RemoteFollowupRuntimeService;
@@ -983,6 +984,8 @@ class GameSessionControlPlaneGrpcServiceTest {
 
       assertNotNull(responseRef.get());
       assertEquals("AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
+      assertEquals(
+          "Runtime state authority unavailable", responseRef.get().getError().getMessage());
       assertFalse(responseRef.get().hasRuntimeState());
       Mockito.verify(runtimeRepository).findByTenantIdAndRegionId(1L, "region-7");
     }
@@ -1902,8 +1905,8 @@ class GameSessionControlPlaneGrpcServiceTest {
             UUID.fromString("3ce19e6a-a63f-46f4-8e25-b105694c79e9"),
             UUID.fromString("f673a1e6-648d-4ac3-8f3d-4b7cc4380f2a"));
     Mockito.when(authorityService.listPointers()).thenReturn(List.of(currentPointer));
-    Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
-        .thenReturn(Optional.of(scopedAdmissionPointerAudit(currentPointer)));
+    stubLatestPointerAudit(
+        authorityService, currentPointer, scopedAdmissionPointerAudit(currentPointer));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -1957,8 +1960,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayAdmissionPointerSnapshot requestedPointer = scopedAdmissionPointer(2L, "tenant-b");
     Mockito.when(authorityService.listPointersForTenants(List.of(2L)))
         .thenReturn(List.of(requestedPointer));
-    Mockito.when(authorityService.findLatestPointerAudit(2L, "tenant-b", "production"))
-        .thenReturn(Optional.of(scopedAdmissionPointerAudit(requestedPointer)));
+    stubLatestPointerAudit(
+        authorityService, requestedPointer, scopedAdmissionPointerAudit(requestedPointer));
     GameSessionControlPlaneGrpcService service =
         admissionPointerControlPlaneService(authorityService);
 
@@ -1977,9 +1980,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("2", responseRef.get().getPointers(0).getTenantId());
     Mockito.verify(authorityService).listPointersForTenants(List.of(2L));
     Mockito.verify(authorityService, Mockito.never()).listPointers();
-    Mockito.verify(authorityService).findLatestPointerAudit(2L, "tenant-b", "production");
+    Mockito.verify(authorityService).findLatestPointerAudits(List.of(auditKey(requestedPointer)));
     Mockito.verify(authorityService, Mockito.never())
-        .findLatestPointerAudit(1L, "tenant-a", "production");
+        .findLatestPointerAudit(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
   }
 
   @Test
@@ -1990,8 +1993,8 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayAdmissionPointerSnapshot requestedPointer = scopedAdmissionPointer(2L, "tenant-b");
     Mockito.when(authorityService.listPointersForTenants(List.of(2L)))
         .thenReturn(List.of(requestedPointer));
-    Mockito.when(authorityService.findLatestPointerAudit(2L, "tenant-b", "production"))
-        .thenReturn(Optional.of(scopedAdmissionPointerAudit(requestedPointer)));
+    stubLatestPointerAudit(
+        authorityService, requestedPointer, scopedAdmissionPointerAudit(requestedPointer));
     GameSessionControlPlaneGrpcService service =
         admissionPointerControlPlaneService(authorityService);
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
@@ -2008,7 +2011,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals("", responseRef.get().getError().getCode());
     assertEquals(1, responseRef.get().getPointersCount());
     Mockito.verify(authorityService).listPointersForTenants(List.of(2L));
-    Mockito.verify(authorityService).findLatestPointerAudit(2L, "tenant-b", "production");
+    Mockito.verify(authorityService).findLatestPointerAudits(List.of(auditKey(requestedPointer)));
   }
 
   @Test
@@ -2162,8 +2165,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     GameplayAdmissionPointerSnapshot requestedPointer = scopedAdmissionPointer(2L, "tenant-b");
     Mockito.when(authorityService.listPointersForTenants(List.of(2L)))
         .thenReturn(List.of(requestedPointer));
-    Mockito.when(authorityService.findLatestPointerAudit(2L, "tenant-b", "production"))
-        .thenReturn(Optional.empty());
+    stubMissingLatestPointerAudit(authorityService, requestedPointer);
     GameSessionControlPlaneGrpcService service =
         admissionPointerControlPlaneService(authorityService);
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
@@ -2185,10 +2187,9 @@ class GameSessionControlPlaneGrpcServiceTest {
   void listAdmissionPointersFailsClosedWhenCurrentPointerHasNoAuditHistory() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.listPointers())
-        .thenReturn(List.of(scopedAdmissionPointer(1L, "demo")));
-    Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
-        .thenReturn(Optional.empty());
+    GameplayAdmissionPointerSnapshot currentPointer = scopedAdmissionPointer(1L, "demo");
+    Mockito.when(authorityService.listPointers()).thenReturn(List.of(currentPointer));
+    stubMissingLatestPointerAudit(authorityService, currentPointer);
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(
@@ -2213,13 +2214,14 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     assertEquals("AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
     assertEquals(0, responseRef.get().getPointersCount());
-    Mockito.verify(authorityService).findLatestPointerAudit(1L, "demo", "production");
+    Mockito.verify(authorityService).findLatestPointerAudits(List.of(auditKey(currentPointer)));
   }
 
   @Test
   void listAdmissionPointersFailsClosedWhenLatestAuditHasNoCatalogRevision() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    PointerAuditKey auditKey = new PointerAuditKey(1L, "demo", "production");
     Mockito.when(authorityService.listPointers())
         .thenReturn(
             List.of(
@@ -2239,9 +2241,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                     6L,
                     UUID.fromString("11111111-1111-1111-1111-111111111111"),
                     UUID.fromString("22222222-2222-2222-2222-222222222222"))));
-    Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
+    Mockito.when(authorityService.findLatestPointerAudits(List.of(auditKey)))
         .thenReturn(
-            Optional.of(
+            Map.of(
+                auditKey,
                 new GameplayAdmissionPointerAuditEntry(
                     "demo",
                     "production",
@@ -2293,6 +2296,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   void listAdmissionPointersFailsClosedWhenLatestAuditDoesNotMatchCurrentPointer() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    PointerAuditKey auditKey = new PointerAuditKey(1L, "demo", "production");
     Mockito.when(authorityService.listPointers())
         .thenReturn(
             List.of(
@@ -2312,9 +2316,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                     6L,
                     UUID.fromString("11111111-1111-1111-1111-111111111111"),
                     UUID.fromString("22222222-2222-2222-2222-222222222222"))));
-    Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
+    Mockito.when(authorityService.findLatestPointerAudits(List.of(auditKey)))
         .thenReturn(
-            Optional.of(
+            Map.of(
+                auditKey,
                 new GameplayAdmissionPointerAuditEntry(
                     "demo",
                     "production",
@@ -2366,6 +2371,7 @@ class GameSessionControlPlaneGrpcServiceTest {
   void listAdmissionPointersExposesDurableIdentityFromAuditEntry() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    PointerAuditKey auditKey = new PointerAuditKey(1L, "demo", "production");
     Mockito.when(authorityService.listPointers())
         .thenReturn(
             List.of(
@@ -2385,9 +2391,10 @@ class GameSessionControlPlaneGrpcServiceTest {
                     6L,
                     UUID.fromString("11111111-1111-1111-1111-111111111111"),
                     UUID.fromString("22222222-2222-2222-2222-222222222222"))));
-    Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
+    Mockito.when(authorityService.findLatestPointerAudits(List.of(auditKey)))
         .thenReturn(
-            Optional.of(
+            Map.of(
+                auditKey,
                 new GameplayAdmissionPointerAuditEntry(
                     "demo",
                     "production",
@@ -2439,7 +2446,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     assertEquals(6L, responseRef.get().getPointers(0).getCatalogRevision());
     Mockito.verify(authorityService).listPointers();
     Mockito.verify(authorityService, Mockito.never()).listPointersForTenants(Mockito.anyList());
-    Mockito.verify(authorityService).findLatestPointerAudit(1L, "demo", "production");
+    Mockito.verify(authorityService).findLatestPointerAudits(List.of(auditKey));
   }
 
   @Test
@@ -2447,9 +2454,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     for (String sqlState : List.of("08006", "57P01", "57P02", "57P03")) {
       GameplayAdmissionPointerAuthorityService authorityService =
           Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-      Mockito.when(authorityService.listPointers())
-          .thenReturn(List.of(scopedAdmissionPointer(1L, "demo")));
-      Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
+      GameplayAdmissionPointerSnapshot currentPointer = scopedAdmissionPointer(1L, "demo");
+      Mockito.when(authorityService.listPointers()).thenReturn(List.of(currentPointer));
+      Mockito.when(authorityService.findLatestPointerAudits(List.of(auditKey(currentPointer))))
           .thenThrow(
               new org.jooq.exception.DataAccessException(
                   "audit database unavailable",
@@ -2487,9 +2494,9 @@ class GameSessionControlPlaneGrpcServiceTest {
     for (RuntimeException failure : unexpectedFailures) {
       GameplayAdmissionPointerAuthorityService authorityService =
           Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-      Mockito.when(authorityService.listPointers())
-          .thenReturn(List.of(scopedAdmissionPointer(1L, "demo")));
-      Mockito.when(authorityService.findLatestPointerAudit(1L, "demo", "production"))
+      GameplayAdmissionPointerSnapshot currentPointer = scopedAdmissionPointer(1L, "demo");
+      Mockito.when(authorityService.listPointers()).thenReturn(List.of(currentPointer));
+      Mockito.when(authorityService.findLatestPointerAudits(List.of(auditKey(currentPointer))))
           .thenThrow(failure);
       SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
       GameSessionControlPlaneGrpcService service =
@@ -9254,11 +9261,25 @@ class GameSessionControlPlaneGrpcServiceTest {
       Mockito.when(fixture.preparationService().getPreparedVersionUpgrade(1L, "pvu-1"))
           .thenThrow(failure);
       SessionContext.setContext("42", List.of(), Map.of("1", List.of("tenantAdmin")));
+      AtomicReference<GetPreparedVersionUpgradeResponse> responseRef = new AtomicReference<>();
+      fixture
+          .service()
+          .getPreparedVersionUpgrade(
+              GetPreparedVersionUpgradeRequest.newBuilder()
+                  .setTenantId("1")
+                  .setPreparationId("pvu-1")
+                  .build(),
+              new NoopObserver<>() {
+                @Override
+                public void onNext(GetPreparedVersionUpgradeResponse value) {
+                  responseRef.set(value);
+                }
+              });
 
+      assertEquals("AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
       assertEquals(
-          "AUTHORITY_UNAVAILABLE",
-          invokeAdmissionReadProof(
-              fixture.service(), AdmissionReadProofOperation.PREPARED_VERSION, "1", "pvu-1"));
+          "Prepared version upgrade authority unavailable",
+          responseRef.get().getError().getMessage());
     }
   }
 
@@ -10553,6 +10574,26 @@ class GameSessionControlPlaneGrpcServiceTest {
         6L,
         UUID.fromString("11111111-1111-1111-1111-111111111111"),
         UUID.fromString("22222222-2222-2222-2222-222222222222"));
+  }
+
+  private static PointerAuditKey auditKey(GameplayAdmissionPointerSnapshot pointer) {
+    return new PointerAuditKey(pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
+  }
+
+  private static void stubLatestPointerAudit(
+      GameplayAdmissionPointerAuthorityService authorityService,
+      GameplayAdmissionPointerSnapshot pointer,
+      GameplayAdmissionPointerAuditEntry audit) {
+    PointerAuditKey key = auditKey(pointer);
+    Mockito.when(authorityService.findLatestPointerAudits(List.of(key)))
+        .thenReturn(Map.of(key, audit));
+  }
+
+  private static void stubMissingLatestPointerAudit(
+      GameplayAdmissionPointerAuthorityService authorityService,
+      GameplayAdmissionPointerSnapshot pointer) {
+    Mockito.when(authorityService.findLatestPointerAudits(List.of(auditKey(pointer))))
+        .thenReturn(Map.of());
   }
 
   private static GameplayAdmissionPointerAuditEntry scopedAdmissionPointerAudit(

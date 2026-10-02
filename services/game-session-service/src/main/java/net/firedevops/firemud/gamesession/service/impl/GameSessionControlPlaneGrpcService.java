@@ -197,12 +197,11 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private ErrorDetail admissionPointerAuthorityUnavailableError(String operation) {
-    return GrpcAppErrors.error(
-        meterRegistry,
-        logger,
-        operation,
-        "AUTHORITY_UNAVAILABLE",
-        "Admission pointer authority unavailable");
+    return authorityUnavailableError(operation, "Admission pointer authority unavailable");
+  }
+
+  private ErrorDetail authorityUnavailableError(String operation, String message) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, "AUTHORITY_UNAVAILABLE", message);
   }
 
   private static boolean isPersistenceAvailabilityFailure(Throwable failure) {
@@ -1120,7 +1119,9 @@ public final class GameSessionControlPlaneGrpcService
         logger.warn("GetGameInstanceRuntimeState persistence unavailable", ex);
         GetGameInstanceRuntimeStateResponse response =
             GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setError(admissionPointerAuthorityUnavailableError("GetGameInstanceRuntimeState"))
+                .setError(
+                    authorityUnavailableError(
+                        "GetGameInstanceRuntimeState", "Runtime state authority unavailable"))
                 .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
@@ -1355,7 +1356,10 @@ public final class GameSessionControlPlaneGrpcService
         logger.warn("GetPreparedVersionUpgrade persistence unavailable", ex);
         GetPreparedVersionUpgradeResponse response =
             GetPreparedVersionUpgradeResponse.newBuilder()
-                .setError(admissionPointerAuthorityUnavailableError("GetPreparedVersionUpgrade"))
+                .setError(
+                    authorityUnavailableError(
+                        "GetPreparedVersionUpgrade",
+                        "Prepared version upgrade authority unavailable"))
                 .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();

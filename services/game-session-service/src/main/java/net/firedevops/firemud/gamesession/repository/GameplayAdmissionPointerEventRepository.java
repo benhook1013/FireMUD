@@ -9,8 +9,11 @@ import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerEventRecord;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -61,6 +64,34 @@ public class GameplayAdmissionPointerEventRepository {
         .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .limit(1)
         .fetchOptional(this::toEntity);
+  }
+
+  public List<GameplayAdmissionPointerEvent> findLatestByPointerKeys(List<PointerAuditKey> keys) {
+    if (keys.isEmpty()) {
+      return List.of();
+    }
+    Condition selectedKeys = DSL.falseCondition();
+    for (PointerAuditKey key : keys) {
+      selectedKeys =
+          selectedKeys.or(
+              GAMEPLAY_ADMISSION_POINTER_EVENT
+                  .TENANT_ID
+                  .eq(key.tenantId())
+                  .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(key.worldSlug()))
+                  .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(key.realmSlug())));
+    }
+    var latestIds =
+        dsl.select(DSL.max(GAMEPLAY_ADMISSION_POINTER_EVENT.ID))
+            .from(GAMEPLAY_ADMISSION_POINTER_EVENT)
+            .where(selectedKeys)
+            .groupBy(
+                GAMEPLAY_ADMISSION_POINTER_EVENT.TENANT_ID,
+                GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG,
+                GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG);
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
+        .where(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.in(latestIds))
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.asc())
+        .fetch(this::toEntity);
   }
 
   public GameplayAdmissionPointerEvent save(GameplayAdmissionPointerEvent entity) {
