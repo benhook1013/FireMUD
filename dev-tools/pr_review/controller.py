@@ -5199,9 +5199,28 @@ class ReviewController:
                 stale = True
                 reason = f"deep review evidence is unavailable: {deep_error}"
             channels = {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"}
-            allocations = self._durable_stop_allocations(state, pr)
+            durable_stops = self._durable_stop_allocations(state, pr)
+            allocations = dict(durable_stops)
+            if deep_error is not None and detailed is not None:
+                prior_channels = detailed.get("channels")
+                prior_allocations = detailed.get("allocations")
+                prior_channels = prior_channels if isinstance(prior_channels, Mapping) else {}
+                prior_allocations = prior_allocations if isinstance(prior_allocations, Mapping) else {}
+                for channel in (policy.Channel.HOSTED.value, policy.Channel.CLI.value):
+                    prior_status = prior_channels.get(channel)
+                    prior_allocation = prior_allocations.get(channel)
+                    allocation_status = (
+                        prior_allocation.get("status") if isinstance(prior_allocation, Mapping) else None
+                    )
+                    if prior_status in closed_channel_states:
+                        channels[channel] = prior_status
+                        if allocation_status in closed_allocation_states:
+                            allocations[channel] = prior_allocation
+                    elif allocation_status == "CAP_AUDITED_STOP":
+                        channels[channel] = "CAP_AUDITED_STOP"
+                        allocations[channel] = prior_allocation
             channels.update(
-                {channel: policy.ReviewStatus.HUMAN_STOPPED.value for channel in allocations}
+                {channel: policy.ReviewStatus.HUMAN_STOPPED.value for channel in durable_stops}
             )
             values.append(
                 {

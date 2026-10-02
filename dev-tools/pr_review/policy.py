@@ -366,23 +366,36 @@ def completion_status(
         if all_items and any(item.non_counting for item in all_items):
             return ReviewStatus.READY
         return ReviewStatus.MISSING_EVIDENCE
-    for item in history:
-        blocked = _blocked(item, None)
-        if blocked:
-            return blocked
     reviews = _review_entries(history)
     reconciliation_blocker = _blocked(Evidence(history[0].pr, "", ""), reconciliation)
     if not reviews:
+        for item in history:
+            blocked = _blocked(item, None)
+            if blocked:
+                return blocked
         return reconciliation_blocker or ReviewStatus.READY
     latest = reviews[-1]
     latest_judgment = _judgment(state, selected, latest)
-    if latest_judgment is not None and latest_judgment.decision == "reopen":
-        return ReviewStatus.READY
     effective_taper_history = (
         taper_history if taper_history is not None else fresh_taper_history(state, selected, history)
     )
     required = required_taper(state, selected, effective_taper_history)
-    if taper_satisfied(selected, effective_taper_history, required):
+    reopened = latest_judgment is not None and latest_judgment.decision == "reopen"
+    taper_complete = not reopened and taper_satisfied(selected, effective_taper_history, required)
+    request_blockers = {
+        ReviewStatus.RATE_LIMITED,
+        ReviewStatus.UNSTABLE,
+        ReviewStatus.UNRECONCILED,
+        ReviewStatus.PARENT_MOVED,
+        ReviewStatus.OVER_CEILING,
+    }
+    for item in history:
+        blocked = _blocked(item, None)
+        if blocked and not (taper_complete and blocked in request_blockers):
+            return blocked
+    if reopened:
+        return ReviewStatus.READY
+    if taper_complete:
         return ReviewStatus.COMPLETE
     if reconciliation_blocker:
         return reconciliation_blocker

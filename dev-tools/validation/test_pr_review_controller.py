@@ -913,6 +913,7 @@ class ControllerTests(unittest.TestCase):
         heads=None,
         pr_number=1,
         fresh_taper=False,
+        sqlite=False,
     ):
         values = values or {pr_number: pr(pr_number, HEAD_1)}
         evidence = evidence or {
@@ -936,6 +937,7 @@ class ControllerTests(unittest.TestCase):
             values,
             evidence,
             heads=heads or {values[pr_number].head_ref: values[pr_number].head},
+            sqlite=sqlite,
         )
         controller.set_stack(tuple(values))
         controller.decide_allocation(
@@ -5365,6 +5367,72 @@ class ControllerTests(unittest.TestCase):
 
         controller.github.batch_pull_requests = fetch
         return calls
+
+    def test_status_overview_retains_prior_closures_when_expanded_deep_read_fails(self):
+        values, heads = _stacked_prs(5)
+        evidence = CountingEvidence()
+        evidence[(1, "cli")] = [
+            self.allocation_evidence(
+                checkpoint="cli-baseline",
+                channel="cli",
+            ),
+            self.scope_timeline_evidence(1, "cli", values[1].head),
+        ]
+        controller = self.grant_bounded_allocation(
+            channel="cli",
+            checkpoint="cli-baseline",
+            cap=1,
+            minimum=0,
+            evidence=evidence,
+            values=values,
+            heads=heads,
+            sqlite=True,
+        )
+        evidence[(1, "cli")].append(
+            self.allocation_evidence(
+                checkpoint="cli-cap-result",
+                channel="cli",
+            )
+        )
+        evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
+        controller.decide_stop(pr=2, channel="hosted", reason="explicitly stop this channel")
+        self._enable_batch_status(controller, values)
+
+        original_status = controller._status_from_state
+        calls = 0
+
+        def expand_after_success(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            report = original_status(*args, **kwargs)
+            if calls == 1:
+                report["review_targets"] = controller._unknown_review_targets("test expands the deep window")
+            return report
+
+        controller._status_from_state = expand_after_success
+        original_pull = controller.github.pull_request
+
+        def fail_expanded_pr(number):
+            if number == 5 and calls:
+                raise OSError("expanded PR evidence is unavailable")
+            return original_pull(number)
+
+        controller.github.pull_request = fail_expanded_pr
+        report = controller.status_overview()
+
+        row = report["prs"][0]
+        self.assertEqual(calls, 1)
+        self.assertEqual(report["review_targets"]["cli"]["status"], "UNKNOWN")
+        self.assertEqual(row["detail_level"], "identity_only")
+        self.assertEqual(row["evidence_status"], "stale")
+        self.assertEqual(row["reconciliation"], "UNRECONCILED")
+        self.assertEqual(row["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(row["channels"]["cli"], "CAP_AUDITED_STOP")
+        self.assertEqual(row["allocations"]["cli"]["status"], "CAP_AUDITED_STOP")
+        stopped_row = report["prs"][1]
+        self.assertEqual(stopped_row["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(stopped_row["allocations"]["hosted"]["status"], "STOPPED")
+        self.assertIn("expanded PR evidence is unavailable", row["reason"])
 
     def test_status_overview_shifts_four_pr_window_after_front_merge(self):
         ordered = list(range(1, 7))

@@ -174,6 +174,55 @@ class AcceptanceCliTest(unittest.TestCase):
             returncode = cli.main(command)
         return subprocess.CompletedProcess(command, returncode, stdout.getvalue(), stderr.getvalue())
 
+    def test_forced_fixture_result_uses_actual_base_anchor(self):
+        for actual_base_ref, actual_base_tip, expected_identity, expected_merge_base, expected_patch in (
+            ("feature-1", HEAD_1, "1", HEAD_1, "actual-stacked-patch"),
+            ("develop", BASE, "develop", BASE, "actual-default-patch"),
+        ):
+            with self.subTest(actual_base_ref=actual_base_ref), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                fixture_path = root / "fixture.json"
+                isolated = root / "state.json"
+                payload = fixture_payload()
+                payload["evidence"]["1"]["hosted"] = [
+                    {
+                        "pr": 1,
+                        "head": HEAD_1,
+                        "child_head": HEAD_1,
+                        "checkpoint": "hosted-complete",
+                        "completed": True,
+                        "attributable": True,
+                        "anchored": True,
+                        "corrected_state": True,
+                        "accepted": 0,
+                        "raw": 0,
+                        "parent_identity": "develop",
+                        "parent_head": BASE,
+                        "merge_base": BASE,
+                        "patch_id": "patch-1",
+                    }
+                ]
+                payload["pull_requests"][1]["base_ref"] = actual_base_ref
+                payload["pull_requests"][1]["base_tip"] = actual_base_tip
+                payload["pull_requests"][1]["mergeable"] = "CONFLICTING"
+                payload["merge_bases"][f"{actual_base_tip}...{HEAD_2}"] = expected_merge_base
+                payload["patch_ids"][f"{expected_merge_base}...{HEAD_2}"] = expected_patch
+                payload["review_results"] = {
+                    "2": {"hosted": [{"status": "dry", "record_evidence": True}]}
+                }
+                fixture_path.write_text(json.dumps(payload), encoding="utf-8")
+
+                acceptance = load(fixture_path, isolated)
+                controller = acceptance.controller()
+                result = controller.run_hosted(expected_pr=2, force=True)
+                self.assertTrue(result["force_acknowledged"])
+                recorded = acceptance.evidence.history(2, "hosted")[-1]
+                self.assertEqual(recorded["parent_identity"], expected_identity)
+                self.assertEqual(recorded["parent_ref"], actual_base_ref)
+                self.assertEqual(recorded["parent_head"], actual_base_tip)
+                self.assertEqual(recorded["merge_base"], expected_merge_base)
+                self.assertEqual(recorded["patch_id"], expected_patch)
+
     def test_allocation_handoff_subcommand_is_removed_in_favor_of_stop(self):
         stop = cli._parser().parse_args(
             ["decide", "stop", "--pr", "1", "--channel", "hosted", "--reason", "human judgment"]
