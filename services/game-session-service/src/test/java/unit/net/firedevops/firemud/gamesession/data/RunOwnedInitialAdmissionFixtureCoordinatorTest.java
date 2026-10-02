@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -41,10 +42,14 @@ import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHold
 import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHold;
 import net.firedevops.firemud.worldmanagement.v1.InitialAdmissionBindHoldStatus;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.MockedStatic;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 
+@ExtendWith(OutputCaptureExtension.class)
 class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private static final String RUN_ID = "compose-smoke-2939";
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
@@ -250,6 +255,68 @@ class RunOwnedInitialAdmissionFixtureCoordinatorTest {
     coordinator.retryRunOwnedFixtureBootstrap();
 
     verifyNoInteractions(gameInstanceService, ownerService, worldClient);
+  }
+
+  @Test
+  void retryLogUsesAllowlistedDiagnosticsAndDoesNotExposeHostileDependencyMessage(
+      CapturedOutput output) {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    String hostileMessage =
+        "capability-bytes=secret grpc-status-detail=tenant-token raw-pointer=private";
+    doThrow(new IllegalStateException(hostileMessage))
+        .when(fixture.gameInstanceService)
+        .startRunOwnedInitialLaunch(any());
+
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.load(
+                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .thenReturn(fixture.capability);
+
+      fixture.coordinator.retryRunOwnedFixtureBootstrap();
+    }
+
+    assertThat(output)
+        .contains("exceptionType=IllegalStateException")
+        .contains("errorCode=FIXTURE_STATE_UNRESOLVED")
+        .contains("message=Fixture state remains unresolved.")
+        .doesNotContain(hostileMessage, "capability-bytes=secret", "tenant-token", "raw-pointer");
+  }
+
+  @Test
+  void exhaustedRetryLogUsesAllowlistedDiagnosticsAndDoesNotExposeHostileDependencyMessage(
+      CapturedOutput output) {
+    Fixture fixture =
+        fixture(InitialAdmissionBindHoldStatus.INITIAL_ADMISSION_BIND_HOLD_STATUS_PENDING);
+    String hostileMessage = "grpc sensitive details capability bytes that must not appear";
+    doThrow(new IllegalStateException(hostileMessage))
+        .when(fixture.gameInstanceService)
+        .startRunOwnedInitialLaunch(any());
+
+    try (MockedStatic<RunOwnedInitialAdmissionFixtureCapability> capabilityLoader =
+        mockStatic(RunOwnedInitialAdmissionFixtureCapability.class)) {
+      capabilityLoader
+          .when(
+              () ->
+                  RunOwnedInitialAdmissionFixtureCapability.load(
+                      any(Path.class), eq(RUN_ID), eq(PROJECT_NAME), same(fixture.grpcProperties)))
+          .thenReturn(fixture.capability);
+
+      for (int attempt = 0; attempt < 12; attempt++) {
+        fixture.coordinator.retryRunOwnedFixtureBootstrap();
+      }
+    }
+
+    assertThat(output)
+        .contains("did not reach a verified terminal result after the bounded retry budget")
+        .contains("exceptionType=IllegalStateException")
+        .contains("errorCode=FIXTURE_STATE_UNRESOLVED")
+        .contains("message=Fixture state remains unresolved.")
+        .doesNotContain(hostileMessage, "grpc sensitive details", "capability bytes");
   }
 
   @Test

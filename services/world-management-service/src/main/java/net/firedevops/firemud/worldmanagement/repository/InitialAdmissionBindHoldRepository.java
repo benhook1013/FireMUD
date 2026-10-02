@@ -70,14 +70,18 @@ public class InitialAdmissionBindHoldRepository {
   }
 
   public boolean hasNonterminalForRealm(long tenantId, String realmUuid) {
-    return Boolean.TRUE.equals(
-        dsl.fetchValue(
+    Record result =
+        dsl.fetchOne(
             "SELECT EXISTS (SELECT 1 FROM initial_admission_bind_hold "
                 + "WHERE tenant_id = ? AND realm_uuid = ?::uuid "
                 + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED'))",
-            Boolean.class,
             tenantId,
-            UUID.fromString(realmUuid)));
+            UUID.fromString(realmUuid));
+    if (result == null) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_BIND_HOLD_LOOKUP_FAILED: realm hold lookup returned no row");
+    }
+    return Boolean.TRUE.equals(result.get(0, Boolean.class));
   }
 
   public Optional<InitialAdmissionBindHold> insertIfNoUniqueConflict(

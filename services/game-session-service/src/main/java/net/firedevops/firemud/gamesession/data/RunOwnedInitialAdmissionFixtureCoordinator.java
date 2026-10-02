@@ -112,17 +112,26 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
                 + " hold reconciliation.");
       }
     } catch (RuntimeException exception) {
+      SafeDiagnostic diagnostic = safeDiagnostic(exception);
       if (attempt >= MAX_ATTEMPTS) {
         finished.set(true);
         logger.error(
             "Run-owned initial-admission fixture did not reach a verified terminal result after"
-                + " the bounded retry budget; World hold state remains owner-controlled.");
+                + " the bounded retry budget; World hold state remains owner-controlled."
+                + " exceptionType={} errorCode={} message={}",
+            diagnostic.exceptionType(),
+            diagnostic.errorCode(),
+            diagnostic.message());
       } else {
         logger.warn(
             "Run-owned initial-admission fixture attempt {}/{} remains unresolved; the same"
-                + " stable operation identity will be retried.",
+                + " stable operation identity will be retried. exceptionType={} errorCode={}"
+                + " message={}",
             attempt,
-            MAX_ATTEMPTS);
+            MAX_ATTEMPTS,
+            diagnostic.exceptionType(),
+            diagnostic.errorCode(),
+            diagnostic.message());
       }
     } finally {
       inProgress.set(false);
@@ -486,6 +495,27 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
   private static RuntimeException unresolved() {
     return new IllegalStateException("Run-owned initial-admission fixture remains unresolved");
   }
+
+  private static SafeDiagnostic safeDiagnostic(RuntimeException exception) {
+    if (exception instanceof IllegalArgumentException) {
+      return new SafeDiagnostic(
+          exception.getClass().getSimpleName(),
+          "FIXTURE_INPUT_REJECTED",
+          "Fixture input or owner response was rejected.");
+    }
+    if (exception instanceof IllegalStateException) {
+      return new SafeDiagnostic(
+          exception.getClass().getSimpleName(),
+          "FIXTURE_STATE_UNRESOLVED",
+          "Fixture state remains unresolved.");
+    }
+    return new SafeDiagnostic(
+        exception.getClass().getSimpleName(),
+        "FIXTURE_ATTEMPT_FAILED",
+        "Fixture dependency attempt failed.");
+  }
+
+  private record SafeDiagnostic(String exceptionType, String errorCode, String message) {}
 
   enum BootstrapResult {
     COMMITTED,
