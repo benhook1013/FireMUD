@@ -22,6 +22,8 @@ import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Client for communicating with the Logging & Admin Service. */
@@ -29,6 +31,8 @@ import org.springframework.stereotype.Component;
 public class LoggingAdminClient
     extends AbstractReloadingBlockingGrpcClient<
         LoggingAdminServiceGrpc.LoggingAdminServiceBlockingStub> {
+  private static final Logger logger = LoggerFactory.getLogger(LoggingAdminClient.class);
+
   public LoggingAdminClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
@@ -61,12 +65,24 @@ public class LoggingAdminClient
 
   /** Send one unchanged owner-local outbox envelope and verify the exact receiver receipt. */
   public AuditDeliveryResult deliver(AccountAuditEnvelope envelope) {
+    AccountAuditScope scope;
+    if ("platform".equals(envelope.scope())) {
+      if (envelope.tenantId() != null) {
+        throw new IllegalArgumentException("Platform audit events must not carry a tenant ID");
+      }
+      scope = AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM;
+    } else if ("tenant".equals(envelope.scope())) {
+      if (envelope.tenantId() == null || envelope.tenantId() <= 0) {
+        throw new IllegalArgumentException("Tenant audit events require a positive tenant ID");
+      }
+      scope = AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT;
+    } else {
+      throw new IllegalArgumentException("Account audit scope must be platform or tenant");
+    }
+
     CreateLogEventRequest.Builder builder =
         CreateLogEventRequest.newBuilder()
-            .setScope(
-                "platform".equals(envelope.scope())
-                    ? AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM
-                    : AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+            .setScope(scope)
             .setAuditEventId(envelope.auditEventId().toString())
             .setProducerService(envelope.producerService())
             .setEventType(envelope.eventType())
@@ -84,6 +100,13 @@ public class LoggingAdminClient
     }
     CreateLogEventResponse response =
         stub().withDeadlineAfter(5, TimeUnit.SECONDS).createLogEvent(builder.build());
+    if (response.hasError()) {
+      String errorCode = response.getError().getCode();
+      if (errorCode == null || !errorCode.matches("[A-Z][A-Z0-9_]{0,63}")) {
+        errorCode = "UNKNOWN";
+      }
+      throw new IllegalStateException("Account audit receiver returned error code " + errorCode);
+    }
     if (response.getAuditProjectionVersion() != 1) {
       throw new IllegalStateException(
           "Account audit receiver did not prove a supported audit projection version");
@@ -118,18 +141,27 @@ public class LoggingAdminClient
   /** Existing deferred-commerce path remains best effort until its own outbox convergence. */
   public void logPayment(long tenantId, long accountId, long transactionId) {
     String payload = "{\"accountId\":" + accountId + ",\"transactionId\":" + transactionId + "}";
-    deliver(
-        new AccountAuditEnvelope(
-            UUID.randomUUID(),
-            "tenant",
-            tenantId,
-            "account-service",
-            "PAYMENT_TXN",
-            Instant.now(),
-            1,
-            1,
-            AccountAuditDigest.ofPayload(payload),
-            payload));
+    try {
+      deliver(
+          new AccountAuditEnvelope(
+              UUID.randomUUID(),
+              "tenant",
+              tenantId,
+              "account-service",
+              "PAYMENT_TXN",
+              Instant.now(),
+              1,
+              1,
+              AccountAuditDigest.ofPayload(payload),
+              payload));
+    } catch (RuntimeException failure) {
+      logger.warn(
+          "Deferred payment audit delivery failed; cause={} tenantId={} accountId={} transactionId={}",
+          failure.getClass().getSimpleName(),
+          tenantId,
+          accountId,
+          transactionId);
+    }
   }
 
   public record AuditDeliveryResult(String receiptId, String logEventId, boolean minimized) {}

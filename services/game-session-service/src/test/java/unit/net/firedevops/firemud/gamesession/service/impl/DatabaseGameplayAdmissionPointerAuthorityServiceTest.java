@@ -186,7 +186,12 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     ArgumentCaptor<GameplayAdmissionPointerEvent> eventCaptor =
         ArgumentCaptor.forClass(GameplayAdmissionPointerEvent.class);
     verify(eventRepository).save(eventCaptor.capture());
+    assertEquals(1L, eventCaptor.getValue().getPointerVersion());
     assertEquals(2L, eventCaptor.getValue().getCatalogRevision());
+    assertEquals(existing.getRealmId(), eventCaptor.getValue().getRealmId());
+    assertEquals(
+        existing.getPlayableStateNamespaceId(),
+        eventCaptor.getValue().getPlayableStateNamespaceId());
   }
 
   @Test

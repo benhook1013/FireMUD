@@ -122,7 +122,8 @@ class AdmissionPointerControllerTest {
         List.of(
             "/admission-pointers",
             "/admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit",
-            "/admission-pointers/runtime-state/{tenantId}/{gameInstanceId}")) {
+            "/admission-pointers/runtime-state/{tenantId}/{gameInstanceId}",
+            "/admission-pointers/version-upgrades/{tenantId}/{preparationId}")) {
       Map<?, ?> admissionPointers = (Map<?, ?>) paths.get(path);
       Map<?, ?> getOperation = (Map<?, ?>) admissionPointers.get("get");
       Map<?, ?> responses = (Map<?, ?>) getOperation.get("responses");
@@ -258,6 +259,27 @@ class AdmissionPointerControllerTest {
         .andExpect(jsonPath("$.data.gameInstanceId").value(7))
         .andExpect(jsonPath("$.data.worldSlug").value("demo"))
         .andExpect(jsonPath("$.data.currentAdmissionPointers[0].realmSlug").value("production"));
+  }
+
+  @Test
+  void getPreparedVersionUpgradeMapsUnavailableAuthorityToServiceUnavailable() throws Exception {
+    when(admissionPointerService.getPreparedVersionUpgrade(2L, "pvu-1"))
+        .thenThrow(
+            new ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "prepared version-upgrade proof authority unavailable"));
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/version-upgrades/2/pvu-1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+        .andExpect(
+            jsonPath("$.error.message")
+                .value("prepared version-upgrade proof authority unavailable"));
   }
 
   @Test

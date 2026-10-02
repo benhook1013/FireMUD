@@ -148,11 +148,11 @@ class SessionResumptionFlowTest {
     sessionContextService.save(bootstrapShell(1L, 1L));
     sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 23L, 2L, true)));
+        List.of(world("demo", 22L, 1L, false, true), world("sandbox", 22L, 2L, true, false)));
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.listByRuntimeTarget(23L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 23L, 2L, 1L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L, true)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L, false)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -454,7 +454,7 @@ class SessionResumptionFlowTest {
     assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
     SessionContext before = sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow();
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L, true)));
 
     for (String alias : List.of("LOGOUT", "LOGOFF", "QUIT")) {
       TextCommandInterpretationResult result = interpreter.interpret("1", alias, false);
@@ -571,7 +571,7 @@ class SessionResumptionFlowTest {
     assertTrue(firstLook.commandResult().accepted());
 
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L, true)));
 
     TextCommandInterpretationResult lookAfterCutover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
@@ -623,7 +623,11 @@ class SessionResumptionFlowTest {
   }
 
   private static GameplayCatalogProperties.World world(
-      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+      String slug,
+      long tenantId,
+      long gameInstanceId,
+      boolean requiresCharacterSelection,
+      boolean publicProductionRealm) {
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
     world.setSlug(slug);
     world.setDisplayName(slug);
@@ -634,7 +638,7 @@ class SessionResumptionFlowTest {
     realm.setGameInstanceId(gameInstanceId);
     realm.setPointerVersion(1L);
     realm.setVisible(true);
-    realm.setPublicProductionRealm(true);
+    realm.setPublicProductionRealm(publicProductionRealm);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
@@ -643,7 +647,12 @@ class SessionResumptionFlowTest {
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
-      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean publicProductionRealm) {
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldSlug,
@@ -653,7 +662,7 @@ class SessionResumptionFlowTest {
         gameInstanceId,
         pointerVersion,
         true,
-        true,
+        publicProductionRealm,
         false,
         "SHARED",
         "ALLOW_NEW");

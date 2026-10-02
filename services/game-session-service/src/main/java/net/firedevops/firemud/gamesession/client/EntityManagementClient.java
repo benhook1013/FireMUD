@@ -16,7 +16,6 @@ import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.EntityManagementServiceGrpc;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
-import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListRoomEntitiesResponse;
@@ -136,28 +135,9 @@ public final class EntityManagementClient
       String accountId,
       String gameInstanceId,
       PlayableStateScope playableStateScope) {
-    ListCharactersByAccountRequest request =
-        ListCharactersByAccountRequest.newBuilder()
-            .setTenantId(tenantId)
-            .setAccountId(accountId)
-            .setGameInstanceId(gameInstanceId)
-            .setPlayableStateScope(playableStateScope)
-            .build();
-    try {
-      return callStub().listCharactersByAccount(request);
-    } catch (StatusRuntimeException ex) {
-      logger.warn(
-          "Failed to call Entity Management list-characters endpoint tenantId={} accountId={}",
-          tenantId,
-          accountId,
-          ex);
-    } catch (Exception ex) {
-      logger.warn(
-          "Failed to call Entity Management list-characters endpoint tenantId={} accountId={}",
-          tenantId,
-          accountId,
-          ex);
-    }
+    // The current Entity roster API cannot prove the stable playable-state namespace for these
+    // actors. gameInstanceId is only a replaceable runtime fence, so it cannot authorize a roster
+    // lookup as a substitute for namespace-qualified character identity.
     return ListCharactersByAccountResponse.newBuilder()
         .setError(
             ErrorDetail.newBuilder()

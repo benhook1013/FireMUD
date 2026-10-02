@@ -8,6 +8,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -135,6 +136,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountId.clear();
+    connectScopesById.clear();
   }
 
   @Override
@@ -218,6 +220,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (caller.getAccountId().isBlank()
         || caller.getTenantId().isBlank()
         || caller.getRealmId().isBlank()
+        || caller.getRequestId().isBlank()
         || caller.getGameInstanceId().isBlank()
         || caller.getPlayableStateNamespaceId().isBlank()
         || caller.getPlayableStateScope().isBlank()
@@ -228,6 +231,12 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || request.getRealmSlug().isBlank()
         || request.getPlayableStateNamespaceId().isBlank()
         || request.getPlayableStateScope().isBlank()
+        || request.getCatalogRevision() <= 0
+        || request.getPointerVersion() <= 0
+        || !isCanonicalUuid(caller.getRealmId())
+        || !isCanonicalUuid(request.getRealmId())
+        || !isCanonicalUuid(caller.getPlayableStateNamespaceId())
+        || !isCanonicalUuid(request.getPlayableStateNamespaceId())
         || !caller.getTenantId().equals(request.getTenantId())
         || !caller.getRealmId().equals(request.getRealmId())
         || !caller.getGameInstanceId().equals(request.getGameInstanceId())
@@ -262,6 +271,17 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     responseObserver.onCompleted();
   }
 
+  private static boolean isCanonicalUuid(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
+    try {
+      return UUID.fromString(value).toString().equals(value);
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
+
   @Override
   public void joinPublicProductionMembership(
       JoinPublicProductionMembershipRequest request,
@@ -273,6 +293,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || !request.getRequestId().equals(caller.getRequestId())
         || caller.getAccountId().isBlank()
         || caller.getTenantId().isBlank()
+        || caller.getSessionId().isBlank()
         || scope == null
         || !scope.expiresAt().isAfter(Instant.now())
         || !scope.accountId().equals(caller.getAccountId())

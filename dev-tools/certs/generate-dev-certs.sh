@@ -8,6 +8,10 @@ refuse_symlink_path() {
   local description="$2"
   local current_path="$path"
 
+  while [[ "$current_path" == */ && "$current_path" != "/" ]]; do
+    current_path="${current_path%/}"
+  done
+
   while [[ "$current_path" != "." && "$current_path" != "/" ]]; do
     [[ ! -L "$current_path" ]] || {
       echo "refusing symlinked $description: $path" >&2
@@ -15,6 +19,39 @@ refuse_symlink_path() {
     }
     current_path="$(dirname -- "$current_path")"
   done
+}
+
+preflight_managed_file() {
+  local path="$1"
+  local description="$2"
+  local link_count
+
+  refuse_symlink_path "$path" "$description"
+  [[ -e "$path" ]] || return 0
+  [[ -f "$path" ]] || {
+    echo "refusing non-regular $description: $path" >&2
+    exit 1
+  }
+  link_count="$(stat -c '%h' -- "$path")"
+  if ((link_count > 1)); then
+    echo "refusing hard-linked $description: $path" >&2
+    exit 1
+  fi
+}
+
+preflight_managed_directory() {
+  local path="$1"
+  local description="$2"
+
+  refuse_symlink_path "$path" "$description"
+  if [[ -e "$path" && ! -d "$path" ]]; then
+    echo "refusing non-directory $description: $path" >&2
+    exit 1
+  fi
+}
+
+paths_are_same_file() {
+  [[ "$1" == "$2" ]] || { [[ -e "$1" && -e "$2" ]] && [[ "$1" -ef "$2" ]]; }
 }
 
 if [[ "${1:-}" == "--workload" ]]; then
@@ -30,10 +67,19 @@ if [[ "${1:-}" == "--workload" ]]; then
   output_key="$5"
   runtime_namespace="$6"
   workload="$7"
-  refuse_symlink_path "$ca_cert" "certificate authority source"
-  refuse_symlink_path "$ca_key" "certificate authority source"
-  refuse_symlink_path "$output_cert" "workload certificate output"
-  refuse_symlink_path "$output_key" "workload private-key output"
+  preflight_managed_file "$ca_cert" "certificate authority source"
+  preflight_managed_file "$ca_key" "certificate authority source"
+  preflight_managed_file "$output_cert" "workload certificate output"
+  preflight_managed_file "$output_key" "workload private-key output"
+  if paths_are_same_file "$ca_cert" "$ca_key" \
+    || paths_are_same_file "$output_cert" "$output_key" \
+    || paths_are_same_file "$output_cert" "$ca_cert" \
+    || paths_are_same_file "$output_cert" "$ca_key" \
+    || paths_are_same_file "$output_key" "$ca_cert" \
+    || paths_are_same_file "$output_key" "$ca_key"; then
+    echo "certificate authority sources and workload outputs must be distinct paths." >&2
+    exit 1
+  fi
   for required_file in "$ca_cert" "$ca_key"; do
     [[ -f "$required_file" ]] || {
       echo "missing certificate authority file: $required_file" >&2
@@ -105,13 +151,13 @@ else
   CERT_DIR="${CERT_DIR:-$SCRIPT_DIR}"
 fi
 
-refuse_symlink_path "$CERT_DIR" "certificate directory"
 generated_files=(
   ca.crt ca.key ca.srl client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem
   server.crt server.key server.csr dev-cert.cnf
 )
+preflight_managed_directory "$CERT_DIR" "certificate directory"
 for filename in "${generated_files[@]}"; do
-  refuse_symlink_path "$CERT_DIR/$filename" "certificate material"
+  preflight_managed_file "$CERT_DIR/$filename" "certificate material"
 done
 if [[ -d "$CERT_DIR" ]]; then
   while IFS= read -r -d '' symlink_path; do
@@ -170,6 +216,10 @@ validate_existing_leaf() {
   fi
   if ! subject_alt_names="$(openssl x509 -in "$certificate" -noout -ext subjectAltName 2>/dev/null)"; then
     echo "existing local $description certificate has no readable subject alternative names: $certificate" >&2
+    return 1
+  fi
+  if [[ "$subject_alt_names" == *"URI:"* ]]; then
+    echo "existing local generic $description certificate must not contain a workload URI SAN: $certificate" >&2
     return 1
   fi
   for dns_name in "${local_service_dns_names[@]}"; do

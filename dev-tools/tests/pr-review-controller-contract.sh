@@ -87,8 +87,8 @@ grep -Fq 'Results count across reviewed heads' design/developer-workflows/pr-lif
   || fail 'lifecycle guidance does not define cross-head CLI taper'
 grep -Fq 'Once reached, taper is durable' design/developer-workflows/pr-lifecycle.md \
   || fail 'lifecycle guidance does not preserve completed taper across head changes'
-grep -Fq -- '--allow-unreconciled' design/developer-workflows/pr-lifecycle.md \
-  || fail 'lifecycle guidance does not define provisional CLI semantics'
+grep -Fq -- '--force' design/developer-workflows/pr-lifecycle.md \
+  || fail 'lifecycle guidance does not define forced warning acknowledgment'
 
 grep -Fq 'review_results' dev-tools/pr_review/acceptance.py \
   || fail 'acceptance fixtures do not expose deterministic review result sequences'

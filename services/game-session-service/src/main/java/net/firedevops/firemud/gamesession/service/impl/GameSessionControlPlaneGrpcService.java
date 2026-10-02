@@ -15,6 +15,7 @@ import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.impl.GameSessionAdmissionPointerControlPlaneService.AdmissionPointerMutationPreconditionException;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
@@ -268,7 +269,7 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
-  private List<Long> validateAdmissionPointerListScope(List<Long> tenantIds) {
+  private List<Long> validateAdmissionPointerListScope(List<String> tenantIds) {
     if (tenantIds.isEmpty()) {
       requireAdminRole();
       return List.of();
@@ -276,7 +277,7 @@ public final class GameSessionControlPlaneGrpcService
 
     List<Long> validatedTenantIds =
         tenantIds.stream()
-            .map(tenantId -> ControlPlaneRequestParser.requirePositive(tenantId, "tenant_ids"))
+            .map(tenantId -> ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_ids"))
             .toList();
     for (long tenantId : validatedTenantIds) {
       if (!SessionContext.hasTenantAccess(tenantId)) {
@@ -699,6 +700,13 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (AdmissionPointerMutationPreconditionException ex) {
+      SetAdmissionPointerResponse response =
+          SetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "FAILED_PRECONDITION", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (AdmissionPointerVersionMismatchException ex) {
       SetAdmissionPointerResponse response =
           SetAdmissionPointerResponse.newBuilder()
@@ -751,6 +759,13 @@ public final class GameSessionControlPlaneGrpcService
               .setError(
                   GrpcAppErrors.error(
                       meterRegistry, "CUTOVER_PREPARATION_INVALID", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (AdmissionPointerMutationPreconditionException ex) {
+      ExecutePreparedVersionCutoverResponse response =
+          ExecutePreparedVersionCutoverResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "FAILED_PRECONDITION", ex.getMessage()))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -1150,6 +1165,16 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
+      if (isPersistenceAvailabilityFailure(ex)) {
+        logger.warn("GetPreparedVersionUpgrade persistence unavailable", ex);
+        GetPreparedVersionUpgradeResponse response =
+            GetPreparedVersionUpgradeResponse.newBuilder()
+                .setError(admissionPointerAuthorityUnavailableError("GetPreparedVersionUpgrade"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       logger.error("GetPreparedVersionUpgrade failed", ex);
       GetPreparedVersionUpgradeResponse response =
           GetPreparedVersionUpgradeResponse.newBuilder()
