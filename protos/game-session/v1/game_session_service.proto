@@ -425,8 +425,10 @@ message AdmissionPointerControlPlaneEntry {
 
 message ListAdmissionPointersRequest {
   // Empty requires a global privileged caller for the all-tenant read.
-  // Non-empty IDs must be positive and individually authorized by the forwarded caller context.
-  repeated int64 tenant_ids = 1;
+  // Current authority accepts only positive decimal values; UUID-form tenant IDs remain
+  // unsupported until owner storage migrates to the canonical UUID-string tenantId.
+  // Each current numeric ID must be individually authorized by the forwarded caller context.
+  repeated string tenant_ids = 1;
 }
 
 message ListAdmissionPointersResponse {

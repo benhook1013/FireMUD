@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
@@ -144,6 +145,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome())
+        .isEqualTo(ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE);
     assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
     assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
     verify(admissionService).getState("1", "7", "region-1");
@@ -268,30 +271,31 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         Mockito.mock(ScriptHandoffEventRepository.class);
     AtomicReference<ScriptHandoffEvent> persisted = new AtomicReference<>();
     AtomicReference<ScriptHandoffEvent> attemptedResponseWrite = new AtomicReference<>();
-    AtomicInteger findCount = new AtomicInteger();
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean concurrentWinnerInjected = new AtomicBoolean();
     AtomicInteger saveCount = new AtomicInteger();
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
         .thenAnswer(
             invocation -> {
-              int call = findCount.incrementAndGet();
-              if (call <= 4) {
-                return Optional.empty();
-              }
-              if (call == 5) {
+              if (intentSaved.get() && concurrentWinnerInjected.compareAndSet(false, true)) {
                 ScriptHandoffEvent intent = persisted.get();
                 ScriptHandoffEvent checkedIntent =
-                    handoffRow(intent.getId(), intent.getRowVersion(), "handoff_in_flight", "");
+                    acceptedHandoffEvent(item, command, "handoff_in_flight");
+                checkedIntent.setId(intent.getId());
+                checkedIntent.setRowVersion(intent.getRowVersion());
                 // Model a retry that commits after this response transaction has read the intent
                 // but before it attempts to append its older downstream response.
-                persisted.set(
-                    handoffRow(
-                        intent.getId(),
-                        intent.getRowVersion() + 1,
-                        "duplicate_noop",
-                        "winner-command"));
+                ScriptHandoffEvent winner = acceptedHandoffEvent(item, command, "duplicate_noop");
+                winner.setId(intent.getId());
+                winner.setRowVersion(intent.getRowVersion() + 1);
+                winner.setGameSessionCommandId("winner-command");
+                persisted.set(winner);
                 return Optional.of(checkedIntent);
               }
-              return Optional.of(persisted.get());
+              return Optional.ofNullable(persisted.get());
             });
     when(handoffEventRepository.save(Mockito.any()))
         .thenAnswer(
@@ -303,6 +307,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 event.setId(44L);
                 event.setRowVersion(5);
                 persisted.set(event);
+                intentSaved.set(true);
                 return event;
               }
               attemptedResponseWrite.set(event);
@@ -329,9 +334,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
     TransactionSynchronizationManager.setActualTransactionActive(false);
     try {
-      ScriptGameplayCommandHandoffService.HandoffResult result =
-          service.handoff(
-              workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+      ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
 
       assertThat(result.accepted()).isFalse();
       assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
@@ -340,15 +343,259 @@ class ScriptGameplayCommandHandoffServiceImplTest {
       assertThat(persisted.get().getRowVersion()).isEqualTo(6);
       assertThat(attemptedResponseWrite.get().getId()).isEqualTo(44L);
       assertThat(attemptedResponseWrite.get().getRowVersion()).isEqualTo(5);
-      assertThat(findCount.get()).isEqualTo(5);
       assertThat(saveCount.get()).isEqualTo(2);
+      assertThat(concurrentWinnerInjected.get()).isTrue();
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
   }
 
   @Test
-  void failedIntentCommitIsRetryableAndNeverClaimsInFlightOrCallsCommandRpc() {
+  void retainedCommandResponseDoesNotAcceptMismatchedConcurrentChildWinner() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(retainedCommandOwnershipResponse("retained-command"));
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> persisted = new AtomicReference<>();
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean winnerInjected = new AtomicBoolean();
+    AtomicInteger saveCount = new AtomicInteger();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(
+            invocation -> {
+              if (intentSaved.get() && winnerInjected.compareAndSet(false, true)) {
+                ScriptHandoffEvent intent = persisted.get();
+                ScriptHandoffEvent winner =
+                    concurrentAcceptedChild(item, command, intent, "retained-command");
+                winner.setTargetEntityId("different-child");
+                persisted.set(winner);
+                return Optional.of(winner);
+              }
+              return Optional.ofNullable(persisted.get());
+            });
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              saveCount.incrementAndGet();
+              if (event.getId() == null) {
+                event.setId(44L);
+                event.setRowVersion(5);
+                persisted.set(event);
+                intentSaved.set(true);
+              }
+              return event;
+            });
+    ScriptGameplayCommandHandoffServiceImpl service =
+        handoffServiceForTest(gameSessionClient, handoffEventRepository);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.commandId()).isEqualTo("retained-command");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(persisted.get().getHandoffOutcome()).isEqualTo("duplicate_noop");
+    assertThat(persisted.get().getTargetEntityId()).isEqualTo("different-child");
+    assertThat(persisted.get().getGameSessionCommandId()).isEqualTo("retained-command");
+    assertThat(saveCount.get()).isEqualTo(1);
+  }
+
+  @Test
+  void retainedCommandResponseConvergesOnMatchingConcurrentAcceptedChild() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(retainedCommandOwnershipResponse("retained-command"));
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> persisted = new AtomicReference<>();
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean winnerInjected = new AtomicBoolean();
+    AtomicInteger saveCount = new AtomicInteger();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(
+            invocation -> {
+              if (intentSaved.get() && winnerInjected.compareAndSet(false, true)) {
+                ScriptHandoffEvent intent = persisted.get();
+                ScriptHandoffEvent winner =
+                    concurrentAcceptedChild(item, command, intent, "retained-command");
+                persisted.set(winner);
+                return Optional.of(winner);
+              }
+              return Optional.ofNullable(persisted.get());
+            });
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              saveCount.incrementAndGet();
+              if (event.getId() == null) {
+                event.setId(44L);
+                event.setRowVersion(5);
+                persisted.set(event);
+                intentSaved.set(true);
+              }
+              return event;
+            });
+    ScriptGameplayCommandHandoffServiceImpl service =
+        handoffServiceForTest(gameSessionClient, handoffEventRepository);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+    assertThat(result.accepted()).isTrue();
+    assertThat(result.outcome()).isEqualTo("DUPLICATE_NOOP");
+    assertThat(result.commandId()).isEqualTo("retained-command");
+    assertThat(persisted.get().getHandoffOutcome()).isEqualTo("duplicate_noop");
+    assertThat(saveCount.get()).isEqualTo(1);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "handoff_in_flight,6,''",
+    "handoff_in_flight,5,other-command",
+    "duplicate_noop,6,other-command"
+  })
+  void retainedCommandResponseDoesNotOverwriteAdvancedOrConflictingIntent(
+      String currentOutcome, int currentRowVersion, String currentCommandId) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(retainedCommandOwnershipResponse("retained-command"));
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> persisted = new AtomicReference<>();
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean mutationInjected = new AtomicBoolean();
+    AtomicInteger saveCount = new AtomicInteger();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(
+            invocation -> {
+              if (intentSaved.get() && mutationInjected.compareAndSet(false, true)) {
+                ScriptHandoffEvent intent = persisted.get();
+                ScriptHandoffEvent changed = acceptedHandoffEvent(item, command, currentOutcome);
+                changed.setId(intent.getId());
+                changed.setRowVersion(currentRowVersion);
+                changed.setGameSessionCommandId(currentCommandId);
+                persisted.set(changed);
+                return Optional.of(changed);
+              }
+              return Optional.ofNullable(persisted.get());
+            });
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              saveCount.incrementAndGet();
+              if (event.getId() == null) {
+                event.setId(44L);
+                event.setRowVersion(5);
+                persisted.set(event);
+                intentSaved.set(true);
+              }
+              return event;
+            });
+    ScriptGameplayCommandHandoffServiceImpl service =
+        handoffServiceForTest(gameSessionClient, handoffEventRepository);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.commandId()).isEqualTo("retained-command");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(persisted.get().getHandoffOutcome()).isEqualTo(currentOutcome);
+    assertThat(persisted.get().getRowVersion()).isEqualTo(currentRowVersion);
+    assertThat(persisted.get().getGameSessionCommandId()).isEqualTo(currentCommandId);
+    assertThat(saveCount.get()).isEqualTo(1);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"different-child,response-command", "entity-1,other-command"})
+  void definitiveResponseDoesNotAcceptConcurrentWinnerWithDifferentIdentityOrCommandId(
+      String winnerTargetEntityId, String winnerCommandId) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(true)
+                .setAdmissionOutcome("ENQUEUED")
+                .setCommandId("response-command")
+                .build());
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> persisted = new AtomicReference<>();
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean winnerInjected = new AtomicBoolean();
+    AtomicInteger saveCount = new AtomicInteger();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(
+            invocation -> {
+              if (intentSaved.get() && winnerInjected.compareAndSet(false, true)) {
+                ScriptHandoffEvent intent = persisted.get();
+                ScriptHandoffEvent winner =
+                    concurrentAcceptedChild(item, command, intent, winnerCommandId);
+                winner.setTargetEntityId(winnerTargetEntityId);
+                persisted.set(winner);
+                return Optional.of(winner);
+              }
+              return Optional.ofNullable(persisted.get());
+            });
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              saveCount.incrementAndGet();
+              if (event.getId() == null) {
+                event.setId(44L);
+                event.setRowVersion(5);
+                persisted.set(event);
+                intentSaved.set(true);
+              }
+              return event;
+            });
+    ScriptGameplayCommandHandoffServiceImpl service =
+        handoffServiceForTest(gameSessionClient, handoffEventRepository);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.commandId()).isEqualTo("response-command");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(persisted.get().getHandoffOutcome()).isEqualTo("duplicate_noop");
+    assertThat(persisted.get().getTargetEntityId()).isEqualTo(winnerTargetEntityId);
+    assertThat(persisted.get().getGameSessionCommandId()).isEqualTo(winnerCommandId);
+    assertThat(saveCount.get()).isEqualTo(1);
+  }
+
+  @ParameterizedTest
+  @CsvSource({"PENDING_EVALUATION", "HANDOFF_IN_FLIGHT"})
+  void failedIntentCommitIsRetryableWhenCapturedStateMatchesAndNeverCallsCommandRpc(
+      String capturedStatus) {
     FailingIntentCommitTransactionManager transactionManager =
         new FailingIntentCommitTransactionManager();
     GameSessionControlPlaneClient gameSessionClient =
@@ -364,7 +611,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
                 .build());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptWorkItem persistedWorkItem = workItem();
-    persistedWorkItem.setStatus("EVALUATING");
+    persistedWorkItem.setStatus(capturedStatus);
     when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
     List<Integer> savedRowVersions = new ArrayList<>();
     when(workItemRepository.save(Mockito.any()))
@@ -401,6 +648,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               return event;
             });
     ScriptWorkItem item = workItem();
+    item.setStatus(capturedStatus);
     ScriptGameplayCommandHandoffServiceImpl service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -420,13 +668,14 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
       assertThat(result.accepted()).isFalse();
-      assertThat(result.outcome()).isEqualTo("REMOTE_REJECTED");
+      assertThat(result.outcome())
+          .isEqualTo(ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE);
       assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
-      assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(item.getStatus()).isEqualTo(capturedStatus);
       assertThat(item.getUpdatedAt()).isEqualTo(Instant.EPOCH);
       assertThat(item.getRowVersion()).isZero();
-      assertThat(persistedWorkItem.getStatus()).isEqualTo("EVALUATING");
+      assertThat(persistedWorkItem.getStatus()).isEqualTo(capturedStatus);
       assertThat(persistedWorkItem.getRowVersion()).isZero();
       verify(gameSessionClient).getGameInstanceRuntimeState("1", "7", "region-1");
       verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
@@ -451,6 +700,94 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               TransactionDefinition.PROPAGATION_REQUIRES_NEW,
               TransactionDefinition.PROPAGATION_NOT_SUPPORTED,
               TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @Test
+  void failedMalformedOwnerIntentCommitRestoresDeadLetterPreparationMutations() {
+    FailingIntentCommitTransactionManager transactionManager =
+        new FailingIntentCommitTransactionManager();
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(GameInstanceRuntimeState.getDefaultInstance())
+                .build());
+
+    Instant originalUpdatedAt = Instant.parse("2026-09-30T12:34:56Z");
+    ScriptWorkItem item = workItem();
+    item.setStatus("PENDING_EVALUATION");
+    item.setCancelReason("prior_cancel_reason");
+    item.setFailureGeneration(8L);
+    item.setUpdatedAt(originalUpdatedAt);
+    item.setRowVersion(4);
+    ScriptWorkItem persistedWorkItem = workItem();
+    persistedWorkItem.setStatus("PENDING_EVALUATION");
+    persistedWorkItem.setCancelReason("prior_cancel_reason");
+    persistedWorkItem.setFailureGeneration(8L);
+    persistedWorkItem.setUpdatedAt(originalUpdatedAt);
+    persistedWorkItem.setRowVersion(4);
+
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              assertThat(saved.getStatus()).isEqualTo("DEAD_LETTERED");
+              assertThat(saved.getCancelReason()).isEqualTo("remote_response_invalid");
+              assertThat(saved.getFailureGeneration()).isEqualTo(9L);
+              assertThat(saved.getUpdatedAt()).isNotEqualTo(originalUpdatedAt);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.empty());
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result =
+          service.handoff(
+              item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+      assertThat(result.accepted()).isFalse();
+      assertThat(result.outcome())
+          .isEqualTo(ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE);
+      assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
+      assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
+      assertThat(item.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(item.getCancelReason()).isEqualTo("prior_cancel_reason");
+      assertThat(item.getFailureGeneration()).isEqualTo(8L);
+      assertThat(item.getUpdatedAt()).isEqualTo(originalUpdatedAt);
+      assertThat(item.getRowVersion()).isEqualTo(4);
+      assertThat(persistedWorkItem.getStatus()).isEqualTo("PENDING_EVALUATION");
+      assertThat(persistedWorkItem.getCancelReason()).isEqualTo("prior_cancel_reason");
+      assertThat(persistedWorkItem.getFailureGeneration()).isEqualTo(8L);
+      assertThat(persistedWorkItem.getUpdatedAt()).isEqualTo(originalUpdatedAt);
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(4);
+      verify(workItemRepository).save(Mockito.same(item));
+      verify(gameSessionClient).getGameInstanceRuntimeState("1", "7", "region-1");
+      verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+      verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
     } finally {
       TransactionSynchronizationManager.setActualTransactionActive(false);
     }
@@ -501,8 +838,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     verify(workItemRepository, never()).save(Mockito.any());
   }
 
-  @Test
-  void failedIntentCommitWithDurableInFlightReadbackRequiresReconciliation() {
+  @ParameterizedTest
+  @CsvSource({"PENDING_EVALUATION, 1", "EVALUATING, 0", "HANDOFF_IN_FLIGHT, 1"})
+  void failedIntentCommitWithoutIntentAndChangedStateRequiresReconciliation(
+      String persistedStatus, int persistedRowVersion) {
     FailingIntentCommitTransactionManager transactionManager =
         new FailingIntentCommitTransactionManager();
     GameSessionControlPlaneClient gameSessionClient =
@@ -511,8 +850,8 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         .thenReturn(currentRuntimeState());
     ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
     ScriptWorkItem persistedWorkItem = workItem();
-    persistedWorkItem.setStatus("HANDOFF_IN_FLIGHT");
-    persistedWorkItem.setRowVersion(1);
+    persistedWorkItem.setStatus(persistedStatus);
+    persistedWorkItem.setRowVersion(persistedRowVersion);
     when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
     when(workItemRepository.save(Mockito.any()))
         .thenAnswer(
@@ -548,7 +887,291 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
       assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
+      assertThat(persistedWorkItem.getStatus()).isEqualTo(persistedStatus);
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(persistedRowVersion);
+      verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+      verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @Test
+  void failedIntentCommitReadbackWithMatchingInFlightIntentRequiresReconciliation() {
+    FailingIntentCommitTransactionManager transactionManager =
+        new FailingIntentCommitTransactionManager();
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+
+    ScriptWorkItem item = workItem();
+    item.setStatus("EVALUATING");
+    item.setRowVersion(6);
+    ScriptWorkItem persistedWorkItem = workItem();
+    persistedWorkItem.setStatus("EVALUATING");
+    persistedWorkItem.setRowVersion(6);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              persistedWorkItem.setStatus(saved.getStatus());
+              persistedWorkItem.setRowVersion(saved.getRowVersion());
+              return saved;
+            });
+
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    AtomicReference<ScriptHandoffEvent> persistedIntent = new AtomicReference<>();
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(invocation -> Optional.ofNullable(persistedIntent.get()));
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent saved = invocation.getArgument(0);
+              saved.setId(44L);
+              saved.setRowVersion(7);
+              persistedIntent.set(saved);
+              return saved;
+            });
+
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+      assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
+      assertThat(item.getStatus()).isEqualTo("EVALUATING");
+      assertThat(item.getRowVersion()).isEqualTo(6);
       assertThat(persistedWorkItem.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(7);
+      assertThat(persistedIntent.get()).isNotNull();
+      assertThat(persistedIntent.get().getId()).isEqualTo(44L);
+      assertThat(persistedIntent.get().getRowVersion()).isEqualTo(7);
+      assertThat(persistedIntent.get().getHandoffOutcome()).isEqualTo("handoff_in_flight");
+      verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+      verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"remote_rejected", "rejected"})
+  void failedIntentCommitWithUnchangedPriorRejectionIsRetryable(String priorOutcome) {
+    FailingIntentCommitTransactionManager transactionManager =
+        new FailingIntentCommitTransactionManager();
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    ScriptWorkItem item = workItem();
+    item.setStatus("EVALUATING");
+    item.setRowVersion(6);
+    ScriptWorkItem persistedWorkItem = workItem();
+    persistedWorkItem.setStatus("EVALUATING");
+    persistedWorkItem.setRowVersion(6);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent priorRejection = acceptedHandoffEvent(item, command, priorOutcome);
+    priorRejection.setId(44L);
+    priorRejection.setRowVersion(7);
+    priorRejection.setHandoffReason("authority_unavailable");
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.of(priorRejection));
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+      assertThat(result.accepted()).isFalse();
+      assertThat(result.errorCode()).isEqualTo("UNAVAILABLE");
+      assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isTrue();
+      assertThat(item.getStatus()).isEqualTo("EVALUATING");
+      assertThat(item.getRowVersion()).isEqualTo(6);
+      assertThat(persistedWorkItem.getStatus()).isEqualTo("EVALUATING");
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(6);
+      assertThat(priorRejection.getHandoffOutcome()).isEqualTo(priorOutcome);
+      assertThat(priorRejection.getRowVersion()).isEqualTo(7);
+      verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+      verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @Test
+  void failedIntentCommitWithConcurrentAcceptedWinnerRemainsUnresolved() {
+    FailingIntentCommitTransactionManager transactionManager =
+        new FailingIntentCommitTransactionManager();
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    ScriptWorkItem item = workItem();
+    item.setStatus("EVALUATING");
+    item.setRowVersion(6);
+    ScriptWorkItem persistedWorkItem = workItem();
+    persistedWorkItem.setStatus("EVALUATING");
+    persistedWorkItem.setRowVersion(6);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent priorRejection = acceptedHandoffEvent(item, command, "remote_rejected");
+    priorRejection.setId(44L);
+    priorRejection.setRowVersion(7);
+    AtomicReference<ScriptHandoffEvent> durableIntent = new AtomicReference<>(priorRejection);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(invocation -> Optional.of(durableIntent.get()));
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent attemptedIntent = invocation.getArgument(0);
+              ScriptHandoffEvent acceptedWinner = acceptedHandoffEvent(item, command, "enqueued");
+              acceptedWinner.setId(attemptedIntent.getId());
+              acceptedWinner.setRowVersion(attemptedIntent.getRowVersion() + 1);
+              acceptedWinner.setGameSessionCommandId("concurrent-command");
+              durableIntent.set(acceptedWinner);
+              return attemptedIntent;
+            });
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+      assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
+      assertThat(durableIntent.get().getHandoffOutcome()).isEqualTo("enqueued");
+      assertThat(durableIntent.get().getGameSessionCommandId()).isEqualTo("concurrent-command");
+      verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+      verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(false);
+    }
+  }
+
+  @Test
+  void failedIntentCommitWithPriorRejectionAndChangedWorkItemRequiresReconciliation() {
+    FailingIntentCommitTransactionManager transactionManager =
+        new FailingIntentCommitTransactionManager();
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    ScriptWorkItem item = workItem();
+    item.setStatus("EVALUATING");
+    item.setRowVersion(6);
+    ScriptWorkItem persistedWorkItem = workItem();
+    persistedWorkItem.setStatus("HANDOFF_IN_FLIGHT");
+    persistedWorkItem.setRowVersion(7);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    when(workItemRepository.findById(99L)).thenReturn(Optional.of(persistedWorkItem));
+    when(workItemRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptWorkItem saved = invocation.getArgument(0);
+              saved.setRowVersion(saved.getRowVersion() + 1);
+              return saved;
+            });
+
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent priorRejection = acceptedHandoffEvent(item, command, "remote_rejected");
+    priorRejection.setId(44L);
+    priorRejection.setRowVersion(7);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.of(priorRejection));
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            transactionManager);
+
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+    try {
+      ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+      assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
+      assertThat(persistedWorkItem.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+      assertThat(persistedWorkItem.getRowVersion()).isEqualTo(7);
       verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
       verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
     } finally {
@@ -581,12 +1204,25 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ScriptGameplayCommandHandoffService.EmittedCommand command =
         emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
     ScriptHandoffEvent mismatchedIntent = acceptedHandoffEvent(item, command, "handoff_in_flight");
+    mismatchedIntent.setId(44L);
+    mismatchedIntent.setRowVersion(5);
     mismatchedIntent.setEmittedCommandText("different command identity");
+    AtomicBoolean intentSaved = new AtomicBoolean();
+    AtomicBoolean mismatchedReadReturned = new AtomicBoolean();
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
-        .thenReturn(
-            Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(mismatchedIntent));
+        .thenAnswer(
+            invocation -> {
+              if (intentSaved.get() && mismatchedReadReturned.compareAndSet(false, true)) {
+                return Optional.of(mismatchedIntent);
+              }
+              return Optional.empty();
+            });
     when(handoffEventRepository.save(Mockito.any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              intentSaved.set(true);
+              return invocation.getArgument(0);
+            });
     ScriptGameplayCommandHandoffServiceImpl service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -607,6 +1243,9 @@ class ScriptGameplayCommandHandoffServiceImplTest {
       assertThat(result.errorMessage())
           .contains("persisted handoff intent identity does not match request");
       assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
+      assertThat(mismatchedReadReturned.get()).isTrue();
+      assertThat(mismatchedIntent.getId()).isEqualTo(44L);
+      assertThat(mismatchedIntent.getRowVersion()).isEqualTo(5);
       verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
       verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
     } finally {
@@ -955,6 +1594,122 @@ class ScriptGameplayCommandHandoffServiceImplTest {
 
   @ParameterizedTest
   @CsvSource({
+    "false, handoff_in_flight, handoff_in_flight",
+    "true, handoff_in_flight, authority_unavailable",
+    "false, rejected, handoff_in_flight"
+  })
+  void matchingRetainedInFlightIntentIsPreservedWithoutAnotherDispatch(
+      boolean remoteHandoff, String outcome, String reason) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AutomationAdmissionStateService admissionService =
+        Mockito.mock(AutomationAdmissionStateService.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptWorkItem item = workItem();
+    item.setStatus("HANDOFF_IN_FLIGHT");
+    item.setRowVersion(9);
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        remoteHandoff
+            ? emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0)
+            : emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent retained = acceptedHandoffEvent(item, command, outcome);
+    retained.setId(44L);
+    retained.setRowVersion(17);
+    retained.setHandoffReason(reason);
+    retained.setGameSessionCommandId("retained-command-1");
+    retained.setRemoteCoordinatorId("retained-coordinator-1");
+    retained.setRemoteFollowupId("retained-followup-1");
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.of(retained));
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionService,
+            rolloutProjectionService);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.commandId()).isEqualTo("retained-command-1");
+    assertThat(result.remoteCoordinatorId()).isEqualTo("retained-coordinator-1");
+    assertThat(result.remoteFollowupId()).isEqualTo("retained-followup-1");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(item.getRowVersion()).isEqualTo(9);
+    assertThat(retained.getId()).isEqualTo(44L);
+    assertThat(retained.getRowVersion()).isEqualTo(17);
+    assertThat(retained.getHandoffOutcome()).isEqualTo(outcome);
+    assertThat(retained.getHandoffReason()).isEqualTo(reason);
+    assertThat(retained.getGameSessionCommandId()).isEqualTo("retained-command-1");
+    assertThat(retained.getRemoteCoordinatorId()).isEqualTo("retained-coordinator-1");
+    assertThat(retained.getRemoteFollowupId()).isEqualTo("retained-followup-1");
+    verifyNoInteractions(gameSessionClient, workItemRepository, auditRepository);
+    verifyNoInteractions(admissionService, rolloutProjectionService);
+    verify(handoffEventRepository, never()).save(Mockito.any());
+  }
+
+  @Test
+  void retainedInFlightIntentDiscoveredBeforeUnavailableScopeOutcomeIsNotOverwritten() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenThrow(new IllegalStateException("runtime owner unavailable"));
+    ScriptWorkItem item = workItem();
+    item.setStatus("EVALUATING");
+    item.setRowVersion(6);
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent retained = acceptedHandoffEvent(item, command, "handoff_in_flight");
+    retained.setId(44L);
+    retained.setRowVersion(17);
+    retained.setHandoffReason("handoff_in_flight");
+    retained.setGameSessionCommandId("retained-command-1");
+    AtomicInteger lookupCount = new AtomicInteger();
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(
+            invocation ->
+                lookupCount.incrementAndGet() < 3 ? Optional.empty() : Optional.of(retained));
+    ScriptWorkItemRepository workItemRepository = Mockito.mock(ScriptWorkItemRepository.class);
+    ScriptEventAuditRepository auditRepository = Mockito.mock(ScriptEventAuditRepository.class);
+    ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            workItemRepository,
+            auditRepository,
+            handoffEventRepository,
+            admissionStateService(),
+            rolloutProjectionService);
+
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
+
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.commandId()).isEqualTo("retained-command-1");
+    assertThat(item.getStatus()).isEqualTo("EVALUATING");
+    assertThat(item.getRowVersion()).isEqualTo(6);
+    assertThat(retained.getHandoffOutcome()).isEqualTo("handoff_in_flight");
+    assertThat(retained.getHandoffReason()).isEqualTo("handoff_in_flight");
+    assertThat(retained.getRowVersion()).isEqualTo(17);
+    verify(gameSessionClient).getGameInstanceRuntimeState("1", "7", "region-1");
+    verifyNoInteractions(workItemRepository, auditRepository, rolloutProjectionService);
+    verify(handoffEventRepository, never()).save(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
     "enqueued, ENQUEUED",
     "duplicate_noop, DUPLICATE_NOOP",
     "remote_scheduled, REMOTE_SCHEDULED"
@@ -1147,8 +1902,11 @@ class ScriptGameplayCommandHandoffServiceImplTest {
         Mockito.mock(ScriptHandoffEventRepository.class);
     AutomationAdmissionStateService admissionService =
         Mockito.mock(AutomationAdmissionStateService.class);
-    ScriptHandoffEvent retryableEvent = new ScriptHandoffEvent();
-    retryableEvent.setHandoffOutcome("game_session_unavailable");
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.EmittedCommand command =
+        emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0);
+    ScriptHandoffEvent retryableEvent =
+        acceptedHandoffEvent(item, command, "game_session_unavailable");
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
         .thenReturn(Optional.of(retryableEvent));
     when(admissionService.getState("1", "7", "region-1"))
@@ -1164,9 +1922,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionService,
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
-    ScriptGameplayCommandHandoffService.HandoffResult result =
-        service.handoff(
-            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+    ScriptGameplayCommandHandoffService.HandoffResult result = service.handoff(item, command);
 
     assertThat(result.accepted()).isFalse();
     assertThat(result.outcome()).isEqualTo(ScriptHandoffOutcomeSupport.REASON_RUNTIME_PAUSED);
@@ -1391,9 +2147,25 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     existing.setSourceDueTickId(item.getSourceDueTickId());
     existing.setSourceDueAtMs(item.getSourceDueAtMs());
     existing.setEmittedCommandText(command.commandText());
-    existing.setHandoffOutcome("handoff_in_flight");
+    existing.setHandoffOutcome("remote_rejected");
     when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
         .thenReturn(Optional.of(existing));
+    List<Integer> savedRowVersions = new ArrayList<>();
+    List<Long> savedIds = new ArrayList<>();
+    List<String> savedEventIds = new ArrayList<>();
+    Mockito.doAnswer(
+            invocation -> {
+              ScriptHandoffEvent saved = invocation.getArgument(0);
+              savedRowVersions.add(saved.getRowVersion());
+              savedIds.add(saved.getId());
+              savedEventIds.add(saved.getEventId());
+              int nextRowVersion = saved.getRowVersion() + 1;
+              saved.setRowVersion(nextRowVersion);
+              existing.setRowVersion(nextRowVersion);
+              return saved;
+            })
+        .when(handoffEventRepository)
+        .save(Mockito.any());
     ScriptGameplayCommandHandoffServiceImpl service =
         new ScriptGameplayCommandHandoffServiceImpl(
             gameSessionClient,
@@ -1409,12 +2181,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
     verify(handoffEventRepository, Mockito.times(2)).save(handoffCaptor.capture());
-    assertThat(handoffCaptor.getAllValues())
-        .allSatisfy(
-            saved -> {
-              assertThat(saved.getId()).isEqualTo(44L);
-              assertThat(saved.getRowVersion()).isEqualTo(7);
-            });
+    assertThat(savedRowVersions).containsExactly(7, 8);
+    assertThat(savedIds).containsExactly(44L, 44L);
+    assertThat(savedEventIds)
+        .containsExactly("she-work-item-99-command-0", "she-work-item-99-command-0");
   }
 
   @Test
@@ -1548,8 +2318,10 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(handoffCaptor.getValue().getHandoffReason()).isEqualTo("plugin_disabled");
   }
 
-  @Test
-  void fanoutRejectionRecordsChildButDefersAggregateTerminalizationToExecutor() {
+  @ParameterizedTest
+  @CsvSource({"AUTHORITY_UNAVAILABLE, authority_unavailable", "UNAVAILABLE, authority_unavailable"})
+  void fanoutRejectionRecordsChildButDefersAggregateTerminalizationToExecutor(
+      String unavailableCode, String expectedReason) {
     GameSessionControlPlaneClient gameSessionClient =
         Mockito.mock(GameSessionControlPlaneClient.class);
     when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
@@ -1557,7 +2329,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             EnqueueAutomationCommandIfAbsentResponse.newBuilder()
                 .setAccepted(false)
                 .setAdmissionOutcome("REJECTED")
-                .setError(ErrorDetail.newBuilder().setCode("AUTHORITY_UNAVAILABLE").build())
+                .setError(ErrorDetail.newBuilder().setCode(unavailableCode).build())
                 .build());
     when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
         .thenReturn(
@@ -1596,12 +2368,20 @@ class ScriptGameplayCommandHandoffServiceImplTest {
               item, emittedCommand("say hello", "target-entity-1", "7", "region-1", 12L, 34L, 0));
 
       assertThat(result.accepted()).isFalse();
+      assertThat(result.outcome()).isEqualTo("REJECTED");
+      assertThat(result.errorCode()).isEqualTo(unavailableCode);
+      assertThat(result.errorMessage()).isEmpty();
       assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
       assertThat(item.getCancelReason()).isNull();
       assertThat(audit.getFinalStage()).isNull();
       assertThat(audit.getFinalOutcome()).isNull();
       verify(workItemRepository).save(Mockito.any(ScriptWorkItem.class));
-      verify(handoffEventRepository, Mockito.times(2)).save(Mockito.any(ScriptHandoffEvent.class));
+      ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
+          ArgumentCaptor.forClass(ScriptHandoffEvent.class);
+      verify(handoffEventRepository, Mockito.times(2)).save(handoffCaptor.capture());
+      assertThat(handoffCaptor.getAllValues().getLast().getHandoffOutcome()).isEqualTo("rejected");
+      assertThat(handoffCaptor.getAllValues().getLast().getHandoffReason())
+          .isEqualTo(expectedReason);
       verify(auditRepository, never()).save(Mockito.any(ScriptEventAudit.class));
 
       service.handoff(
@@ -1845,6 +2625,223 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(result.accepted()).isFalse();
     assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
     assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+    verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
+    verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+  }
+
+  @Test
+  void exactReceiverFenceUnavailableLocalResponseRemainsInFlightWithIntentRetained() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(false)
+                .setAdmissionOutcome("REJECTED")
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("FAILED_PRECONDITION")
+                        .setMessage("automation_admission_receiver_fence_unavailable")
+                        .build())
+                .build());
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> savedIntent = new AtomicReference<>();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.empty());
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              event.setId(44L);
+              event.setRowVersion(0);
+              savedIntent.set(event);
+              return event;
+            });
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.errorMessage()).isEqualTo("automation_admission_receiver_fence_unavailable");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(savedIntent.get().getHandoffOutcome()).isEqualTo("handoff_in_flight");
+    verify(handoffEventRepository).save(Mockito.any());
+    verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
+    verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "RUNTIME_PAUSED,runtime_paused",
+    "STALE_TIMELINE,stale_region_id",
+    "STALE_TIMELINE,stale_region_epoch",
+    "OWNERSHIP_UNAVAILABLE,runtime_ownership_not_found"
+  })
+  void rejectedExistingCommandOwnershipResponseRetainsInFlightCommandIdentity(
+      String admissionOutcome, String errorCode) {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(false)
+                .setAdmissionOutcome(admissionOutcome)
+                .setCommandId("retained-command-1")
+                .setError(ErrorDetail.newBuilder().setCode(errorCode).build())
+                .build());
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> savedEvent = new AtomicReference<>();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenAnswer(invocation -> Optional.ofNullable(savedEvent.get()));
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              if (event.getId() == null) {
+                event.setId(44L);
+              }
+              event.setRowVersion(event.getRowVersion() + 1);
+              savedEvent.set(event);
+              return event;
+            });
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.commandId()).isEqualTo("retained-command-1");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(savedEvent.get().getHandoffOutcome()).isEqualTo("handoff_in_flight");
+    assertThat(savedEvent.get().getGameSessionCommandId()).isEqualTo("retained-command-1");
+    verify(handoffEventRepository, Mockito.times(2)).save(Mockito.any());
+    verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
+    verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
+  }
+
+  @Test
+  void exactReceiverFenceUnavailableRemoteResponseRemainsInFlightWithIntentRetained() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.scheduleRemoteFollowup(Mockito.any()))
+        .thenReturn(
+            ScheduleRemoteFollowupResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("FAILED_PRECONDITION")
+                        .setMessage("automation_admission_receiver_fence_unavailable")
+                        .build())
+                .build());
+    ScriptHandoffEventRepository handoffEventRepository =
+        Mockito.mock(ScriptHandoffEventRepository.class);
+    AtomicReference<ScriptHandoffEvent> savedIntent = new AtomicReference<>();
+    when(handoffEventRepository.findByTenantIdAndWorkItemIdAndCommandOrdinal("1", 99L, 0))
+        .thenReturn(Optional.empty());
+    when(handoffEventRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              ScriptHandoffEvent event = invocation.getArgument(0);
+              event.setId(44L);
+              event.setRowVersion(0);
+              savedIntent.set(event);
+              return event;
+            });
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            handoffEventRepository,
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            item, emittedCommand("say hello", "entity-remote", "8", "region-2", 77L, 45L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.errorCode()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(result.errorMessage()).isEqualTo("automation_admission_receiver_fence_unavailable");
+    assertThat(item.getStatus()).isEqualTo("HANDOFF_IN_FLIGHT");
+    assertThat(savedIntent.get().getHandoffOutcome()).isEqualTo("handoff_in_flight");
+    verify(handoffEventRepository).save(Mockito.any());
+    verify(gameSessionClient).scheduleRemoteFollowup(Mockito.any());
+    verify(gameSessionClient, never()).enqueueAutomationCommandIfAbsent(Mockito.any());
+  }
+
+  @Test
+  void unrelatedFailedPreconditionRemainsATerminalLocalRejection() {
+    GameSessionControlPlaneClient gameSessionClient =
+        Mockito.mock(GameSessionControlPlaneClient.class);
+    when(gameSessionClient.getGameInstanceRuntimeState("1", "7", "region-1"))
+        .thenReturn(currentRuntimeState());
+    when(gameSessionClient.enqueueAutomationCommandIfAbsent(Mockito.any()))
+        .thenReturn(
+            EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+                .setAccepted(false)
+                .setAdmissionOutcome("REJECTED")
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("FAILED_PRECONDITION")
+                        .setMessage("other_precondition_failed")
+                        .build())
+                .build());
+    ScriptGameplayCommandHandoffServiceImpl service =
+        new ScriptGameplayCommandHandoffServiceImpl(
+            gameSessionClient,
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            Mockito.mock(ScriptHandoffEventRepository.class),
+            null,
+            null,
+            admissionStateService(),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
+
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("REJECTED");
+    assertThat(result.errorCode()).isEqualTo("FAILED_PRECONDITION");
+    assertThat(ScriptHandoffOutcomeSupport.isRetryable(result)).isFalse();
     verify(gameSessionClient).enqueueAutomationCommandIfAbsent(Mockito.any());
     verify(gameSessionClient, never()).scheduleRemoteFollowup(Mockito.any());
   }
@@ -2344,6 +3341,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             EnqueueAutomationCommandIfAbsentResponse.newBuilder()
                 .setAccepted(false)
                 .setAdmissionOutcome("REJECTED")
+                .setCommandId("existing-conflict-command")
                 .setError(
                     ErrorDetail.newBuilder()
                         .setCode("IDEMPOTENCY_CONFLICT")
@@ -2363,8 +3361,15 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             admissionStateService(),
             Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
 
-    service.handoff(
-        workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+    ScriptWorkItem item = workItem();
+    ScriptGameplayCommandHandoffService.HandoffResult result =
+        service.handoff(
+            item, emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
+
+    assertThat(result.outcome()).isEqualTo("REJECTED");
+    assertThat(result.errorCode()).isEqualTo("IDEMPOTENCY_CONFLICT");
+    assertThat(result.commandId()).isEqualTo("existing-conflict-command");
+    assertThat(item.getStatus()).isEqualTo("DEAD_LETTERED");
 
     ArgumentCaptor<ScriptHandoffEvent> handoffCaptor =
         ArgumentCaptor.forClass(ScriptHandoffEvent.class);
@@ -2418,6 +3423,7 @@ class ScriptGameplayCommandHandoffServiceImplTest {
             workItem(), emittedCommand("say hello", "entity-1", "7", "region-1", 12L, 34L, 0));
 
     assertThat(result.accepted()).isFalse();
+    assertThat(result.outcome()).isEqualTo("REJECTED");
     assertThat(result.errorCode()).isEqualTo("STALE_TIMELINE");
     ArgumentCaptor<ScriptWorkItem> workItemCaptor = ArgumentCaptor.forClass(ScriptWorkItem.class);
     verify(workItemRepository, Mockito.times(2)).save(workItemCaptor.capture());
@@ -3084,14 +4090,38 @@ class ScriptGameplayCommandHandoffServiceImplTest {
     assertThat(persistedOutcome.getPointerVersion()).isBlank();
   }
 
-  private static ScriptHandoffEvent handoffRow(
-      Long id, int rowVersion, String outcome, String commandId) {
-    ScriptHandoffEvent event = new ScriptHandoffEvent();
-    event.setId(id);
-    event.setRowVersion(rowVersion);
-    event.setHandoffOutcome(outcome);
-    event.setGameSessionCommandId(commandId);
-    return event;
+  private static EnqueueAutomationCommandIfAbsentResponse retainedCommandOwnershipResponse(
+      String commandId) {
+    return EnqueueAutomationCommandIfAbsentResponse.newBuilder()
+        .setAccepted(false)
+        .setAdmissionOutcome("RUNTIME_PAUSED")
+        .setCommandId(commandId)
+        .setError(ErrorDetail.newBuilder().setCode("runtime_paused").build())
+        .build();
+  }
+
+  private static ScriptHandoffEvent concurrentAcceptedChild(
+      ScriptWorkItem item,
+      ScriptGameplayCommandHandoffService.EmittedCommand command,
+      ScriptHandoffEvent intent,
+      String commandId) {
+    ScriptHandoffEvent winner = acceptedHandoffEvent(item, command, "duplicate_noop");
+    winner.setId(intent.getId());
+    winner.setRowVersion(intent.getRowVersion() + 1);
+    winner.setGameSessionCommandId(commandId);
+    return winner;
+  }
+
+  private static ScriptGameplayCommandHandoffServiceImpl handoffServiceForTest(
+      GameSessionControlPlaneClient gameSessionClient,
+      ScriptHandoffEventRepository handoffEventRepository) {
+    return new ScriptGameplayCommandHandoffServiceImpl(
+        gameSessionClient,
+        Mockito.mock(ScriptWorkItemRepository.class),
+        Mockito.mock(ScriptEventAuditRepository.class),
+        handoffEventRepository,
+        admissionStateService(),
+        Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class));
   }
 
   private static ScriptHandoffEvent acceptedHandoffEvent(

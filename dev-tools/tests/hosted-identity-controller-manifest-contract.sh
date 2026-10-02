@@ -4124,27 +4124,27 @@ def service_consumer_documents():
                 },
             ]
         elif service != "spring-cloud-gateway":
-            container["env"] = [
-                {
-                    "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
-                    "value": "/tls/client.crt",
-                },
-                {
-                    "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
-                    "value": "/tls/client.key",
-                },
-                {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
-            ]
+            container["env"] = []
             if service == "logging-admin-service":
-                container["env"].insert(
-                    0,
+                container["env"].append(
                     {
                         "name": "FIREMUD_GRPC_WORKLOAD_NAMESPACE",
-                        "valueFrom": {
-                            "fieldRef": {"fieldPath": "metadata.namespace"}
-                        },
-                    },
+                        "valueFrom": {"fieldRef": {"fieldPath": "metadata.namespace"}},
+                    }
                 )
+            container["env"].extend(
+                [
+                    {
+                        "name": "FIREMUD_GRPC_CERT_CHAIN_PATH",
+                        "value": "/tls/client.crt",
+                    },
+                    {
+                        "name": "FIREMUD_GRPC_PRIVATE_KEY_PATH",
+                        "value": "/tls/client.key",
+                    },
+                    {"name": "FIREMUD_GRPC_CA_CERT_PATH", "value": "/tls/ca.crt"},
+                ]
+            )
         if service == "spring-cloud-gateway":
             container["env"] = validator._expected_gateway_container_env("pr-42")
             container["envFrom"] = copy.deepcopy(validator.EXPECTED_GATEWAY_ENV_FROM)
@@ -4168,6 +4168,68 @@ def service_consumer_documents():
 
 valid_consumers = service_consumer_documents()
 validator.validate_service_consumers(valid_consumers, "pr-42", "standalone", "public")
+
+logging_namespace_failure = (
+    "Deployment/logging-admin-service must bind "
+    "FIREMUD_GRPC_WORKLOAD_NAMESPACE to metadata.namespace"
+)
+missing_logging_namespace = copy.deepcopy(valid_consumers)
+logging_deployment = next(
+    document
+    for document in missing_logging_namespace
+    if document["metadata"]["name"] == "logging-admin-service"
+)
+logging_container = logging_deployment["spec"]["template"]["spec"]["containers"][0]
+logging_container["env"] = [
+    entry
+    for entry in logging_container["env"]
+    if entry.get("name") != "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+]
+assert_rejected(
+    lambda: validator.validate_service_consumers(
+        missing_logging_namespace, "pr-42", "standalone", "public"
+    ),
+    logging_namespace_failure,
+)
+
+duplicate_logging_namespace = copy.deepcopy(valid_consumers)
+logging_deployment = next(
+    document
+    for document in duplicate_logging_namespace
+    if document["metadata"]["name"] == "logging-admin-service"
+)
+logging_container = logging_deployment["spec"]["template"]["spec"]["containers"][0]
+logging_namespace = next(
+    entry
+    for entry in logging_container["env"]
+    if entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+)
+logging_container["env"].append(copy.deepcopy(logging_namespace))
+assert_rejected(
+    lambda: validator.validate_service_consumers(
+        duplicate_logging_namespace, "pr-42", "standalone", "public"
+    ),
+    logging_namespace_failure,
+)
+
+wrong_logging_namespace = copy.deepcopy(valid_consumers)
+logging_deployment = next(
+    document
+    for document in wrong_logging_namespace
+    if document["metadata"]["name"] == "logging-admin-service"
+)
+logging_container = logging_deployment["spec"]["template"]["spec"]["containers"][0]
+next(
+    entry
+    for entry in logging_container["env"]
+    if entry.get("name") == "FIREMUD_GRPC_WORKLOAD_NAMESPACE"
+)["valueFrom"] = {"fieldRef": {"fieldPath": "metadata.name"}}
+assert_rejected(
+    lambda: validator.validate_service_consumers(
+        wrong_logging_namespace, "pr-42", "standalone", "public"
+    ),
+    logging_namespace_failure,
+)
 
 missing_publication_trust_mount = copy.deepcopy(valid_consumers)
 publication_deployment = next(
@@ -5018,12 +5080,13 @@ for service in shared_services:
         container, service, "/tls/client.crt", "/tls/client.key", "/tls/ca.crt"
     )
     env = env_map(container, service)
-    if not allows_shared_namespace_identity(service, env):
-        if service == "logging-admin-service":
+    if service == "logging-admin-service":
+        if not allows_shared_namespace_identity(service, env):
             fail(
                 f"Deployment/{service} must derive FIREMUD_GRPC_WORKLOAD_NAMESPACE "
                 "from metadata.namespace"
             )
+    elif "FIREMUD_GRPC_WORKLOAD_NAMESPACE" in env:
         fail(
             f"Deployment/{service} shared transport unexpectedly declares "
             "FIREMUD_GRPC_WORKLOAD_NAMESPACE"

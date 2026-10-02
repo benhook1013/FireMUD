@@ -6,3 +6,4 @@ ALTER TABLE gameplay_admission_pointer_event
         CHECK (catalog_revision IS NULL OR catalog_revision > 0),
     ADD CONSTRAINT gameplay_admission_pointer_event_identity_pair_complete
         CHECK ((realm_id IS NULL) = (playable_state_namespace_id IS NULL));
+

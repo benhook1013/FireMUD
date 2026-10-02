@@ -129,6 +129,7 @@ class ReviewTarget:
     default_test_merge_base_sha: str = ""
     default_test_merge_head_sha: str = ""
     default_test_merge_tree_sha: str = ""
+    candidate_warnings: tuple[str, ...] = ()
 
     def has_current_default_test_merge_proof(self) -> bool:
         """Whether the controller supplied a tree proof for this exact PR tuple."""
@@ -219,6 +220,9 @@ class ReviewResult:
     exit_status: int
     capture_dir: Path
     warning: str | None = None
+    force_acknowledged: bool = False
+    candidate_warnings: tuple[str, ...] = ()
+    force_reason: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result = {
@@ -231,6 +235,9 @@ class ReviewResult:
             "candidate_files": self.candidate_files,
             "published_status": self.published_status,
             "provisional": self.provisional,
+            "force_acknowledged": self.force_acknowledged,
+            "candidate_warnings": list(self.candidate_warnings),
+            "force_reason": self.force_reason,
             "duration_seconds": self.duration_seconds,
             "duration_display": evidence.format_duration_seconds(self.duration_seconds),
             "exit_status": self.exit_status,
@@ -406,13 +413,26 @@ def _test_merge_commit(
     return merge
 
 
-def _verify_target_still_current(target: ReviewTarget, github: GitHubReader) -> None:
+def _verify_target_still_current(target: ReviewTarget, github: GitHubReader, *, force: bool = False) -> None:
     """Recheck the selected tuple at the provider boundary, after context setup."""
 
     current = github.pull_request(target.snapshot.number)
-    parent_tip = _sha(github.branch_head(target.parent.ref_name), "effective parent tip")
     selected_head = _sha(target.snapshot.head_sha, "selected head")
     selected_base = _sha(target.snapshot.base_sha, "selected base")
+    if force:
+        actual_base_tip = _sha(github.branch_head(target.snapshot.base_ref_name), "pull request base branch tip")
+        if (
+            current.number == target.snapshot.number
+            and current.state.upper() == "OPEN"
+            and current.base_exists
+            and _sha(current.head_sha, "pull request head") == selected_head
+            and current.base_ref_name == target.snapshot.base_ref_name
+            and _sha(current.base_sha, "pull request base") == selected_base
+            and actual_base_tip == selected_base
+        ):
+            return
+        raise ReviewRunnerError("pull request identity changed during forced CLI preflight")
+    parent_tip = _sha(github.branch_head(target.parent.ref_name), "effective parent tip")
     if (
         current.number == target.snapshot.number
         and current.state.upper() == "OPEN"
@@ -446,6 +466,21 @@ def _atomic_json(path: Path, value: Mapping[str, Any]) -> None:
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     os.chmod(temporary, 0o600)
     os.replace(temporary, path)
+
+
+def _write_cli_lock_owner(lock_handle: Any, run_id: str) -> None:
+    lock_handle.seek(0)
+    lock_handle.truncate()
+    lock_handle.write(f"run_id={run_id}\n")
+    lock_handle.flush()
+    os.fsync(lock_handle.fileno())
+
+
+def _clear_cli_lock_owner(lock_handle: Any) -> None:
+    lock_handle.seek(0)
+    lock_handle.truncate()
+    lock_handle.flush()
+    os.fsync(lock_handle.fileno())
 
 
 def _write_capture_complete_marker(capture_dir: Path) -> None:
@@ -663,21 +698,21 @@ def _validate_target(
     runner: CommandRunner,
     source_root: Path,
     *,
-    allow_unreconciled: bool,
+    force: bool,
     git_timeout_seconds: float = GIT_TIMEOUT_SECONDS,
 ) -> tuple[str, int, int, str, str]:
     expected = target.snapshot
-    if target.default_base_front and not target.has_current_default_test_merge_proof():
+    if target.default_base_front and not force and not target.has_current_default_test_merge_proof():
         raise ReviewRunnerError("direct default-base target has no verified current base/head test merge")
     if live.number != expected.number:
         raise ReviewRunnerError("live pull request identity differs from selected target")
     if live.state.upper() != "OPEN":
         raise ReviewRunnerError(f"pull request is not OPEN (state: {live.state})")
-    if live.mergeable.upper() != "MERGEABLE":
+    if live.mergeable.upper() != "MERGEABLE" and not force:
         raise ReviewRunnerError(f"pull request is not mergeable (mergeable: {live.mergeable})")
     if not live.base_exists:
         raise ReviewRunnerError("pull request base branch no longer exists")
-    if live.base_ref_name != target.parent.ref_name:
+    if live.base_ref_name != (expected.base_ref_name if force else target.parent.ref_name):
         raise ReviewRunnerError(
             f"pull request base {live.base_ref_name!r} does not match effective parent {target.parent.ref_name!r}"
         )
@@ -688,18 +723,18 @@ def _validate_target(
     expected_base = _sha(expected.base_sha, "selected base")
     live_parent_tip = _sha(parent_tip, "effective parent tip")
     selected_parent_tip = _sha(target.parent.head_sha, "selected parent")
-    if target.default_base_front and live_base != expected_base and live_base == live_parent_tip:
+    if not force and target.default_base_front and live_base != expected_base and live_base == live_parent_tip:
         raise StaleReviewTargetError("default base advanced after CLI target selection")
     if live_base != expected_base:
         raise ReviewRunnerError("pull request base moved since target selection")
-    if live_parent_tip != selected_parent_tip:
+    if not force and live_parent_tip != selected_parent_tip:
         if target.default_base_front:
             raise StaleReviewTargetError("default base advanced after CLI target selection")
         raise ReviewRunnerError("effective parent moved since target selection")
     if live_base != live_parent_tip:
-        raise ReviewRunnerError("pull request base SHA does not equal the effective parent tip")
-    if not allow_unreconciled and (not target.reconciled or not target.ancestor_links_valid):
-        raise UnreconciledReviewError("stack is unreconciled; reconcile it before running a normal CLI review")
+        raise ReviewRunnerError("pull request's actual base branch tip does not match its selected base SHA")
+    if not force and (not target.reconciled or not target.ancestor_links_valid):
+        raise UnreconciledReviewError("stack identity warnings require --force for a CLI review")
     if len(live_files) != live.changed_files:
         raise ReviewRunnerError(
             f"pull request file list/count mismatch (files: {len(live_files)}, changedFiles: {live.changed_files})"
@@ -714,16 +749,16 @@ def _validate_target(
         "committed HEAD is neither the pull request head nor a descendant containing its fixes",
         timeout=git_timeout_seconds,
     )
+    diff_base = live_base if force else target.parent.head_sha
+    diff_head = candidate_sha if force or not target.default_base_front else child_head
     merge_base = _unique_merge_base(
         runner,
         source_root,
-        target.parent.head_sha,
-        child_head if target.default_base_front else candidate_sha,
+        diff_base,
+        diff_head,
         timeout=git_timeout_seconds,
     )
-    # Provisional discovery can use the unique merge base above even when the exact
-    # parent tip is outside candidate history; normal reviews still require ancestry.
-    if not allow_unreconciled and not target.default_base_front:
+    if not force and not target.default_base_front:
         _ancestor(
             runner,
             source_root,
@@ -732,7 +767,7 @@ def _validate_target(
             "committed HEAD does not contain the exact effective parent tip",
             timeout=git_timeout_seconds,
         )
-    if target.default_base_front:
+    if target.default_base_front and not force:
         published_context = _test_merge_commit(
             runner,
             source_root,
@@ -824,7 +859,7 @@ def run_cli_review(
     github: GitHubReader,
     source_root: Path | None = None,
     runner: CommandRunner | None = None,
-    allow_unreconciled: bool = False,
+    force: bool = False,
     reason: str | None = None,
     review_executable: str = "coderabbit",
     git_timeout_seconds: float = GIT_TIMEOUT_SECONDS,
@@ -836,23 +871,19 @@ def run_cli_review(
     """Run one isolated committed CLI review for an already-selected target.
 
     ``target`` must come from the unified stack integration.  In particular, callers
-    must compare ``--expect-pr`` to this target before calling this function.  The
-    exceptional unreconciled mode is deliberately a one-pass provisional run and is
-    rejected unless a non-empty reason is recorded in its private capture.
+    must compare ``--expect-pr`` to this target before calling this function. ``force``
+    records acknowledgment of the selected candidate's known reconciliation warnings;
+    it does not weaken live PR, candidate, quota, or active-request validation.
     """
 
-    if allow_unreconciled and not reason:
-        raise ReviewRunnerError("--allow-unreconciled requires a non-empty --reason")
-    if allow_unreconciled and len(reason) > 240:
+    if reason and not force:
+        raise ReviewRunnerError("--reason is only valid with --force")
+    if force and reason is not None and len(reason) > 240:
         raise ReviewRunnerError("--reason must be 240 characters or fewer")
-    if allow_unreconciled and any(unicodedata.category(character) == "Cc" for character in reason):
+    if force and reason is not None and any(unicodedata.category(character) == "Cc" for character in reason):
         raise ReviewRunnerError("--reason must not contain control characters")
-    if not allow_unreconciled and reason:
-        raise ReviewRunnerError("--reason is only valid with --allow-unreconciled")
-    if allow_unreconciled and target.reconciled and target.ancestor_links_valid:
-        raise ReviewRunnerError("--allow-unreconciled is only valid for an unreconciled target")
-    if not allow_unreconciled and (not target.reconciled or not target.ancestor_links_valid):
-        raise UnreconciledReviewError("stack is unreconciled; reconcile it before running a normal CLI review")
+    if not force and (not target.reconciled or not target.ancestor_links_valid):
+        raise UnreconciledReviewError("stack identity warnings require --force for a CLI review")
     runner = runner or SubprocessRunner()
     source_root = (
         source_root
@@ -871,6 +902,7 @@ def run_cli_review(
     # private metadata, not in the human-facing marker.
     run_id = f"run.{uuid.uuid4().hex}"
     capture_dir = capture_root / run_id
+    reservation_saved = False
     attempt_started = False
     attempt_finished = False
     provider_result_saved = False
@@ -889,6 +921,10 @@ def run_cli_review(
         hosted_lock_acquired = False
         temp_root: Path | None = None
         try:
+            try:
+                _write_cli_lock_owner(lock_handle, run_id)
+            except OSError as error:
+                raise ReviewRunnerError("could not persist active CLI run owner marker") from error
             repository = target.repository or str(getattr(github, "repo", "unknown/unknown"))
             hosted_record_path = hosted.default_trigger_record_path(
                 repository, target.snapshot.number, common=common_dir
@@ -908,9 +944,10 @@ def run_cli_review(
             capture_dir.mkdir(mode=0o700)
             live = github.pull_request(target.snapshot.number)
             live_files = github.pull_request_files(target.snapshot.number)
-            parent_tip = github.branch_head(target.parent.ref_name)
+            review_base_ref = live.base_ref_name if force else target.parent.ref_name
+            review_base_tip = github.branch_head(review_base_ref)
             _ensure_commit(runner, source_root, live.base_sha, "pull request base", timeout=git_timeout_seconds)
-            _ensure_commit(runner, source_root, parent_tip, "effective parent tip", timeout=git_timeout_seconds)
+            _ensure_commit(runner, source_root, review_base_tip, "review base branch tip", timeout=git_timeout_seconds)
             _ensure_commit(runner, source_root, live.head_sha, "pull request head", timeout=git_timeout_seconds)
             candidate_sha = _sha(
                 _git_output(runner, source_root, "rev-parse", "HEAD^{commit}", timeout=git_timeout_seconds),
@@ -920,11 +957,11 @@ def run_cli_review(
                 target,
                 live,
                 live_files,
-                parent_tip,
+                review_base_tip,
                 candidate_sha,
                 runner,
                 source_root,
-                allow_unreconciled=allow_unreconciled,
+                force=force,
                 git_timeout_seconds=git_timeout_seconds,
             )
             candidate_patch_identity = _patch_identity(
@@ -933,7 +970,7 @@ def run_cli_review(
                 _unique_merge_base(
                     runner,
                     source_root,
-                    target.parent.head_sha,
+                    live.base_sha if force else target.parent.head_sha,
                     candidate_sha,
                     timeout=git_timeout_seconds,
                 )
@@ -942,7 +979,7 @@ def run_cli_review(
                 candidate_sha,
                 timeout=git_timeout_seconds,
             )
-            if target.merge_base and _sha(target.merge_base, "selected merge base") != merge_base:
+            if not force and target.merge_base and _sha(target.merge_base, "selected merge base") != merge_base:
                 raise ReviewRunnerError("candidate merge base changed since target selection")
             published_merge_base = (
                 merge_base
@@ -950,7 +987,7 @@ def run_cli_review(
                 else _unique_merge_base(
                     runner,
                     source_root,
-                    target.parent.head_sha,
+                    live.base_sha if force else target.parent.head_sha,
                     child_head,
                     timeout=git_timeout_seconds,
                 )
@@ -994,11 +1031,11 @@ def run_cli_review(
                     target,
                     live,
                     live_files,
-                    parent_tip,
+                    review_base_tip,
                     candidate_sha,
                     runner,
                     source_root,
-                    allow_unreconciled=allow_unreconciled,
+                    force=force,
                     git_timeout_seconds=git_timeout_seconds,
                 )
                 candidate_patch_identity = published_patch_identity
@@ -1020,7 +1057,9 @@ def run_cli_review(
             # cleanup boundary: either setup step can fail, but a successful pin
             # must never outlive a failed temporary-root allocation.
             try:
-                review_base_sha = target.parent.head_sha if target.default_base_front else merge_base
+                review_base_sha = (
+                    target.parent.head_sha if target.default_base_front and not force else merge_base
+                )
                 _git(runner, source_root, "update-ref", pinned_ref, review_base_sha, timeout=git_timeout_seconds)
                 temp_root = Path(tempfile.mkdtemp(prefix="firemud-pr-review-"))
             except Exception:
@@ -1050,6 +1089,7 @@ def run_cli_review(
                 )
                 metadata: dict[str, Any] = {
                     "run_id": run_id,
+                    "repository": target.repository or str(getattr(github, "repo", "unknown/unknown")),
                     "kind": "cli",
                     "capture_completion_marker": "capture-complete",
                     "pull_request": target.snapshot.number,
@@ -1058,15 +1098,27 @@ def run_cli_review(
                     "published_head_sha": child_head,
                     "review_context_sha": review_context_sha,
                     "review_base_sha": review_base_sha,
-                    "parent_pr": target.parent.pr_number,
-                    "parent_ref": target.parent.ref_name,
-                    "parent_sha": target.parent.head_sha,
+                    "parent_pr": (
+                        None
+                        if force and review_base_ref != target.parent.ref_name
+                        else target.parent.pr_number
+                    ),
+                    "parent_ref": review_base_ref if force else target.parent.ref_name,
+                    "parent_sha": live.base_sha if force else target.parent.head_sha,
+                    "configured_parent_pr": target.parent.pr_number,
+                    "configured_parent_ref": target.parent.ref_name,
+                    "configured_parent_sha": target.parent.head_sha,
+                    "actual_base_ref": review_base_ref,
+                    "actual_base_sha": live.base_sha,
                     "merge_base": merge_base,
+                    "published_merge_base": published_merge_base,
                     "published_files": published_files,
                     "candidate_files": candidate_files,
                     "published_status": published_status,
-                    "provisional": allow_unreconciled,
-                    "reason": reason,
+                    "provisional": False,
+                    "force_acknowledged": force,
+                    "force_reason": reason,
+                    "candidate_warnings": list(target.candidate_warnings),
                     "patch_identity": candidate_patch_identity,
                     "argv": [review_executable, "review", "--agent", "--committed", "--base", pinned_ref],
                 }
@@ -1080,30 +1132,46 @@ def run_cli_review(
                     "candidate_sha": candidate_sha,
                     "child_head_sha": candidate_sha,
                     "published_head_sha": child_head,
-                    "parent_pr": str(target.parent.pr_number) if target.parent.pr_number is not None else "",
-                    "parent_ref": target.parent.ref_name,
-                    "parent_sha": target.parent.head_sha,
+                    "parent_pr": (
+                        ""
+                        if force and review_base_ref != target.parent.ref_name
+                        else str(target.parent.pr_number) if target.parent.pr_number is not None else ""
+                    ),
+                    "parent_ref": review_base_ref if force else target.parent.ref_name,
+                    "parent_sha": live.base_sha if force else target.parent.head_sha,
+                    "configured_parent_pr": str(target.parent.pr_number) if target.parent.pr_number is not None else "",
+                    "configured_parent_ref": target.parent.ref_name,
+                    "configured_parent_sha": target.parent.head_sha,
+                    "actual_base_ref": review_base_ref,
+                    "actual_base_sha": live.base_sha,
                     "merge_base": merge_base,
+                    "published_merge_base": published_merge_base,
                     "patch_identity": candidate_patch_identity,
                     "candidate_files": str(candidate_files),
                     "published_files": str(published_files),
                     "published_status": published_status,
-                    "provisional": str(allow_unreconciled).lower(),
-                    "reason": reason or "",
+                    "provisional": "false",
+                    "force_acknowledged": str(force).lower(),
+                    "force_reason": reason or "",
+                    "candidate_warnings": json.dumps(list(target.candidate_warnings), sort_keys=True),
                 }
 
                 def reserve() -> None:
+                    nonlocal reservation_saved
                     (capture_dir / "metadata").write_text(
                         "".join(f"{key}={value}\n" for key, value in legacy_metadata.items()),
                         encoding="utf-8",
                     )
                     os.chmod(capture_dir / "metadata", 0o600)
                     _atomic_json(capture_dir / "metadata.json", metadata)
+                    reservation_saved = True
 
                 if admit is None:
                     reserve()
                 else:
                     admit(reserve)
+                if not reservation_saved:
+                    raise ReviewRunnerError("CLI admission callback returned without reserving the candidate")
                 records_warning = None
                 if records is not None:
                     attempt_started_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -1133,7 +1201,7 @@ def run_cli_review(
                         hosted_lock_acquired = False
                     hosted_lock_handle.close()
                     hosted_lock_handle = None
-                _verify_target_still_current(target, github)
+                _verify_target_still_current(target, github, force=force)
                 started = monotonic_ns()
                 try:
                     process = runner.run(
@@ -1296,16 +1364,19 @@ def run_cli_review(
                     run_id=run_id,
                     pull_request=target.snapshot.number,
                     candidate_sha=candidate_sha,
-                    parent_sha=target.parent.head_sha,
+                    parent_sha=live.base_sha if force else target.parent.head_sha,
                     merge_base=merge_base,
                     published_files=published_files,
                     candidate_files=candidate_files,
                     published_status=published_status,
-                    provisional=allow_unreconciled,
+                    provisional=False,
                     duration_seconds=duration,
                     exit_status=command_exit_status,
                     capture_dir=capture_dir,
                     warning=records_warning,
+                    force_acknowledged=force,
+                    candidate_warnings=target.candidate_warnings,
+                    force_reason=reason,
                 )
             finally:
                 if candidate_worktree is not None:
@@ -1341,11 +1412,21 @@ def run_cli_review(
                         add_note(f"SQLite review-attempt archival also failed: {archive_error}")
             raise
         finally:
-            if hosted_lock_handle is not None:
-                if hosted_lock_acquired:
-                    fcntl.flock(hosted_lock_handle.fileno(), fcntl.LOCK_UN)
-                hosted_lock_handle.close()
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            try:
+                if hosted_lock_handle is not None:
+                    if hosted_lock_acquired:
+                        fcntl.flock(hosted_lock_handle.fileno(), fcntl.LOCK_UN)
+                    hosted_lock_handle.close()
+            finally:
+                try:
+                    _clear_cli_lock_owner(lock_handle)
+                except OSError:
+                    # The owner marker is advisory cleanup. Preserve the
+                    # completed provider result or primary failure, while
+                    # still releasing the repository-wide execution lock.
+                    pass
+                finally:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def target_from_resolver(resolver: ReviewTargetResolver, expected_pr: int | None = None) -> ReviewTarget:

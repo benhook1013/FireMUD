@@ -376,6 +376,23 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void browseViewUsesOneWorldSnapshotForDefaultRealmAndCardinalityChecks() {
+    AtomicInteger supplierCalls = new AtomicInteger();
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () ->
+                supplierCalls.getAndIncrement() == 0
+                    ? List.of(worldWithRealm("demo", "production", 7L, true))
+                    : List.of(worldWithRealm("demo", "preview", 7L, false)));
+
+    assertThat(catalog.browseView().worlds())
+        .extracting(
+            net.firedevops.firemud.gamesession.presentation.WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("demo");
+    assertThat(supplierCalls).hasValue(1);
+  }
+
+  @Test
   void closedVisiblePublicRealmStillCountsAsTheTenantPublicRealm() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
@@ -500,6 +517,95 @@ class GameplayWorldCatalogTest {
         .contains(production);
     assertThat(catalog.readRealmDiscoverySnapshot(reordered).catalogFingerprint())
         .isNotEqualTo(snapshot.catalogFingerprint());
+  }
+
+  @Test
+  void revalidatedRealmFingerprintIncludesOnlyTheOriginalResponseTargets() {
+    GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldViews(List.of());
+    GameplayWorldCatalog.RealmView production =
+        new GameplayWorldCatalog.RealmView(
+            "production",
+            "Live Realm",
+            7L,
+            11L,
+            3L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            29L,
+            UUID.fromString("8a1df0f1-1b57-465e-9c4b-bb34f8153d31"),
+            UUID.fromString("2ea958e0-13a2-41d0-9c39-59a96cf31412"));
+    GameplayWorldCatalog.RealmView deniedPrivateRealm =
+        new GameplayWorldCatalog.RealmView(
+            "preview",
+            "Preview Realm",
+            7L,
+            12L,
+            4L,
+            true,
+            false,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            30L,
+            UUID.fromString("a11df0f1-1b57-465e-9c4b-bb34f8153d31"),
+            UUID.fromString("b2a958e0-13a2-41d0-9c39-59a96cf31412"));
+    GameplayWorldCatalog.WorldView responseWorld =
+        new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(production, deniedPrivateRealm));
+    GameplayWorldCatalog.RealmDiscoverySnapshot snapshot =
+        catalog.realmDiscoverySnapshot(responseWorld, List.of(production));
+    GameplayWorldCatalog.RealmView changedDeniedPrivateRealm =
+        new GameplayWorldCatalog.RealmView(
+            "preview",
+            "Preview Realm",
+            7L,
+            98L,
+            9L,
+            true,
+            false,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            31L,
+            deniedPrivateRealm.realmId(),
+            deniedPrivateRealm.playableStateNamespaceId());
+
+    GameplayWorldCatalog.RealmDiscoverySnapshot hiddenChange =
+        catalog
+            .revalidateRealmDiscoverySnapshot(
+                new GameplayWorldCatalog.WorldView(
+                    "demo", "Demo", List.of(production, changedDeniedPrivateRealm)),
+                snapshot.ordinalTargets())
+            .orElseThrow();
+
+    assertThat(hiddenChange.catalogFingerprint()).isEqualTo(snapshot.catalogFingerprint());
+    assertThat(hiddenChange.ordinalTargets()).containsExactlyElementsOf(snapshot.ordinalTargets());
+
+    GameplayWorldCatalog.RealmView changedProduction =
+        new GameplayWorldCatalog.RealmView(
+            production.slug(),
+            production.displayName(),
+            production.tenantId(),
+            production.gameInstanceId(),
+            production.pointerVersion() + 1,
+            production.visible(),
+            production.publicProductionRealm(),
+            production.requiresCharacterSelection(),
+            production.stateScope(),
+            production.characterCreationPolicy(),
+            production.catalogRevision(),
+            production.realmId(),
+            production.playableStateNamespaceId());
+    GameplayWorldCatalog.RealmDiscoverySnapshot visibleChange =
+        catalog
+            .revalidateRealmDiscoverySnapshot(
+                new GameplayWorldCatalog.WorldView(
+                    "demo", "Demo", List.of(changedProduction, deniedPrivateRealm)),
+                snapshot.ordinalTargets())
+            .orElseThrow();
+    assertThat(visibleChange.catalogFingerprint()).isNotEqualTo(snapshot.catalogFingerprint());
   }
 
   private static GameplayWorldCatalog.WorldView worldWithTargetRealm(

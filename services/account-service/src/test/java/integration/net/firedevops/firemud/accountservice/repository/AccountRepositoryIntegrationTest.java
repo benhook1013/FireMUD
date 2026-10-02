@@ -5,10 +5,19 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
@@ -195,6 +204,12 @@ class AccountRepositoryIntegrationTest {
                 Long.class,
                 auditEventId))
         .isEqualTo(1L);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                auditEventId))
+        .isNull();
   }
 
   @Test
@@ -212,6 +227,26 @@ class AccountRepositoryIntegrationTest {
     outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", true);
     outbox.append(committedEventId, "platform", null, "ACCOUNT_REGISTERED", committedPayload);
     outbox.markDelivered(committedEventId, "receipt-committed", "log-committed", false);
+    outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", true);
+    outbox.markDelivered(committedEventId, "receipt-committed", "log-committed", false);
+
+    assertThatThrownBy(
+            () -> outbox.markDelivered(minimizedEventId, "other-receipt", "log-minimized", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
+    assertThatThrownBy(
+            () -> outbox.markDelivered(minimizedEventId, "receipt-minimized", "other-log", true))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
+    assertThatThrownBy(
+            () ->
+                outbox.markDelivered(minimizedEventId, "receipt-minimized", "log-minimized", false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
+    assertThatThrownBy(
+            () -> outbox.markDelivered(UUID.randomUUID(), "receipt-missing", "log-missing", false))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Audit delivery state changed concurrently");
 
     assertThat(
             jdbc.queryForObject(
@@ -263,6 +298,12 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo("MINIMIZED");
     assertThat(
             jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                minimizedEventId))
+        .isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
                 "SELECT payload FROM account_audit_outbox WHERE audit_event_id = ?",
                 String.class,
                 committedEventId))
@@ -273,9 +314,243 @@ class AccountRepositoryIntegrationTest {
                 String.class,
                 committedEventId))
         .isEqualTo("COMMITTED");
-    assertThat(outbox.pending(10))
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                committedEventId))
+        .isEqualTo(1);
+    assertThatThrownBy(
+            () ->
+                jdbc.update(
+                    "UPDATE account_audit_outbox SET receiver_audit_projection_version = 2 WHERE audit_event_id = ?",
+                    committedEventId))
+        .isInstanceOf(org.springframework.dao.DataAccessException.class);
+    assertThat(outbox.pending(10, Instant.now()))
         .noneMatch(envelope -> envelope.auditEventId().equals(minimizedEventId))
         .noneMatch(envelope -> envelope.auditEventId().equals(committedEventId));
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
+                LocalDateTime.class,
+                minimizedEventId))
+        .isNull();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
+                LocalDateTime.class,
+                committedEventId))
+        .isNull();
+  }
+
+  @Test
+  void auditRetryUsesCappedExponentialBackoffAndDoesNotStarveNewDueEvents() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(dsl);
+    UUID failingEventId = UUID.randomUUID();
+    UUID laterEventId = UUID.randomUUID();
+    outbox.append(failingEventId, "platform", null, "ACCOUNT_REGISTERED", "{\"id\":1}");
+    assertThat(outbox.pending(50, Instant.now()))
+        .extracting(envelope -> envelope.auditEventId())
+        .contains(failingEventId);
+
+    List<Integer> expectedDelays = List.of(5, 10, 20, 40, 80, 160, 300, 300);
+    for (int attempt = 0; attempt < expectedDelays.size(); attempt++) {
+      outbox.recordAttempt(failingEventId);
+
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT attempt_count FROM account_audit_outbox WHERE audit_event_id = ?",
+                  Integer.class,
+                  failingEventId))
+          .isEqualTo(attempt + 1);
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT EXTRACT(EPOCH FROM (next_attempt_at - last_attempt_at))::INTEGER "
+                      + "FROM account_audit_outbox WHERE audit_event_id = ?",
+                  Integer.class,
+                  failingEventId))
+          .isEqualTo(expectedDelays.get(attempt));
+    }
+
+    outbox.append(laterEventId, "platform", null, "ACCOUNT_REGISTERED", "{\"id\":2}");
+
+    assertThat(outbox.pending(50, Instant.now()))
+        .extracting(envelope -> envelope.auditEventId())
+        .containsExactly(laterEventId);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT delivery_status FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                failingEventId))
+        .isEqualTo("PENDING");
+  }
+
+  @Test
+  void auditAttemptTimesUseUtcLocalDateTimeUnderNonUtcDatabaseSession() {
+    TransactionTemplate transaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    TransactionAwareDataSourceProxy transactionAwareDataSource =
+        new TransactionAwareDataSourceProxy(dataSource);
+    JdbcTemplate transactionJdbc = new JdbcTemplate(transactionAwareDataSource);
+    DSLContext transactionDsl = DSL.using(transactionAwareDataSource, SQLDialect.POSTGRES);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionDsl);
+    UUID appendedEventId = UUID.randomUUID();
+    UUID defaultedEventId = UUID.randomUUID();
+
+    transaction.executeWithoutResult(
+        status -> {
+          transactionJdbc.execute("SET LOCAL TIME ZONE 'Pacific/Auckland'");
+          assertThat(
+                  transactionJdbc.queryForObject(
+                      "SELECT current_setting('TimeZone')", String.class))
+              .isEqualTo("Pacific/Auckland");
+
+          outbox.append(appendedEventId, "platform", null, "ACCOUNT_REGISTERED", "{}");
+          LocalDateTime occurredAt =
+              transactionJdbc.queryForObject(
+                  "SELECT occurred_at FROM account_audit_outbox WHERE audit_event_id = ?",
+                  LocalDateTime.class,
+                  appendedEventId);
+          LocalDateTime retryAt =
+              transactionJdbc.queryForObject(
+                  "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
+                  LocalDateTime.class,
+                  appendedEventId);
+          assertThat(retryAt).isEqualTo(occurredAt);
+
+          Instant beforeDefaultInsert = Instant.now();
+          transactionJdbc.update(
+              "INSERT INTO account_audit_outbox "
+                  + "(audit_event_id, scope, producer_service, event_type, occurred_at, "
+                  + "schema_version, payload_digest_version, payload_digest, payload, delivery_status) "
+                  + "VALUES (?, 'platform', 'account-service', 'ACCOUNT_REGISTERED', ?, 1, 1, ?, '{}', 'PENDING')",
+              defaultedEventId,
+              LocalDateTime.ofInstant(beforeDefaultInsert, ZoneOffset.UTC),
+              AccountAuditDigest.ofPayload("{}"));
+          LocalDateTime defaultRetryAt =
+              Objects.requireNonNull(
+                  transactionJdbc.queryForObject(
+                      "SELECT next_attempt_at FROM account_audit_outbox WHERE audit_event_id = ?",
+                      LocalDateTime.class,
+                      defaultedEventId),
+                  "next_attempt_at database default should be populated");
+          assertThat(
+                  Duration.between(beforeDefaultInsert, defaultRetryAt.toInstant(ZoneOffset.UTC)))
+              .isLessThan(Duration.ofSeconds(10));
+          assertThat(
+                  Duration.between(defaultRetryAt, LocalDateTime.now(ZoneId.of("Pacific/Auckland")))
+                      .abs())
+              .isGreaterThan(Duration.ofHours(1));
+        });
+  }
+
+  @Test
+  void subscriptionForUpdateLocksOnlySubscriptionAndKeepsThatLockThroughTransaction()
+      throws Exception {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    long accountId =
+        Objects.requireNonNull(
+            jdbc.queryForObject(
+                "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
+                Long.class,
+                "subscription-lock",
+                "subscription-lock@example.com",
+                "hash"));
+    long tenantId = 7654321L;
+    jdbc.update(
+        "INSERT INTO subscription (account_id, plan_id, status, tenant_id, entitlement_version) "
+            + "VALUES (?, 'test-plan', 'active', ?, 1)",
+        accountId,
+        tenantId);
+
+    TransactionAwareDataSourceProxy transactionAwareDataSource =
+        new TransactionAwareDataSourceProxy(dataSource);
+    DSLContext transactionDsl = DSL.using(transactionAwareDataSource, SQLDialect.POSTGRES);
+    SubscriptionRepository subscriptions = new SubscriptionRepository(transactionDsl);
+    TransactionTemplate lockTransaction =
+        new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    CountDownLatch subscriptionLocked = new CountDownLatch(1);
+    CountDownLatch releaseSubscriptionLock = new CountDownLatch(1);
+    ExecutorService executor = Executors.newSingleThreadExecutor();
+    Future<?> lockHolder =
+        executor.submit(
+            () ->
+                lockTransaction.executeWithoutResult(
+                    status -> {
+                      assertThat(subscriptions.findByTenantIdForUpdate(tenantId)).hasSize(1);
+                      subscriptionLocked.countDown();
+                      try {
+                        if (!releaseSubscriptionLock.await(10, TimeUnit.SECONDS)) {
+                          throw new IllegalStateException(
+                              "Timed out holding subscription row lock");
+                        }
+                      } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException("Interrupted while holding row lock", ex);
+                      }
+                    }));
+
+    try {
+      assertThat(subscriptionLocked.await(5, TimeUnit.SECONDS)).isTrue();
+
+      TransactionTemplate conflictingTransaction =
+          new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+      JdbcTemplate conflictingJdbc = new JdbcTemplate(transactionAwareDataSource);
+      assertThatThrownBy(
+              () ->
+                  conflictingTransaction.executeWithoutResult(
+                      status -> {
+                        conflictingJdbc.execute("SET LOCAL lock_timeout = '250ms'");
+                        conflictingJdbc.update(
+                            "UPDATE subscription SET status = status WHERE tenant_id = ?",
+                            tenantId);
+                      }))
+          .hasMessageContaining("lock timeout");
+
+      Integer updatedAccounts =
+          conflictingTransaction.execute(
+              status -> {
+                conflictingJdbc.execute("SET LOCAL lock_timeout = '2s'");
+                return conflictingJdbc.update(
+                    "UPDATE accounts SET email = ? WHERE id = ?",
+                    "subscription-lock-updated@example.com",
+                    accountId);
+              });
+      assertThat(updatedAccounts).isEqualTo(1);
+    } finally {
+      releaseSubscriptionLock.countDown();
+      try {
+        lockHolder.get(5, TimeUnit.SECONDS);
+      } finally {
+        executor.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void markDeliveredRejectsBlankReceiverIdentityWithoutChangingPendingRow() {
+    JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+    AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(dsl);
+    UUID eventId = UUID.randomUUID();
+    outbox.append(eventId, "platform", null, "ACCOUNT_REGISTERED", "{\"accountId\":44}");
+
+    assertThatThrownBy(() -> outbox.markDelivered(eventId, " ", "projection-id", false))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Verified audit delivery requires nonblank identity");
+
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT delivery_status FROM account_audit_outbox WHERE audit_event_id = ?",
+                String.class,
+                eventId))
+        .isEqualTo("PENDING");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                eventId))
+        .isNull();
   }
 
   @Test
@@ -391,7 +666,7 @@ class AccountRepositoryIntegrationTest {
                 jdbc.update(
                     "DELETE FROM account_connect_scope_records WHERE scope_token_hash = ?",
                     AccountJoinDigest.tokenHash(pending.connectScopeId())))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     assertThatThrownBy(
             () -> insertJoinIntent(joinOperations, unreferenced, "join-scope-after-cleanup"))
         .isInstanceOf(DataAccessException.class);

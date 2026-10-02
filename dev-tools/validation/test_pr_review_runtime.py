@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import dataclasses
+import fcntl
 import json
+import os
 import sys
 import tempfile
 import threading
@@ -23,7 +26,8 @@ sys.path.insert(0, str(ROOT / "dev-tools"))
 from pr_review import cli as review_cli
 from pr_review import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records, sqlite_store
 from pr_review.cli_runner import EffectiveParent, PullRequestSnapshot, ReviewRunnerError, ReviewTarget
-from pr_review.controller import ControllerError, StaleReviewTarget, _review_activity
+from pr_review.controller import ControllerError, HostedAdmissionBusy, StaleReviewTarget, _review_activity
+from pr_review.policy import Channel, taper_satisfied
 from pr_review.runtime import HostedRunner, LiveEvidence, LiveGitHub, default_controller
 from pr_review.state import ReviewState, StateStore, SummaryFindingDisposition, observation_fingerprint
 
@@ -33,7 +37,785 @@ PATCH = "c" * 64
 
 
 class RuntimeTest(unittest.TestCase):
+    def test_admission_history_refreshes_actual_cached_channel_projection(self) -> None:
+        for channel in ("hosted", "cli"):
+            with self.subTest(channel=channel), tempfile.TemporaryDirectory() as directory:
+                other = "cli" if channel == "hosted" else "hosted"
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+                observer._payloads[42] = {"stale": True}
+                observer._histories[(42, channel)] = [{"checkpoint": "stale-selection"}]
+                observer._histories[(42, other)] = [{"checkpoint": "other-channel"}]
+                observer._records_histories[42] = {"stale": True}
+                observer._payloads[99] = {"unrelated": True}
+                payload = self._payload()
+                payload["data"]["repository"]["pullRequest"]["changedFiles"] = 1
+                with (
+                    patch.object(github, "fetch_pull_request", return_value=payload) as fetch,
+                    patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                ):
+                    self.assertEqual(observer.history(42, channel), [{"checkpoint": "stale-selection"}])
+                    fresh = observer.admission_history(42, channel)
+                fetch.assert_called_once_with("owner/repo", 42)
+                self.assertNotIn("stale-selection", [value.get("checkpoint") for value in fresh])
+                self.assertEqual(observer._histories[(42, channel)], fresh)
+                self.assertEqual(observer._histories[(42, other)], [{"checkpoint": "other-channel"}])
+                self.assertEqual(observer._payloads[99], {"unrelated": True})
+                self.assertNotIn(42, observer._records_histories)
+
+    def test_hosted_source_resolution_retries_transient_history_failure_and_casefolds_repository(self) -> None:
+        origin = {
+            "source_pr": 42,
+            "checkpoint_id": 55,
+            "channel": "hosted",
+            "provider_id": "901",
+            "repository": "OWNER/REPO",
+            "run_id": "hosted-run-901",
+        }
+        history = {"provider_origins": [origin], "attempts": []}
+        checkpoint = evidence.Checkpoint(
+            comment_id=55,
+            created_at="2026-09-30T12:00:00Z",
+            type="hosted",
+            raw_found=1,
+            accepted=1,
+            reviewed_sha=HEAD,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=901,
+        )
+
+        for transient_error in (
+            sqlite_review_records.ReviewRecordsError("temporary"),
+            OSError("temporary"),
+        ):
+            with self.subTest(error=type(transient_error).__name__):
+                records = SimpleNamespace(
+                    history=unittest.mock.Mock(side_effect=[transient_error, history]),
+                    source_resolution_status=unittest.mock.Mock(return_value="resolved"),
+                )
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "unavailable")
+                self.assertNotIn(42, observer._records_histories)
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "resolved")
+                self.assertEqual(records.history.call_count, 2)
+                self.assertEqual(records.history.call_args.kwargs, {"include_display": False})
+                records.source_resolution_status.assert_called_once()
+
+    def test_hosted_source_resolution_reports_record_status_read_failures_as_unavailable(self) -> None:
+        origin = {
+            "source_pr": 42,
+            "checkpoint_id": 55,
+            "channel": "hosted",
+            "provider_id": "901",
+            "repository": "owner/repo",
+            "run_id": "hosted-run-901",
+        }
+        checkpoint = evidence.Checkpoint(
+            comment_id=55,
+            created_at="2026-09-30T12:00:00Z",
+            type="hosted",
+            raw_found=1,
+            accepted=1,
+            reviewed_sha=HEAD,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=901,
+        )
+        for failure in (
+            sqlite_review_records.ReviewRecordsError("unavailable"),
+            OSError("unavailable"),
+        ):
+            records = SimpleNamespace(
+                history=unittest.mock.Mock(return_value={"provider_origins": [origin], "attempts": []}),
+                source_resolution_status=unittest.mock.Mock(side_effect=failure),
+            )
+            observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+            with self.subTest(error=type(failure).__name__):
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "unavailable")
+
+    def test_closed_pr_archived_cooldown_uses_response_time_and_casefolds_repository(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        terminal_at = now.isoformat().replace("+00:00", "Z")
+        reservation = self._trigger_record(created=terminal_at)
+        reservation.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
+        reservation["anchor"]["pr"] = 99
+        path = Path("/unused/pr-99/trigger.json")
+
+        cases = (
+            ("mixed-case repository", now - timedelta(minutes=1), terminal_at, "OWNER/REPO", True),
+            ("delayed observation", now - timedelta(minutes=20), terminal_at, "owner/repo", False),
+            ("missing response time", None, terminal_at, "owner/repo", False),
+            ("response after terminal", now + timedelta(minutes=1), terminal_at, "owner/repo", False),
+        )
+        for label, response_at, observed_at, repository, should_hold in cases:
+            with self.subTest(case=label):
+                response = {
+                    "databaseId": 11,
+                    "author": {"login": "coderabbitai[bot]"},
+                    "body": "Review rate limited. Next reviews available in: 10 minutes.",
+                }
+                if response_at is not None:
+                    response["createdAt"] = response_at.isoformat().replace("+00:00", "Z")
+                artifacts = {
+                    "metadata": json.dumps(
+                        {
+                            "state": "rate_limited",
+                            "terminal": True,
+                            "attributable": True,
+                            "repository": repository,
+                            "pull_request": 99,
+                            "head_sha": HEAD,
+                            "trigger_id": 10,
+                            "response_id": 11,
+                            "observed_at": observed_at,
+                        }
+                    ),
+                    "hosted_comments": json.dumps({"comments": [response]}),
+                }
+                attempt = {
+                    "attempt_id": "attempt-99",
+                    "channel": "hosted",
+                    "state": "rate_limited",
+                    "candidate_sha": HEAD,
+                    "finished_at": observed_at,
+                    "trigger_id": "10",
+                    "provider_review_id": "11",
+                }
+                runner.records = SimpleNamespace(
+                    attempt_history=lambda _pr, attempt=attempt: [attempt],
+                    attempt_artifacts=lambda _attempt_id, artifacts=artifacts: artifacts,
+                )
+                with patch.object(hosted, "load_trigger_reservation", return_value=reservation):
+                    reset = runner._closed_repository_cooldown_until(99, [path])
+                self.assertEqual(reset is not None, should_hold)
+
+    def test_hosted_source_resolution_rejects_malformed_or_foreign_origin_repository(self) -> None:
+        origin = {
+            "source_pr": 42,
+            "checkpoint_id": 55,
+            "channel": "hosted",
+            "provider_id": "901",
+            "repository": "owner/repo",
+            "run_id": "hosted-run-901",
+        }
+        checkpoint = evidence.Checkpoint(
+            comment_id=55,
+            created_at="2026-09-30T12:00:00Z",
+            type="hosted",
+            raw_found=1,
+            accepted=1,
+            reviewed_sha=HEAD,
+            file_count=1,
+            correction=False,
+            updated_at=None,
+            run_id=None,
+            hosted_review_id=901,
+        )
+        cases = (("missing", None, True), ("null", None, False), ("nonstring", 901, False), ("foreign", "other/repo", False))
+        for label, repository, remove_repository in cases:
+            with self.subTest(repository=label):
+                candidate = dict(origin)
+                if remove_repository:
+                    candidate.pop("repository")
+                else:
+                    candidate["repository"] = repository
+                records = SimpleNamespace(
+                    history=unittest.mock.Mock(return_value={"provider_origins": [candidate], "attempts": []}),
+                    source_resolution_status=unittest.mock.Mock(return_value="resolved"),
+                )
+                observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"), records=records)
+
+                self.assertEqual(observer._source_resolution_status(42, "hosted", checkpoint, HEAD), "pending")
+                records.source_resolution_status.assert_not_called()
+
+    def test_stop_and_legacy_reauthorization_audits_invalidate_records_history_cache(self) -> None:
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        anchor = {
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        for audit, arguments in (
+            (observer.review_stop_audit, (42, anchor)),
+            (
+                observer.legacy_transition_reauthorization_audit,
+                (42, (), {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE}),
+            ),
+        ):
+            observer._payloads[42] = {"stale": True}
+            observer._histories[(42, "hosted")] = [{"stale": True}]
+            observer._histories[(42, "cli")] = [{"stale": True}]
+            observer._records_histories[42] = {"stale": True}
+            with self.subTest(audit=audit.__name__), patch.object(
+                observer, "_payload", side_effect=ControllerError("stop after invalidation")
+            ), self.assertRaisesRegex(ControllerError, "stop after invalidation"):
+                audit(*arguments)
+            self.assertNotIn(42, observer._payloads)
+            self.assertNotIn((42, "hosted"), observer._histories)
+            self.assertNotIn((42, "cli"), observer._histories)
+            self.assertNotIn(42, observer._records_histories)
+
+    def test_closed_reservation_uses_only_durable_future_cooldown_when_history_is_unavailable(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        created = now.isoformat().replace("+00:00", "Z")
+        path = Path("/unused/pr-99/trigger.json")
+        record = self._trigger_record(created=created)
+        record.update({"pr_number": 99, "sqlite_attempt_id": "attempt-99"})
+        record["anchor"]["pr"] = 99
+
+        def records_with_cooldown(minutes: int | None) -> SimpleNamespace:
+            if minutes is None:
+                return SimpleNamespace(attempt_history=lambda _pr: [], attempt_artifacts=lambda _id: {})
+            response = {
+                "databaseId": 11,
+                "author": {"login": "coderabbitai"},
+                "body": f"Next reviews available in {abs(minutes)} minutes",
+                "createdAt": (
+                    created
+                    if minutes > 0
+                    else (now - timedelta(minutes=20)).isoformat().replace("+00:00", "Z")
+                ),
+            }
+            observed_at = response["createdAt"]
+            artifacts = {
+                "metadata": json.dumps(
+                    {
+                        "state": "rate_limited",
+                        "terminal": True,
+                        "attributable": True,
+                        "repository": "owner/repo",
+                        "pull_request": 99,
+                        "head_sha": HEAD,
+                        "trigger_id": 10,
+                        "response_id": 11,
+                        "observed_at": observed_at,
+                    }
+                ),
+                "hosted_comments": json.dumps({"comments": [response]}),
+            }
+            attempt = {
+                "attempt_id": "attempt-99",
+                "channel": "hosted",
+                "state": "rate_limited",
+                "candidate_sha": HEAD,
+                "finished_at": observed_at,
+                "trigger_id": "10",
+                "provider_review_id": "11",
+            }
+            return SimpleNamespace(
+                attempt_history=lambda _pr: [attempt],
+                attempt_artifacts=lambda _id: artifacts,
+            )
+
+        for label, minutes, should_hold in (("future", 10, True), ("expired", -10, False), ("unknown", None, False)):
+            with self.subTest(cooldown=label), tempfile.TemporaryDirectory() as directory:
+                runner.records = records_with_cooldown(minutes)
+                with (
+                    patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
+                    patch.object(github, "fetch_api_endpoint", return_value=[]),
+                    patch.object(hosted, "load_trigger_reservation", return_value=record),
+                    patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
+                ):
+                    if should_hold:
+                        with self.assertRaisesRegex(ControllerError, "cooldown.*closed PR"):
+                            runner._assert_no_other_active_reservations(42, Path(directory))
+                    else:
+                        runner._assert_no_other_active_reservations(42, Path(directory))
+                fetch.assert_not_called()
+
+    def test_archived_edited_rate_limit_uses_response_creation_timestamp(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = now - timedelta(minutes=30)
+        response_created = now - timedelta(minutes=20)
+        response_updated = now - timedelta(minutes=1)
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._new_review_records(common / "controller.sqlite3")
+            attempt_id = "closed-pr-rate-limit"
+            trigger_record = self._trigger_record(created=trigger_at.isoformat().replace("+00:00", "Z"))
+            trigger_record.update({"pr_number": 99, "sqlite_attempt_id": attempt_id})
+            trigger_record["anchor"]["pr"] = 99
+            path = hosted.default_trigger_record_path("owner/repo", 99, common)
+            path.parent.mkdir(parents=True)
+            path.write_text(json.dumps(trigger_record), encoding="utf-8")
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=99,
+                candidate_sha=HEAD,
+                started_at=trigger_record["trigger"]["created_at"],
+            )
+            response = {
+                "databaseId": 11,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Review rate limited. Next reviews available in: 10 minutes.",
+                "createdAt": response_created.isoformat().replace("+00:00", "Z"),
+                "updatedAt": response_updated.isoformat().replace("+00:00", "Z"),
+            }
+            payload = self._payload(comments=[response])
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull["number"] = 99
+            pull["comments"]["nodes"].insert(
+                0,
+                {
+                    "databaseId": 10,
+                    "author": {"login": "maintainer"},
+                    "body": hosted.FULL_COMMAND,
+                    "createdAt": trigger_record["trigger"]["created_at"],
+                    "url": trigger_record["trigger"]["url"],
+                },
+            )
+            captured = sqlite_hosted_capture.record_hosted_terminal_result(
+                records,
+                attempt_id=attempt_id,
+                repo="owner/repo",
+                source_pr=99,
+                trigger_record=trigger_record,
+                payload=payload,
+                current_record_path=path,
+            )
+            attempt = records.attempt_history(99)[0]
+            artifacts = records.attempt_artifacts(attempt_id)
+            metadata = json.loads(artifacts["metadata"])
+            archived_comments = json.loads(artifacts["hosted_comments"])["comments"]
+            self.assertEqual(captured["state"], "rate_limited")
+            self.assertEqual(attempt["candidate_sha"], trigger_record["head_sha"])
+            self.assertEqual(attempt["trigger_id"], "10")
+            self.assertEqual(attempt["provider_review_id"], "11")
+            self.assertEqual(metadata["head_sha"], trigger_record["head_sha"])
+            self.assertEqual(metadata["trigger_id"], 10)
+            self.assertEqual(metadata["response_id"], 11)
+            self.assertEqual(metadata["observed_at"], attempt["finished_at"])
+            self.assertEqual([item["databaseId"] for item in archived_comments], [10, 11])
+
+            runner.records = records
+            with (
+                patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
+                patch.object(github, "fetch_api_endpoint", return_value=[]),
+                patch.object(github, "fetch_pull_request", side_effect=RuntimeError("closed history unavailable")) as fetch,
+            ):
+                runner._assert_no_other_active_reservations(42, common)
+            fetch.assert_not_called()
+
+    def test_open_pull_request_listing_failure_remains_fail_closed(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            patch.object(runner, "_repository_current_trigger_paths", return_value={}),
+            patch.object(github, "fetch_api_endpoint", side_effect=RuntimeError("open listing unavailable")),
+            self.assertRaisesRegex(ControllerError, "open repository pull requests cannot be checked"),
+        ):
+            runner._assert_no_other_active_reservations(42, Path("/unused"))
+
+    def test_closed_pr_retired_reservation_skips_live_pull_request_lookup(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 99, common)
+            path.parent.mkdir(parents=True)
+            record = self._trigger_record(status="retired")
+            record["pr_number"] = 99
+            record["anchor"]["pr"] = 99
+            path.write_text(json.dumps(record), encoding="utf-8")
+
+            with (
+                patch.object(runner, "_repository_current_trigger_paths", return_value={99: [path]}),
+                patch.object(github, "fetch_api_endpoint", return_value=[]),
+                patch.object(github, "fetch_pull_request") as fetch_pull_request,
+            ):
+                runner._assert_no_other_active_reservations(42, common)
+
+            fetch_pull_request.assert_not_called()
+
+    def test_stopped_request_projection_never_reads_idle_historical_evidence(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(evidence, "resolve_cli_capture_context", return_value=(Path(directory), None)),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider, "_payload", side_effect=RuntimeError("broken archived history")) as full,
+            patch.object(evidence, "discover_cli_captures", side_effect=AssertionError("archive read")),
+        ):
+            self.assertEqual(provider.request_history(42, "cli"), [])
+            self.assertEqual(provider.request_history(42, "hosted"), [])
+            full.assert_not_called()
+
+    def test_stopped_terminal_noncounting_reply_needs_no_historical_attribution(self) -> None:
+        record = self._trigger_record()
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "reviewer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": record["trigger"]["created_at"],
+            "url": record["trigger"]["url"],
+        }
+        reply = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Full review finished.",
+            "createdAt": "2026-09-23T00:02:00Z",
+            "url": "https://example.test/comments/11",
+        }
+        identity = self._payload([trigger, reply])["data"]["repository"]["pullRequest"]
+        identity.pop("reviewThreads")  # Activity proof does not provide complete finding evidence.
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+            patch.object(provider, "_payload", side_effect=RuntimeError("broken old checkpoint")) as full,
+        ):
+            rows = provider.request_history(42, "hosted")
+            self.assertFalse(any(row.get("active_reservation") for row in rows))
+            self.assertFalse(any(row.get("completed") for row in rows))
+            full.assert_not_called()
+
+    def test_stopped_current_unknown_activity_remains_fail_closed(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(evidence, "resolve_cli_capture_context", return_value=(Path(directory), None)),
+            patch.object(provider, "_request_lock_is_held", return_value=True),
+        ):
+            self.assertTrue(provider.request_history(42, "cli")[0]["active_review"])
+            self.assertTrue(provider.request_history(42, "hosted")[0]["active_reservation"])
+        identity = self._payload()["data"]["repository"]["pullRequest"]
+        with (
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=self._trigger_record()),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+            patch.object(provider, "_payload", side_effect=ControllerError("current request unverified")),
+            self.assertRaisesRegex(ControllerError, "current request unverified"),
+        ):
+            provider.request_history(42, "hosted")
+
+    def test_stopped_current_hosted_identity_requires_an_exact_live_head(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        valid_identity = self._payload()["data"]["repository"]["pullRequest"]
+        invalid_heads = (("missing", None), ("nonstr", 42), ("malformed", "not-a-full-sha"))
+        for label, head in invalid_heads:
+            with self.subTest(head=label):
+                identity = dict(valid_identity)
+                if label == "missing":
+                    identity.pop("headRefOid")
+                else:
+                    identity["headRefOid"] = head
+                with (
+                    patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+                    patch.object(provider, "_request_lock_is_held", return_value=False),
+                    patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+                    patch.object(provider, "_current_hosted_history") as current_hosted_history,
+                    self.assertRaisesRegex(
+                        ControllerError,
+                        "current Hosted admission state cannot be verified",
+                    ),
+                ):
+                    provider.request_history(42, "hosted")
+                current_hosted_history.assert_not_called()
+
+    def test_cli_terminal_error_cleanup_is_not_reported_as_an_active_review(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            run_id = f"run.{'a' * 32}"
+            cli_root = common / "firemud" / "pr-review"
+            failed_capture = cli_root / "runs" / run_id
+            failed_capture.mkdir(parents=True)
+            (failed_capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (failed_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            (cli_root / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+            with (
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+            ):
+                self.assertEqual(provider.request_history(42, "cli"), [])
+
+    def test_recognized_cli_terminal_error_is_scoped_to_lock_owner(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            runs = common / "firemud" / "pr-review" / "runs"
+            run_id = f"run.{'b' * 32}"
+            failed_capture = runs / run_id
+            failed_capture.mkdir(parents=True)
+            (failed_capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (failed_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            (common / "firemud" / "pr-review" / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+            active_capture = runs / "run.other"
+            active_capture.mkdir(parents=True)
+            (active_capture / "metadata.json").write_text(
+                json.dumps({"run_id": "run.other", "pull_request": 43, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            with (
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+            ):
+                target_observation = provider.request_history(42, "cli")
+                other_pr_observation = provider.request_history(43, "cli")
+
+            self.assertEqual(target_observation, [])
+            self.assertEqual([item["checkpoint"] for item in other_pr_observation], ["active-cli:unidentified"])
+
+    def test_historical_terminal_error_does_not_identify_a_later_lock_owner(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            old_run_id = f"run.{'c' * 32}"
+            old_capture = cli_root / "runs" / old_run_id
+            old_capture.mkdir(parents=True)
+            (old_capture / "metadata.json").write_text(
+                json.dumps({"run_id": old_run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (old_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            (cli_root / "cli.lock").write_text(f"run_id=run.{'d' * 32}\n", encoding="utf-8")
+            with (
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+            ):
+                history = provider.request_history(42, "cli")
+
+            self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
+
+    def test_missing_or_malformed_cli_lock_owner_retains_active_fallback(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            run_id = f"run.{'e' * 32}"
+            failed_capture = cli_root / "runs" / run_id
+            failed_capture.mkdir(parents=True)
+            (failed_capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42}), encoding="utf-8"
+            )
+            (failed_capture / "error").write_text("preflight failed\n", encoding="utf-8")
+            lock_path = cli_root / "cli.lock"
+            for marker in ("", "not-an-owner\n", f"run_id={run_id}"):
+                with self.subTest(marker=marker):
+                    lock_path.write_text(marker, encoding="utf-8")
+                    with (
+                        patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+                        patch.object(provider, "_request_lock_is_held", return_value=True),
+                    ):
+                        history = provider.request_history(42, "cli")
+                    self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
+
+    def test_recognized_cli_lock_owner_reads_only_its_capture_metadata(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            run_id = f"run.{'f' * 32}"
+            capture = cli_root / "runs" / run_id
+            capture.mkdir(parents=True)
+            (capture / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "pull_request": 42,
+                        "candidate_sha": HEAD,
+                        "child_head_sha": HEAD,
+                        "parent_pr": 41,
+                        "parent_ref": "feature-1",
+                        "parent_sha": BASE,
+                        "merge_base": BASE,
+                        "patch_identity": PATCH,
+                        "run_counter": 7,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            unrelated = cli_root / "runs" / "run.unrelated"
+            unrelated.mkdir()
+            (unrelated / "metadata.json").write_text(
+                json.dumps({"run_id": "run.unrelated", "pull_request": 43, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            (cli_root / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(Path, "glob", side_effect=AssertionError("recognized owner must not scan run history")),
+            ):
+                owner_history = provider._active_cli_history(42, common)
+                other_pr_history = provider._active_cli_history(43, common, operational_only=True)
+
+            self.assertEqual([item["checkpoint"] for item in owner_history], [f"active-cli:{run_id}"])
+            self.assertTrue(owner_history[0]["current_lock_owner"])
+            self.assertEqual(
+                (owner_history[0]["child_head"], owner_history[0]["parent_identity"], owner_history[0]["parent_head"]),
+                (HEAD, "41", BASE),
+            )
+            self.assertEqual((owner_history[0]["merge_base"], owner_history[0]["patch_id"]), (BASE, PATCH))
+            self.assertEqual(other_pr_history, [])
+
+            invalid_parent_metadata = {
+                "run_id": run_id,
+                "pull_request": 42,
+                "candidate_sha": HEAD,
+                "parent_pr": True,
+                "parent_ref": "feature-1",
+                "parent_sha": BASE,
+                "merge_base": BASE,
+                "patch_identity": PATCH,
+            }
+            (capture / "metadata.json").write_text(json.dumps(invalid_parent_metadata), encoding="utf-8")
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(Path, "glob", side_effect=AssertionError("recognized owner must not scan run history")),
+            ):
+                invalid_parent_history = provider._active_cli_history(42, common)
+            self.assertEqual(invalid_parent_history[0]["parent_identity"], "feature-1")
+
+    def test_recognized_cli_owner_requires_matching_active_metadata_to_suppress_fallback(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        for metadata_run_id, terminal_marker in (("run.other", None), (None, "exit-status")):
+            with (
+                self.subTest(metadata_run_id=metadata_run_id, terminal_marker=terminal_marker),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                common = Path(directory)
+                cli_root = common / "firemud" / "pr-review"
+                run_id = f"run.{'b' * 32}"
+                capture = cli_root / "runs" / run_id
+                capture.mkdir(parents=True)
+                metadata = {"run_id": metadata_run_id or run_id, "pull_request": 43, "candidate_sha": HEAD}
+                (capture / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+                if terminal_marker is not None:
+                    (capture / terminal_marker).write_text("0\n", encoding="utf-8")
+                (cli_root / "cli.lock").write_text(f"run_id={run_id}\n", encoding="utf-8")
+
+                with (
+                    patch.object(provider, "_request_lock_is_held", return_value=True),
+                    patch.object(
+                        Path,
+                        "glob",
+                        side_effect=AssertionError("recognized owner must not scan run history"),
+                    ),
+                ):
+                    history = provider._active_cli_history(42, common, operational_only=True)
+
+                self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
+
+    def test_recognized_cli_lock_owner_with_missing_metadata_fails_closed(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            runs = cli_root / "runs"
+            runs.mkdir(parents=True)
+            (runs / "run.other").mkdir()
+            (runs / "run.other" / "metadata.json").write_text(
+                json.dumps({"run_id": "run.other", "pull_request": 42, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            owner_run_id = f"run.{'a' * 32}"
+            (cli_root / "cli.lock").write_text(f"run_id={owner_run_id}\n", encoding="utf-8")
+
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(Path, "glob", side_effect=AssertionError("recognized owner must not scan run history")),
+            ):
+                history = provider._active_cli_history(42, common, operational_only=True)
+
+            self.assertEqual([item["checkpoint"] for item in history], ["active-cli:unidentified"])
+
+    def test_unknown_cli_lock_owner_still_scans_active_captures(self) -> None:
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            cli_root = common / "firemud" / "pr-review"
+            run_id = "run.active"
+            capture = cli_root / "runs" / run_id
+            capture.mkdir(parents=True)
+            (capture / "metadata.json").write_text(
+                json.dumps({"run_id": run_id, "pull_request": 42, "candidate_sha": HEAD}),
+                encoding="utf-8",
+            )
+            (cli_root / "cli.lock").write_text("owner unavailable\n", encoding="utf-8")
+
+            with (
+                patch.object(provider, "_request_lock_is_held", return_value=True),
+                patch.object(evidence, "resolve_cli_capture_context", return_value=(common, None)),
+            ):
+                history = provider.request_history(42, "cli")
+                unrelated_pr_history = provider.request_history(43, "cli")
+
+            self.assertEqual([item["checkpoint"] for item in history], [f"active-cli:{run_id}"])
+            self.assertFalse(history[0].get("current_lock_owner", False))
+            self.assertEqual([item["checkpoint"] for item in unrelated_pr_history], ["active-cli:unidentified"])
+
+    def test_stopped_hosted_projection_preserves_current_cooldown(self) -> None:
+        now = datetime.now(timezone.utc)
+        record = self._trigger_record(created=(now - timedelta(minutes=2)).isoformat())
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "reviewer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": record["trigger"]["created_at"],
+            "url": record["trigger"]["url"],
+        }
+        reply = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai"},
+            "body": "Review rate limited; next reviews available in 30 minutes",
+            "createdAt": (now - timedelta(minutes=1)).isoformat(),
+        }
+        identity = self._payload([trigger, reply])["data"]["repository"]["pullRequest"]
+        provider = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        with (
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/unused/trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
+            patch.object(provider, "_request_lock_is_held", return_value=False),
+            patch.object(provider.live, "batch_pull_requests", return_value={42: identity}),
+        ):
+            self.assertTrue(provider.request_history(42, "hosted")[0]["rate_limited"])
+
+    def test_hosted_admission_keeps_other_pr_cooldown_and_releases_expired_quota(self) -> None:
+        runner = HostedRunner("owner/repo", LiveGitHub("owner/repo"))
+        for reset in (
+            None,
+            datetime.now(timezone.utc) + timedelta(minutes=10),
+            datetime.now(timezone.utc) - timedelta(minutes=1),
+        ):
+            with self.subTest(reset=reset), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "trigger.json"
+                state = SimpleNamespace(state="rate_limited", cooldown_until=reset.isoformat() if reset else None)
+                with (
+                    patch.object(runner, "_repository_current_trigger_paths", return_value={43: [path]}),
+                    patch.object(hosted, "load_trigger_reservation", return_value={"status": "posted"}),
+                    patch.object(github, "fetch_pull_request", return_value=self._payload()),
+                    patch.object(hosted, "trigger_state", return_value=state),
+                ):
+                    if reset is None or reset > datetime.now(timezone.utc):
+                        with self.assertRaisesRegex(ControllerError, "repository cooldown"):
+                            runner._assert_no_other_active_reservations(42, Path(directory))
+                    else:
+                        runner._assert_no_other_active_reservations(42, Path(directory))
+
     def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        context = patch.object(evidence, "git_common_dir", return_value=Path(directory.name))
+        context.start()
+        self.addCleanup(context.stop)
         def quiet_repository(endpoint: str) -> list[dict[str, Any]]:
             if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
                 return [{"number": 43, "state": "open"}]
@@ -827,6 +1609,154 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(event_order, ["sqlite-start", "reservation", "post"])
             self.assertEqual(post_timeout, [github.GH_API_TIMEOUT_SECONDS])
 
+    def test_force_posts_at_hosted_boundary_for_known_parent_and_mergeability_warning(self) -> None:
+        snapshot = PullRequestSnapshot(
+            42,
+            "OPEN",
+            "older-base",
+            BASE,
+            HEAD,
+            "feature",
+            1,
+            mergeable="UNKNOWN",
+        )
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("current-parent", "d" * 40, 41),
+            reconciled=False,
+            ancestor_links_valid=False,
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+            candidate_warnings=("stack reconciliation is PARENT_MOVED",),
+            default_base_front=True,
+        )
+        live = LiveGitHub("owner/repo")
+        comment = {
+            "id": 456,
+            "created_at": "2026-09-23T00:01:00Z",
+            "html_url": "https://example.test/456",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+
+        def gh_call(args, **_kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            return CompletedProcess(args, 0, json.dumps(comment), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.json"
+            actual_merge_base = "e" * 40
+            actual_patch_id = "f" * 64
+            git = SimpleNamespace(
+                merge_base=lambda base, head: actual_merge_base,
+                patch_identity=lambda merge_base, head: actual_patch_id,
+            )
+            payload = self._payload()
+            pull = payload["data"]["repository"]["pullRequest"]
+            pull.update({"baseRefName": "older-base", "baseRefOid": BASE})
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations"),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                result = HostedRunner("owner/repo", live, git=git)(
+                    target,
+                    expect_pr=42,
+                    force=True,
+                    reason="the configured parent moved",
+                    admit=lambda reserve: reserve(),
+                )
+
+            record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(result["status"], "posted")
+            self.assertTrue(result["force_acknowledged"])
+            self.assertEqual(record["actual_base_ref"], "older-base")
+            self.assertEqual(record["actual_base_sha"], BASE)
+            self.assertEqual(record["anchor"]["actual_base_ref"], "older-base")
+            self.assertEqual(record["anchor"]["actual_base_sha"], BASE)
+            self.assertEqual(record["anchor"]["parent_identity"], "older-base")
+            self.assertEqual(record["anchor"]["parent_head"], BASE)
+            self.assertEqual(record["anchor"]["merge_base"], actual_merge_base)
+            self.assertEqual(record["anchor"]["patch_id"], actual_patch_id)
+            self.assertEqual(record["configured_queue_anchor"]["parent_identity"], "41")
+            self.assertEqual(record["configured_queue_anchor"]["parent_head"], "d" * 40)
+            self.assertEqual(record["candidate_warnings"], ["stack reconciliation is PARENT_MOVED"])
+            self.assertEqual(record["force_reason"], "the configured parent moved")
+
+            reviewed = "2026-09-23T00:03:00Z"
+            trigger = {
+                "databaseId": 456,
+                "author": {"login": "maintainer"},
+                "body": hosted.FULL_COMMAND,
+                "createdAt": "2026-09-23T00:01:00Z",
+                "updatedAt": "2026-09-23T00:01:00Z",
+                "url": "https://example.test/456",
+            }
+            checkpoint = {
+                "databaseId": 457,
+                "author": {"login": "maintainer"},
+                "body": (
+                    f"Hosted: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files · 2m 00s\n"
+                    "<!-- firemud-hosted-review: 55 -->\n<!-- firemud-review-duration-seconds: 120 -->"
+                ),
+                "createdAt": reviewed,
+                "updatedAt": reviewed,
+            }
+            review = {
+                "databaseId": 55,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+                "state": "COMMENTED",
+                "submittedAt": reviewed,
+                "commit": {"oid": HEAD},
+            }
+            history_payload = self._payload([trigger, checkpoint], [review])
+            history_pr = history_payload["data"]["repository"]["pullRequest"]
+            history_pr.update({"baseRefName": "older-base", "baseRefOid": BASE, "changedFiles": 1})
+            with patch.object(hosted, "trigger_record_paths", return_value=[path]):
+                history = self._history(Path(directory), history_payload)
+            completed = [item for item in history if item.get("checkpoint") == "457"]
+            self.assertEqual(len(completed), 1)
+            self.assertTrue(completed[0]["completed"])
+            self.assertTrue(completed[0]["anchored"])
+            self.assertEqual(completed[0]["parent_identity"], "older-base")
+            self.assertEqual(completed[0]["parent_head"], BASE)
+            self.assertEqual(completed[0]["merge_base"], actual_merge_base)
+            self.assertEqual(completed[0]["patch_id"], actual_patch_id)
+
+            same_ref_target = dataclasses.replace(
+                target,
+                parent=EffectiveParent("older-base", "d" * 40, 41),
+            )
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[]),
+                patch.object(HostedRunner, "_assert_no_other_active_reservations"),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=Path(directory)),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+            ):
+                HostedRunner("owner/repo", live, git=git)(
+                    same_ref_target,
+                    expect_pr=42,
+                    force=True,
+                    reason="acknowledge a known candidate warning",
+                    admit=lambda reserve: reserve(),
+                )
+            same_ref_record = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(same_ref_record["anchor"]["parent_identity"], "41")
+            self.assertEqual(same_ref_record["anchor"]["parent_head"], BASE)
+            self.assertEqual(same_ref_record["anchor"]["merge_base"], actual_merge_base)
+            self.assertEqual(same_ref_record["anchor"]["patch_id"], actual_patch_id)
+
     def test_hosted_attempt_start_failure_does_not_block_the_single_post(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
         target = ReviewTarget(
@@ -918,6 +1848,62 @@ class RuntimeTest(unittest.TestCase):
 
             self.assertEqual(post_calls, [])
             self.assertFalse(path.exists())
+            attempts = records.attempt_history(42)
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(attempts[0]["state"], "failed")
+            self.assertIsNone(attempts[0]["run_id"])
+
+    def test_hosted_admission_callback_must_complete_durable_reservation_before_post(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        live = LiveGitHub("owner/repo")
+        completed_review = {
+            "databaseId": 901,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": f"<!-- walkthrough_start -->\nReviewed {HEAD}",
+            "state": "COMMENTED",
+            "submittedAt": "2026-09-23T00:02:00Z",
+            "commit": {"oid": HEAD},
+        }
+        payload = self._payload(reviews=[completed_review])
+        post_calls: list[list[str]] = []
+
+        def gh_call(args, **kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            post_calls.append(args)
+            raise AssertionError("Hosted POST must not run without a durable reservation")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            original_record = self._trigger_record()
+            self._bind_trigger(common, payload, original_record)
+            original_bytes = path.read_bytes()
+            records = self._new_review_records(common / "controller.sqlite3")
+            runner = HostedRunner("owner/repo", live, records=records)
+
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(runner, "_authenticated_login", return_value="maintainer"),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(ControllerError, "returned without reserving"),
+            ):
+                runner(target, expect_pr=42, admit=lambda _reserve: None)
+
+            self.assertEqual(path.read_bytes(), original_bytes)
+            self.assertFalse(path.with_name("trigger-10.json").exists())
+            self.assertEqual(post_calls, [])
             attempts = records.attempt_history(42)
             self.assertEqual(len(attempts), 1)
             self.assertEqual(attempts[0]["state"], "failed")
@@ -1862,8 +2848,8 @@ class RuntimeTest(unittest.TestCase):
                     self.assertTrue(post_started.wait(timeout=5), "first Hosted request did not reach POST")
                     second = pool.submit(HostedRunner("owner/repo", lives[43]), targets[43], expect_pr=43)
                     with self.assertRaisesRegex(
-                        ControllerError,
-                        "another Hosted request is active for repository owner/repo",
+                        HostedAdmissionBusy,
+                        "admission lock is busy for repository owner/repo.*does not establish an active Hosted",
                     ):
                         second.result(timeout=5)
                 finally:
@@ -1873,6 +2859,97 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(len(posts), 1)
             self.assertTrue(paths[42].exists())
             self.assertFalse(paths[43].exists())
+
+    def test_hosted_admission_lock_contention_is_typed_and_prepost(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE, repository="owner/repo"
+        )
+        live = LiveGitHub("owner/repo")
+
+        for lock_kind in ("repository", "pr"):
+            with self.subTest(lock_kind=lock_kind), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+                lock_path = (
+                    common / "firemud" / "hosted" / "owner_repo" / "repository.request.lock"
+                    if lock_kind == "repository"
+                    else path.parent / "request.lock"
+                )
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                with lock_path.open("a+") as lock_handle:
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+                    with (
+                        patch.object(live, "pull_request", return_value=snapshot),
+                        patch.object(live, "branch_head", return_value=BASE),
+                        patch.object(hosted, "default_trigger_record_path", return_value=path),
+                        patch.object(evidence, "git_common_dir", return_value=common),
+                        patch("pr_review.runtime.subprocess.run") as provider_call,
+                        self.assertRaisesRegex(
+                            HostedAdmissionBusy,
+                            "admission lock is busy.*does not establish an active Hosted provider request",
+                        ),
+                    ):
+                        HostedRunner("owner/repo", live)(target, expect_pr=42)
+                    provider_call.assert_not_called()
+                    self.assertFalse(path.exists())
+                    fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    def test_concurrent_hosted_requests_for_same_pr_post_only_once(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot, EffectiveParent("develop", BASE), patch_identity=PATCH, merge_base=BASE, repository="owner/repo"
+        )
+        live = LiveGitHub("owner/repo")
+        payload = self._payload()
+        comment = {
+            "id": 123,
+            "created_at": "2026-09-24T00:01:00Z",
+            "html_url": "https://example.test/123",
+            "body": hosted.FULL_COMMAND,
+            "user": {"login": "maintainer"},
+        }
+        post_started = threading.Event()
+        release_post = threading.Event()
+        posts = []
+
+        def gh_call(args, **_kwargs):
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            posts.append(args)
+            post_started.set()
+            if not release_post.wait(timeout=10):
+                raise AssertionError("test did not release the Hosted POST")
+            return CompletedProcess(args, 0, json.dumps(comment), "")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            with (
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(live, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(hosted, "default_trigger_record_path", return_value=path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                ThreadPoolExecutor(max_workers=2) as pool,
+            ):
+                first = pool.submit(HostedRunner("owner/repo", live), target, expect_pr=42)
+                try:
+                    self.assertTrue(post_started.wait(timeout=5), "first Hosted request did not reach POST")
+                    with self.assertRaisesRegex(
+                        HostedAdmissionBusy,
+                        "admission lock is busy.*does not establish an active Hosted provider request",
+                    ):
+                        HostedRunner("owner/repo", live)(target, expect_pr=42)
+                    self.assertTrue(path.exists())
+                finally:
+                    release_post.set()
+
+                self.assertEqual(first.result(timeout=5)["status"], "posted")
+
+            self.assertEqual(len(posts), 1)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["trigger"]["id"], 123)
 
     def test_hosted_stop_at_admission_leaves_no_post_or_started_sqlite_attempt(self) -> None:
         snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
@@ -1907,36 +2984,61 @@ class RuntimeTest(unittest.TestCase):
             self.assertEqual(len(records.attempt_history(42)), 1)
             self.assertEqual(records.attempt_history(42)[0]["state"], "failed")
 
-    def test_cli_activity_uses_existing_capture_and_excludes_terminal_files(self) -> None:
+    def test_cli_activity_scans_all_captures_and_excludes_terminal_files(self) -> None:
         import fcntl
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
             root = common / "firemud" / "pr-review"
-            capture = root / "runs" / "run.active"
-            capture.mkdir(parents=True)
-            metadata = {
-                "run_id": "run.active",
-                "pull_request": 42,
-                "candidate_sha": HEAD,
-                "parent_ref": "develop",
-                "parent_sha": BASE,
-                "merge_base": BASE,
-                "patch_identity": PATCH,
-            }
-            (capture / "metadata.json").write_text(json.dumps(metadata))
+            captures = root / "runs"
+
+            def create_capture(run_id: str, metadata: dict[str, Any], modified_ns: int) -> Path:
+                capture = captures / run_id
+                capture.mkdir(parents=True)
+                metadata_path = capture / "metadata.json"
+                metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+                os.utime(metadata_path, ns=(modified_ns, modified_ns))
+                return capture
+
+            create_capture(
+                "run.active",
+                {
+                    "run_id": "run.active",
+                    "pull_request": 42,
+                    "candidate_sha": HEAD,
+                    "parent_ref": "develop",
+                    "parent_sha": BASE,
+                    "merge_base": BASE,
+                    "patch_identity": PATCH,
+                },
+                1_000_000_000,
+            )
+            completed = create_capture(
+                "run.completed",
+                {"run_id": "run.completed", "pull_request": 42, "candidate_sha": HEAD},
+                2_000_000_000,
+            )
+            create_capture(
+                "run.other-pr",
+                {"run_id": "run.other-pr", "pull_request": 43, "candidate_sha": HEAD},
+                3_000_000_000,
+            )
+            malformed = captures / "run.malformed"
+            malformed.mkdir(parents=True)
+            malformed_metadata = malformed / "metadata.json"
+            malformed_metadata.write_text("{not-json", encoding="utf-8")
+            os.utime(malformed_metadata, ns=(4_000_000_000, 4_000_000_000))
             with (root / "cli.lock").open("a+") as handle:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                history = self._history(common, self._payload(), "cli")
-                self.assertEqual(
-                    [item["checkpoint"] for item in history if item.get("active_review")], ["active-cli:run.active"]
-                )
                 for terminal_file in ("error", "exit-status", "capture-complete"):
                     with self.subTest(terminal_file=terminal_file):
-                        path = capture / terminal_file
+                        path = completed / terminal_file
                         path.write_text("0")
                         history = self._history(common, self._payload(), "cli")
-                        self.assertFalse(any(item.get("active_review") for item in history))
+                        self.assertEqual(
+                            [item["checkpoint"] for item in history if item.get("active_review")],
+                            ["active-cli:run.active"],
+                        )
                         path.unlink()
 
     def test_hosted_request_rejects_more_than_100_files_before_reserving_or_posting(self) -> None:
@@ -2287,7 +3389,16 @@ class RuntimeTest(unittest.TestCase):
         path.write_text(json.dumps(record), encoding="utf-8")
 
     def _history(self, common: Path, payload, channel="hosted", *, changed_files=1, current_head=HEAD):
-        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, current_head, "feature", changed_files)
+        pull = payload["data"]["repository"]["pullRequest"]
+        snapshot = PullRequestSnapshot(
+            42,
+            "OPEN",
+            pull.get("baseRefName", "develop"),
+            pull.get("baseRefOid", BASE),
+            current_head,
+            "feature",
+            changed_files,
+        )
         live = LiveGitHub("owner/repo")
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
@@ -2313,6 +3424,14 @@ class RuntimeTest(unittest.TestCase):
             @staticmethod
             def cli_source_decisions(_run_id):
                 return None
+
+            @staticmethod
+            def cli_capture_snapshot(_run_id, *, source_pr):
+                return None
+
+            @staticmethod
+            def completed_cli_capture_snapshots(_pr):
+                return []
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -2550,7 +3669,8 @@ class RuntimeTest(unittest.TestCase):
         now = datetime.now(timezone.utc).replace(microsecond=0)
         trigger_at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
         response_at = (now - timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
-        cooldown_until = (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+        audit_after = now + timedelta(seconds=2)
+        cooldown_until = (now + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
         trigger = {
             "databaseId": 10,
             "author": {"login": "maintainer"},
@@ -2604,16 +3724,51 @@ class RuntimeTest(unittest.TestCase):
             "unresolved_findings": [],
         }
 
+        class SteppedDateTime(datetime):
+            last_sample = None
+            calls = 0
+            samples = iter(())
+
+            @classmethod
+            def now(cls, tz=None):
+                cls.calls += 1
+                try:
+                    cls.last_sample = next(cls.samples)
+                except StopIteration:
+                    pass
+                return cls.last_sample
+
+        SteppedDateTime.last_sample = now
+        SteppedDateTime.calls = 0
+        SteppedDateTime.samples = iter((now, audit_after))
+
+        def legacy_audit_at_sample(*_args, **kwargs):
+            self.assertIn("now", kwargs)
+            audit_time = kwargs["now"]
+            self.assertEqual(audit_time, now)
+            history = observer.history(42, "hosted", now=audit_time)
+            self.assertTrue(any(item.get("rate_limited") for item in history))
+            active = ["rate_limited"] if hosted.parse_timestamp(cooldown_until) > audit_time else []
+            return {**generic_audit, "active_reservations": [*active, "review active"]}
+
         with (
             patch.object(github, "fetch_pull_request", return_value=payload),
             patch.object(live, "pull_request", return_value=snapshot),
-            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=generic_audit),
+            patch.object(observer, "legacy_transition_reauthorization_audit", side_effect=legacy_audit_at_sample),
             patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
             patch.object(hosted, "load_trigger_record", return_value=record),
             patch.object(hosted, "trigger_state", return_value=state),
-            patch.object(observer, "history", return_value=[]),
+            patch.object(observer, "_global_blockers", return_value=[]),
+            patch("pr_review.runtime.datetime", SteppedDateTime),
         ):
             audit = observer.review_stop_audit(42, anchor)
+            self.assertEqual(SteppedDateTime.calls, 1)
+            SteppedDateTime.samples = iter((audit_after,))
+            ordinary_history = observer.history(42, "hosted")
+            self.assertEqual(SteppedDateTime.calls, 2)
+            self.assertFalse(any(item.get("rate_limited") for item in ordinary_history))
 
         self.assertEqual(audit["active_reservations"], ["review active"])
         self.assertEqual(
@@ -2630,6 +3785,114 @@ class RuntimeTest(unittest.TestCase):
             ],
         )
         self.assertIn("active Hosted reservation: review active", audit["blockers"])
+
+        expired_cooldown = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        expired_state = SimpleNamespace(**{**vars(state), "cooldown_until": expired_cooldown})
+        expired_audit = {**generic_audit, "active_reservations": ["review active"]}
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=expired_audit),
+            patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
+            patch.object(hosted, "load_trigger_record", return_value=record),
+            patch.object(hosted, "trigger_state", return_value=expired_state),
+            patch.object(observer, "_global_blockers", return_value=[]),
+        ):
+            expired_result = observer.review_stop_audit(42, anchor)
+
+        self.assertEqual(expired_result["active_reservations"], ["review active"])
+        self.assertEqual(
+            expired_result["terminal_rate_limits"][0]["cooldown_until"],
+            expired_cooldown,
+        )
+
+        mismatched_audit = {**generic_audit, "active_reservations": ["review active"]}
+        mismatched_state = SimpleNamespace(
+            **{
+                **vars(state),
+                "cooldown_until": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            }
+        )
+        with (
+            patch.object(github, "fetch_pull_request", return_value=payload),
+            patch.object(live, "pull_request", return_value=snapshot),
+            patch.object(observer, "legacy_transition_reauthorization_audit", return_value=mismatched_audit),
+            patch.object(observer, "_complete_trigger_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "current_trigger_record_paths", return_value=[Path("trigger.json")]),
+            patch.object(hosted, "load_trigger_reservation", return_value=record),
+            patch.object(hosted, "load_trigger_record", return_value=record),
+            patch.object(hosted, "trigger_state", return_value=mismatched_state),
+            patch.object(observer, "_global_blockers", return_value=[]),
+            self.assertRaisesRegex(ControllerError, "cannot be isolated from other reservations"),
+        ):
+            observer.review_stop_audit(42, anchor)
+
+    def test_review_stop_audit_preserves_active_cli_identity_separately_from_pending_findings(self) -> None:
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        observer = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+        anchor = {
+            "pr": 42,
+            "child_head": HEAD,
+            "parent_identity": "develop",
+            "parent_head": BASE,
+            "merge_base": BASE,
+            "patch_id": PATCH,
+        }
+        active_cli = {
+            **anchor,
+            "head": HEAD,
+            "checkpoint": f"active-cli:run.{'a' * 32}",
+            "active_review": True,
+            "held": True,
+            "current_lock_owner": True,
+            "reason": "CLI review is running; its eventual findings still require adjudication",
+        }
+        pending_cli = {
+            "pr": 42,
+            "head": HEAD,
+            "checkpoint": "pending-capture:cli-run",
+            "held": True,
+            "reason": "a successful private CLI capture has no public checkpoint and requires adjudication",
+        }
+        empty_audit = {
+            "complete": True,
+            "active_reservations": [],
+            "unmatched_responses": [],
+            "historical_unmatched_responses": [],
+            "ambiguous_responses": [],
+            "unresolved_findings": [],
+        }
+
+        def audit_for(cli_history):
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(observer.live, "pull_request", return_value=snapshot),
+                patch.object(observer, "legacy_transition_reauthorization_audit", return_value=empty_audit),
+                patch.object(observer, "_complete_trigger_paths", return_value=[]),
+                patch.object(
+                    observer,
+                    "history",
+                    side_effect=lambda _pr, channel, **_kwargs: cli_history if channel == "cli" else [],
+                ),
+            ):
+                return observer.review_stop_audit(42, anchor)
+
+        active_audit = audit_for([active_cli])
+        self.assertEqual(active_audit["active_cli_reviews"], [active_cli])
+        self.assertFalse(any("CLI review is running" in item for item in active_audit["unresolved_findings"]))
+        self.assertFalse(any("CLI review is running" in item for item in active_audit["blockers"]))
+
+        pending_audit = audit_for([pending_cli])
+        self.assertEqual(pending_audit["active_cli_reviews"], [])
+        self.assertEqual(
+            pending_audit["unresolved_findings"],
+            ["a successful private CLI capture has no public checkpoint and requires adjudication"],
+        )
 
     def test_hosted_checkpoint_requires_matching_completed_durable_trigger_and_anchor(self) -> None:
         body = (
@@ -2668,9 +3931,22 @@ class RuntimeTest(unittest.TestCase):
             record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
             record_path.parent.mkdir(parents=True)
             record = self._trigger_record(created=created)
+            record["force_acknowledged"] = True
+            record["force_reason"] = "known parent reconciliation warning"
+            record["candidate_warnings"] = ["stack reconciliation is PARENT_MOVED"]
+            record["actual_base_ref"] = "develop"
+            record["actual_base_sha"] = BASE
+            record["anchor"]["actual_base_ref"] = "develop"
+            record["anchor"]["actual_base_sha"] = BASE
             record_path.write_text(json.dumps(record), encoding="utf-8")
             history = self._history(common, payload)
-            self.assertTrue(any(item.get("completed") and item.get("anchored") for item in history))
+            completed_rows = [item for item in history if item.get("checkpoint") == "12"]
+            self.assertEqual(len(completed_rows), 1)
+            self.assertTrue(completed_rows[0]["completed"])
+            self.assertTrue(completed_rows[0]["attributable"])
+            self.assertTrue(completed_rows[0]["anchored"])
+            self.assertFalse(completed_rows[0]["provisional"])
+            self.assertTrue(taper_satisfied(Channel.HOSTED, completed_rows, required=1))
             self.assertEqual(_review_activity(history, HEAD)["recent"][0]["routed"], 1)
 
             mismatched = {**review, "databaseId": 56}
@@ -3224,6 +4500,68 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(observation["trigger_id"], 10)
         self.assertEqual(observation["response_id"], 11)
 
+    def test_complete_audit_exposes_exact_active_hosted_response_identity(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+        response_at = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        trigger = {
+            "databaseId": 10,
+            "author": {"login": "maintainer"},
+            "body": hosted.FULL_COMMAND,
+            "createdAt": trigger_at,
+            "updatedAt": trigger_at,
+        }
+        response = {
+            "databaseId": 11,
+            "author": {"login": "coderabbitai[bot]"},
+            "body": "Full review triggered.",
+            "createdAt": response_at,
+            "updatedAt": response_at,
+        }
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            response_id=11,
+            state="active",
+            terminal=False,
+            attributed=True,
+            head_sha=HEAD,
+            reason="CodeRabbit acknowledged that the full review is active",
+        )
+        payload = self._payload([trigger, response])
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        observer = LiveEvidence("owner/repo", live)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(observer, "_complete_trigger_paths", return_value=[record_path]),
+                patch.object(hosted, "current_trigger_record_paths", return_value=[record_path]),
+                patch.object(hosted, "load_trigger_record", return_value=record),
+                patch.object(hosted, "load_trigger_reservation", return_value=record),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                audit = observer.legacy_transition_reauthorization_audit(
+                    42,
+                    (),
+                    {"child_head": HEAD, "live_base_ref": "develop", "live_base_tip": BASE},
+                )
+
+        self.assertEqual(audit["active_reservations"], ["active"])
+        self.assertEqual(len(audit["active_hosted_reservations"]), 1)
+        active = audit["active_hosted_reservations"][0]
+        self.assertEqual(active["trigger_id"], 10)
+        self.assertEqual(active["response_id"], 11)
+        self.assertEqual(active["anchor"], record["anchor"])
+
     def test_review_stop_audit_pins_exact_terminal_ambiguity_without_legacy_reauthorization(self) -> None:
         trigger_at = "2026-09-23T00:01:00Z"
         response_at = "2026-09-23T00:03:00Z"
@@ -3341,12 +4679,10 @@ class RuntimeTest(unittest.TestCase):
                     "live_base_ref": "develop",
                     "live_base_tip": BASE,
                 }
-                audit.assert_called_once_with(
-                    42,
-                    (),
-                    expected_anchor,
-                    allow_historical_unmatched=True,
-                )
+                audit.assert_called_once()
+                self.assertEqual(audit.call_args.args, (42, (), expected_anchor))
+                self.assertEqual(audit.call_args.kwargs["allow_historical_unmatched"], True)
+                self.assertIsInstance(audit.call_args.kwargs["now"], datetime)
                 return result
 
         observed = run_review_stop()

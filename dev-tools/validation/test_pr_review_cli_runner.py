@@ -17,7 +17,7 @@ from unittest.mock import Mock, patch
 DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
-from pr_review import cli_attempts, cli_runner, evidence, hosted
+from pr_review import cli_attempts, cli_runner, evidence, github, hosted
 from pr_review.cli import _parser, _render
 from pr_review.cli_runner import (
     HOSTED_CLI_OVERLAP_HOLD_REASON,
@@ -37,6 +37,8 @@ from pr_review.cli_runner import (
     target_from_resolver,
 )
 from pr_review.patch_identity import patch_diff_args
+from pr_review.policy import Channel, taper_satisfied
+from pr_review.runtime import LiveEvidence, LiveGitHub
 from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 
@@ -201,6 +203,7 @@ class FakeCommands:
         merge_base=None,
         merge_conflict=False,
         merge_tree=CONTEXT,
+        merge_bases=None,
     ):
         self.root = root
         self.delay = delay
@@ -222,6 +225,7 @@ class FakeCommands:
         self.merge_base = merge_base or PARENT
         self.merge_conflict = merge_conflict
         self.merge_tree = merge_tree
+        self.merge_bases = merge_bases or {}
         self.timeout_calls = []
         self.test_worktrees = set()
         self.records = None
@@ -287,8 +291,9 @@ class FakeCommands:
                 return CompletedProcess(args, 0, output, b"" if not text else "")
             if git_args == ["rev-list", "--count", f"{HEAD}..{self.candidate}"]:
                 return CompletedProcess(args, 0, "1\n", "")
-            if git_args[:3] == ["merge-base", "--all", PARENT]:
-                return CompletedProcess(args, 0, f"{self.merge_base}\n", "")
+            if git_args[:2] == ["merge-base", "--all"]:
+                selected_base = self.merge_bases.get((git_args[2], git_args[3]), self.merge_base)
+                return CompletedProcess(args, 0, f"{selected_base}\n", "")
             if git_args[:3] == ["merge-base", "--is-ancestor", HEAD]:
                 return CompletedProcess(args, 0, "", "")
             if git_args[:3] == ["merge-base", "--is-ancestor", PARENT]:
@@ -313,11 +318,15 @@ def target(
     patch_identity="",
     default_base_front=False,
     changed_files=1,
+    parent_ref="develop",
+    parent_head=PARENT,
+    parent_pr=None,
+    candidate_warnings=(),
 ):
     snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, changed_files=changed_files)
     return ReviewTarget(
         snapshot,
-        EffectiveParent("develop", PARENT),
+        EffectiveParent(parent_ref, parent_head, parent_pr),
         reconciled=reconciled,
         ancestor_links_valid=ancestor_links_valid,
         merge_base=merge_base,
@@ -327,6 +336,7 @@ def target(
         default_test_merge_base_sha=BASE if default_base_front else "",
         default_test_merge_head_sha=HEAD if default_base_front else "",
         default_test_merge_tree_sha=CONTEXT if default_base_front else "",
+        candidate_warnings=tuple(candidate_warnings),
     )
 
 
@@ -410,6 +420,38 @@ def cli_anchor(*, parent_identity="develop", parent_head=PARENT, merge_base=PARE
 
 
 class CliReviewRunnerTests(unittest.TestCase):
+    def test_admission_callback_must_reserve_before_attempt_or_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            database = root / "records.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            commands = FakeCommands(root)
+            commands.records = records
+            callback_calls = []
+
+            def admit_without_reserving(reserve):
+                callback_calls.append(reserve)
+
+            with self.assertRaisesRegex(ReviewRunnerError, "without reserving"):
+                run_cli_review(
+                    target(),
+                    github=FakeGitHub(),
+                    source_root=root,
+                    runner=commands,
+                    records=records,
+                    admit=admit_without_reserving,
+                )
+
+            self.assertEqual(len(callback_calls), 1)
+            self.assertEqual(records.attempt_history(42), [])
+            self.assertEqual(
+                [call for call in commands.calls if call[0][0] == "coderabbit"],
+                [],
+            )
+
     def test_sqlite_attempt_is_written_before_provider_and_completed_with_json_events(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1074,7 +1116,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 head_sha,
                 SubprocessRunner(),
                 root,
-                allow_unreconciled=False,
+                force=False,
             )
 
             self.assertEqual(result[1:3], (1, 1))
@@ -1101,9 +1143,7 @@ class CliReviewRunnerTests(unittest.TestCase):
             target_from_resolver(resolver, expected_pr=99)
         resolver.resolve_cli_target.assert_called_once_with()
 
-    def test_unreconciled_mode_requires_reason_and_is_provisional(self):
-        with self.assertRaises(ReviewRunnerError):
-            run_cli_review(target(reconciled=False), github=FakeGitHub(), allow_unreconciled=True)
+    def test_force_acknowledges_known_candidate_warning_without_provisional_credit(self):
         with self.assertRaises(UnreconciledReviewError):
             run_cli_review(target(reconciled=False), github=FakeGitHub())
 
@@ -1115,15 +1155,106 @@ class CliReviewRunnerTests(unittest.TestCase):
                 github=FakeGitHub(),
                 source_root=root,
                 runner=FakeCommands(root),
-                allow_unreconciled=True,
-                reason="cost is disproportionate for a one-pass discovery",
+                force=True,
             )
-            self.assertTrue(result.provisional)
+            self.assertFalse(result.provisional)
+            self.assertTrue(result.force_acknowledged)
             metadata = json.loads((result.capture_dir / "metadata.json").read_text())
-            self.assertTrue(metadata["provisional"])
-            self.assertIn("one-pass", metadata["reason"])
+            self.assertFalse(metadata["provisional"])
+            self.assertTrue(metadata["force_acknowledged"])
 
-    def test_unreconciled_reason_rejects_long_and_control_text_before_capture(self):
+    def test_repeated_forced_cli_results_import_as_counting_runtime_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            common = root / ".git"
+            common.mkdir()
+            fake_github = FakeGitHub()
+            selected = target(
+                reconciled=False,
+                ancestor_links_valid=False,
+                parent_ref="current-parent",
+                parent_head="d" * 40,
+                parent_pr=41,
+                candidate_warnings=("stack reconciliation is PARENT_MOVED",),
+            )
+            results = []
+            for _ in range(3):
+                commands = FakeCommands(
+                    root,
+                    parent_is_ancestor=False,
+                    merge_base=BASE,
+                    review_output=(
+                        '{"type":"start","reviewType":"full"}\n'
+                        '{"type":"complete","status":"review_completed",'
+                        '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                    ),
+                )
+                results.append(
+                    run_cli_review(
+                        selected,
+                        github=fake_github,
+                        source_root=root,
+                        runner=commands,
+                        force=True,
+                        reason="acknowledged parent movement",
+                    )
+                )
+            comments = [
+                {
+                    "databaseId": index + 1,
+                    "body": (
+                        f"CLI: 0 found / 0 accepted · `{HEAD[:12]}` · 1 files · 1s\n"
+                        f"<!-- firemud-cli-run: {result.run_id} -->\n"
+                        "<!-- firemud-review-duration-seconds: 1 -->"
+                    ),
+                    "createdAt": f"2026-09-23T00:0{index}:00Z",
+                    "updatedAt": f"2026-09-23T00:0{index}:00Z",
+                }
+                for index, result in enumerate(results)
+            ]
+            payload = {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "number": 42,
+                            "baseRefName": "develop",
+                            "baseRefOid": BASE,
+                            "headRefOid": HEAD,
+                            "changedFiles": 1,
+                            "comments": {"nodes": comments},
+                            "reviews": {"nodes": []},
+                            "reviewThreads": {"nodes": []},
+                        }
+                    }
+                }
+            }
+            observer_live = LiveGitHub("owner/repo")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(observer_live, "pull_request", return_value=selected.snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+            ):
+                history = list(LiveEvidence("owner/repo", observer_live).history(42, "cli"))
+
+            counting = [row for row in history if row.get("completed") is True]
+            self.assertEqual(len(counting), 3)
+            self.assertTrue(all(row["attributable"] and row["anchored"] for row in counting))
+            self.assertTrue(all(row["provisional"] is False for row in counting))
+            self.assertTrue(all(row["parent_identity"] == "develop" for row in counting))
+            self.assertTrue(all(row["parent_head"] == BASE for row in counting))
+            self.assertTrue(taper_satisfied(Channel.CLI, counting, required=3))
+            for result in results:
+                metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+                self.assertTrue(metadata["force_acknowledged"])
+                self.assertEqual(metadata["parent_ref"], "develop")
+                self.assertEqual(metadata["parent_sha"], BASE)
+                self.assertEqual(metadata["actual_base_ref"], "develop")
+                self.assertEqual(metadata["actual_base_sha"], BASE)
+                self.assertEqual(metadata["configured_parent_sha"], "d" * 40)
+                self.assertEqual(metadata["configured_parent_pr"], 41)
+                self.assertIsNone(metadata["parent_pr"])
+
+    def test_force_reason_rejects_long_and_control_text_before_capture(self):
         invalid_reasons = (
             ("x" * 241, "240 characters or fewer"),
             ("line one\nline two", "control characters"),
@@ -1141,13 +1272,13 @@ class CliReviewRunnerTests(unittest.TestCase):
                             github=FakeGitHub(),
                             source_root=root,
                             runner=commands,
-                            allow_unreconciled=True,
+                            force=True,
                             reason=reason,
                         )
                     self.assertEqual(commands.calls, [])
                     self.assertFalse((root / ".git" / "firemud" / "pr-review" / "runs").exists())
 
-    def test_provisional_run_allows_parent_tip_outside_candidate_history(self):
+    def test_force_run_allows_known_parent_tip_outside_candidate_history(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".git").mkdir()
@@ -1157,13 +1288,14 @@ class CliReviewRunnerTests(unittest.TestCase):
                 github=FakeGitHub(),
                 source_root=root,
                 runner=commands,
-                allow_unreconciled=True,
-                reason="one provisional discovery after the parent advanced",
+                force=True,
+                reason="parent advanced after reconciliation",
             )
 
             self.assertEqual(result.merge_base, OLDER_BASE)
-            self.assertEqual(result.parent_sha, PARENT)
-            self.assertTrue(result.provisional)
+            self.assertEqual(result.parent_sha, BASE)
+            self.assertFalse(result.provisional)
+            self.assertTrue(result.force_acknowledged)
             pinned_ref = f"refs/firemud/pr-review-base/{result.run_id}"
             self.assertTrue(pinned_ref.startswith("refs/firemud/pr-review-base/"))
             self.assertNotIn("refs/heads/", pinned_ref)
@@ -1173,6 +1305,58 @@ class CliReviewRunnerTests(unittest.TestCase):
             )
             self.assertIn(
                 ("git", "-C", str(root), "merge-base", "--all", PARENT, HEAD),
+                [call[0] for call in commands.calls],
+            )
+
+    def test_force_reviews_actual_pr_base_when_configured_parent_and_mergeability_are_stale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(
+                root,
+                parent_is_ancestor=False,
+                merge_base=BASE,
+                review_output=(
+                    '{"type":"start","reviewType":"full"}\n'
+                    '{"type":"complete","status":"review_completed",'
+                    '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                ),
+            )
+            live = FakeGitHub()
+            live.mergeable = "UNKNOWN"
+            selected = target(
+                reconciled=False,
+                ancestor_links_valid=False,
+                parent_ref="current-parent",
+                parent_head="d" * 40,
+                parent_pr=41,
+                candidate_warnings=("stack reconciliation is PARENT_MOVED",),
+            )
+
+            result = run_cli_review(
+                selected,
+                github=live,
+                source_root=root,
+                runner=commands,
+                force=True,
+            )
+
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            self.assertEqual(result.exit_status, 0)
+            self.assertTrue(result.force_acknowledged)
+            self.assertFalse(result.provisional)
+            self.assertEqual(metadata["actual_base_ref"], "develop")
+            self.assertEqual(metadata["actual_base_sha"], BASE)
+            self.assertEqual(metadata["parent_ref"], "develop")
+            self.assertEqual(metadata["parent_sha"], BASE)
+            self.assertEqual(metadata["configured_parent_ref"], "current-parent")
+            self.assertEqual(metadata["configured_parent_sha"], "d" * 40)
+            self.assertIsNone(metadata["parent_pr"])
+            self.assertEqual(metadata["configured_parent_pr"], 41)
+            self.assertEqual(metadata["candidate_warnings"], ["stack reconciliation is PARENT_MOVED"])
+            self.assertTrue(metadata["force_acknowledged"])
+            self.assertNotIn(
+                ("git", "-C", str(root), "merge-base", "--is-ancestor", "d" * 40, HEAD),
                 [call[0] for call in commands.calls],
             )
 
@@ -1212,6 +1396,85 @@ class CliReviewRunnerTests(unittest.TestCase):
                     args[:6] == ("git", "-C", str(root), "worktree", "add", "--detach") and args[-1] == CONTEXT
                     for args in command_args
                 )
+            )
+
+    def test_force_reviews_default_base_diff_without_merge_readiness_proof(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(
+                root,
+                parent_is_ancestor=False,
+                merge_base=BASE,
+                merge_conflict=True,
+                review_output=(
+                    '{"type":"start","reviewType":"full"}\n'
+                    '{"type":"complete","status":"review_completed",'
+                    '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                ),
+            )
+            selected = dataclasses.replace(
+                target(default_base_front=True),
+                default_test_merge_tree_sha="",
+                candidate_warnings=("current default-base merge proof is missing",),
+            )
+
+            result = run_cli_review(
+                selected,
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+                force=True,
+            )
+
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            command_args = [call[0] for call in commands.calls]
+            self.assertEqual(result.exit_status, 0)
+            self.assertTrue(result.force_acknowledged)
+            self.assertEqual(metadata["actual_base_ref"], "develop")
+            self.assertEqual(metadata["actual_base_sha"], BASE)
+            self.assertEqual(metadata["parent_sha"], BASE)
+            self.assertEqual(metadata["candidate_warnings"], ["current default-base merge proof is missing"])
+            self.assertFalse(any("merge-tree" in args for args in command_args))
+
+    def test_force_default_base_local_candidate_records_candidate_merge_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(
+                root,
+                candidate=CANDIDATE,
+                parent_is_ancestor=False,
+                merge_base=OLDER_BASE,
+                merge_bases={(BASE, CANDIDATE): OLDER_BASE, (BASE, HEAD): BASE},
+                review_output=(
+                    '{"type":"start","reviewType":"full"}\n'
+                    '{"type":"complete","status":"review_completed",'
+                    '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                ),
+            )
+
+            result = run_cli_review(
+                target(default_base_front=True),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+                force=True,
+            )
+
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            command_args = [call[0] for call in commands.calls]
+            self.assertEqual(result.merge_base, OLDER_BASE)
+            self.assertEqual(metadata["merge_base"], OLDER_BASE)
+            self.assertEqual(metadata["review_base_sha"], OLDER_BASE)
+            self.assertEqual(metadata["published_merge_base"], BASE)
+            self.assertIn(
+                ("git", "-C", str(root), "merge-base", "--all", BASE, CANDIDATE),
+                command_args,
+            )
+            self.assertIn(
+                ("git", "-C", str(root), "merge-base", "--all", BASE, HEAD),
+                command_args,
             )
 
     def test_direct_default_front_rejects_a_published_tree_that_differs_from_selected_proof(self):
@@ -1370,14 +1633,13 @@ class CliReviewRunnerTests(unittest.TestCase):
     def test_human_stop_preserves_running_cli_capture_and_rejects_next_admission(self):
         import test_pr_review_controller as controller_fixtures
         from pr_review.controller import ControllerError, ReviewController
-        from pr_review.state import StateStore
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             common = root / ".git"
             common.mkdir()
             controller = ReviewController(
-                store=StateStore(common / "firemud" / "pr-review-stack.json"),
+                store=SqliteStateStore(common / "firemud" / "pr-review-stack.sqlite3"),
                 repository="owner/repo",
                 github=controller_fixtures.FakeGitHub({42: controller_fixtures.pr(42, HEAD)}),
                 git=controller_fixtures.FakeGit({"feature-42": HEAD}),
@@ -1470,6 +1732,121 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertIn("already running", errors[0])
             self.assertFalse(commands.overlap)
+
+    def test_cli_lock_owner_marker_matches_active_provider_and_replaces_stale_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.write_text(f"run_id=run.{'0' * 32}\n", encoding="utf-8")
+            commands = FakeCommands(root)
+            observed_markers = []
+            original_run = commands.run
+
+            def observe_provider(args, **kwargs):
+                if args[0] == "coderabbit":
+                    observed_markers.append(lock_path.read_text(encoding="utf-8"))
+                return original_run(args, **kwargs)
+
+            commands.run = observe_provider
+            result = run_cli_review(
+                target(),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+            )
+
+            self.assertEqual(observed_markers, [f"run_id={result.run_id}\n"])
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), "")
+
+    def test_cli_lock_owner_marker_clears_after_failed_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.write_text(f"run_id=run.{'1' * 32}\n", encoding="utf-8")
+            github = FakeGitHub()
+            github.mergeable = "CONFLICTING"
+            observed_markers = []
+            original_pull_request = github.pull_request
+
+            def observe_preflight(number):
+                observed_markers.append(lock_path.read_text(encoding="utf-8"))
+                return original_pull_request(number)
+
+            github.pull_request = observe_preflight
+            commands = FakeCommands(root)
+            with self.assertRaisesRegex(ReviewRunnerError, "not mergeable"):
+                run_cli_review(target(), github=github, source_root=root, runner=commands)
+
+            self.assertTrue(observed_markers)
+            self.assertTrue(
+                all(
+                    marker.startswith("run_id=run.")
+                    and len(marker) == len("run_id=run.") + 32 + 1
+                    and marker.endswith("\n")
+                    for marker in observed_markers
+                )
+            )
+            self.assertEqual(len(set(observed_markers)), 1)
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), "")
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_owner_cleanup_failure_preserves_success_and_releases_execution_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+
+            with patch("pr_review.cli_runner._clear_cli_lock_owner", side_effect=OSError("disk unavailable")):
+                result = run_cli_review(target(), github=FakeGitHub(), source_root=root, runner=commands)
+
+            self.assertTrue(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(result.pull_request, 42)
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+    def test_cli_owner_cleanup_failure_preserves_primary_error_and_releases_execution_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            github = FakeGitHub()
+            github.mergeable = "CONFLICTING"
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+
+            with (
+                patch("pr_review.cli_runner._clear_cli_lock_owner", side_effect=OSError("disk unavailable")),
+                self.assertRaisesRegex(ReviewRunnerError, "not mergeable"),
+            ):
+                run_cli_review(target(), github=github, source_root=root, runner=commands)
+
+            with lock_path.open("r+") as lock_handle:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+
+    def test_cli_lock_owner_marker_write_failure_prevents_preflight_and_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            github = FakeGitHub()
+            commands = FakeCommands(root)
+            lock_path = root / ".git" / "firemud" / "pr-review" / "cli.lock"
+            with (
+                patch("pr_review.cli_runner._write_cli_lock_owner", side_effect=OSError("disk unavailable")),
+                patch.object(github, "pull_request", wraps=github.pull_request) as pull_request,
+                self.assertRaisesRegex(ReviewRunnerError, "could not persist active CLI run owner"),
+            ):
+                run_cli_review(target(), github=github, source_root=root, runner=commands)
+
+            pull_request.assert_not_called()
+            self.assertFalse(any(call[0][0] == "coderabbit" for call in commands.calls))
+            self.assertEqual(lock_path.read_text(encoding="utf-8"), "")
 
     def test_cli_holds_hosted_lock_during_preflight_and_releases_it_for_provider(self):
         with tempfile.TemporaryDirectory() as directory:

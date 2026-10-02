@@ -1274,7 +1274,8 @@ def publication_workload_secret_requirements(
         leaf_secret_names.append(secret_name)
     if len(set(leaf_secret_names)) != len(leaf_secret_names):
         raise ValueError(
-            "Rendered gRPC workload consumers must mount eight distinct grpc-tls Secrets"
+            "Rendered gRPC workload consumers must mount "
+            f"{len(GRPC_WORKLOAD_SECRET_CONSUMERS)} distinct grpc-tls Secrets"
         )
     requirements.append(
         (

@@ -89,7 +89,6 @@ public final class GameplayWorldCatalog {
               ordinal,
               world.slug(),
               world.displayName(),
-              defaultRealm.gameInstanceId(),
               defaultRealm.requiresCharacterSelection()));
       targets.add(
           new WorldOrdinalTarget(
@@ -175,13 +174,13 @@ public final class GameplayWorldCatalog {
     return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
-  /** Reads the current realm catalog and records the exact response-local ordinal targets. */
+  /** Builds a catalog-wide snapshot when every visible realm is part of the response. */
   public RealmDiscoverySnapshot readRealmDiscoverySnapshot(WorldView world) {
     Objects.requireNonNull(world, "world must not be null");
     return realmDiscoverySnapshot(world, visibleRealms(world));
   }
 
-  /** Builds a REALMS snapshot whose ordinals match the filtered response entries. */
+  /** Builds a REALMS snapshot and fingerprint from the exact caller-visible response entries. */
   public RealmDiscoverySnapshot realmDiscoverySnapshot(
       WorldView world, List<RealmView> responseRealms) {
     Objects.requireNonNull(world, "world must not be null");
@@ -203,25 +202,51 @@ public final class GameplayWorldCatalog {
               realm.pointerVersion(),
               realmTargetFingerprint(world, realm)));
     }
-    List<RealmOrdinalTarget> catalogTargets = new ArrayList<>(visibleCatalogRealms.size());
-    for (int index = 0; index < visibleCatalogRealms.size(); index++) {
-      RealmView realm = visibleCatalogRealms.get(index);
-      catalogTargets.add(
+    return new RealmDiscoverySnapshot(
+        world.slug(), realmDiscoveryFingerprint(targets), List.copyOf(targets));
+  }
+
+  /**
+   * Revalidates pointer identity for only the targets included in a caller's REALMS response.
+   * Callers must still perform fresh membership, entitlement, and grant checks before admission.
+   */
+  public Optional<RealmDiscoverySnapshot> revalidateRealmDiscoverySnapshot(
+      WorldView world, List<RealmOrdinalTarget> responseTargets) {
+    Objects.requireNonNull(world, "world must not be null");
+    List<RealmOrdinalTarget> safeResponseTargets =
+        List.copyOf(Objects.requireNonNull(responseTargets, "responseTargets must not be null"));
+    if (safeResponseTargets.isEmpty()) {
+      return Optional.empty();
+    }
+
+    List<RealmView> currentRealms = visibleRealms(world);
+    List<RealmOrdinalTarget> currentTargets = new ArrayList<>(safeResponseTargets.size());
+    for (int index = 0; index < safeResponseTargets.size(); index++) {
+      RealmOrdinalTarget responseTarget = safeResponseTargets.get(index);
+      if (responseTarget.ordinal() != index + 1) {
+        return Optional.empty();
+      }
+      List<RealmView> matches =
+          currentRealms.stream()
+              .filter(realm -> realm.slug().equalsIgnoreCase(responseTarget.realmSlug()))
+              .filter(realm -> realm.tenantId() == responseTarget.tenantId())
+              .toList();
+      if (matches.size() != 1) {
+        return Optional.empty();
+      }
+      RealmView realm = matches.getFirst();
+      currentTargets.add(
           new RealmOrdinalTarget(
-              index + 1,
+              responseTarget.ordinal(),
               realm.slug(),
               realm.tenantId(),
               realm.catalogRevision(),
               realm.pointerVersion(),
               realmTargetFingerprint(world, realm)));
     }
-    return new RealmDiscoverySnapshot(
-        world.slug(),
-        fingerprint(
-            catalogTargets.stream()
-                .map(GameplayWorldCatalog::realmTargetFingerprintInput)
-                .toList()),
-        List.copyOf(targets));
+    return Optional.of(
+        new RealmDiscoverySnapshot(
+            world.slug(), realmDiscoveryFingerprint(currentTargets), List.copyOf(currentTargets)));
   }
 
   /** Resolves a numeric REALMS target by identity, never by its current ordinal. */
@@ -269,7 +294,7 @@ public final class GameplayWorldCatalog {
       return resolveStableWorld(selector, visibleWorlds)
           .filter(world -> hasValidPublicProductionRealm(world, catalogState));
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -440,6 +465,11 @@ public final class GameplayWorldCatalog {
         + target.targetFingerprint();
   }
 
+  private static String realmDiscoveryFingerprint(List<RealmOrdinalTarget> targets) {
+    return fingerprint(
+        targets.stream().map(GameplayWorldCatalog::realmTargetFingerprintInput).toList());
+  }
+
   private static String targetFingerprintInput(WorldOrdinalTarget target) {
     return target.ordinal()
         + "|"
@@ -574,8 +604,9 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
+    CatalogState snapshot = readCatalogState();
     List<RealmView> matches =
-        readCatalogState().worlds().stream()
+        snapshot.worlds().stream()
             .flatMap(world -> world.realms().stream())
             .filter(realm -> realm.tenantId() == tenantId)
             .filter(realm -> realm.gameInstanceId() == gameInstanceId)
@@ -584,8 +615,9 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RuntimeRealmTarget> resolveRuntimeTarget(long tenantId, long gameInstanceId) {
+    CatalogState snapshot = readCatalogState();
     List<RuntimeRealmTarget> matches =
-        readCatalogState().worlds().stream()
+        snapshot.worlds().stream()
             .flatMap(
                 world ->
                     world.realms().stream()
@@ -643,7 +675,10 @@ public final class GameplayWorldCatalog {
 
   /** Returns only worlds whose public browse projection has one unambiguous realm. */
   public List<WorldView> publicVisibleWorlds() {
-    return discoverableWorlds(readCatalogState());
+    CatalogState catalogState = readCatalogState();
+    List<WorldView> visibleWorlds =
+        catalogState.worlds().stream().filter(this::hasVisibleRealmEntries).toList();
+    return discoverableWorlds(visibleWorlds, catalogState);
   }
 
   /**
@@ -658,7 +693,7 @@ public final class GameplayWorldCatalog {
     if (authorityPointerSupplier == null) {
       return visibleWorlds();
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -687,7 +722,7 @@ public final class GameplayWorldCatalog {
       throw new AuthorityPointerUnavailableException(
           "Authoritative public-production realm identity is unavailable");
     }
-    List<GameplayAdmissionPointerSnapshot> pointers = readAuthorityPointers();
+    List<GameplayAdmissionPointerSnapshot> pointers = authorityPointerSupplier.get();
     if (pointers == null) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable");
@@ -770,30 +805,6 @@ public final class GameplayWorldCatalog {
   private static boolean sameWorld(WorldView expectedWorld, WorldView currentWorld) {
     return Objects.equals(expectedWorld.slug(), currentWorld.slug())
         && Objects.equals(expectedWorld.displayName(), currentWorld.displayName());
-  }
-
-  private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    CatalogState catalogState = readCatalogState();
-    List<WorldView> worlds = discoverableWorlds(catalogState);
-    ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
-    for (WorldView world : worlds) {
-      RealmView defaultRealm = resolveDefaultRealm(world, catalogState).orElseThrow();
-      entries.add(
-          new WorldsViewOutput.WorldEntry(
-              entries.size() + 1,
-              world.slug(),
-              world.displayName(),
-              defaultRealm.gameInstanceId(),
-              defaultRealm.requiresCharacterSelection()));
-    }
-    return List.copyOf(entries);
-  }
-
-  private List<WorldView> discoverableWorlds(CatalogState catalogState) {
-    List<WorldView> catalogWorlds = catalogState.worlds();
-    List<WorldView> visibleWorlds =
-        catalogWorlds.stream().filter(this::hasVisibleRealmEntries).toList();
-    return discoverableWorlds(visibleWorlds, catalogState);
   }
 
   private List<WorldView> discoverableWorlds(

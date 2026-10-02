@@ -13,6 +13,7 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -96,6 +97,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -374,20 +376,34 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.bootstrap_worlds")
   public List<BootstrapWorldDto> listBootstrapWorlds(String bootstrapToken) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
-    return listGameplayWorlds().stream()
-        .filter(world -> hasAdmissibleRealm(bootstrapContext, world.getWorldSlug()))
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
+    return gameSessionClient.listGameplayWorlds().stream()
+        .filter(
+            world ->
+                hasAdmissibleRealm(
+                    bootstrapContext, world.getWorldSlug(), discoveryEntitlementMemo))
         .map(world -> new BootstrapWorldDto(world.getWorldSlug(), world.getDisplayName()))
         .toList();
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
+    Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo = new HashMap<>();
     Instant evaluatedAt = Instant.now();
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
-    return listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug).stream()
+    final List<RuntimeRealmTarget> admissibleRealms;
+    try {
+      admissibleRealms =
+          listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug, discoveryEntitlementMemo);
+    } catch (AuthenticationException ex) {
+      throw ex;
+    } catch (RuntimeException ex) {
+      throw admissionPointerUnavailable(ex);
+    }
+    return admissibleRealms.stream()
         .map(
             discovered -> {
               RuntimeRealmTarget current =
@@ -476,7 +492,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.direct_text_connect_scope")
   public DirectTextJoinScope issueDirectTextConnectScope(
       DirectTextCallerContext caller, DirectTextJoinTarget target) {
@@ -547,6 +563,10 @@ public class AccountServiceImpl implements AccountService {
         || !StringUtils.hasText(request.requestId())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
+    if (request.requestId().length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
+      throw new AuthenticationException(
+          "INVALID_ARGUMENT", "JOIN requestId exceeds the maximum length");
+    }
     String requestId = request.requestId();
     String scopeTokenHash = AccountJoinDigest.tokenHash(request.connectScopeId());
     Optional<JoinOperation> existing = accountJoinOperationRepository.find(requestId);
@@ -596,8 +616,14 @@ public class AccountServiceImpl implements AccountService {
     }
 
     try {
-      return joinTransactionTemplate.execute(
-          transactionStatus -> executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      JoinAttemptOutcome outcome =
+          joinTransactionTemplate.execute(
+              transactionStatus ->
+                  executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      if (outcome.terminalOperation() != null) {
+        return replayTerminalJoinSafely(outcome.terminalOperation(), callerBinding, retained);
+      }
+      return outcome.result();
     } catch (AuthenticationException ex) {
       if ("IDEMPOTENCY_CONFLICT".equals(ex.getCode())) {
         throw ex;
@@ -610,12 +636,7 @@ public class AccountServiceImpl implements AccountService {
         JoinOperation operation = outcomeReadback.orElseThrow();
         requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
         if (!"PENDING".equals(operation.status())) {
-          try {
-            return joinTransactionTemplate.execute(
-                transactionStatus -> replayTerminalJoin(operation, callerBinding, retained));
-          } catch (RuntimeException policyCheckFailure) {
-            return joinRetryFailure(retained, "AUTH_UNAVAILABLE");
-          }
+          return replayTerminalJoinSafely(operation, callerBinding, retained);
         }
         recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
       }
@@ -624,7 +645,7 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult executeJoinAttempt(
+  private JoinAttemptOutcome executeJoinAttempt(
       long accountId, String callerBinding, String requestId, VerifiedJoinScope scope) {
     accountJoinOperationRepository.lockAccount(accountId);
     JoinOperation operation =
@@ -634,16 +655,25 @@ public class AccountServiceImpl implements AccountService {
     requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
 
     if (!"PENDING".equals(operation.status())) {
-      return replayTerminalJoin(operation, callerBinding, scope);
+      return JoinAttemptOutcome.terminal(operation);
     }
+    return JoinAttemptOutcome.result(
+        executePendingJoinAttempt(accountId, callerBinding, requestId, scope, operation));
+  }
 
+  private JoinPublicProductionResult executePendingJoinAttempt(
+      long accountId,
+      String callerBinding,
+      String requestId,
+      VerifiedJoinScope scope,
+      JoinOperation operation) {
     if (isConnectScopeExpired(scope)) {
       accountJoinOperationRepository.recordAttemptFailure(
           requestId, "NOT_EVALUATED", "AUTH_UNAVAILABLE");
       return pendingJoinFailure(scope, "AUTH_UNAVAILABLE");
     }
 
-    JoinEvaluation evaluation = evaluateJoin(scope);
+    JoinEvaluation evaluation = evaluateJoin(scope, false);
     if (evaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(evaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -678,7 +708,7 @@ public class AccountServiceImpl implements AccountService {
       return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
 
-    JoinEvaluation commitEvaluation = evaluateJoin(scope);
+    JoinEvaluation commitEvaluation = evaluateJoin(scope, true);
     if (commitEvaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(commitEvaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -785,6 +815,13 @@ public class AccountServiceImpl implements AccountService {
 
   private JoinPublicProductionResult replayTerminalJoin(
       JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    if (isConnectScopeExpired(scope)) {
+      return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
+    }
+
+    boolean replayUnboundFailure =
+        "FAILED".equals(operation.status()) && operation.requestDigest() == null;
+
     JoinEvaluation evaluation;
     try {
       evaluation = evaluateJoin(scope);
@@ -802,6 +839,9 @@ public class AccountServiceImpl implements AccountService {
         || evaluation.entitlementVersion() == null) {
       return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
     }
+    if (replayUnboundFailure) {
+      return resultFromJoinOperation(operation, true);
+    }
 
     String currentRequestDigest =
         AccountJoinDigest.request(
@@ -818,6 +858,15 @@ public class AccountServiceImpl implements AccountService {
       return joinRetryFailure(scope, "IDEMPOTENCY_CONFLICT");
     }
     return resultFromJoinOperation(operation, true);
+  }
+
+  private JoinPublicProductionResult replayTerminalJoinSafely(
+      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    try {
+      return replayTerminalJoin(operation, callerBinding, scope);
+    } catch (RuntimeException policyCheckFailure) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
   }
 
   private JoinPublicProductionResult joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
@@ -953,6 +1002,10 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private JoinEvaluation evaluateJoin(VerifiedJoinScope scope) {
+    return evaluateJoin(scope, true);
+  }
+
+  private JoinEvaluation evaluateJoin(VerifiedJoinScope scope, boolean lockEntitlement) {
     return evaluateJoin(
         new ConnectScopeContext(
             scope.accountId(),
@@ -966,10 +1019,11 @@ public class AccountServiceImpl implements AccountService {
             scope.catalogRevision(),
             scope.pointerVersion(),
             Instant.parse(scope.evaluatedAt()),
-            Instant.parse(scope.connectScopeExpiresAt())));
+            Instant.parse(scope.connectScopeExpiresAt())),
+        lockEntitlement);
   }
 
-  private JoinEvaluation evaluateJoin(ConnectScopeContext scope) {
+  private JoinEvaluation evaluateJoin(ConnectScopeContext scope, boolean lockEntitlement) {
     RuntimeRealmTarget target;
     try {
       target = requireCurrentConnectScopeTarget(scope);
@@ -985,7 +1039,7 @@ public class AccountServiceImpl implements AccountService {
           "NOT_EVALUATED", null, null, false, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
     try {
-      RuntimeEntitlementsDto entitlement = lockedJoinEntitlement(scope.tenantId());
+      RuntimeEntitlementsDto entitlement = joinEntitlement(scope.tenantId(), lockEntitlement);
       return new JoinEvaluation(
           "AVAILABLE",
           entitlement.allowPublicJoin(),
@@ -1007,9 +1061,22 @@ public class AccountServiceImpl implements AccountService {
       boolean gameplayAvailable,
       String failureCode) {}
 
-  private RuntimeEntitlementsDto lockedJoinEntitlement(long tenantId) {
+  private record JoinAttemptOutcome(
+      JoinPublicProductionResult result, JoinOperation terminalOperation) {
+    private static JoinAttemptOutcome result(JoinPublicProductionResult result) {
+      return new JoinAttemptOutcome(result, null);
+    }
+
+    private static JoinAttemptOutcome terminal(JoinOperation operation) {
+      return new JoinAttemptOutcome(null, operation);
+    }
+  }
+
+  private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> rows =
-        subscriptionRepository.findByTenantIdForUpdate(tenantId);
+        lockSubscription
+            ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
+            : subscriptionRepository.findByTenantId(tenantId);
     if (rows.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");
@@ -1355,7 +1422,14 @@ public class AccountServiceImpl implements AccountService {
       String worldSlug,
       String realmSlug) {
     RuntimeRealmTarget realm = requireRealmTarget(expectedTenantId, worldSlug, realmSlug);
-    if (!isRealmAdmissible(bootstrapContext, realm)) {
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      throw new AuthenticationException(
+          "ADMISSION_POINTER_UNAVAILABLE",
+          "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
+    }
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(realm.tenantId(), "bootstrap-selected-target");
+    if (!entitlements.gameplayAvailable()) {
       throw new AuthenticationException(
           "ADMISSION_POINTER_UNAVAILABLE",
           "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry");
@@ -1402,41 +1476,38 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private List<net.firedevops.firemud.gamesession.v1.GameplayWorld> listGameplayWorlds() {
+  private boolean hasAdmissibleRealm(
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
     try {
-      List<net.firedevops.firemud.gamesession.v1.GameplayWorld> worlds =
-          gameSessionClient.listGameplayWorlds();
-      if (worlds == null) {
-        throw new IllegalStateException("Gameplay world discovery returned no authority");
-      }
-      return worlds;
-    } catch (AuthenticationException ex) {
-      throw ex;
-    } catch (RuntimeException ex) {
-      throw admissionPointerUnavailable(ex);
+      return !listAdmissibleRuntimeRealmTargets(
+              bootstrapContext, worldSlug, discoveryEntitlementMemo)
+          .isEmpty();
+    } catch (IllegalStateException ex) {
+      return false;
     }
   }
 
   private List<RuntimeRealmTarget> listAdmissibleRuntimeRealmTargets(
-      BootstrapContext bootstrapContext, String worldSlug) {
-    try {
-      List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
-          gameSessionClient.listGameplayRealms(worldSlug);
-      if (realms == null) {
-        throw new IllegalStateException("Gameplay realm discovery returned no authority");
-      }
-      List<RuntimeRealmTarget> targets =
-          realms.stream()
-              .map(realm -> readReachableDiscoveryRealm(bootstrapContext, realm))
-              .flatMap(Optional::stream)
-              .toList();
-      validatePublicRealmCardinality(targets);
-      return targets.stream().filter(realm -> isRealmAdmissible(bootstrapContext, realm)).toList();
-    } catch (AuthenticationException ex) {
-      throw ex;
-    } catch (RuntimeException ex) {
-      throw admissionPointerUnavailable(ex);
+      BootstrapContext bootstrapContext,
+      String worldSlug,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
+    List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
+        gameSessionClient.listGameplayRealms(worldSlug);
+    if (realms == null) {
+      throw new IllegalStateException("Gameplay realm discovery returned no authority");
     }
+    List<RuntimeRealmTarget> targets =
+        realms.stream()
+            .map(realm -> readReachableDiscoveryRealm(bootstrapContext, realm))
+            .flatMap(Optional::stream)
+            .toList();
+    validatePublicRealmCardinality(targets);
+    return targets.stream()
+        .filter(
+            realm -> isDiscoveryRealmAdmissible(bootstrapContext, realm, discoveryEntitlementMemo))
+        .toList();
   }
 
   private List<RuntimeRealmTarget> listRuntimeRealmTargets(
@@ -1536,11 +1607,22 @@ public class AccountServiceImpl implements AccountService {
         cause);
   }
 
-  private boolean hasAdmissibleRealm(BootstrapContext bootstrapContext, String worldSlug) {
-    return !listAdmissibleRuntimeRealmTargets(bootstrapContext, worldSlug).isEmpty();
+  private boolean isDiscoveryRealmAdmissible(
+      BootstrapContext bootstrapContext,
+      RuntimeRealmTarget realm,
+      Map<Long, RuntimeEntitlementsDto> discoveryEntitlementMemo) {
+    if (!hasRealmAdmissionAccess(bootstrapContext, realm)) {
+      return false;
+    }
+    RuntimeEntitlementsDto entitlements =
+        discoveryEntitlementMemo.computeIfAbsent(
+            realm.tenantId(),
+            tenantId -> getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery"));
+    return entitlements.gameplayAvailable();
   }
 
-  private boolean isRealmAdmissible(BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
+  private boolean hasRealmAdmissionAccess(
+      BootstrapContext bootstrapContext, RuntimeRealmTarget realm) {
     long tenantId = realm.tenantId();
     if (!isPublicProductionRealm(realm)) {
       if (accountTenantMembershipRepository
@@ -1554,9 +1636,7 @@ public class AccountServiceImpl implements AccountService {
         return false;
       }
     }
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(tenantId, "bootstrap-discovery");
-    return entitlements.gameplayAvailable();
+    return true;
   }
 
   private boolean isPublicProductionRealm(RuntimeRealmTarget realm) {

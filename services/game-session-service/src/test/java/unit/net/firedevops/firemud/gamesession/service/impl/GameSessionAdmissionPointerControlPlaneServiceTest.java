@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
@@ -24,14 +25,13 @@ import org.junit.jupiter.api.Test;
 
 class GameSessionAdmissionPointerControlPlaneServiceTest {
   @Test
-  void listFiltersTenantScopeBeforeCheckingAuditHistory() {
+  void listQueriesTenantScopeBeforeCheckingLatestAudit() {
     GameplayAdmissionPointerAuthorityService authorityService =
         mock(GameplayAdmissionPointerAuthorityService.class);
-    GameplayAdmissionPointerSnapshot tenantA = pointer(1L, "tenant-a");
     GameplayAdmissionPointerSnapshot tenantB = pointer(2L, "tenant-b");
-    when(authorityService.listPointers()).thenReturn(List.of(tenantA, tenantB));
-    when(authorityService.listPointerAudit(2L, "tenant-b", "production"))
-        .thenReturn(List.of(audit(tenantB)));
+    when(authorityService.listPointersForTenants(List.of(2L))).thenReturn(List.of(tenantB));
+    when(authorityService.findLatestPointerAudit(2L, "tenant-b", "production"))
+        .thenReturn(Optional.of(audit(tenantB)));
     GameSessionAdmissionPointerControlPlaneService controlPlaneService =
         new GameSessionAdmissionPointerControlPlaneService(
             mock(GameInstanceRepository.class),
@@ -42,8 +42,10 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
 
     assertEquals(1, response.getPointersCount());
     assertEquals("2", response.getPointers(0).getTenantId());
-    verify(authorityService).listPointerAudit(2L, "tenant-b", "production");
-    verify(authorityService, never()).listPointerAudit(1L, "tenant-a", "production");
+    verify(authorityService).listPointersForTenants(List.of(2L));
+    verify(authorityService, never()).listPointers();
+    verify(authorityService).findLatestPointerAudit(2L, "tenant-b", "production");
+    verify(authorityService, never()).findLatestPointerAudit(1L, "tenant-a", "production");
   }
 
   @Test
@@ -93,9 +95,8 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
 
     when(pointerRepository.findAllByOrderByWorldSlugAscRealmSlugAsc())
         .thenReturn(List.of(currentPointer));
-    when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
-            1L, "demo", "production"))
-        .thenReturn(List.of(retainedPreV7Event));
+    when(eventRepository.findLatestByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+        .thenReturn(Optional.of(retainedPreV7Event));
 
     DatabaseGameplayAdmissionPointerAuthorityService authorityService =
         new DatabaseGameplayAdmissionPointerAuthorityService(pointerRepository, eventRepository);

@@ -46,8 +46,36 @@ class HelpCommandHandlerTest {
             .get(0)
             .text()
             .contains("List currently connected players in this game instance."));
-    assertTrue(result.outputs().get(0).text().contains("Gods appear first, then players."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains(
+                "Connected users are currently classified as players; "
+                    + "gameplay-grant roles are not yet shown."));
     assertTrue(result.outputs().get(0).text().contains("You must already be in-world with PLAY."));
+  }
+
+  @Test
+  void characterHelpMatchesCurrentBrowseAndSelectorSupport() {
+    for (String topic : List.of("CHARS", "PLAY")) {
+      TextCommandInterpretationResult result =
+          handler.handle(new TextCommand(TextCommandType.HELP, List.of(topic), "HELP " + topic));
+
+      assertTrue(result.commandResult().accepted());
+      String helpText = result.outputs().get(0).text();
+      if (topic.equals("CHARS")) {
+        assertTrue(helpText.contains("Character browsing is currently unavailable."));
+        assertTrue(helpText.contains("with a known character."));
+        assertFalse(helpText.contains("list number"));
+      } else {
+        assertTrue(helpText.contains("Character browsing is currently unavailable"));
+        assertTrue(helpText.contains("use a known character name, not a list number"));
+        assertFalse(helpText.contains("shown by CHARS"));
+        assertFalse(helpText.contains("List visible characters"));
+      }
+    }
   }
 
   @Test
@@ -59,6 +87,21 @@ class HelpCommandHandlerTest {
     assertTrue(result.outputs().get(0).text().contains("JOIN <world>"));
     assertTrue(result.outputs().get(0).text().contains("public-production membership"));
     assertTrue(result.outputs().get(0).text().contains("Use REALMS <world> first"));
+    assertFalse(result.outputs().get(0).text().contains("CHARS"));
+  }
+
+  @Test
+  void characterSelectionHelpDoesNotAdvertiseUnavailableBrowsing() {
+    for (String topic : List.of("join", "realms", "chars")) {
+      TextCommandInterpretationResult result =
+          handler.handle(new TextCommand(TextCommandType.HELP, List.of(topic), "HELP " + topic));
+
+      assertTrue(result.commandResult().accepted());
+      assertTrue(
+          result.outputs().get(0).text().contains("Character browsing is currently unavailable"));
+      assertFalse(result.outputs().get(0).text().contains("List visible characters"));
+      assertTrue(result.outputs().get(0).text().contains("known character"));
+    }
   }
 
   @Test
@@ -80,6 +123,21 @@ class HelpCommandHandlerTest {
     assertFalse(result.outputs().get(0).text().contains("FRIENDS FRIENDS_ONLY"));
     assertFalse(result.outputs().get(0).text().contains("FRIENDS PRIVATE"));
     assertFalse(result.outputs().get(0).text().contains("FRIENDS UNSPECIFIED_SCOPE"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains(
+                "SHARED and ISOLATED filters are currently unavailable until Social provides viewer-bound location discovery."));
+    assertFalse(
+        result.outputs().get(0).text().contains("FRIENDS SHARED, and FRIENDS ISOLATED filter"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("Player output currently withholds world/realm labels"));
     assertTrue(result.outputs().get(0).text().contains("#entryNumber removal"));
     assertFalse(result.outputs().get(0).text().contains("HIDDEN_STAFF"));
     assertFalse(result.outputs().get(0).text().contains("hidden-staff"));

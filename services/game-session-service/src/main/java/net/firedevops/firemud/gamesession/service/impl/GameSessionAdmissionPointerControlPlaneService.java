@@ -6,7 +6,6 @@ import java.util.Set;
 import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
-import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
@@ -24,6 +23,12 @@ import org.springframework.stereotype.Service;
 
 @Service
 final class GameSessionAdmissionPointerControlPlaneService {
+  static final class AdmissionPointerMutationPreconditionException extends RuntimeException {
+    AdmissionPointerMutationPreconditionException(String message) {
+      super(message);
+    }
+  }
+
   private final GameInstanceRepository gameInstanceRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
   private final VersionUpgradePreparationService versionUpgradePreparationService;
@@ -39,18 +44,25 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   ListAdmissionPointersResponse listAdmissionPointers(List<Long> requestedTenantIds) {
     Set<Long> tenantScope = Set.copyOf(requestedTenantIds);
+    List<Long> tenantIds = List.copyOf(requestedTenantIds);
     List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
-        gameplayAdmissionPointerAuthorityService.listPointers().stream()
-            .filter(pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
-            .toList();
+        (tenantScope.isEmpty()
+                ? gameplayAdmissionPointerAuthorityService.listPointers()
+                : gameplayAdmissionPointerAuthorityService.listPointersForTenants(tenantIds))
+            .stream()
+                .filter(
+                    pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
+                .toList();
     java.util.List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
             .map(
                 pointer -> {
-                  java.util.List<GameplayAdmissionPointerAuditEntry> audit =
-                      gameplayAdmissionPointerAuthorityService.listPointerAudit(
-                          pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
-                  if (audit.isEmpty()) {
+                  GameplayAdmissionPointerAuditEntry latestAudit =
+                      gameplayAdmissionPointerAuthorityService
+                          .findLatestPointerAudit(
+                              pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug())
+                          .orElse(null);
+                  if (latestAudit == null) {
                     throw new AdmissionPointerAuditUnavailableException(
                         "Admission pointer audit unavailable for current pointer "
                             + pointer.tenantId()
@@ -59,7 +71,6 @@ final class GameSessionAdmissionPointerControlPlaneService {
                             + "/"
                             + pointer.realmSlug());
                   }
-                  GameplayAdmissionPointerAuditEntry latestAudit = audit.getFirst();
                   if (!matchesCurrentPointer(pointer, latestAudit)) {
                     throw new AdmissionPointerAuditUnavailableException(
                         "Admission pointer audit does not match current pointer "
@@ -98,11 +109,11 @@ final class GameSessionAdmissionPointerControlPlaneService {
             .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
             .orElse(null);
     if (currentPointer != null) {
-      throw new AdmissionPointerVersionMismatchException(
+      throw new AdmissionPointerMutationPreconditionException(
           "admission-pointer updates are temporarily disabled until catalog revision "
               + "preconditions are supported");
     }
-    throw new AdmissionPointerVersionMismatchException(
+    throw new AdmissionPointerMutationPreconditionException(
         "admission-pointer creation is temporarily disabled until catalog revision and "
             + "stable realm/namespace identity preconditions are supported");
   }
@@ -114,7 +125,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
     requireText(request.getPreparedVersionUpgradeId(), "prepared_version_upgrade_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
-    rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported();
+    rejectPreparedCutoverUntilOwnerContractsAreSupported();
     GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService
             .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
@@ -174,9 +185,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
   private AdmissionPointerControlPlaneEntry latestAuditEntry(
       long tenantId, String worldSlug, String realmSlug) {
     return gameplayAdmissionPointerAuthorityService
-        .listPointerAudit(tenantId, worldSlug, realmSlug)
-        .stream()
-        .findFirst()
+        .findLatestPointerAudit(tenantId, worldSlug, realmSlug)
         .map(this::toEntry)
         .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
   }
@@ -315,10 +324,10 @@ final class GameSessionAdmissionPointerControlPlaneService {
     return entry;
   }
 
-  private void rejectAdmissionPointerMutationsUntilOwnerContractsAreSupported() {
-    throw new AdmissionPointerVersionMismatchException(
-        "admission-pointer mutations are temporarily disabled until owner hold, drain, and "
-            + "durable execution contracts are supported");
+  private void rejectPreparedCutoverUntilOwnerContractsAreSupported() {
+    throw new AdmissionPointerMutationPreconditionException(
+        "prepared cutover is temporarily disabled until catalog revision preconditions, "
+            + "World hold binding, source drain, and durable execution contracts are supported");
   }
 
   private GameInstance getInstanceOrThrow(long gameInstanceId) {

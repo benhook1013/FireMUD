@@ -1,9 +1,11 @@
 import contextlib
+import http.server
 import importlib.util
 import io
 import json
 import pathlib
 import sys
+import threading
 import unittest
 from collections import deque
 from unittest.mock import patch
@@ -14,6 +16,66 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
+
+
+@contextlib.contextmanager
+def local_http_server():
+    requests = []
+    small_json = b'{"ok":true}'
+    exact_json = small_json + b" " * (MODULE.MAX_HTTP_RESPONSE_BYTES - len(small_json))
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _respond(self):
+            request_body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            requests.append((self.command, self.path, dict(self.headers.items()), request_body))
+            parsed = MODULE.urllib.parse.urlsplit(self.path)
+            query = MODULE.urllib.parse.parse_qs(parsed.query)
+            response_headers = {}
+            response_body = b"ok"
+            status = 200
+
+            if parsed.path in {"/auth/bootstrap/worlds", "/auth/connect-token"}:
+                status = int(query["redirect"][0])
+                response_headers["Location"] = f"http://localhost:{self.server.server_port}/redirect-target"
+                response_body = b"redirect response"
+            elif parsed.path == "/success-small":
+                response_body = small_json
+            elif parsed.path == "/success-exact":
+                response_body = exact_json
+            elif parsed.path == "/success-over":
+                response_body = b"do-not-print-this" + b"x" * MODULE.MAX_HTTP_RESPONSE_BYTES
+            elif parsed.path == "/error-exact":
+                status = 401
+                response_body = b"e" * MODULE.MAX_HTTP_RESPONSE_BYTES
+            elif parsed.path == "/error-over":
+                status = 401
+                response_body = b"do-not-print-this" + b"x" * MODULE.MAX_HTTP_RESPONSE_BYTES
+
+            self.send_response(status)
+            for name, value in response_headers.items():
+                self.send_header(name, value)
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
+        def do_GET(self):
+            self._respond()
+
+        def do_POST(self):
+            self._respond()
+
+        def log_message(self, format, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}", requests
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 class FakeHttp:
@@ -138,6 +200,132 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         }
         values.update(overrides)
         return MODULE.SmokeConfig(**values)
+
+    def test_default_http_transport_rejects_cross_origin_redirects_for_get_and_post(self):
+        with local_http_server() as (base_url, requests):
+            for status in (301, 302, 303):
+                get_response = MODULE._default_http_request(
+                    "GET",
+                    f"{base_url}/auth/bootstrap/worlds?redirect={status}",
+                    None,
+                    {"Authorization": "Bearer bootstrap-secret"},
+                    2.0,
+                )
+                self.assertEqual(get_response.status, status)
+                with self.assertRaisesRegex(
+                    MODULE.HostedWebSocketPlayableSmokeError,
+                    f"returned HTTP {status}",
+                ):
+                    MODULE._require_success(get_response, "bootstrap worlds", self.config())
+
+                post_response = MODULE._default_http_request(
+                    "POST",
+                    f"{base_url}/auth/connect-token?redirect={status}",
+                    {"connectScopeId": "scope-1", "requestId": "request-1"},
+                    {
+                        "Authorization": "Bearer bootstrap-secret",
+                        "Content-Type": "application/json",
+                    },
+                    2.0,
+                )
+                self.assertEqual(post_response.status, status)
+                with self.assertRaisesRegex(
+                    MODULE.HostedWebSocketPlayableSmokeError,
+                    f"returned HTTP {status}",
+                ):
+                    MODULE._require_success(post_response, "connect-token issuance", self.config())
+
+        self.assertEqual(len(requests), 6)
+        self.assertTrue(all("redirect-target" not in request[1] for request in requests))
+        get_requests = [request for request in requests if request[0] == "GET"]
+        post_requests = [request for request in requests if request[0] == "POST"]
+        self.assertEqual(len(get_requests), 3)
+        self.assertEqual(len(post_requests), 3)
+        self.assertTrue(all(request[2].get("Authorization") == "Bearer bootstrap-secret" for request in requests))
+        self.assertTrue(
+            all(
+                json.loads(request[3]) == {"connectScopeId": "scope-1", "requestId": "request-1"}
+                for request in post_requests
+            )
+        )
+
+    def test_default_http_redirect_handler_rejects_https_downgrade_without_post_conversion(self):
+        handler = MODULE._RejectRedirectHandler()
+        for status in (301, 302, 303):
+            with self.subTest(status=status):
+                request = MODULE.urllib.request.Request(
+                    "https://preview.example/api/account/auth/connect-token",
+                    data=b'{"connectScopeId":"scope-1"}',
+                    method="POST",
+                    headers={"Authorization": "Bearer bootstrap-secret"},
+                )
+                redirected = handler.redirect_request(
+                    request,
+                    None,
+                    status,
+                    "Found",
+                    {},
+                    "http://attacker.example/connect-token",
+                )
+                self.assertIsNone(redirected)
+                self.assertEqual(request.full_url, "https://preview.example/api/account/auth/connect-token")
+                self.assertEqual(request.get_method(), "POST")
+                self.assertEqual(request.data, b'{"connectScopeId":"scope-1"}')
+
+    def test_default_http_transport_accepts_in_limit_and_exact_limit_success_bodies(self):
+        with local_http_server() as (base_url, _):
+            for path in ("/success-small", "/success-exact"):
+                with self.subTest(path=path):
+                    response = MODULE._default_http_request("GET", base_url + path, None, {}, 2.0)
+                    self.assertEqual(MODULE._require_success(response, "local probe", self.config()), {"ok": True})
+                    if path == "/success-exact":
+                        self.assertEqual(len(response.body), MODULE.MAX_HTTP_RESPONSE_BYTES)
+
+    def test_default_http_transport_bounds_oversized_success_and_http_error_bodies(self):
+        secret = "do-not-print-this"
+        with local_http_server() as (base_url, _):
+            with self.assertRaisesRegex(
+                MODULE.HostedWebSocketPlayableSmokeError,
+                rf"HTTP 200.*{MODULE.MAX_HTTP_RESPONSE_BYTES} bytes",
+            ) as caught:
+                MODULE._default_http_request(
+                    "GET",
+                    base_url + "/success-over?token=" + secret,
+                    None,
+                    {"Authorization": "Bearer bootstrap-secret"},
+                    2.0,
+                )
+            self.assertNotIn(secret, str(caught.exception))
+            self.assertNotIn("bootstrap-secret", str(caught.exception))
+
+            error_response = MODULE._default_http_request("GET", base_url + "/error-over", None, {}, 2.0)
+            self.assertEqual(error_response.status, 401)
+            self.assertEqual(len(error_response.body), MODULE.MAX_HTTP_RESPONSE_BYTES)
+            with self.assertRaisesRegex(
+                MODULE.HostedWebSocketPlayableSmokeError,
+                "returned HTTP 401",
+            ) as caught:
+                MODULE._require_success(error_response, "local probe", self.config())
+            self.assertNotIn(secret, str(caught.exception))
+
+            exact_error_response = MODULE._default_http_request("GET", base_url + "/error-exact", None, {}, 2.0)
+            self.assertEqual(exact_error_response.status, 401)
+            self.assertEqual(len(exact_error_response.body), MODULE.MAX_HTTP_RESPONSE_BYTES)
+
+    def test_default_http_transport_closes_http_error_responses(self):
+        url = "https://preview.example/auth/connect-token"
+        response_body = io.BytesIO(b"error response")
+        error = MODULE.urllib.error.HTTPError(url, 401, "Unauthorized", {}, response_body)
+
+        class ErrorOpener:
+            def open(self, request, timeout):
+                raise error
+
+        with patch.object(MODULE.urllib.request, "build_opener", return_value=ErrorOpener()):
+            response = MODULE._default_http_request("POST", url, {}, {}, 2.0)
+
+        self.assertEqual(response.status, 401)
+        self.assertTrue(response_body.closed)
 
     def test_default_first_party_cookie_bootstrap_runs_read_only_baseline(self):
         http = FakeHttp()

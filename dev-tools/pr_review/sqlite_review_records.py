@@ -30,7 +30,7 @@ from .state import FindingRoute, ReviewState
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
-_RECORDS_SCHEMA_VERSION = 6
+_RECORDS_SCHEMA_VERSION = 8
 _RECORDS_METADATA_TABLE = "review_records_metadata"
 _RECORDS_TABLES = {
     _RECORDS_METADATA_TABLE,
@@ -48,6 +48,8 @@ _RECORDS_TABLES = {
     "imported_artifacts",
     "historical_provider_gaps",
     "historical_gap_artifacts",
+    "source_finding_resolutions",
+    "source_finding_resolution_corrections",
 }
 
 
@@ -57,6 +59,14 @@ class ReviewRecordsError(ValueError):
 
 class AttemptNotFound(ReviewRecordsError):
     """Raised when an exact attempt ID is not present in the records store."""
+
+
+class CliCaptureTerminalFailure(ReviewRecordsError):
+    """A CLI attempt is terminal but did not produce a completed source run."""
+
+
+class CliCaptureInProgress(ReviewRecordsError):
+    """A CLI attempt is still running and has no countable completed capture."""
 
 
 class RecordsSchemaIncompatible(ReviewRecordsError):
@@ -106,7 +116,10 @@ class FindingObservation:
         _bounded_text(self.title, "title", maximum=300)
         _bounded_text(self.detail, "detail", maximum=1000, allow_empty=True)
         if not isinstance(self.disposition, str) or self.disposition not in {
-            "accepted", "routed", "rejected", "unresolved"
+            "accepted",
+            "routed",
+            "rejected",
+            "unresolved",
         }:
             raise ReviewRecordsError("finding disposition is invalid")
         if self.target_pr is not None:
@@ -124,10 +137,28 @@ _SECRET_PATTERNS = (
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
 )
 _SECRET_FIELD_SUFFIXES = (
-    "password", "passwd", "secret", "token", "credential", "credentials",
-    "apikey", "accesskey", "secretkey", "privatekey", "signingkey", "encryptionkey",
-    "accesstoken", "refreshtoken", "authtoken", "oauthtoken", "clientsecret",
-    "clienttoken", "githubtoken", "bearertoken", "sessiontoken", "idtoken",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "credential",
+    "credentials",
+    "apikey",
+    "accesskey",
+    "secretkey",
+    "privatekey",
+    "signingkey",
+    "encryptionkey",
+    "accesstoken",
+    "refreshtoken",
+    "authtoken",
+    "oauthtoken",
+    "clientsecret",
+    "clienttoken",
+    "githubtoken",
+    "bearertoken",
+    "sessiontoken",
+    "idtoken",
 )
 _SECRET_FIELD_TRAILING_QUALIFIERS = ("value", "material", "hash", "raw", "plaintext", "encoded", "encrypted")
 _REDACTED_CREDENTIAL = "[redacted credential]"
@@ -148,6 +179,24 @@ def _bounded_text(value: Any, label: str, *, maximum: int, allow_empty: bool = F
     return value
 
 
+def _coverage_limits(values: Sequence[str], *, retained: Sequence[str] = ()) -> tuple[str, ...]:
+    """Validate coverage text while retaining bounded exact historical notes."""
+
+    if isinstance(values, (str, bytes)) or not isinstance(values, Sequence):
+        raise ReviewRecordsError("coverage_limits must be a sequence of bounded text values")
+    if len(values) > 20:
+        raise ReviewRecordsError("coverage_limits may contain at most 20 entries")
+    matches_retained = tuple(values) == tuple(retained)
+    return tuple(
+        _bounded_text(
+            item,
+            "coverage limit",
+            maximum=1000 if matches_retained else 200,
+        )
+        for item in values
+    )
+
+
 def _is_secret_field(key: str) -> bool:
     """Return whether a JSON field name semantically identifies secret material."""
 
@@ -159,7 +208,7 @@ def _is_secret_field(key: str) -> bool:
         )
         if qualifier is None:
             break
-        normalized = normalized[:-len(qualifier)]
+        normalized = normalized[: -len(qualifier)]
     return any(normalized.endswith(suffix) for suffix in _SECRET_FIELD_SUFFIXES)
 
 
@@ -355,7 +404,7 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("cannot bootstrap SQLite review records") from exc
 
     def migrate(self) -> None:
-        """Upgrade existing v4/v5 records atomically and fence older state writers.
+        """Upgrade existing v4/v5/v6 records atomically and fence older state writers.
 
         This is an explicit offline cutover operation. It does not read or edit
         the controller's legacy capture directories and is safe to retry after
@@ -377,21 +426,47 @@ class SqliteReviewRecords:
                     self._raise_controller_writer_fence(connection)
                     connection.commit()
                     return
-                if row[0] not in {4, 5}:
+                if row[0] not in {4, 5, 6, 7}:
                     raise ReviewRecordsError(f"unsupported review-records schema version {row[0]}")
                 existing = self._table_names(connection)
-                added = ({"review_attempts", "review_artifacts", "source_decision_corrections",
-                          "provider_origins", "imported_artifacts", "historical_provider_gaps",
-                          "historical_gap_artifacts"}
-                         if row[0] == 4 else {"provider_origins", "imported_artifacts",
-                                               "historical_provider_gaps", "historical_gap_artifacts"})
-                required = _RECORDS_TABLES - added
+                if row[0] == 7:
+                    added = {"source_finding_resolution_corrections"}
+                    required = _RECORDS_TABLES - added
+                elif row[0] == 6:
+                    added = {"source_finding_resolutions", "source_finding_resolution_corrections"}
+                    required = _RECORDS_TABLES - added
+                else:
+                    added = (
+                        {
+                            "review_attempts",
+                            "review_artifacts",
+                            "source_decision_corrections",
+                            "provider_origins",
+                            "imported_artifacts",
+                            "historical_provider_gaps",
+                            "historical_gap_artifacts",
+                        }
+                        if row[0] == 4
+                        else {
+                            "provider_origins",
+                            "imported_artifacts",
+                            "historical_provider_gaps",
+                            "historical_gap_artifacts",
+                        }
+                    )
+                    added.add("source_finding_resolutions")
+                    added.add("source_finding_resolution_corrections")
+                    required = _RECORDS_TABLES - added
                 if not required <= existing or added & existing:
                     raise ReviewRecordsError("review-records schema is incomplete or partially upgraded")
                 if row[0] == 4:
                     self._create_attempt_schema(connection)
-                self._create_origin_schema(connection)
-                self._create_historical_gap_schema(connection)
+                if row[0] in {4, 5}:
+                    self._create_origin_schema(connection)
+                    self._create_historical_gap_schema(connection)
+                if row[0] < 7:
+                    self._create_source_finding_resolution_schema(connection)
+                self._create_source_finding_resolution_correction_schema(connection)
                 self._raise_controller_writer_fence(connection)
                 connection.execute(
                     "UPDATE review_records_metadata SET records_schema_version = ?, min_writer_build = ? "
@@ -424,6 +499,8 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("attempt channel is invalid")
         if candidate_sha is not None and not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", candidate_sha):
             raise ReviewRecordsError("attempt candidate SHA is invalid")
+        if channel == "subagent" and metadata is not None and "coverage_limits" in metadata:
+            _coverage_limits(metadata["coverage_limits"])
         started_at_was_supplied = started_at is not None
         started_at = _timestamp(started_at, "attempt start")
         try:
@@ -484,17 +561,16 @@ class SqliteReviewRecords:
         if exit_status is not None and type(exit_status) is not int:
             raise ReviewRecordsError("attempt exit status is invalid")
         identifiers = []
-        for label, value in (("trigger ID", trigger_id), ("provider review ID", provider_review_id),
-                             ("checkpoint ID", checkpoint_id)):
+        for label, value in (
+            ("trigger ID", trigger_id),
+            ("provider review ID", provider_review_id),
+            ("checkpoint ID", checkpoint_id),
+        ):
             identifiers.append(None if value is None else _safe_identifier(value, label, maximum=100))
         trigger_id, provider_review_id, checkpoint_id = identifiers
         diagnostic = _bounded_text(diagnostic, "attempt diagnostic", maximum=1000, allow_empty=True)
-        archived = {
-            kind: _archive_artifact(kind, content)
-            for kind, content in (artifacts or {}).items()
-        }
-        with (self._write_connection() if _connection is None
-              else contextlib.nullcontext(_connection)) as connection:
+        archived = {kind: _archive_artifact(kind, content) for kind, content in (artifacts or {}).items()}
+        with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
             existing = connection.execute(
                 "SELECT state, finished_at, duration_seconds, exit_status, trigger_id, provider_review_id, "
                 "checkpoint_id, diagnostic FROM review_attempts WHERE attempt_id = ?",
@@ -502,13 +578,22 @@ class SqliteReviewRecords:
             ).fetchone()
             if existing is None:
                 raise ReviewRecordsError("attempt ID is not registered")
-            expected = (state, finished_at, duration_seconds, exit_status, trigger_id,
-                        provider_review_id, checkpoint_id, diagnostic)
+            expected = (
+                state,
+                finished_at,
+                duration_seconds,
+                exit_status,
+                trigger_id,
+                provider_review_id,
+                checkpoint_id,
+                diagnostic,
+            )
             if existing[0] != "started":
                 stored = {
-                    row[0]: (row[1], row[2], row[3]) for row in connection.execute(
-                        "SELECT kind, content, source_sha256, redactions FROM review_artifacts "
-                        "WHERE attempt_id = ?", (attempt_id,)
+                    row[0]: (row[1], row[2], row[3])
+                    for row in connection.execute(
+                        "SELECT kind, content, source_sha256, redactions FROM review_artifacts WHERE attempt_id = ?",
+                        (attempt_id,),
                     )
                 }
                 existing_content = tuple(existing)
@@ -547,10 +632,21 @@ class SqliteReviewRecords:
                 (pr,),
             ).fetchall()
         return [
-            {"attempt_id": row[0], "channel": row[1], "candidate_sha": row[2], "state": row[3],
-             "started_at": row[4], "finished_at": row[5], "duration_seconds": row[6],
-             "exit_status": row[7], "trigger_id": row[8], "provider_review_id": row[9],
-             "checkpoint_id": row[10], "run_id": row[11], "diagnostic": row[12]}
+            {
+                "attempt_id": row[0],
+                "channel": row[1],
+                "candidate_sha": row[2],
+                "state": row[3],
+                "started_at": row[4],
+                "finished_at": row[5],
+                "duration_seconds": row[6],
+                "exit_status": row[7],
+                "trigger_id": row[8],
+                "provider_review_id": row[9],
+                "checkpoint_id": row[10],
+                "run_id": row[11],
+                "diagnostic": row[12],
+            }
             for row in rows
         ]
 
@@ -588,12 +684,17 @@ class SqliteReviewRecords:
         }
 
     @_translate_database_errors
-    def attempt_artifacts(self, attempt_id: str) -> dict[str, str]:
+    def attempt_artifacts(
+        self, attempt_id: str, *, _connection: sqlite3.Connection | None = None
+    ) -> dict[str, str]:
         """Read private archived evidence for exact recovery, outside ordinary history."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         self._require_regular_database()
-        with contextlib.closing(self._connect(read_only=True)) as connection:
+        with (
+            contextlib.closing(self._connect(read_only=True))
+            if _connection is None else contextlib.nullcontext(_connection)
+        ) as connection:
             self._require_compatible(connection)
             rows = connection.execute(
                 "SELECT kind, content FROM review_artifacts WHERE attempt_id = ?",
@@ -602,15 +703,12 @@ class SqliteReviewRecords:
         return {kind: content for kind, content in rows}
 
     @_translate_database_errors
-    def link_attempt_run(
-        self, attempt_id: str, run_id: str, *, _connection: sqlite3.Connection | None = None
-    ) -> None:
+    def link_attempt_run(self, attempt_id: str, run_id: str, *, _connection: sqlite3.Connection | None = None) -> None:
         """Bind one completed, attributable source run to its exact attempt."""
 
         attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
         run_id = _safe_identifier(run_id, "run ID", maximum=100)
-        with (self._write_connection() if _connection is None
-              else contextlib.nullcontext(_connection)) as connection:
+        with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
             attempt = connection.execute(
                 "SELECT source_pr, channel, state, run_id FROM review_attempts WHERE attempt_id = ?",
                 (attempt_id,),
@@ -622,9 +720,7 @@ class SqliteReviewRecords:
                 raise ReviewRecordsError("attempt and completed source run do not match")
             if attempt[3] not in (None, run_id):
                 raise ReviewRecordsError("attempt is already linked to a different run")
-            connection.execute(
-                "UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id)
-            )
+            connection.execute("UPDATE review_attempts SET run_id = ? WHERE attempt_id = ?", (run_id, attempt_id))
 
     @_translate_database_errors
     def complete_attempt_run(
@@ -655,9 +751,7 @@ class SqliteReviewRecords:
             recorded = self.record_run(_connection=connection, **run)
             self.link_attempt_run(attempt_id, attempt_id, _connection=connection)
             if finalize_empty:
-                self.finalize_run(
-                    attempt_id, finalized_at=run.get("finished_at"), _connection=connection
-                )
+                self.finalize_run(attempt_id, finalized_at=run.get("finished_at"), _connection=connection)
         return {"attempt": finished, "run": recorded}
 
     @_translate_database_errors
@@ -681,18 +775,23 @@ class SqliteReviewRecords:
         with self._write_connection() as connection:
             attempt = connection.execute(
                 "SELECT source_pr, channel, candidate_sha, state, run_id, trigger_id, "
-                "provider_review_id FROM review_attempts WHERE attempt_id = ?", (attempt_id,)
+                "provider_review_id FROM review_attempts WHERE attempt_id = ?",
+                (attempt_id,),
             ).fetchone()
             if (
-                attempt is None or attempt[1] != "hosted" or attempt[3] != "completed"
-                or attempt[4] is not None or attempt[5] is None or attempt[6] is None
-                or attempt[0] != run.get("source_pr") or attempt[2] != run.get("source_head")
+                attempt is None
+                or attempt[1] != "hosted"
+                or attempt[3] != "completed"
+                or attempt[4] is not None
+                or attempt[5] is None
+                or attempt[6] is None
+                or attempt[0] != run.get("source_pr")
+                or attempt[2] != run.get("source_head")
             ):
                 raise ReviewRecordsError("completed Hosted attempt is not recoverable by this run")
             archived = {
-                row[0] for row in connection.execute(
-                    "SELECT kind FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
-                )
+                row[0]
+                for row in connection.execute("SELECT kind FROM review_artifacts WHERE attempt_id = ?", (attempt_id,))
             }
             if not {"hosted_review", "hosted_comments", "metadata"} <= archived:
                 raise ReviewRecordsError("completed Hosted attempt lacks its archived evidence")
@@ -741,10 +840,7 @@ class SqliteReviewRecords:
                 ).fetchone()
                 if gap is not None and gap != (channel, checkpoint_fingerprint):
                     raise ReviewRecordsError("provider origin conflicts with historical checkpoint evidence")
-                columns = (
-                    "repository, source_pr, channel, provider_id, checkpoint_id, "
-                    "checkpoint_fingerprint, run_id"
-                )
+                columns = "repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint, run_id"
                 by_checkpoint = connection.execute(
                     f"SELECT {columns} FROM provider_origins "
                     "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
@@ -767,21 +863,21 @@ class SqliteReviewRecords:
                         )
                     replay = True
                 else:
-                    connection.execute(
-                        "INSERT INTO provider_origins VALUES (?, ?, ?, ?, ?, ?, ?)", expected
-                    )
+                    connection.execute("INSERT INTO provider_origins VALUES (?, ?, ?, ?, ?, ?, ?)", expected)
                     replay = False
         except ReviewRecordsError:
             raise
         except sqlite3.Error as exc:
             raise ReviewRecordsError("cannot link provider origin") from exc
-        return {"run_id": run_id, "checkpoint_id": checkpoint_id, "provider_id": provider_id,
-                "idempotent_replay": replay}
+        return {
+            "run_id": run_id,
+            "checkpoint_id": checkpoint_id,
+            "provider_id": provider_id,
+            "idempotent_replay": replay,
+        }
 
     @_translate_database_errors
-    def archive_imported_artifacts(
-        self, run_id: str, artifacts: Mapping[str, str]
-    ) -> dict[str, Any]:
+    def archive_imported_artifacts(self, run_id: str, artifacts: Mapping[str, str]) -> dict[str, Any]:
         """Retain historical provider evidence without fabricating a live attempt."""
 
         run_id = _safe_identifier(run_id, "run ID", maximum=100)
@@ -795,12 +891,19 @@ class SqliteReviewRecords:
             if run is None or run[0] not in {"hosted", "cli"} or run[1:] != ("completed", 1):
                 raise ReviewRecordsError("artifacts require a completed attributable provider run")
             existing = {
-                row[0]: (row[1], row[2], row[3]) for row in connection.execute(
+                row[0]: (row[1], row[2], row[3])
+                for row in connection.execute(
                     "SELECT kind, content, source_sha256, redactions FROM imported_artifacts WHERE run_id = ?",
                     (run_id,),
                 )
             }
             if existing:
+                if "metadata" in existing and "metadata" in archived and self._same_checkpoint_projection(
+                    existing["metadata"][0], archived["metadata"][0]
+                ):
+                    # The added parsed projection must not rewrite any prior
+                    # immutable capture bytes, source hash or redaction count.
+                    archived["metadata"] = existing["metadata"]
                 if existing != archived:
                     raise ReviewRecordsError("imported provider artifacts conflict with existing evidence")
                 replay = True
@@ -812,6 +915,28 @@ class SqliteReviewRecords:
                     )
                 replay = False
         return {"run_id": run_id, "kinds": sorted(archived), "idempotent_replay": replay}
+
+    @staticmethod
+    def _same_checkpoint_projection(stored_content: str, incoming_content: str) -> bool:
+        """Recognize only the hash-verified projection added to older metadata."""
+
+        from .evidence import Checkpoint
+        from .sqlite_provider_imports import _checkpoint_fingerprint
+
+        try:
+            stored = json.loads(stored_content)
+            incoming = json.loads(incoming_content)
+            if not isinstance(stored, dict) or not isinstance(incoming, dict) or "checkpoint_fields" in stored:
+                return False
+            fields = incoming.pop("checkpoint_fields")
+            checkpoint = Checkpoint(**fields)
+            return (
+                incoming == stored
+                and checkpoint.as_json() == stored["checkpoint"]
+                and _checkpoint_fingerprint(checkpoint) == stored["checkpoint_fingerprint"]
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def record_historical_gap(
         self,
@@ -845,19 +970,24 @@ class SqliteReviewRecords:
             serialized_checkpoint = _json(dict(checkpoint))
         except (TypeError, ValueError) as exc:
             raise ReviewRecordsError("historical checkpoint metadata must be JSON") from exc
-        checkpoint_json, checkpoint_digest, checkpoint_redactions = _archive_artifact(
-            "metadata", serialized_checkpoint
-        )
+        checkpoint_json, checkpoint_digest, checkpoint_redactions = _archive_artifact("metadata", serialized_checkpoint)
         archived = {kind: _archive_artifact(kind, content) for kind, content in artifacts.items()}
         expected = (
-            repository, source_pr, channel, checkpoint_id, checkpoint_fingerprint,
-            checkpoint_json, checkpoint_digest, checkpoint_redactions, missing_reason,
+            repository,
+            source_pr,
+            channel,
+            checkpoint_id,
+            checkpoint_fingerprint,
+            checkpoint_json,
+            checkpoint_digest,
+            checkpoint_redactions,
+            missing_reason,
         )
         try:
             with self._write_connection() as connection:
                 if connection.execute(
-                    "SELECT 1 FROM provider_origins WHERE repository = ? AND source_pr = ? "
-                    "AND checkpoint_id = ?", (repository, source_pr, checkpoint_id)
+                    "SELECT 1 FROM provider_origins WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
+                    (repository, source_pr, checkpoint_id),
                 ).fetchone():
                     raise ReviewRecordsError("historical gap conflicts with an attributed provider origin")
                 existing = connection.execute(
@@ -878,7 +1008,8 @@ class SqliteReviewRecords:
                     replay = False
                 else:
                     existing_artifacts = {
-                        row[0]: (row[1], row[2], row[3]) for row in connection.execute(
+                        row[0]: (row[1], row[2], row[3])
+                        for row in connection.execute(
                             "SELECT kind, content, source_sha256, redactions FROM historical_gap_artifacts "
                             "WHERE repository = ? AND source_pr = ? AND checkpoint_id = ?",
                             (repository, source_pr, checkpoint_id),
@@ -892,8 +1023,233 @@ class SqliteReviewRecords:
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot record historical provider gap") from exc
         return {
-            "repository": repository, "source_pr": source_pr, "channel": channel,
-            "checkpoint_id": checkpoint_id, "kinds": sorted(archived), "idempotent_replay": replay,
+            "repository": repository,
+            "source_pr": source_pr,
+            "channel": channel,
+            "checkpoint_id": checkpoint_id,
+            "kinds": sorted(archived),
+            "idempotent_replay": replay,
+        }
+
+    @_translate_database_errors
+    def cli_capture_snapshot(self, attempt_id: str, *, source_pr: int) -> dict[str, Any] | None:
+        """Read one native CLI attempt, linked source run, artifacts, and decisions atomically.
+
+        ``None`` means the run ID has no structured association and may use the
+        retained historical capture path. Any partial or conflicting SQL
+        association raises instead of allowing a raw-file fallback.
+        """
+
+        attempt_id = _safe_identifier(attempt_id, "attempt ID", maximum=100)
+        source_pr = _positive_pr(source_pr, "source PR")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            return self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+
+    @_translate_database_errors
+    def completed_cli_capture_snapshots(self, source_pr: int) -> list[dict[str, Any]]:
+        """Read all completed native CLI captures for one PR from one snapshot."""
+
+        source_pr = _positive_pr(source_pr, "source PR")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            attempt_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT attempt_id AS run_id FROM review_attempts "
+                    "WHERE source_pr = ? AND channel = 'cli' AND state = 'completed' "
+                    "UNION SELECT r.run_id FROM review_runs r WHERE r.source_pr = ? AND r.channel = 'cli' "
+                    "AND r.outcome = 'completed' AND NOT EXISTS ("
+                    "SELECT 1 FROM review_attempts a WHERE a.attempt_id = r.run_id) "
+                    "AND NOT EXISTS (SELECT 1 FROM imported_artifacts i WHERE i.run_id = r.run_id) "
+                    "AND NOT EXISTS (SELECT 1 FROM provider_origins o WHERE o.run_id = r.run_id) "
+                    "AND EXISTS (SELECT 1 FROM finding_observations o JOIN findings f USING (finding_id) "
+                    "WHERE o.run_id = r.run_id AND "
+                    "substr(f.source_finding_key, 1, length('cli-run:' || r.run_id || ':finding:')) = "
+                    "'cli-run:' || r.run_id || ':finding:') "
+                    "ORDER BY run_id",
+                    (source_pr, source_pr),
+                )
+            ]
+            snapshots = []
+            for attempt_id in attempt_ids:
+                snapshot = self._cli_capture_snapshot(connection, attempt_id, source_pr=source_pr)
+                if snapshot is None:
+                    raise ReviewRecordsError("completed CLI attempt has no structured association")
+                snapshots.append(snapshot)
+            return snapshots
+
+    @staticmethod
+    def _cli_capture_snapshot(
+        connection: sqlite3.Connection, attempt_id: str, *, source_pr: int
+    ) -> dict[str, Any] | None:
+        attempt = connection.execute(
+            "SELECT source_pr, channel, candidate_sha, state, started_at, finished_at, duration_seconds, "
+            "exit_status, run_id, metadata_json FROM review_attempts WHERE attempt_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        linked_attempt = connection.execute(
+            "SELECT attempt_id FROM review_attempts WHERE run_id = ? AND attempt_id != ? LIMIT 1",
+            (attempt_id, attempt_id),
+        ).fetchone()
+        run = connection.execute(
+            "SELECT source_pr, channel, source_head, outcome, attributable, started_at, finished_at, "
+            "found_count, accepted_count, routed_count, finalized, import_payload_json FROM review_runs WHERE run_id = ?",
+            (attempt_id,),
+        ).fetchone()
+        origin = connection.execute(
+            "SELECT repository, source_pr, channel, run_id FROM provider_origins WHERE run_id = ? LIMIT 1",
+            (attempt_id,),
+        ).fetchone()
+        imported = connection.execute(
+            "SELECT 1 FROM imported_artifacts WHERE run_id = ? LIMIT 1", (attempt_id,)
+        ).fetchone()
+        artifact_rows = connection.execute(
+            "SELECT kind, content, redactions FROM review_artifacts WHERE attempt_id = ?", (attempt_id,)
+        ).fetchall()
+        artifacts = {row[0]: row[1] for row in artifact_rows}
+        artifact_redactions = {row[0]: row[2] for row in artifact_rows}
+        if not any((attempt, linked_attempt, run, origin, imported, artifacts)):
+            return None
+        if attempt is None:
+            raise ReviewRecordsError("CLI SQL association is missing its attempt")
+        if linked_attempt is not None:
+            raise ReviewRecordsError("CLI SQL run ID is linked to a different attempt")
+        if attempt[0] != source_pr or attempt[1] != "cli" or attempt[8] not in (None, attempt_id):
+            raise ReviewRecordsError("CLI SQL attempt does not match its exact source run and PR")
+        if attempt[3] in {"failed", "rate_limited", "timed_out", "ambiguous"}:
+            raise CliCaptureTerminalFailure("CLI SQL attempt ended without a completed source run")
+        if attempt[3] == "started":
+            raise CliCaptureInProgress("CLI SQL attempt is still in progress")
+        if attempt[3] != "completed":
+            raise ReviewRecordsError("CLI SQL attempt is not terminally completed")
+        if attempt[8] != attempt_id or run is None:
+            raise ReviewRecordsError("CLI SQL association is missing its exact linked source run")
+        if run[0] != source_pr or run[1] != "cli":
+            raise ReviewRecordsError("CLI SQL source run does not match its exact attempt and PR")
+        if origin is not None and (origin[1] != source_pr or origin[2] != "cli"):
+            raise ReviewRecordsError("CLI provider origin conflicts with its source run")
+        try:
+            attempt_metadata = json.loads(attempt[9])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ReviewRecordsError("CLI SQL attempt metadata is malformed") from exc
+        if not isinstance(attempt_metadata, dict):
+            raise ReviewRecordsError("CLI SQL attempt metadata is not an object")
+        if "cli_raw_output" in artifacts:
+            raise ReviewRecordsError("completed CLI SQL attempt contains conflicting raw output")
+        if not {"cli_events", "metadata"} <= artifacts.keys():
+            raise ReviewRecordsError("completed CLI SQL attempt lacks complete archived events or metadata")
+        if attempt[3] != "completed" or attempt[7] != 0:
+            raise ReviewRecordsError("CLI SQL attempt is not a successful terminal completion")
+        if run[3] != "completed" or not run[4] or run[2] != attempt[2]:
+            raise ReviewRecordsError("CLI SQL source run is not completed, attributable, and linked to its head")
+
+        try:
+            original_findings = json.loads(run[11])["findings"]
+            if not isinstance(original_findings, list) or not all(isinstance(item, dict) for item in original_findings):
+                raise ValueError("invalid original findings")
+            original_by_key = {item["source_finding_key"]: item for item in original_findings}
+            if len(original_by_key) != run[7] or len(original_findings) != run[7]:
+                raise ValueError("invalid original finding count")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ReviewRecordsError("CLI SQL immutable source projection is incomplete") from exc
+
+        rows = connection.execute(
+            "SELECT f.source_finding_key, o.disposition, d.decision, d.reason, c.decision, c.reason, o.title, o.detail, "
+            "(SELECT COUNT(*) FROM decisions d2 WHERE d2.run_id = o.run_id "
+            "AND d2.finding_id = o.finding_id AND d2.decision_scope = 'source') "
+            "FROM finding_observations o JOIN findings f USING (finding_id) "
+            "LEFT JOIN decisions d ON d.run_id = o.run_id AND d.finding_id = o.finding_id "
+            "AND d.decision_scope = 'source' "
+            "LEFT JOIN source_decision_corrections c ON c.sequence = ("
+            "SELECT MAX(sequence) FROM source_decision_corrections "
+            "WHERE run_id = o.run_id AND finding_id = o.finding_id) "
+            "WHERE o.run_id = ? ORDER BY f.source_finding_key",
+            (attempt_id,),
+        ).fetchall()
+        observations: list[dict[str, Any]] = []
+        decisions: dict[int, tuple[str, str]] = {}
+        prefix = f"cli-run:{attempt_id}:finding:"
+        for key, disposition, decision, reason, correction, correction_reason, title, detail, decision_count in rows:
+            if not isinstance(key, str) or not key.startswith(prefix) or not key[len(prefix) :].isdigit():
+                raise ReviewRecordsError("CLI source finding has an invalid finding key")
+            suffix = key[len(prefix) :]
+            index = int(suffix)
+            if str(index) != suffix:
+                raise ReviewRecordsError("CLI source finding index is not canonical")
+            if index in decisions or any(item["index"] == index for item in observations):
+                raise ReviewRecordsError("CLI source finding index is duplicated")
+            if decision_count > 1:
+                raise ReviewRecordsError("CLI source finding has duplicate decisions")
+            if correction is not None and decision_count != 1:
+                raise ReviewRecordsError("CLI source correction has no exact original decision")
+            effective_decision = correction or decision
+            effective_reason = correction_reason if correction is not None else reason
+            if disposition == "unresolved":
+                if effective_decision is not None:
+                    raise ReviewRecordsError("unresolved CLI source finding has a stored decision")
+            elif (
+                disposition not in {"accepted", "routed", "rejected"}
+                or effective_decision != disposition
+                or not isinstance(effective_reason, str)
+            ):
+                raise ReviewRecordsError("CLI source decisions conflict with stored finding dispositions")
+            else:
+                decisions[index] = (effective_decision, effective_reason)
+            original = original_by_key.get(key)
+            if original is None or original.get("title") != title or original.get("detail") != detail:
+                raise ReviewRecordsError("CLI SQL finding conflicts with its immutable source projection")
+            observations.append({
+                "index": index, "source_finding_key": key, "disposition": disposition,
+                "title": title, "detail": detail, "detail_recorded": detail != "",
+            })
+        if len(observations) != run[7] or sorted(item["index"] for item in observations) != list(
+            range(1, run[7] + 1)
+        ):
+            raise ReviewRecordsError("CLI SQL source findings do not match the stored run count")
+        accepted = sum(item["disposition"] == "accepted" for item in observations)
+        routed = sum(item["disposition"] == "routed" for item in observations)
+        if (run[8], run[9]) != (accepted, routed):
+            raise ReviewRecordsError("CLI SQL decisions do not match stored source counts")
+        if run[10] and (
+            len(decisions) != run[7] or any(item["disposition"] == "unresolved" for item in observations)
+        ):
+            raise ReviewRecordsError("finalized CLI SQL source run has incomplete decisions")
+        return {
+            "attempt": {
+                "attempt_id": attempt_id,
+                "source_pr": attempt[0],
+                "channel": attempt[1],
+                "candidate_sha": attempt[2],
+                "state": attempt[3],
+                "started_at": attempt[4],
+                "finished_at": attempt[5],
+                "duration_seconds": attempt[6],
+                "exit_status": attempt[7],
+                "run_id": attempt[8],
+                "metadata": attempt_metadata,
+            },
+            "run": {
+                "run_id": attempt_id,
+                "source_pr": run[0],
+                "channel": run[1],
+                "source_head": run[2],
+                "outcome": run[3],
+                "attributable": bool(run[4]),
+                "started_at": run[5],
+                "finished_at": run[6],
+                "counts": {"found": run[7], "accepted": run[8], "routed": run[9]},
+                "finalized": bool(run[10]),
+            },
+            "artifacts": artifacts,
+            "artifact_redactions": artifact_redactions,
+            "observations": observations,
+            "decisions": decisions,
+            "provider_origin": origin,
         }
 
     @_translate_database_errors
@@ -923,9 +1279,9 @@ class SqliteReviewRecords:
         result: dict[int, tuple[str, str]] = {}
         prefix = f"cli-run:{attempt_id}:finding:"
         for key, decision, reason in rows:
-            if not key.startswith(prefix) or not key[len(prefix):].isdigit():
+            if not key.startswith(prefix) or not key[len(prefix) :].isdigit():
                 raise ReviewRecordsError("CLI source decision has an invalid finding key")
-            index = int(key[len(prefix):])
+            index = int(key[len(prefix) :])
             if index in result:
                 raise ReviewRecordsError("CLI source decision index is duplicated")
             result[index] = (decision, reason)
@@ -978,10 +1334,16 @@ class SqliteReviewRecords:
                 ).fetchone()
                 latest = connection.execute(
                     "SELECT correction_id FROM source_decision_corrections WHERE run_id = ? AND finding_id = ? "
-                    "ORDER BY sequence DESC LIMIT 1", (run_id, finding_id),
+                    "ORDER BY sequence DESC LIMIT 1",
+                    (run_id, finding_id),
                 ).fetchone()
                 if initial is None or supersedes_id != (latest or initial)[0]:
                     raise ReviewRecordsError("correction does not name the latest exact decision")
+                if decision != "accepted" and connection.execute(
+                    "SELECT 1 FROM source_finding_resolutions WHERE run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
+                ).fetchone() is not None:
+                    raise ReviewRecordsError("a resolved source finding cannot be corrected away from accepted")
                 if connection.execute(
                     "SELECT 1 FROM source_decision_corrections WHERE correction_id = ?", (correction_id,)
                 ).fetchone():
@@ -1008,8 +1370,11 @@ class SqliteReviewRecords:
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot record SQLite source decision") from exc
         return {
-            "correction_id": correction_id, "run_id": run_id, "prior_decision_id": supersedes_id,
-            "decision": decision, "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},
+            "correction_id": correction_id,
+            "run_id": run_id,
+            "prior_decision_id": supersedes_id,
+            "decision": decision,
+            "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},
             "public_checkpoint_correction_required": bool(finalized),
         }
 
@@ -1047,13 +1412,7 @@ class SqliteReviewRecords:
         reviewer = _bounded_text(reviewer, "reviewer", maximum=100)
         if not isinstance(scope, str) or scope not in {"broad", "narrow"}:
             raise ReviewRecordsError("scope must be broad or narrow")
-        if isinstance(coverage_limits, (str, bytes)) or not isinstance(coverage_limits, Sequence):
-            raise ReviewRecordsError("coverage_limits must be a sequence of bounded text values")
-        coverage = tuple(
-            _bounded_text(item, "coverage limit", maximum=200) for item in coverage_limits
-        )
-        if len(coverage) > 20:
-            raise ReviewRecordsError("coverage_limits may contain at most 20 entries")
+        coverage = _coverage_limits(coverage_limits)
         supplied_started_at = started_at
         supplied_finished_at = finished_at
         started_at = _timestamp(started_at, "started_at")
@@ -1104,8 +1463,7 @@ class SqliteReviewRecords:
             "routed_count": sum(item.disposition == "routed" for item in observations),
         }
         try:
-            with (self._write_connection() if _connection is None
-                  else contextlib.nullcontext(_connection)) as connection:
+            with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
                 existing = connection.execute(
                     "SELECT source_pr, channel, import_payload_json, found_count, accepted_count, "
                     "routed_count, finalized FROM review_runs WHERE run_id = ?",
@@ -1247,7 +1605,8 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("finalized source-run counts cannot be changed")
                 prior = connection.execute(
                     "SELECT decision_id FROM decisions WHERE decision_scope = 'source' "
-                    "AND run_id = ? AND finding_id = ?", (run_id, finding_id)
+                    "AND run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
                 ).fetchone()
                 if prior is not None:
                     raise ReviewRecordsError("source finding is already decided; use an audited correction")
@@ -1265,8 +1624,7 @@ class SqliteReviewRecords:
                         observed_at=decided_at,
                     )
                 connection.execute(
-                    "UPDATE finding_observations SET disposition = ?, route_id = ? "
-                    "WHERE run_id = ? AND finding_id = ?",
+                    "UPDATE finding_observations SET disposition = ?, route_id = ? WHERE run_id = ? AND finding_id = ?",
                     (decision, route_id, run_id, finding_id),
                 )
                 connection.execute(
@@ -1306,6 +1664,478 @@ class SqliteReviewRecords:
             "route_id": route_id,
             "counts": {"found": counts[0], "accepted": counts[1], "routed": counts[2]},
         }
+
+    def record_source_resolution(
+        self,
+        run_id: str,
+        source_finding_key: str,
+        *,
+        source_pr: int,
+        resolution_id: str,
+        fix_sha: str,
+        actor: str,
+        proof_note: str,
+        resolved_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Record one immutable accepted-fix proof for an exact source finding."""
+
+        run_id = _safe_identifier(run_id, "run_id", maximum=100)
+        source_finding_key = _safe_identifier(source_finding_key, "source_finding_key", maximum=200)
+        source_pr = _positive_pr(source_pr, "source PR")
+        resolution_id = _safe_identifier(resolution_id, "resolution_id", maximum=200)
+        fix_sha = _text(fix_sha, "fix SHA", maximum=64)
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", fix_sha):
+            raise ReviewRecordsError("fix SHA must be a full 40- or 64-character commit identifier")
+        actor = _bounded_text(actor, "actor", maximum=100)
+        proof_note = _bounded_text(proof_note, "proof note", maximum=300)
+        resolved_at = _timestamp(resolved_at, "resolved_at")
+        try:
+            with self._write_connection() as connection:
+                run = connection.execute(
+                    "SELECT source_pr, channel, outcome, attributable, finalized FROM review_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                if run is None:
+                    raise ReviewRecordsError("source run does not exist")
+                observed_pr, channel, outcome, attributable, finalized = run
+                if observed_pr != source_pr:
+                    raise ReviewRecordsError("source PR does not match the exact source run")
+                if outcome != "completed" or not attributable or not finalized:
+                    raise ReviewRecordsError("source resolution requires a completed attributable finalized run")
+                finding = connection.execute(
+                    "SELECT f.finding_id, o.disposition FROM finding_observations o "
+                    "JOIN findings f USING (finding_id) "
+                    "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = ? "
+                    "AND f.source_finding_key = ?",
+                    (run_id, source_pr, channel, source_finding_key),
+                ).fetchone()
+                if finding is None:
+                    raise ReviewRecordsError("source finding was not observed in that exact run and PR")
+                finding_id, disposition = finding
+                if disposition != "accepted":
+                    raise ReviewRecordsError("only an effectively accepted source finding can be resolved")
+                if connection.execute(
+                    "SELECT 1 FROM decisions WHERE decision_scope = 'source' AND run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
+                ).fetchone() is None:
+                    raise ReviewRecordsError("accepted source finding has no source decision evidence")
+
+                expected = (
+                    run_id,
+                    finding_id,
+                    source_pr,
+                    channel,
+                    "accepted_fixed",
+                    fix_sha,
+                    actor,
+                    proof_note,
+                )
+                existing = connection.execute(
+                    "SELECT resolution_id, run_id, finding_id, source_pr, source_channel, outcome, fix_sha, "
+                    "actor, proof_note, resolved_at FROM source_finding_resolutions "
+                    "WHERE run_id = ? AND finding_id = ?",
+                    (run_id, finding_id),
+                ).fetchone()
+                if existing is not None:
+                    same_claim = tuple(existing[:9]) == (resolution_id, *expected)
+                    if not same_claim:
+                        raise ReviewRecordsError("source finding already has a different immutable resolution")
+                    correction_chain = self._source_resolution_corrections(connection, resolution_id, existing[6])
+                    if correction_chain is None:
+                        raise ReviewRecordsError("source finding resolution correction history is invalid")
+                    corrections, effective_fix_sha = correction_chain
+                    return {
+                        "resolution_id": existing[0],
+                        "run_id": existing[1],
+                        "finding_id": existing[2],
+                        "source_pr": existing[3],
+                        "source_channel": existing[4],
+                        "outcome": existing[5],
+                        "fix_sha": existing[6],
+                        "effective_fix_sha": effective_fix_sha,
+                        "corrections": corrections,
+                        "actor": existing[7],
+                        "proof_note": existing[8],
+                        "resolved_at": existing[9],
+                        "idempotent_replay": True,
+                    }
+                if connection.execute(
+                    "SELECT 1 FROM source_finding_resolutions WHERE resolution_id = ?", (resolution_id,)
+                ).fetchone() is not None:
+                    raise ReviewRecordsError("source resolution ID is already used")
+                connection.execute(
+                    "INSERT INTO source_finding_resolutions "
+                    "(resolution_id, run_id, finding_id, source_pr, source_channel, outcome, fix_sha, actor, "
+                    "proof_note, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (resolution_id, *expected, resolved_at),
+                )
+        except ReviewRecordsError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise ReviewRecordsError("source finding resolution conflicts with existing immutable records") from exc
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError("cannot record SQLite source finding resolution") from exc
+        return {
+            "resolution_id": resolution_id,
+            "run_id": run_id,
+            "finding_id": finding_id,
+            "source_pr": source_pr,
+            "source_channel": channel,
+            "outcome": "accepted_fixed",
+            "fix_sha": fix_sha,
+            "effective_fix_sha": fix_sha,
+            "corrections": [],
+            "actor": actor,
+            "proof_note": proof_note,
+            "resolved_at": resolved_at,
+            "idempotent_replay": False,
+        }
+
+    def correct_source_resolution(
+        self,
+        run_id: str,
+        source_finding_key: str,
+        *,
+        source_pr: int,
+        resolution_id: str,
+        expected_fix_sha: str,
+        fix_sha: str,
+        correction_id: str,
+        actor: str,
+        reason: str,
+        proof_note: str,
+        corrected_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Append a proof-SHA correction without changing the original resolution."""
+
+        run_id = _safe_identifier(run_id, "run_id", maximum=100)
+        source_finding_key = _safe_identifier(source_finding_key, "source_finding_key", maximum=200)
+        source_pr = _positive_pr(source_pr, "source PR")
+        resolution_id = _safe_identifier(resolution_id, "resolution_id", maximum=200)
+        correction_id = _safe_identifier(correction_id, "correction_id", maximum=200)
+        expected_fix_sha = _text(expected_fix_sha, "expected fix SHA", maximum=64)
+        fix_sha = _text(fix_sha, "corrected fix SHA", maximum=64)
+        for value, label in ((expected_fix_sha, "expected fix SHA"), (fix_sha, "corrected fix SHA")):
+            if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", value):
+                raise ReviewRecordsError(f"{label} must be a full 40- or 64-character commit identifier")
+        expected_fix_sha = expected_fix_sha.casefold()
+        fix_sha = fix_sha.casefold()
+        actor = _bounded_text(actor, "actor", maximum=100)
+        reason = _bounded_text(reason, "correction reason", maximum=300)
+        proof_note = _bounded_text(proof_note, "proof note", maximum=300)
+        requested_corrected_at = _timestamp(corrected_at, "corrected_at", optional=True)
+        corrected_at = _timestamp(corrected_at, "corrected_at")
+        try:
+            with self._write_connection() as connection:
+                original = connection.execute(
+                    "SELECT r.run_id, r.finding_id, r.source_pr, r.source_channel, r.outcome, r.fix_sha, "
+                    "o.disposition, f.source_finding_key FROM source_finding_resolutions r "
+                    "JOIN finding_observations o ON o.run_id = r.run_id AND o.finding_id = r.finding_id "
+                    "JOIN findings f USING (finding_id) WHERE r.resolution_id = ?",
+                    (resolution_id,),
+                ).fetchone()
+                if original is None:
+                    raise ReviewRecordsError("source resolution does not exist")
+                original_run, _finding_id, original_pr, _source_channel, outcome, original_sha, disposition, original_key = original
+                if (
+                    original_run != run_id
+                    or original_pr != source_pr
+                    or original_key != source_finding_key
+                    or outcome != "accepted_fixed"
+                    or disposition != "accepted"
+                    or not isinstance(original_sha, str)
+                    or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", original_sha)
+                ):
+                    raise ReviewRecordsError("source resolution does not match the exact accepted finding")
+
+                replay = connection.execute(
+                    "SELECT resolution_id, expected_fix_sha, corrected_fix_sha, actor, reason, proof_note, corrected_at "
+                    "FROM source_finding_resolution_corrections WHERE correction_id = ?",
+                    (correction_id,),
+                ).fetchone()
+                claim = (resolution_id, expected_fix_sha, fix_sha, actor, reason, proof_note, corrected_at)
+                if replay is not None:
+                    if tuple(replay[:6]) != claim[:6] or (
+                        requested_corrected_at is not None and replay[6] != requested_corrected_at
+                    ):
+                        raise ReviewRecordsError("correction ID is already used for a different immutable correction")
+                    return {
+                        "correction_id": correction_id,
+                        "resolution_id": resolution_id,
+                        "expected_fix_sha": expected_fix_sha,
+                        "fix_sha": fix_sha,
+                        "actor": actor,
+                        "reason": reason,
+                        "proof_note": proof_note,
+                        "corrected_at": replay[6],
+                        "idempotent_replay": True,
+                    }
+
+                chain = self._source_resolution_corrections(connection, resolution_id, original_sha)
+                if chain is None:
+                    raise ReviewRecordsError("existing source resolution correction history is invalid")
+                current_sha = chain[1]
+                if current_sha.casefold() != expected_fix_sha:
+                    raise ReviewRecordsError("expected fix SHA does not match the current effective source proof")
+                connection.execute(
+                    "INSERT INTO source_finding_resolution_corrections "
+                    "(correction_id, resolution_id, expected_fix_sha, corrected_fix_sha, actor, reason, proof_note, "
+                    "corrected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (correction_id, *claim),
+                )
+        except ReviewRecordsError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise ReviewRecordsError("source resolution correction conflicts with existing immutable records") from exc
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError("cannot record source resolution correction") from exc
+        return {
+            "correction_id": correction_id,
+            "resolution_id": resolution_id,
+            "expected_fix_sha": expected_fix_sha,
+            "fix_sha": fix_sha,
+            "actor": actor,
+            "reason": reason,
+            "proof_note": proof_note,
+            "corrected_at": corrected_at,
+            "idempotent_replay": False,
+        }
+
+    @staticmethod
+    def _source_resolution_corrections(
+        connection: sqlite3.Connection, resolution_id: str, original_sha: str
+    ) -> tuple[list[dict[str, Any]], str] | None:
+        """Validate the append-only correction chain and return its effective SHA."""
+
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", original_sha):
+            return None
+        effective_sha = original_sha.casefold()
+        corrections: list[dict[str, Any]] = []
+        rows = connection.execute(
+            "SELECT sequence, correction_id, expected_fix_sha, corrected_fix_sha, actor, reason, proof_note, "
+            "corrected_at FROM source_finding_resolution_corrections WHERE resolution_id = ? ORDER BY sequence",
+            (resolution_id,),
+        ).fetchall()
+        for row in rows:
+            sequence, correction_id, expected_sha, corrected_sha, actor, reason, proof_note, corrected_at = row
+            if (
+                isinstance(sequence, bool)
+                or not isinstance(sequence, int)
+                or not isinstance(correction_id, str)
+                or not isinstance(expected_sha, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", expected_sha)
+                or expected_sha.casefold() != effective_sha
+                or not isinstance(corrected_sha, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", corrected_sha)
+            ):
+                return None
+            try:
+                corrections.append(
+                    {
+                        "sequence": sequence,
+                        "correction_id": _safe_identifier(correction_id, "correction_id", maximum=200),
+                        "expected_fix_sha": expected_sha,
+                        "fix_sha": corrected_sha,
+                        "actor": _bounded_text(actor, "actor", maximum=100),
+                        "reason": _bounded_text(reason, "correction reason", maximum=300),
+                        "proof_note": _bounded_text(proof_note, "proof note", maximum=300),
+                        "corrected_at": _timestamp(corrected_at, "corrected_at"),
+                    }
+                )
+            except ReviewRecordsError:
+                return None
+            effective_sha = corrected_sha.casefold()
+        return corrections, effective_sha
+
+    @_translate_database_errors
+    def source_resolution_status(
+        self,
+        run_id: str,
+        *,
+        source_pr: int,
+        source_channel: ReviewChannel,
+        source_head: str,
+        accepted_count: int,
+        source_checkpoint: Any = None,
+        source_repository: str | None = None,
+    ) -> str | None:
+        """Return proof status, or None for a CLI capture with no structured association."""
+
+        run_id = _safe_identifier(run_id, "run_id", maximum=100)
+        source_pr = _positive_pr(source_pr, "source PR")
+        if not isinstance(source_channel, str) or source_channel not in {"hosted", "cli", "manual", "subagent"}:
+            raise ReviewRecordsError("source channel is invalid")
+        source_head = _text(source_head, "source head", maximum=64)
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", source_head):
+            raise ReviewRecordsError("source head must be a full commit identifier")
+        if isinstance(accepted_count, bool) or not isinstance(accepted_count, int) or accepted_count < 0:
+            raise ReviewRecordsError("accepted count must be a non-negative integer")
+        self._require_regular_database()
+        with contextlib.closing(self._connect(read_only=True)) as connection:
+            connection.execute("BEGIN")
+            self._require_compatible(connection)
+            if source_checkpoint is not None:
+                from .evidence import Checkpoint
+
+                if not isinstance(source_checkpoint, Checkpoint) or not isinstance(source_repository, str):
+                    raise ReviewRecordsError("source checkpoint binding requires parsed checkpoint and repository")
+                provider_ids = (
+                    (source_checkpoint.run_id, f"run:{source_checkpoint.run_id}")
+                    if source_channel == "cli"
+                    else (str(source_checkpoint.hosted_review_id), f"review:{source_checkpoint.hosted_review_id}")
+                )
+                origins = connection.execute(
+                    "SELECT repository, source_pr, channel, provider_id, checkpoint_id, checkpoint_fingerprint, run_id "
+                    "FROM provider_origins WHERE checkpoint_id = ? OR "
+                    "(source_pr = ? AND channel = ? AND provider_id IN (?, ?))",
+                    (source_checkpoint.comment_id, source_pr, source_channel, *provider_ids),
+                ).fetchall()
+                if origins:
+                    if len(origins) != 1:
+                        return "pending"
+                    origin = origins[0]
+                    if (
+                        origin[0] != source_repository.casefold()
+                        or origin[1] != source_pr
+                        or origin[2] != source_channel
+                        or origin[3] not in provider_ids
+                        or origin[4] != source_checkpoint.comment_id
+                        or not self._source_checkpoint_matches(connection, origin[6], origin[5], source_checkpoint)
+                    ):
+                        return "pending"
+                    if source_channel == "cli":
+                        if origin[6] != run_id and connection.execute(
+                            "SELECT 1 FROM review_runs WHERE run_id = ? "
+                            "UNION ALL SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? LIMIT 1",
+                            (run_id, run_id, run_id),
+                        ).fetchone() is not None:
+                            return "pending"
+                        run_id = origin[6]
+                    elif origin[6] != run_id:
+                        return "pending"
+            run = connection.execute(
+                "SELECT source_pr, channel, source_head, outcome, attributable, accepted_count, finalized "
+                "FROM review_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+            if run is None and source_channel == "cli":
+                # CLI markers predate SQLite. Only an actual source association
+                # switches a retained capture from legacy to structured proof.
+                # Keep partial attempts/origins pending even if their run or
+                # link is missing, rather than silently downgrading to legacy.
+                associated = connection.execute(
+                    "SELECT 1 FROM review_attempts WHERE attempt_id = ? OR run_id = ? "
+                    "UNION ALL SELECT 1 FROM provider_origins WHERE run_id = ? LIMIT 1",
+                    (run_id, run_id, run_id),
+                ).fetchone()
+                if associated is None:
+                    return None
+            if (
+                run is None
+                or run[0] != source_pr
+                or run[1] != source_channel
+                or not isinstance(run[2], str)
+                or run[2].casefold() != source_head.casefold()
+                or run[3] != "completed"
+                or not run[4]
+                or run[5] != accepted_count
+                or not run[6]
+            ):
+                return "pending"
+            accepted = connection.execute(
+                "SELECT o.finding_id, f.source_finding_key, r.resolution_id, r.source_pr, r.source_channel, "
+                "r.outcome, r.fix_sha, r.actor, r.proof_note, r.resolved_at, "
+                "(SELECT COUNT(*) FROM decisions d WHERE d.decision_scope = 'source' "
+                "AND d.run_id = o.run_id AND d.finding_id = o.finding_id) "
+                "FROM finding_observations o JOIN findings f USING (finding_id) "
+                "LEFT JOIN source_finding_resolutions r ON r.run_id = o.run_id AND r.finding_id = o.finding_id "
+                "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = ? AND o.disposition = 'accepted'",
+                (run_id, source_pr, source_channel),
+            ).fetchall()
+            all_resolutions = connection.execute(
+                "SELECT COUNT(*) FROM source_finding_resolutions WHERE run_id = ?", (run_id,)
+            ).fetchone()[0]
+            if len(accepted) != accepted_count or all_resolutions != accepted_count:
+                return "pending"
+            for row in accepted:
+                (
+                    _,
+                    source_finding_key,
+                    resolution_id,
+                    proof_pr,
+                    proof_channel,
+                    outcome,
+                    fix_sha,
+                    actor,
+                    note,
+                    at,
+                    decision_count,
+                ) = row
+                if (
+                    not isinstance(source_finding_key, str)
+                    or not isinstance(resolution_id, str)
+                    or decision_count < 1
+                    or proof_pr != source_pr
+                    or proof_channel != source_channel
+                    or outcome != "accepted_fixed"
+                    or not isinstance(fix_sha, str)
+                    or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", fix_sha)
+                ):
+                    return "pending"
+                try:
+                    _bounded_text(actor, "actor", maximum=100)
+                    _bounded_text(note, "proof note", maximum=300)
+                    _timestamp(at, "resolved_at")
+                except ReviewRecordsError:
+                    return "pending"
+                correction_chain = self._source_resolution_corrections(connection, resolution_id, fix_sha)
+                if correction_chain is None:
+                    return "pending"
+            return "resolved"
+
+    @staticmethod
+    def _source_checkpoint_matches(
+        connection: sqlite3.Connection, run_id: str, fingerprint: str, checkpoint: Any
+    ) -> bool:
+        """Verify retained checkpoint identity while neutralizing only its edit timestamp."""
+
+        from .sqlite_provider_imports import _checkpoint_fingerprint
+
+        row = connection.execute(
+            "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'metadata'", (run_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            metadata = json.loads(row[0])
+            stored = metadata["checkpoint"]
+            if not isinstance(stored, dict) or metadata.get("checkpoint_fingerprint") != fingerprint:
+                return False
+            if "checkpoint_fields" in metadata:
+                recorded = type(checkpoint)(**metadata["checkpoint_fields"])
+                if recorded.as_json() != stored:
+                    return False
+            else:
+                required = ("comment_id", "created_at", "type", "raw_found", "accepted", "reviewed_sha", "file_count", "correction")
+                recorded = dataclasses.replace(
+                    checkpoint,
+                    **{key: stored[key] for key in required},
+                    updated_at=stored.get("updated_at"),
+                    run_id=stored.get("run_id"),
+                    hosted_review_id=stored.get("hosted_review_id"),
+                    duration_seconds=stored.get("duration_seconds"),
+                    duration_invalid=stored.get("duration_invalid", False),
+                    routed=stored.get("routed"),
+                    author_login=stored.get("author_login", checkpoint.author_login),
+                )
+            # Only older snapshots without the author use the immutable
+            # current GitHub author, and still have to reproduce the hash.
+            return (
+                _checkpoint_fingerprint(recorded) == fingerprint
+                and _checkpoint_fingerprint(dataclasses.replace(checkpoint, updated_at=recorded.updated_at)) == fingerprint
+            )
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def import_completed_run(
         self,
@@ -1350,11 +2180,31 @@ class SqliteReviewRecords:
         reviewer = _bounded_text(reviewer, "reviewer", maximum=100)
         if not isinstance(scope, str) or scope not in {"broad", "narrow"}:
             raise ReviewRecordsError("scope must be broad or narrow")
-        if isinstance(coverage_limits, (str, bytes)) or not isinstance(coverage_limits, Sequence):
-            raise ReviewRecordsError("coverage_limits must be a sequence of bounded text values")
-        coverage = tuple(_bounded_text(item, "coverage limit", maximum=200) for item in coverage_limits)
-        if len(coverage) > 20:
-            raise ReviewRecordsError("coverage_limits may contain at most 20 entries")
+        retained_coverage: Sequence[str] = ()
+        if (
+            channel == "subagent"
+            and isinstance(coverage_limits, Sequence)
+            and not isinstance(coverage_limits, (str, bytes))
+            and any(isinstance(item, str) and len(item) > 200 for item in coverage_limits)
+        ):
+            try:
+                attempt = self.attempt(run_id)
+            except AttemptNotFound:
+                pass
+            else:
+                metadata = attempt["metadata"]
+                if (
+                    attempt["source_pr"] == source_pr
+                    and attempt["channel"] == channel
+                    and attempt["candidate_sha"] == source_head
+                    and attempt["started_at"] == started_at
+                    and attempt["state"] in {"started", "completed"}
+                    and metadata.get("reviewer") == reviewer
+                    and metadata.get("scope") == scope
+                    and isinstance(metadata.get("coverage_limits"), list)
+                ):
+                    retained_coverage = metadata["coverage_limits"]
+        coverage = _coverage_limits(coverage_limits, retained=retained_coverage)
         supplied_started_at = started_at
         supplied_finished_at = finished_at
         started_at = _timestamp(started_at, "started_at")
@@ -1383,10 +2233,19 @@ class SqliteReviewRecords:
             if not isinstance(item, Mapping):
                 raise ReviewRecordsError("source decisions must be objects")
             allowed = {
-                "source_finding_key", "decision_id", "decision", "actor", "reason", "target_pr",
-                "decided_at", "route_id", "route_status",
+                "source_finding_key",
+                "decision_id",
+                "decision",
+                "actor",
+                "reason",
+                "target_pr",
+                "decided_at",
+                "route_id",
+                "route_status",
             }
-            if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(item):
+            if set(item) - allowed or not {"source_finding_key", "decision_id", "decision", "actor", "reason"} <= set(
+                item
+            ):
                 raise ReviewRecordsError("source decision has missing or unsupported fields")
             source_finding_key = _safe_identifier(item["source_finding_key"], "source_finding_key", maximum=200)
             if source_finding_key not in observation_keys:
@@ -1642,8 +2501,7 @@ class SqliteReviewRecords:
 
                 final_counts = self._current_run_counts(connection, run_id)
                 unresolved = connection.execute(
-                    "SELECT COUNT(*) FROM finding_observations "
-                    "WHERE run_id = ? AND disposition = 'unresolved'",
+                    "SELECT COUNT(*) FROM finding_observations WHERE run_id = ? AND disposition = 'unresolved'",
                     (run_id,),
                 ).fetchone()[0]
                 if unresolved:
@@ -1675,7 +2533,10 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("cannot import completed SQLite review run") from exc
 
     def finalize_run(
-        self, run_id: str, *, finalized_at: str | None = None,
+        self,
+        run_id: str,
+        *,
+        finalized_at: str | None = None,
         _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Freeze the source counts after every finding has a source disposition."""
@@ -1683,8 +2544,7 @@ class SqliteReviewRecords:
         run_id = _safe_identifier(run_id, "run_id", maximum=100)
         finalized_at = _timestamp(finalized_at, "finalized_at")
         try:
-            with (self._write_connection() if _connection is None
-                  else contextlib.nullcontext(_connection)) as connection:
+            with self._write_connection() if _connection is None else contextlib.nullcontext(_connection) as connection:
                 run = connection.execute(
                     "SELECT finalized, finalized_at FROM review_runs WHERE run_id = ?", (run_id,)
                 ).fetchone()
@@ -1692,8 +2552,7 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("review run does not exist")
                 counts = self._current_run_counts(connection, run_id)
                 unresolved = connection.execute(
-                    "SELECT COUNT(*) FROM finding_observations "
-                    "WHERE run_id = ? AND disposition = 'unresolved'",
+                    "SELECT COUNT(*) FROM finding_observations WHERE run_id = ? AND disposition = 'unresolved'",
                     (run_id,),
                 ).fetchone()[0]
                 if unresolved:
@@ -1755,7 +2614,10 @@ class SqliteReviewRecords:
                     raise ReviewRecordsError("route does not exist")
                 if row[2] != "open":
                     raise ReviewRecordsError("only open routes can be retargeted")
-                connection.execute("UPDATE routes SET target_pr = ?, updated_at = ? WHERE route_id = ?", (target_pr, changed_at, route_id))
+                connection.execute(
+                    "UPDATE routes SET target_pr = ?, updated_at = ? WHERE route_id = ?",
+                    (target_pr, changed_at, route_id),
+                )
                 connection.execute(
                     "INSERT INTO route_target_history (route_id, target_pr, changed_at, actor, reason) "
                     "VALUES (?, ?, ?, ?, ?)",
@@ -1873,10 +2735,19 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("resolution conflicts with existing immutable records") from exc
         except sqlite3.DatabaseError as exc:
             raise ReviewRecordsError("cannot resolve SQLite review route") from exc
-        return {"resolution_id": resolution_id, "route_id": route_id, "resolution_pr": resolution_pr, "outcome": outcome}
+        return {
+            "resolution_id": resolution_id,
+            "route_id": route_id,
+            "resolution_pr": resolution_pr,
+            "outcome": outcome,
+        }
 
     def history(
-        self, pr: int, *, include_legacy_routes: bool = False,
+        self,
+        pr: int,
+        *,
+        include_legacy_routes: bool = False,
+        include_display: bool = True,
         _connection: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
         """Return machine-readable source and incoming route history for one PR.
@@ -1891,9 +2762,14 @@ class SqliteReviewRecords:
         pr = _positive_pr(pr)
         if not isinstance(include_legacy_routes, bool):
             raise ReviewRecordsError("include_legacy_routes must be boolean")
+        if not isinstance(include_display, bool):
+            raise ReviewRecordsError("include_display must be boolean")
         try:
-            with (contextlib.closing(self._connect(read_only=True)) if _connection is None
-                  else contextlib.nullcontext(_connection)) as connection:
+            with (
+                contextlib.closing(self._connect(read_only=True))
+                if _connection is None
+                else contextlib.nullcontext(_connection)
+            ) as connection:
                 if _connection is None:
                     connection.execute("BEGIN")
                 self._require_compatible(connection)
@@ -1953,6 +2829,73 @@ class SqliteReviewRecords:
                         (pr,),
                     )
                 ]
+                source_resolutions = []
+                source_resolution_corrections = []
+                for row in connection.execute(
+                    "SELECT r.resolution_id, r.run_id, r.finding_id, r.source_pr, r.source_channel, "
+                    "f.source_finding_key, r.outcome, r.fix_sha, r.actor, r.proof_note, r.resolved_at, "
+                    "o.source_pr, o.source_channel, rr.source_pr, rr.channel "
+                    "FROM source_finding_resolutions r JOIN findings f USING (finding_id) "
+                    "JOIN finding_observations o ON o.run_id = r.run_id AND o.finding_id = r.finding_id "
+                    "JOIN review_runs rr ON rr.run_id = r.run_id "
+                    "WHERE r.source_pr = ? ORDER BY r.resolved_at, r.resolution_id",
+                    (pr,),
+                ):
+                    (
+                        resolution_id,
+                        run_id,
+                        finding_id,
+                        source_pr,
+                        source_channel,
+                        source_finding_key,
+                        outcome,
+                        fix_sha,
+                        actor,
+                        proof_note,
+                        resolved_at,
+                        observation_pr,
+                        observation_channel,
+                        run_pr,
+                        run_channel,
+                    ) = row
+                    if (
+                        source_pr != pr
+                        or source_channel not in {"hosted", "cli", "manual", "subagent"}
+                        or observation_pr != source_pr
+                        or observation_channel != source_channel
+                        or run_pr != source_pr
+                        or run_channel != source_channel
+                        or outcome != "accepted_fixed"
+                        or not isinstance(fix_sha, str)
+                        or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", fix_sha)
+                    ):
+                        raise ReviewRecordsError("stored source finding resolution is malformed")
+                    correction_chain = self._source_resolution_corrections(connection, resolution_id, fix_sha)
+                    if correction_chain is None:
+                        raise ReviewRecordsError("stored source finding resolution correction history is malformed")
+                    corrections, effective_fix_sha = correction_chain
+                    source_resolution_corrections.extend(
+                        {"resolution_id": resolution_id, **correction} for correction in corrections
+                    )
+                    source_resolutions.append(
+                        {
+                            "resolution_id": _safe_identifier(resolution_id, "resolution_id", maximum=200),
+                            "run_id": _safe_identifier(run_id, "run_id", maximum=100),
+                            "finding_id": _safe_identifier(finding_id, "finding_id", maximum=64),
+                            "source_pr": source_pr,
+                            "source_channel": source_channel,
+                            "source_finding_key": _safe_identifier(
+                                source_finding_key, "source_finding_key", maximum=200
+                            ),
+                            "outcome": outcome,
+                            "fix_sha": fix_sha,
+                            "effective_fix_sha": effective_fix_sha,
+                            "corrections": corrections,
+                            "actor": _bounded_text(actor, "actor", maximum=100),
+                            "proof_note": _bounded_text(proof_note, "proof note", maximum=300),
+                            "resolved_at": _timestamp(resolved_at, "resolved_at"),
+                        }
+                    )
                 attempts = []
                 for row in connection.execute(
                     "SELECT attempt_id, channel, candidate_sha, state, started_at, finished_at, "
@@ -1968,49 +2911,84 @@ class SqliteReviewRecords:
                     if not isinstance(metadata, dict):
                         raise ReviewRecordsError("review attempt metadata is not an object")
                     attempts.append(
-                        {"attempt_id": row[0], "channel": row[1], "candidate_sha": row[2],
-                         "state": row[3], "started_at": row[4], "finished_at": row[5],
-                         "duration_seconds": row[6], "exit_status": row[7], "trigger_id": row[8],
-                         "provider_review_id": row[9], "checkpoint_id": row[10], "run_id": row[11],
-                         "diagnostic": row[12], "origin": metadata.get("origin"),
-                         "legacy_outcome": metadata.get("legacy_outcome")}
+                        {
+                            "attempt_id": row[0],
+                            "channel": row[1],
+                            "candidate_sha": row[2],
+                            "state": row[3],
+                            "started_at": row[4],
+                            "finished_at": row[5],
+                            "duration_seconds": row[6],
+                            "exit_status": row[7],
+                            "trigger_id": row[8],
+                            "provider_review_id": row[9],
+                            "checkpoint_id": row[10],
+                            "run_id": row[11],
+                            "diagnostic": row[12],
+                            "origin": metadata.get("origin"),
+                            "legacy_outcome": metadata.get("legacy_outcome"),
+                            "repository": metadata.get("repository"),
+                        }
                     )
                 corrections = [
-                    {"correction_id": row[0], "supersedes_id": row[1], "run_id": row[2],
-                     "finding_id": row[3], "decision": row[4], "target_pr": row[5],
-                     "actor": row[6], "reason": row[7], "decided_at": row[8]}
+                    {
+                        "correction_id": row[0],
+                        "supersedes_id": row[1],
+                        "run_id": row[2],
+                        "finding_id": row[3],
+                        "decision": row[4],
+                        "target_pr": row[5],
+                        "actor": row[6],
+                        "reason": row[7],
+                        "decided_at": row[8],
+                    }
                     for row in connection.execute(
                         "SELECT c.correction_id, c.supersedes_id, c.run_id, c.finding_id, c.decision, "
                         "c.target_pr, c.actor, c.reason, c.decided_at "
                         "FROM source_decision_corrections c JOIN review_runs r USING (run_id) "
-                        "WHERE r.source_pr = ? ORDER BY c.sequence", (pr,)
+                        "WHERE r.source_pr = ? ORDER BY c.sequence",
+                        (pr,),
                     )
                 ]
                 provider_origins = [
-                    {"repository": row[0], "source_pr": row[1], "channel": row[2],
-                     "provider_id": row[3], "checkpoint_id": row[4],
-                     "checkpoint_fingerprint": row[5], "run_id": row[6]}
+                    {
+                        "repository": row[0],
+                        "source_pr": row[1],
+                        "channel": row[2],
+                        "provider_id": row[3],
+                        "checkpoint_id": row[4],
+                        "checkpoint_fingerprint": row[5],
+                        "run_id": row[6],
+                    }
                     for row in connection.execute(
                         "SELECT repository, source_pr, channel, provider_id, checkpoint_id, "
                         "checkpoint_fingerprint, run_id FROM provider_origins "
-                        "WHERE source_pr = ? ORDER BY checkpoint_id", (pr,)
+                        "WHERE source_pr = ? ORDER BY checkpoint_id",
+                        (pr,),
                     )
                 ]
                 imported_artifacts = [
-                    {"run_id": row[0], "kind": row[1], "source_sha256": row[2],
-                     "redactions": row[3]}
+                    {"run_id": row[0], "kind": row[1], "source_sha256": row[2], "redactions": row[3]}
                     for row in connection.execute(
                         "SELECT a.run_id, a.kind, a.source_sha256, a.redactions "
                         "FROM imported_artifacts a JOIN review_runs r USING (run_id) "
-                        "WHERE r.source_pr = ? ORDER BY a.run_id, a.kind", (pr,)
+                        "WHERE r.source_pr = ? ORDER BY a.run_id, a.kind",
+                        (pr,),
                     )
                 ]
                 historical_gaps = [
-                    {"repository": row[0], "source_pr": row[1], "channel": row[2],
-                     "checkpoint_id": row[3], "checkpoint_fingerprint": row[4],
-                     "checkpoint": json.loads(row[5]), "checkpoint_source_sha256": row[6],
-                     "checkpoint_redactions": row[7], "missing_reason": row[8],
-                     "superseded_by_run_id": row[9]}
+                    {
+                        "repository": row[0],
+                        "source_pr": row[1],
+                        "channel": row[2],
+                        "checkpoint_id": row[3],
+                        "checkpoint_fingerprint": row[4],
+                        "checkpoint": json.loads(row[5]),
+                        "checkpoint_source_sha256": row[6],
+                        "checkpoint_redactions": row[7],
+                        "missing_reason": row[8],
+                        "superseded_by_run_id": row[9],
+                    }
                     for row in connection.execute(
                         "SELECT g.repository, g.source_pr, g.channel, g.checkpoint_id, "
                         "g.checkpoint_fingerprint, g.checkpoint_json, g.checkpoint_source_sha256, "
@@ -2018,24 +2996,37 @@ class SqliteReviewRecords:
                         "FROM historical_provider_gaps g LEFT JOIN provider_origins o "
                         "ON o.repository = g.repository AND o.source_pr = g.source_pr "
                         "AND o.checkpoint_id = g.checkpoint_id "
-                        "WHERE g.source_pr = ? ORDER BY g.checkpoint_id", (pr,)
+                        "WHERE g.source_pr = ? ORDER BY g.checkpoint_id",
+                        (pr,),
                     )
                 ]
                 historical_gap_artifacts = [
-                    {"repository": row[0], "source_pr": row[1], "checkpoint_id": row[2],
-                     "kind": row[3], "source_sha256": row[4], "redactions": row[5]}
+                    {
+                        "repository": row[0],
+                        "source_pr": row[1],
+                        "checkpoint_id": row[2],
+                        "kind": row[3],
+                        "source_sha256": row[4],
+                        "redactions": row[5],
+                    }
                     for row in connection.execute(
                         "SELECT repository, source_pr, checkpoint_id, kind, "
                         "source_sha256, redactions FROM historical_gap_artifacts "
-                        "WHERE source_pr = ? ORDER BY checkpoint_id, kind", (pr,)
+                        "WHERE source_pr = ? ORDER BY checkpoint_id, kind",
+                        (pr,),
                     )
                 ]
+                if include_display:
+                    self._add_hosted_display_titles(connection, observations, routes)
+                    self._add_run_durations(connection, runs)
                 return {
                     "pr": pr,
                     "runs": runs,
                     "findings": observations,
                     "routes": routes,
                     "decisions": decisions,
+                    "source_resolutions": source_resolutions,
+                    "source_resolution_corrections": source_resolution_corrections,
                     "attempts": attempts,
                     "corrections": corrections,
                     "provider_origins": provider_origins,
@@ -2049,7 +3040,11 @@ class SqliteReviewRecords:
             raise ReviewRecordsError("cannot read SQLite review history") from exc
 
     def history_batch(
-        self, prs: Sequence[int], *, include_legacy_routes: bool = False
+        self,
+        prs: Sequence[int],
+        *,
+        include_legacy_routes: bool = False,
+        include_display: bool = True,
     ) -> dict[int, dict[str, Any]]:
         """Read several PR histories from one SQLite snapshot."""
 
@@ -2064,8 +3059,12 @@ class SqliteReviewRecords:
                 connection.execute("BEGIN")
                 self._require_compatible(connection)
                 return {
-                    pr: self.history(pr, include_legacy_routes=include_legacy_routes,
-                                     _connection=connection)
+                    pr: self.history(
+                        pr,
+                        include_legacy_routes=include_legacy_routes,
+                        include_display=include_display,
+                        _connection=connection,
+                    )
                     for pr in selected
                 }
         except ReviewRecordsError:
@@ -2124,8 +3123,7 @@ class SqliteReviewRecords:
                     # must see the authoritative legacy record before any
                     # status or assignment filters are applied.
                     rows = connection.execute(
-                        route_select + " ORDER BY COALESCE(routes.target_pr, 0), "
-                        "routes.source_pr, routes.route_id"
+                        route_select + " ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id"
                     )
                 else:
                     conditions = []
@@ -2144,7 +3142,8 @@ class SqliteReviewRecords:
                         conditions.append("routes.target_pr IS NULL")
                     where = " WHERE " + " AND ".join(conditions) if conditions else ""
                     rows = connection.execute(
-                        route_select + where
+                        route_select
+                        + where
                         + " ORDER BY COALESCE(routes.target_pr, 0), routes.source_pr, routes.route_id",
                         parameters,
                     )
@@ -2182,6 +3181,7 @@ class SqliteReviewRecords:
                     routes = [route for route in routes if route["source_pr"] == source_pr]
                 if unassigned:
                     routes = [route for route in routes if route["target_pr"] is None]
+                self._add_hosted_display_titles(connection, (), routes)
                 return sorted(
                     routes,
                     key=lambda route: (route["target_pr"] or 0, route["source_pr"], route["route_id"]),
@@ -2204,10 +3204,305 @@ class SqliteReviewRecords:
             include_legacy_routes=include_legacy_routes,
         )
 
+    def _add_run_durations(self, connection: sqlite3.Connection, runs: Sequence[dict[str, Any]]) -> None:
+        """Expose recorded provider elapsed time, never infer runtime from import timestamps."""
+
+        from .evidence import Checkpoint
+
+        for run in runs:
+            if run["channel"] not in {"hosted", "cli"}:
+                continue
+            # Presence is authoritative: null blocks legacy UI fallback from
+            # resurrecting missing, invalid or conflicting timing evidence.
+            run["duration_seconds"] = None
+            durations = set()
+            attempts = connection.execute(
+                "SELECT duration_seconds FROM review_attempts WHERE run_id = ? AND source_pr = ? "
+                "AND channel = ? AND state = 'completed'",
+                (run["run_id"], run["source_pr"], run["channel"]),
+            ).fetchall()
+            if len(attempts) > 1:
+                continue
+            if attempts and attempts[0][0] is not None:
+                duration = attempts[0][0]
+                if type(duration) is not int or duration < 0:
+                    continue
+                durations.add(duration)
+            row = connection.execute(
+                "SELECT i.content, o.repository, o.source_pr, o.channel, o.provider_id, "
+                "o.checkpoint_id, o.checkpoint_fingerprint FROM imported_artifacts i "
+                "JOIN provider_origins o USING (run_id) WHERE i.run_id = ? AND i.kind = 'metadata'",
+                (run["run_id"],),
+            ).fetchone()
+            if row is not None:
+                try:
+                    metadata = json.loads(row[0])
+                    fields = (
+                        dict(metadata["checkpoint_fields"]) if "checkpoint_fields" in metadata else {
+                            key: value for key, value in metadata["checkpoint"].items()
+                            if key in {field.name for field in dataclasses.fields(Checkpoint)}
+                        }
+                    )
+                    for key in ("updated_at", "run_id", "hosted_review_id"):
+                        fields.setdefault(key, None)
+                    checkpoint = Checkpoint(**fields)
+                    provider_id = (
+                        f"run:{checkpoint.run_id}" if run["channel"] == "cli"
+                        else f"review:{checkpoint.hosted_review_id}"
+                    )
+                    if row[4].startswith("trigger:") and run["channel"] == "hosted":
+                        provider_id = f"trigger:{metadata.get('trigger_id')}"
+                    if (
+                        metadata.get("repository") != row[1]
+                        or metadata.get("pull_request") != run["source_pr"]
+                        or row[2:4] != (run["source_pr"], run["channel"])
+                        or checkpoint.type.casefold() != run["channel"]
+                        or checkpoint.comment_id != row[5]
+                        or provider_id != row[4]
+                        or not self._source_checkpoint_matches(connection, run["run_id"], row[6], checkpoint)
+                        or checkpoint.duration_invalid
+                    ):
+                        continue
+                    if checkpoint.duration_seconds is not None:
+                        duration = checkpoint.duration_seconds
+                        if type(duration) is not int or duration < 0:
+                            continue
+                        durations.add(duration)
+                    capture_duration = metadata.get("review_duration_seconds") if run["channel"] == "cli" else None
+                    if capture_duration is not None:
+                        if not isinstance(capture_duration, str) or not re.fullmatch(r"0|[1-9][0-9]*", capture_duration.strip()):
+                            continue
+                        durations.add(int(capture_duration.strip()))
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    continue
+            if len(durations) == 1:
+                run["duration_seconds"] = durations.pop()
+
+    def _add_hosted_display_titles(
+        self,
+        connection: sqlite3.Connection,
+        observations: Sequence[dict[str, Any]],
+        routes: Sequence[dict[str, Any]],
+    ) -> None:
+        """Enrich malformed Hosted titles without changing any historical projection."""
+
+        from .sqlite_finding_text import _unusable_hosted_title
+
+        cache: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
+        for record in (*observations, *routes):
+            if record.get("source_channel") not in {"hosted", "cli"} or record.get("origin") == "legacy_controller":
+                continue
+            if "run_id" in record:
+                run_id, title = record["run_id"], record["title"]
+            else:
+                # The route's source finding, not its receiving PR, owns the
+                # archive. Match the same latest observation used by list_routes.
+                row = connection.execute(
+                    "SELECT o.run_id, o.title FROM finding_observations o "
+                    "JOIN review_runs r USING (run_id) JOIN findings f USING (finding_id) "
+                    "WHERE o.finding_id = ? AND o.source_pr = ? AND o.source_channel = ? "
+                    "AND f.source_finding_key = ? "
+                    "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1",
+                    (record["finding_id"], record["source_pr"], record["source_channel"], record["source_finding_key"]),
+                ).fetchone()
+                if row is None:
+                    continue
+                run_id, title = row
+            cache_key = (run_id, record["source_pr"])
+            if cache_key not in cache:
+                reader = self._hosted_display_titles if record["source_channel"] == "hosted" else self._cli_display_severities
+                cache[cache_key] = reader(connection, run_id, record["source_pr"])
+            presentation = cache[cache_key].get(record["source_finding_key"])
+            if presentation:
+                record["display_severity"] = presentation["display_severity"]
+                if (_unusable_hosted_title(title) or title in presentation.get("classification_titles", ())) and presentation.get("display_title"):
+                    record["display_title"] = presentation["display_title"]
+                if presentation.get("display_title_is_excerpt") and title == presentation.get("display_title"):
+                    record["display_title_is_excerpt"] = True
+                if presentation.get("display_detail"):
+                    record["display_detail"] = presentation["display_detail"]
+
+    def _cli_display_severities(
+        self, connection: sqlite3.Connection, run_id: str, source_pr: int
+    ) -> dict[str, dict[str, Any]]:
+        """Associate retained provider severity with exact validated CLI finding ordinals."""
+
+        from . import evidence
+
+        try:
+            attempts = connection.execute(
+                "SELECT attempt_id FROM review_attempts WHERE run_id = ?", (run_id,)
+            ).fetchall()
+            if attempts:
+                if attempts != [(run_id,)]:
+                    return {}
+                snapshot = self._cli_capture_snapshot(connection, run_id, source_pr=source_pr)
+                if snapshot is None:
+                    return {}
+                repository = snapshot["attempt"]["metadata"].get("repository", "")
+                capture = evidence._cli_capture_from_sql(snapshot, repository, source_pr)
+                findings, capture_id = capture.findings, run_id
+            else:
+                rows = connection.execute(
+                    "SELECT i.kind, i.content, o.repository, o.source_pr, o.channel, o.provider_id, "
+                    "o.checkpoint_id, o.checkpoint_fingerprint FROM imported_artifacts i "
+                    "JOIN provider_origins o USING (run_id) WHERE i.run_id = ? "
+                    "AND i.kind IN ('metadata', 'cli_events')", (run_id,)
+                ).fetchall()
+                if len(rows) != 2 or {row[0] for row in rows} != {"metadata", "cli_events"}:
+                    return {}
+                artifacts = {row[0]: row[1] for row in rows}
+                origin = rows[0][2:]
+                if any(row[2:] != origin for row in rows):
+                    return {}
+                metadata = json.loads(artifacts["metadata"])
+                checkpoint = evidence.Checkpoint(**metadata["checkpoint_fields"])
+                if (
+                    origin[1:3] != (source_pr, "cli")
+                    or metadata.get("repository") != origin[0]
+                    or metadata.get("pull_request") != source_pr
+                    or checkpoint.type.casefold() != "cli"
+                    or metadata.get("run_id") != checkpoint.run_id
+                    or origin[3] != f"run:{checkpoint.run_id}"
+                    or origin[4] != checkpoint.comment_id
+                    or not self._source_checkpoint_matches(connection, run_id, origin[5], checkpoint)
+                ):
+                    return {}
+                findings, _ = evidence.parse_capture_events(artifacts["cli_events"])
+                if len(findings) != checkpoint.raw_found:
+                    return {}
+                capture_id = checkpoint.run_id
+            keys = {row[0] for row in connection.execute(
+                "SELECT f.source_finding_key FROM finding_observations o JOIN findings f USING (finding_id) "
+                "WHERE o.run_id = ? AND o.source_pr = ? AND o.source_channel = 'cli'", (run_id, source_pr)
+            )}
+            expected = {f"cli-run:{capture_id}:finding:{index}" for index in range(1, len(findings) + 1)}
+            if keys != expected:
+                return {}
+            labels = {label.casefold(): label for label in
+                      ("Critical", "Major", "Minor", "Trivial", "High", "Medium", "Low", "P0", "P1", "P2", "P3")}
+            return {
+                f"cli-run:{capture_id}:finding:{index}": {
+                    "display_severity": labels.get(finding["severity"].strip().casefold())
+                    if isinstance(finding.get("severity"), str) else None,
+                } for index, finding in enumerate(findings, 1)
+            }
+        except (evidence.EvidenceError, ReviewRecordsError, KeyError, TypeError, ValueError, AttributeError):
+            return {}
+
+    def _hosted_display_titles(
+        self, connection: sqlite3.Connection, run_id: str, source_pr: int
+    ) -> dict[str, dict[str, Any]]:
+        """Use complete retained comments and canonical finding keys; omit uncertain evidence."""
+
+        from . import github
+        from .sqlite_hosted_capture import HostedCaptureError, _hosted_comment_finding_segments
+
+        run = connection.execute(
+            "SELECT source_pr, channel FROM review_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if run != (source_pr, "hosted"):
+            return {}
+        archives = [row[0] for row in connection.execute(
+            "SELECT content FROM imported_artifacts WHERE run_id = ? AND kind = 'hosted_comments'", (run_id,)
+        )]
+        for attempt_id, in connection.execute(
+            "SELECT attempt_id FROM review_attempts WHERE run_id = ? AND source_pr = ? "
+            "AND channel = 'hosted' AND state = 'completed'", (run_id, source_pr)
+        ):
+            content = self.attempt_artifacts(attempt_id, _connection=connection).get("hosted_comments")
+            if content is not None:
+                archives.append(content)
+        bodies: dict[int, str] = {}
+        ambiguous_ids: set[int] = set()
+        try:
+            for content in archives:
+                archive = json.loads(content)
+                if not isinstance(archive, dict) or archive.get("pull_request", source_pr) != source_pr:
+                    return {}
+                comments = archive.get("comments", [])
+                threads = archive.get("review_threads", [])
+                if not isinstance(comments, list) or not isinstance(threads, list):
+                    return {}
+                for thread in threads:
+                    if not isinstance(thread, dict):
+                        return {}
+                    nodes = thread.get("comments", {}).get("nodes", [])
+                    if not isinstance(nodes, list):
+                        return {}
+                    comments = [*comments, *nodes[:1]]
+                for comment in comments:
+                    if not isinstance(comment, dict):
+                        continue
+                    author = comment.get("author", comment.get("user"))
+                    if not isinstance(author, dict) or not github.is_coderabbit_login(author.get("login")):
+                        continue
+                    if comment.get("in_reply_to_id") is not None:
+                        continue
+                    try:
+                        comment_id = github.immutable_database_id(comment)
+                    except (ValueError, TypeError, OverflowError):
+                        continue
+                    body = comment.get("body")
+                    if comment_id is None or not isinstance(body, str) or comment_id in ambiguous_ids:
+                        continue
+                    if comment_id in bodies and bodies[comment_id] != body:
+                        # Conflicting exact identity never picks a variant, including later repeats.
+                        ambiguous_ids.add(comment_id)
+                        bodies.pop(comment_id)
+                        continue
+                    bodies[comment_id] = body
+            titles = {}
+            for comment_id, body in bodies.items():
+                try:
+                    findings = _hosted_comment_finding_segments(comment_id, body)
+                except HostedCaptureError:
+                    # Invalid individual comments cannot invalidate independent exact-key siblings.
+                    continue
+                aggregate_key = f"hosted-comment:{comment_id}"
+                aggregate = connection.execute(
+                    "SELECT o.title FROM finding_observations o JOIN findings f USING (finding_id) "
+                    "WHERE o.run_id = ? AND o.source_pr = ? AND f.source_finding_key = ?",
+                    (run_id, source_pr, aggregate_key),
+                ).fetchone()
+                if len(findings) > 1 and aggregate is not None:
+                    from .sqlite_finding_text import _hosted_aggregate_display_detail
+
+                    first_title = findings[0]["title"]
+                    severity = {finding["display_severity"] for finding in findings}
+                    titles[aggregate_key] = {
+                        "display_title": first_title,
+                        "display_detail": _hosted_aggregate_display_detail(findings, aggregate[0]),
+                        "display_severity": next(iter(severity)) if len(severity) == 1 else None,
+                    }
+                for finding in findings:
+                    title = finding["title"]
+                    if title.startswith(f"CodeRabbit review comment {comment_id}"):
+                        title = None
+                    else:
+                        # Enforce the same bounded/secret-free title contract as writes.
+                        try:
+                            FindingObservation(source_finding_key=finding["key"], title=title)
+                        except ReviewRecordsError:
+                            title = None
+                    titles[finding["key"]] = {
+                        "display_title": title,
+                        "display_detail": finding["display_detail"],
+                        "display_severity": finding["display_severity"],
+                        "display_title_is_excerpt": finding["display_title_is_excerpt"],
+                        "classification_titles": finding["classification_titles"],
+                    }
+            return titles
+        except (json.JSONDecodeError, TypeError, AttributeError, HostedCaptureError, ReviewRecordsError):
+            return {}
+
     def _routes_for_pr(self, connection: sqlite3.Connection, pr: int) -> list[dict[str, Any]]:
         rows = connection.execute(
             "SELECT routes.route_id, routes.finding_id, routes.source_pr, routes.source_channel, "
-            "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, routes.updated_at "
+            "findings.source_finding_key, routes.target_pr, routes.status, routes.created_at, routes.updated_at, "
+            "(SELECT o.title FROM finding_observations o JOIN review_runs r USING (run_id) "
+            "WHERE o.finding_id = routes.finding_id "
+            "ORDER BY r.started_at DESC, o.run_id DESC LIMIT 1) "
             "FROM routes JOIN findings USING (finding_id) "
             "WHERE routes.source_pr = ? OR routes.target_pr = ? ORDER BY routes.source_pr, routes.route_id",
             (pr, pr),
@@ -2225,8 +3520,12 @@ class SqliteReviewRecords:
             ]
             decisions = [
                 {
-                    "decision_id": item[0], "decision_pr": item[1], "decision": item[2],
-                    "actor": item[3], "reason": item[4], "decided_at": item[5],
+                    "decision_id": item[0],
+                    "decision_pr": item[1],
+                    "decision": item[2],
+                    "actor": item[3],
+                    "reason": item[4],
+                    "decided_at": item[5],
                 }
                 for item in connection.execute(
                     "SELECT decision_id, decision_pr, decision, actor, reason, decided_at FROM decisions "
@@ -2236,8 +3535,12 @@ class SqliteReviewRecords:
             ]
             resolutions = [
                 {
-                    "resolution_id": item[0], "resolution_pr": item[1], "outcome": item[2],
-                    "actor": item[3], "proof_or_reason": item[4], "resolved_at": item[5],
+                    "resolution_id": item[0],
+                    "resolution_pr": item[1],
+                    "outcome": item[2],
+                    "actor": item[3],
+                    "proof_or_reason": item[4],
+                    "resolved_at": item[5],
                 }
                 for item in connection.execute(
                     "SELECT resolution_id, resolution_pr, outcome, actor, proof_or_reason, resolved_at "
@@ -2257,6 +3560,7 @@ class SqliteReviewRecords:
                     "status": row[6],
                     "created_at": row[7],
                     "updated_at": row[8],
+                    "title": row[9],
                     "target_history": targets,
                     "decisions": decisions,
                     "resolutions": resolutions,
@@ -2351,18 +3655,33 @@ class SqliteReviewRecords:
         if not isinstance(coverage_limits, list) or any(not isinstance(item, str) for item in coverage_limits):
             raise ReviewRecordsError("stored coverage metadata must be a list of strings")
         return {
-            "run_id": row[0], "source_pr": row[1], "channel": row[2], "source_head": row[3],
-            "reviewer": row[4], "scope": row[5], "coverage_limits": coverage_limits,
-            "outcome": row[7], "attributable": bool(row[8]), "started_at": row[9], "finished_at": row[10],
+            "run_id": row[0],
+            "source_pr": row[1],
+            "channel": row[2],
+            "source_head": row[3],
+            "reviewer": row[4],
+            "scope": row[5],
+            "coverage_limits": coverage_limits,
+            "outcome": row[7],
+            "attributable": bool(row[8]),
+            "started_at": row[9],
+            "finished_at": row[10],
             "counts": {"found": row[11], "accepted": row[12], "routed": row[13]},
-            "finalized": bool(row[14]), "finalized_at": row[15],
+            "finalized": bool(row[14]),
+            "finalized_at": row[15],
         }
 
     @staticmethod
     def _observation_record(row: Sequence[Any]) -> dict[str, Any]:
         return {
-            "run_id": row[0], "finding_id": row[1], "source_pr": row[2], "source_channel": row[3],
-            "source_finding_key": row[4], "title": row[5], "detail": row[6], "disposition": row[7],
+            "run_id": row[0],
+            "finding_id": row[1],
+            "source_pr": row[2],
+            "source_channel": row[3],
+            "source_finding_key": row[4],
+            "title": row[5],
+            "detail": row[6],
+            "disposition": row[7],
             "route_id": row[8],
         }
 
@@ -2441,10 +3760,7 @@ class SqliteReviewRecords:
 
     @staticmethod
     def _table_names(connection: sqlite3.Connection) -> set[str]:
-        return {
-            row[0]
-            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
-        }
+        return {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
     def _require_controller_compatible(self, connection: sqlite3.Connection) -> None:
         schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
@@ -2481,9 +3797,9 @@ class SqliteReviewRecords:
         self._require_controller_compatible(connection)
         tables = self._table_names(connection)
         if _RECORDS_METADATA_TABLE not in tables:
-            raise RecordsNotBootstrapped(
-                "review-records schema is not bootstrapped; call bootstrap() explicitly"
-            )
+            if tables & _RECORDS_TABLES:
+                raise RecordsSchemaIncompatible("review-records schema is partial: metadata table is missing")
+            raise RecordsNotBootstrapped("review-records schema is not bootstrapped; call bootstrap() explicitly")
         try:
             row = connection.execute(
                 f"SELECT records_schema_version, controller_schema_version, controller_data_model_version, "
@@ -2585,18 +3901,49 @@ class SqliteReviewRecords:
             "proof_or_reason TEXT NOT NULL, resolved_at TEXT NOT NULL, "
             "FOREIGN KEY (route_id) REFERENCES routes(route_id))"
         )
-        connection.execute(
-            "CREATE INDEX review_runs_source_pr_idx ON review_runs(source_pr, started_at)"
-        )
-        connection.execute(
-            "CREATE INDEX routes_target_status_idx ON routes(target_pr, status, source_pr)"
-        )
+        SqliteReviewRecords._create_source_finding_resolution_schema(connection)
+        SqliteReviewRecords._create_source_finding_resolution_correction_schema(connection)
+        connection.execute("CREATE INDEX review_runs_source_pr_idx ON review_runs(source_pr, started_at)")
+        connection.execute("CREATE INDEX routes_target_status_idx ON routes(target_pr, status, source_pr)")
         SqliteReviewRecords._create_attempt_schema(connection)
         SqliteReviewRecords._create_origin_schema(connection)
         SqliteReviewRecords._create_historical_gap_schema(connection)
         connection.execute(
             "INSERT INTO review_records_metadata VALUES (1, ?, ?, ?, ?)",
             (_RECORDS_SCHEMA_VERSION, SQLITE_SCHEMA_VERSION, ReviewState().schema_version, WRITER_BUILD),
+        )
+
+    @staticmethod
+    def _create_source_finding_resolution_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE source_finding_resolutions ("
+            "resolution_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, finding_id TEXT NOT NULL, "
+            "source_pr INTEGER NOT NULL CHECK (source_pr > 0), "
+            "source_channel TEXT NOT NULL CHECK (source_channel IN ('hosted', 'cli', 'manual', 'subagent')), "
+            "outcome TEXT NOT NULL CHECK (outcome = 'accepted_fixed'), "
+            "fix_sha TEXT NOT NULL CHECK (length(fix_sha) IN (40, 64)), actor TEXT NOT NULL, "
+            "proof_note TEXT NOT NULL, resolved_at TEXT NOT NULL, UNIQUE (run_id, finding_id), "
+            "FOREIGN KEY (run_id, source_pr, source_channel) REFERENCES review_runs(run_id, source_pr, channel), "
+            "FOREIGN KEY (run_id, finding_id) REFERENCES finding_observations(run_id, finding_id))"
+        )
+        connection.execute(
+            "CREATE INDEX source_finding_resolutions_pr_idx "
+            "ON source_finding_resolutions(source_pr, source_channel, run_id)"
+        )
+
+    @staticmethod
+    def _create_source_finding_resolution_correction_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE source_finding_resolution_corrections ("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT, correction_id TEXT NOT NULL UNIQUE, "
+            "resolution_id TEXT NOT NULL, expected_fix_sha TEXT NOT NULL CHECK (length(expected_fix_sha) IN (40, 64)), "
+            "corrected_fix_sha TEXT NOT NULL CHECK (length(corrected_fix_sha) IN (40, 64)), "
+            "actor TEXT NOT NULL, reason TEXT NOT NULL, proof_note TEXT NOT NULL, corrected_at TEXT NOT NULL, "
+            "FOREIGN KEY (resolution_id) REFERENCES source_finding_resolutions(resolution_id))"
+        )
+        connection.execute(
+            "CREATE INDEX source_finding_resolution_corrections_resolution_idx "
+            "ON source_finding_resolution_corrections(resolution_id, sequence)"
         )
 
     @staticmethod
@@ -2615,9 +3962,7 @@ class SqliteReviewRecords:
             "(state != 'started' AND finished_at IS NOT NULL)), "
             "FOREIGN KEY (run_id) REFERENCES review_runs(run_id))"
         )
-        connection.execute(
-            "CREATE INDEX review_attempts_pr_idx ON review_attempts(source_pr, started_at)"
-        )
+        connection.execute("CREATE INDEX review_attempts_pr_idx ON review_attempts(source_pr, started_at)")
         connection.execute(
             "CREATE TABLE review_artifacts ("
             "attempt_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN "
@@ -2636,8 +3981,7 @@ class SqliteReviewRecords:
             "FOREIGN KEY (run_id, finding_id) REFERENCES finding_observations(run_id, finding_id))"
         )
         connection.execute(
-            "CREATE INDEX source_corrections_finding_idx "
-            "ON source_decision_corrections(run_id, finding_id, sequence)"
+            "CREATE INDEX source_corrections_finding_idx ON source_decision_corrections(run_id, finding_id, sequence)"
         )
 
     @staticmethod
@@ -2652,9 +3996,7 @@ class SqliteReviewRecords:
             "UNIQUE (repository, source_pr, channel, provider_id), "
             "FOREIGN KEY (run_id) REFERENCES review_runs(run_id))"
         )
-        connection.execute(
-            "CREATE INDEX provider_origins_source_idx ON provider_origins(source_pr, checkpoint_id)"
-        )
+        connection.execute("CREATE INDEX provider_origins_source_idx ON provider_origins(source_pr, checkpoint_id)")
         connection.execute(
             "CREATE TABLE imported_artifacts ("
             "run_id TEXT NOT NULL, kind TEXT NOT NULL CHECK (kind IN "

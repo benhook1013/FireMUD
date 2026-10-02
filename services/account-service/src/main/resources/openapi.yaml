@@ -5,9 +5,11 @@ info:
     API for user accounts and authentication. The obsolete caller-asserted
     POST /accounts/{accountId}/external route is removed and denied at the
     public edge; no provider-linking route is available until the
-    server-verified global-account flow and its proof converge. The public
-    POST /auth/bootstrap/join facade is target-only and denied until Account
-    recovery, PostgreSQL, and direct text-client proof are complete.
+    server-verified global-account flow and its proof converge. Account's
+    POST /auth/bootstrap/join facade and local operation are implemented;
+    external Gateway exposure remains blocked pending JOIN recovery and
+    reconciliation (#2848), PostgreSQL runtime proof, and direct text-client
+    end-to-end proof.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0
@@ -457,6 +459,12 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '403':
+          description: Gameplay admission denied for this authenticated account or selected realm
+        '409':
+          description: Admission routing evidence is invalid or stale; rediscover realms and obtain a fresh connectScopeId before retrying
+        '503':
+          $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/connect-token:
     post:
       summary: Mint a short-lived gameplay connect token from a valid player-bootstrap token
@@ -485,6 +493,10 @@ paths:
                     $ref: '#/components/schemas/ErrorDetail'
         '401':
           description: Invalid or expired bootstrap token
+        '403':
+          description: Gameplay admission denied for this authenticated account or selected realm
+        '409':
+          description: Admission routing evidence is invalid or stale; rediscover realms and obtain a fresh connectScopeId before retrying
         '503':
           $ref: '#/components/responses/RetryableAuthenticationUnavailable'
   /auth/request-password-reset:
