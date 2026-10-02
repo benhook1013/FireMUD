@@ -388,7 +388,7 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playRejectsCharacterRosterErrorBeforeBinding() {
+  void playRejectsNamespaceUnqualifiedRosterBeforeAdmissionOrBindingSideEffects() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -407,6 +407,10 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+    assertThat(((ErrorOutput) result.outputs().getFirst().payload()).code())
+        .isEqualTo(GameplayStageCommandConstants.PLAY_IDENTITY_UNAVAILABLE_CODE);
+    Mockito.verify(moderationPolicyClient, Mockito.never())
+        .evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong());
     verifyNoGameplayBindingSideEffects();
   }
 
