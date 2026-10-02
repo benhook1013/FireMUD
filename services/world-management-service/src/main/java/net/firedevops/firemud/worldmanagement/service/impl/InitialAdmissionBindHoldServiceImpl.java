@@ -19,6 +19,7 @@ import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +37,7 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
   private final WorldInstanceRepository worldInstanceRepository;
   private final Clock clock;
 
+  @Autowired
   public InitialAdmissionBindHoldServiceImpl(
       InitialAdmissionBindHoldRepository holdRepository,
       WorldInstanceRepository worldInstanceRepository) {
@@ -208,10 +210,6 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
   private InitialAdmissionBindHoldDto markReconciliationRequired(
       InitialAdmissionBindHold hold, String errorCode) {
     String normalizedErrorCode = normalizeErrorCode(errorCode);
-    if (STATUS_RECONCILIATION_REQUIRED.equals(hold.status())
-        && normalizedErrorCode.equals(hold.reconciliationError())) {
-      return toDto(hold);
-    }
     return holdRepository
         .markReconciliationRequired(hold, normalizedErrorCode, clock.instant())
         .map(this::toDto)
@@ -300,7 +298,7 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
     }
     if (proof.outcome() == InitialAdmissionBindOwnerProof.Outcome.COMMITTED) {
       return proof.expectedNoPriorPointer()
-          && proof.pointerVersion() > 0L
+          && proof.pointerVersion() == 1L
           && proof.pointerAuditId() != null
           && !proof.pointerAuditId().isBlank()
           && hold.requestDigest().equals(proof.pointerAuditRequestDigest());
@@ -308,6 +306,8 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
     return proof.outcome() == InitialAdmissionBindOwnerProof.Outcome.ABORTED
         && proof.futureCommitPrevented()
         && (proof.pointerAuditId() == null || proof.pointerAuditId().isBlank())
+        && (proof.pointerAuditRequestDigest() == null
+            || proof.pointerAuditRequestDigest().isBlank())
         && proof.pointerVersion() == 0L;
   }
 
@@ -382,7 +382,6 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
             nullToEmpty(proof.pointerAuditId()),
             Long.toString(proof.pointerVersion()),
             nullToEmpty(proof.pointerAuditRequestDigest()),
-            Boolean.toString(proof.priorPointerStillAbsent()),
             Boolean.toString(proof.futureCommitPrevented()));
     try {
       return HexFormat.of()

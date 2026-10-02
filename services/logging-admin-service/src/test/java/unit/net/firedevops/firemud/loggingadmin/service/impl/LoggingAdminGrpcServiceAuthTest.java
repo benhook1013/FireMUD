@@ -610,8 +610,7 @@ class LoggingAdminGrpcServiceAuthTest {
     ByteString payload = ByteString.copyFromUtf8("{}");
     return CreateLogEventRequest.newBuilder()
         .setScope(
-            net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
-        .setTenantId("1")
+            net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM)
         .setAuditEventId("d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3")
         .setProducerService("account-service")
         .setEventType("ACCOUNT_REGISTERED")

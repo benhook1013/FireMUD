@@ -145,10 +145,11 @@ class AdmissionPointerControllerTest {
     Map<?, ?> schemas = (Map<?, ?>) components.get("schemas");
     Map<?, ?> pointer = (Map<?, ?>) schemas.get("AdmissionPointerDto");
     Map<?, ?> properties = (Map<?, ?>) pointer.get("properties");
-    for (String revision : List.of("pointerVersion", "catalogRevision")) {
-      Map<?, ?> revisionSchema = (Map<?, ?>) properties.get(revision);
-      assertEquals("integer", revisionSchema.get("type"));
-      assertEquals("int64", revisionSchema.get("format"));
+    for (String field :
+        List.of("tenantId", "gameInstanceId", "pointerVersion", "catalogRevision")) {
+      Map<?, ?> fieldSchema = (Map<?, ?>) properties.get(field);
+      assertEquals("integer", fieldSchema.get("type"));
+      assertEquals("int64", fieldSchema.get("format"));
     }
     assertEquals(true, ((Map<?, ?>) properties.get("catalogRevision")).get("nullable"));
   }

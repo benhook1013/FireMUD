@@ -57,7 +57,7 @@ class SqliteBackupTest(unittest.TestCase):
         records.record_run(
             run_id="backup-fixture-run",
             source_pr=123,
-            channel="manual",
+            channel="subagent",
             source_head="c" * 40,
             reviewer="fixture reviewer",
             findings=[
@@ -65,6 +65,7 @@ class SqliteBackupTest(unittest.TestCase):
                     source_finding_key="backup-fixture-finding",
                     title="Synthetic backup finding",
                     detail="Synthetic bounded review detail.",
+                    display_severity="Major",
                 )
             ],
         )
@@ -75,6 +76,11 @@ class SqliteBackupTest(unittest.TestCase):
             decision="accepted",
             actor="fixture reviewer",
             reason="owned by the source PR",
+        )
+        records.set_source_severity(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            severity="Trivial",
         )
         records.finalize_run("backup-fixture-run")
         records.record_source_resolution(
@@ -134,6 +140,7 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertEqual(sorted(run["run_id"] for run in history["runs"]),
                          ["backup-fixture-run", "backup-provider-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
+        self.assertEqual(history["findings"][0]["display_severity"], "Trivial")
         self.assertEqual(history["source_resolutions"][0]["fix_sha"], "d" * 40)
         self.assertEqual(history["source_resolutions"][0]["effective_fix_sha"], "e" * 40)
         self.assertEqual(len(history["source_resolution_corrections"]), 1)

@@ -69,9 +69,14 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   }
 
   @Test
-  void runRejectsMissingBootstrapPointerSeedsBeforeAnyMutation() throws Exception {
-    assertRejectedBeforeMutation(
-        List.of(), "Gameplay admission pointer bootstrap seeds are required");
+  void runTreatsEmptyBootstrapPointerSeedsAsExplicitOptOutWithoutMutation() throws Exception {
+    when(pointerRepository.count()).thenReturn(0L);
+    properties.setPointers(List.of());
+
+    initializer.run(new DefaultApplicationArguments(new String[] {}));
+
+    verify(pointerRepository).count();
+    verifyNoMoreInteractions(pointerRepository);
   }
 
   @Test

@@ -15,60 +15,19 @@ Entry format:
   - Observation: what was surprising or wasteful
   - Expected pattern: what should happen instead
 
-- `2026-09-09`: A public symmetric JWK is the signing credential
-  - Context: hosted review proposed making a diagnostic `oct.k` correspond to the shared-HMAC Secret, but Account serves that document through the public JWKS route.
-  - Observation: an `oct` JWK has no public-only representation; encoding the exact HMAC bytes would let every reader mint valid tokens. A mismatched diagnostic key must not be repaired by publishing the private material.
-  - Expected pattern: trace the actual signer, validators, mounts, and routed JWKS endpoint before aligning key metadata. For the current diagnostic-only hosted path, publish an empty JWK Set plus non-secret correlation metadata; implement real verification only with the canonical asymmetric Account-published JWKS and custody boundary.
-
 - `2026-09-09`: Bind cert-manager Secret bytes to durable issuance evidence
   - Context: a hosted identity controller initially treated a ready Certificate revision and a separately read TLS Secret as one issuance snapshot during renewal.
   - Observation: cert-manager writes the Secret before advancing Certificate status, so independent reads can combine different revisions; Ready status and Secret metadata do not prove that the observed certificate bytes belong to the recorded revision.
   - Expected pattern: select the uniquely owned CertificateRequest for the ready revision, require its issued certificate bytes to match the Secret exactly, carry those validated bytes forward, and re-read the Certificate snapshot before acceptance. Treat absent or ambiguous issuance evidence as retryable and remember that `CertificateRequest.status.ca` is optional.
-
-- `2026-09-09`: CodeRabbit uncommitted review omits untracked files
-  - Context: an uncommitted CLI review reported the tracked workflow refactor clean but did not include its new local composite action in `reviewedFiles`.
-  - Observation: `coderabbit review --uncommitted` does not provide evidence for a new file while that file remains untracked, even when tracked callers of the file are reviewed.
-  - Expected pattern: inspect `reviewedFiles` before treating an uncommitted review as complete; stage or intent-to-add new files before a later CLI cycle, or explicitly report the missing coverage and use focused proof for that file.
-
-- `2026-09-09`: Post each adjudicated CLI review checkpoint before the next Hosted request
-  - Context: an independent CLI cycle finished between two Hosted cycles, but its canonical found/accepted checkpoint was delayed until after the second Hosted request while accepted findings were being implemented.
-  - Observation: implementation and verification do not need to finish before the review count is durable; once every CLI finding is adjudicated, delaying the count obscures the actual independent review cadence.
-  - Expected pattern: promptly adjudicate a completed CLI cycle and post its canonical found/accepted count immediately, before fixes, verification, or the next Hosted trigger. Continue CLI, Hosted, CI, and fixes as independent parallel lanes.
-
-- `2026-09-13`: Version-file setup requires checkout ordering
-  - Context: workflow language and operational tool versions moved from repeated YAML literals to repository-owned authority files.
-  - Observation: GitHub setup actions and local composites cannot consume repository files before checkout, and a top-level workflow environment value cannot read a file directly.
-  - Expected pattern: keep checkout before every file-backed setup action, validate that ordering as a workflow contract, and route operational tools through a local loader that rejects malformed or missing authority files.
-
-- `2026-09-14`: Release-asset version updates need an explicit checksum completion step
-  - Context: Renovate can discover GitHub release versions but cannot derive the checksum of an arbitrary release archive into a second authority field.
-  - Observation: independently managed version and checksum fields would either permit stale verification or leave routine update repair ambiguous.
-  - Expected pattern: store the checksum's source version beside the digest, fail closed when it differs from the tool version, and use the repository updater to fetch the publisher's checksum manifest and update the pair together.
-
-- `2026-09-14`: Production image pinning remains a promotion even when the runtime version is unchanged
-  - Context: pinning the existing Velero CronJob tag to its registry digest changed a production-applicable manifest, while the repository has no retained staging deployment and promotion evidence for that change.
-  - Observation: a correct digest does not substitute for the canonical staging, smoke, recovery, custody, and approval lineage required by production preflight.
-  - Expected pattern: retain the verified digest authority and transactional update path, but commit the production projection only in an evidence-backed promotion PR; never fabricate an attestation or weaken preflight for a tooling-only change.
-
-- `2026-09-16`: Concurrent Gradle validation can race generated sources
-  - Context: focused Gradle tests for independent modules were launched concurrently during multi-module validation.
-  - Observation: concurrent generation and compilation raced generated sources in a shared dependency and caused transient missing-generated-source errors that obscured the real result.
-  - Expected pattern: run Gradle validation sequentially when tasks share generated-source dependencies, preferably through the canonical locked runner or one combined invocation, and parallelize only independent read-only checks such as script linting.
-
-- `2026-09-19`: Canonical validation wrappers and broad formatters need scope-safe invocation
-  - Context: successor validation in a dedicated stacked worktree used `dev-tools/validation/run-locked-gradle.sh` and `dev-tools/validation/validate-helm.sh`, then the repository-wide `spotlessApply` required by the validation workflow.
-  - Observation: both canonical shell entrypoints are tracked as non-executable, so direct invocation fails unless callers know to use `bash`; repository-wide Spotless also reformatted clean inherited controller files outside the assigned slice, requiring explicit diff inspection and scoped reversal before handoff.
-  - Expected pattern: either make canonical validation entrypoints executable or document `bash` as the required invocation, and treat broad automatic-formatting output as untrusted scope expansion until the resulting diff is inspected against ownership boundaries.
-
-- `2026-09-20`: A partial Spotless invocation can report success without checking formatting
-  - Context: focused TCP Proxy tests and `:tcp-proxy-service:spotlessCheck` passed locally, but a later full local check found formatting violations in the same changed test files.
-  - Observation: without `-PfullCheck`, this module's `spotlessJavaCheck` and `spotlessCheck` tasks were skipped; the successful Gradle exit was not formatting proof.
-  - Expected pattern: when claiming focused formatting proof for this module, run the locked Spotless check with `-PfullCheck` and confirm the check task executed rather than showing `SKIPPED`.
+  - Current status: [PR #2853](https://github.com/benhook1013/FireMUD/pull/2853) owns the source-side TLS rotation and hosted identity proof work. Its current scope does not prove that live CertificateRequest bytes equal the TLS Secret, that the Ready Certificate snapshot is re-read afterward, or that the served identity uses the rotated certificate; these checks remain an activation gate.
+  - Reconsideration trigger: revisit during an authorized activation or renewal observation that can compare the uniquely owned CertificateRequest bytes with the TLS Secret and re-read the Ready Certificate snapshot.
 
 - `2026-09-20`: Workflow-code fixes need an environment-policy cutover for old branches
   - Context: preview deployment secrets were available to a branch-selectable workflow on a persistent self-hosted runner; new workflow code routes privileged jobs through the default branch.
   - Observation: an existing PR branch can retain its old workflow revision after the corrected default-branch workflow merges, and an unrestricted GitHub environment can still release secrets to that old revision.
   - Expected pattern: alongside the code change, restrict privileged GitHub environments to the trusted deployment branch and clear or rotate credentials exposed by old runner state; verify the live environment policies before declaring the trust boundary effective.
+  - Current status: The live `trusted-hosted-cluster` Environment allows only `develop`; its environment-scoped secret-name list is empty, while repository secrets still include legacy `PREVIEW_KUBECONFIG`. The scoped credential bootstrap/finalization, token rotation, legacy binding removal, and old-identity RBAC denial proof remain unverified.
+  - Reconsideration trigger: before the next privileged deployment or declaring cutover complete, an authorized operator should provision and verify the canonical scoped credentials, finalize removal and revocation of the legacy credential and binding, and prove the old identity cannot read Secrets, create CertificateRequests, or change an Issuer. Secret-name presence or absence alone is not rotation or RBAC proof.
 
 - `2026-09-20`: PostgreSQL migration preflights must also pass jOOQ's DDL parser
   - Context: an Automation Flyway migration used a PostgreSQL `DO` block to report duplicate active-readiness rows before adding a partial unique index.

@@ -523,7 +523,7 @@ public final class GameSessionGrpcService
       ListGameplayWorldsResponse response =
           ListGameplayWorldsResponse.newBuilder()
               .addAllWorlds(
-                  gameplayWorldCatalog.visibleWorldsFromAuthoritySnapshot().stream()
+                  gameplayWorldCatalog.publicWorldsFromAuthoritySnapshot().stream()
                       .map(
                           world ->
                               net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
@@ -562,7 +562,7 @@ public final class GameSessionGrpcService
       String worldSelector = requireWorldSelector(request.getWorldSlug());
       WorldView world =
           gameplayWorldCatalog
-              .resolveWorldFromAuthoritySnapshot(worldSelector)
+              .resolvePublicWorldFromAuthoritySnapshot(worldSelector)
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.visibleRealms(world).stream()
@@ -611,8 +611,12 @@ public final class GameSessionGrpcService
           gameplayAdmissionPointerAuthorityService
               .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
-      if (realm.visible() && realm.publicProductionRealm()) {
-        gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
+      if (realm.visible()) {
+        if (realm.publicProductionRealm()) {
+          gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
+        } else {
+          gameplayWorldCatalog.requireHealthyVisiblePrivateRealm(realm);
+        }
       }
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
@@ -846,7 +850,7 @@ public final class GameSessionGrpcService
     if (!trimmed.matches("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")) {
       throw new IllegalArgumentException("worldSlug must be a valid selector");
     }
-    return worldSelector;
+    return trimmed;
   }
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {

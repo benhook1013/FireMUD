@@ -26,7 +26,7 @@ public class WorldInstance {
   private Instant terminatedAt;
   private Instant createdAt = Instant.now();
   private Instant updatedAt = Instant.now();
-  private Long rowVersion;
+  private Long rowVersion = 0L;
 
   void touchUpdatedAt() {
     updatedAt = Instant.now();
