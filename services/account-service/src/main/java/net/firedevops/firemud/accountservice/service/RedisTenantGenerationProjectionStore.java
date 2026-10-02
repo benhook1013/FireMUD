@@ -1,6 +1,5 @@
 package net.firedevops.firemud.accountservice.service;
 
-import java.io.IOException;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -8,17 +7,15 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceReader.AccountSourceSnapshot;
 import net.firedevops.firemud.common.redis.contracts.RedisInvocationContract;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * Explicitly initialized, unwired Account-owned store for the current account-generation
- * projection.
+ * Explicitly initialized, unwired Account-owned store for the current tenant-generation projection.
  */
-public final class RedisAccountGenerationProjectionStore implements AutoCloseable {
-  private final AccountAuthoritySourceReader sourceReader;
+public final class RedisTenantGenerationProjectionStore implements AutoCloseable {
+  private final AccountTenantAuthorityEventProducer source;
   private final CoordinationEndpoint coordinationEndpoint;
 
   private LettuceConnectionFactory connectionFactory;
@@ -26,11 +23,11 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
   private boolean closed;
 
   /** Captures explicit role endpoints without creating a bean or opening a Redis connection. */
-  public RedisAccountGenerationProjectionStore(
-      AccountAuthoritySourceReader reader,
+  public RedisTenantGenerationProjectionStore(
+      AccountTenantAuthorityEventProducer source,
       CoordinationEndpoint coordination,
       CacheRateLimitEndpoint cache) {
-    sourceReader = Objects.requireNonNull(reader, "Account source reader is required");
+    this.source = Objects.requireNonNull(source, "Tenant authority source is required");
     coordinationEndpoint =
         Objects.requireNonNull(coordination, "Coordination endpoint is required");
     Objects.requireNonNull(cache, "Cache/Rate-Limit endpoint is required");
@@ -40,13 +37,13 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
   /** Initializes this store's private Coordination-only Redis client. */
   public synchronized void init() {
     if (closed) {
-      throw new IllegalStateException("Account generation projection store is closed");
+      throw new IllegalStateException("Tenant generation projection store is closed");
     }
     if (connectionFactory != null) {
       return;
     }
     CurrentGenerationProjectionRedisSupport.verifyScriptDigest(
-        AccountGenerationProjectionRedisContract.descriptor());
+        TenantGenerationProjectionRedisContract.descriptor());
     CurrentGenerationProjectionRedisSupport.InitializedClient client =
         CurrentGenerationProjectionRedisSupport.initialize(
             coordinationEndpoint.host(),
@@ -58,17 +55,17 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
   }
 
   /**
-   * Reprojects one exact current Account snapshot. It reads source evidence before every attempt,
-   * performs at most one registered CAS, verifies exact Redis bytes, then rereads Account before
-   * reporting convergence. Source advancement never triggers an implicit retry.
+   * Reprojects one exact current Account tenant snapshot. It reads source evidence before every
+   * attempt, performs at most one registered CAS, verifies exact Redis bytes, then rereads Account
+   * before reporting convergence. Source advancement never triggers an implicit retry.
    */
-  public synchronized ApplyResult refreshCurrent(UUID accountId) {
+  public synchronized ApplyResult refreshCurrent(UUID tenantId) {
     requireInitialized();
-    String key = AccountGenerationProjection.keyForAccount(accountId);
-    AccountSourceSnapshot source = sourceReader.readCurrent(accountId);
-    AccountGenerationProjection candidate = AccountGenerationProjection.fromSource(source);
+    String key = TenantGenerationProjection.keyForTenant(tenantId);
+    TenantGenerationProjection candidate =
+        TenantGenerationProjection.fromSource(source.readCurrent(tenantId));
     if (!key.equals(candidate.key())) {
-      return quarantined("ACCOUNT_SOURCE_IDENTITY_MISMATCH", Optional.empty());
+      return quarantined("TENANT_SOURCE_IDENTITY_MISMATCH", Optional.empty());
     }
     String candidateJson = candidate.toJson();
     byte[] candidateBytes = candidateJson.getBytes(StandardCharsets.UTF_8);
@@ -78,17 +75,17 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
       return quarantined("TTL_PRESENT", Optional.empty());
     }
 
-    AccountGenerationProjection stored = null;
+    TenantGenerationProjection stored = null;
     String storedJson = null;
     if (observed.bytes() != null) {
       try {
-        storedJson = decodeUtf8(observed.bytes());
-        stored = AccountGenerationProjection.parse(storedJson);
-      } catch (IOException | IllegalArgumentException malformed) {
+        storedJson = CurrentGenerationProjectionRedisSupport.decodeUtf8(observed.bytes());
+        stored = TenantGenerationProjection.parse(storedJson);
+      } catch (CharacterCodingException | IllegalArgumentException malformed) {
         return quarantined("MALFORMED_STORED_PROJECTION", Optional.empty());
       }
       if (!key.equals(stored.key())) {
-        return quarantined("STORED_ACCOUNT_ID_MISMATCH", Optional.empty());
+        return quarantined("STORED_TENANT_ID_MISMATCH", Optional.empty());
       }
       if (isRegression(candidate, stored)) {
         return staleSource(key, storedJson);
@@ -123,11 +120,11 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
     }
     if ("INVALID".equals(scriptResult)) {
       throw new IllegalStateException(
-          "Registered Account generation projection script rejected its invocation");
+          "Registered tenant generation projection script rejected its invocation");
     }
     if (!"APPLIED".equals(scriptResult) && !"REPLAY".equals(scriptResult)) {
       throw new IllegalStateException(
-          "Unknown registered Account generation projection script result: "
+          "Unknown registered tenant generation projection script result: "
               + Objects.toString(scriptResult, "null"));
     }
 
@@ -143,13 +140,13 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
       return changedRedisReadback(key, readback.bytes());
     }
 
-    AccountGenerationProjection current =
-        AccountGenerationProjection.fromSource(sourceReader.readCurrent(accountId));
+    TenantGenerationProjection current =
+        TenantGenerationProjection.fromSource(source.readCurrent(tenantId));
     if (!candidate.equals(current)) {
       return new ApplyResult(
           Outcome.SOURCE_CHANGED,
           Optional.of(new ProjectionSnapshot(key, candidateJson)),
-          Optional.of("ACCOUNT_SOURCE_ADVANCED_DURING_REPROJECTION"));
+          Optional.of("ACCOUNT_TENANT_SOURCE_ADVANCED_DURING_REPROJECTION"));
     }
     Outcome convergedOutcome = "APPLIED".equals(scriptResult) ? Outcome.APPLIED : Outcome.REPLAYED;
     return new ApplyResult(
@@ -170,22 +167,22 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
 
   private ApplyResult changedRedisReadback(String key, byte[] bytes) {
     try {
-      String json = decodeUtf8(bytes);
-      AccountGenerationProjection projection = AccountGenerationProjection.parse(json);
+      String json = CurrentGenerationProjectionRedisSupport.decodeUtf8(bytes);
+      TenantGenerationProjection projection = TenantGenerationProjection.parse(json);
       if (!key.equals(projection.key())) {
-        return quarantined("READBACK_ACCOUNT_ID_MISMATCH", Optional.empty());
+        return quarantined("READBACK_TENANT_ID_MISMATCH", Optional.empty());
       }
       return new ApplyResult(
           Outcome.STALE,
           Optional.of(new ProjectionSnapshot(key, json)),
           Optional.of("REDIS_READBACK_CHANGED"));
-    } catch (IOException | IllegalArgumentException malformed) {
+    } catch (CharacterCodingException | IllegalArgumentException malformed) {
       return quarantined("MALFORMED_REDIS_READBACK", Optional.empty());
     }
   }
 
   private static boolean isRegression(
-      AccountGenerationProjection candidate, AccountGenerationProjection stored) {
+      TenantGenerationProjection candidate, TenantGenerationProjection stored) {
     return candidate.generationValue().compareTo(stored.generationValue()) < 0
         || candidate.sourceVersionValue().compareTo(stored.sourceVersionValue()) < 0
         || candidate.outboxSequenceValue().compareTo(stored.outboxSequenceValue()) < 0;
@@ -194,12 +191,12 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
   private String executeRegistered(
       String key, String expectedMode, String expectedBytes, String candidateBytes) {
     RedisInvocationContract invocation =
-        AccountGenerationProjectionRedisContract.prepareInvocation(
+        TenantGenerationProjectionRedisContract.prepareInvocation(
             key, expectedMode, expectedBytes, candidateBytes);
     return CurrentGenerationProjectionRedisSupport.executeRegistered(
         redisTemplate,
         invocation,
-        AccountGenerationProjectionRedisContract.descriptor(),
+        TenantGenerationProjectionRedisContract.descriptor(),
         key,
         expectedMode,
         expectedBytes,
@@ -213,12 +210,8 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
   private void requireInitialized() {
     if (closed || redisTemplate == null) {
       throw new IllegalStateException(
-          "Account generation projection store requires explicit init()");
+          "Tenant generation projection store requires explicit init()");
     }
-  }
-
-  private static String decodeUtf8(byte[] value) throws CharacterCodingException {
-    return CurrentGenerationProjectionRedisSupport.decodeUtf8(value);
   }
 
   private static void validateDistinctEndpoints(
@@ -226,7 +219,7 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
     if (normalizeHost(coordination.host()).equals(normalizeHost(cache.host()))
         && coordination.port() == cache.port()) {
       throw new IllegalArgumentException(
-          "Coordination and Cache/Rate-Limit Redis endpoints must be distinct");
+          "Coordination and Cache/Rate-Limit endpoints must be distinct");
     }
   }
 
@@ -283,7 +276,7 @@ public final class RedisAccountGenerationProjectionStore implements AutoCloseabl
     public CoordinationEndpoint {
       validateHost(host, "Coordination host");
       validatePort(port, "Coordination port");
-      if (!AccountGenerationProjectionRedisContract.PRINCIPAL.equals(principal)) {
+      if (!TenantGenerationProjectionRedisContract.PRINCIPAL.equals(principal)) {
         throw new IllegalArgumentException("Coordination principal must be account_coord_app");
       }
       if (password == null || password.isBlank()) {

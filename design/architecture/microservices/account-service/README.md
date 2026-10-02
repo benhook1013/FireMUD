@@ -59,7 +59,7 @@ Manages user accounts and authentication for the platform. It stores profile dat
 - **Internal:**
   - Logging & Admin Service for audit logging.
   - Game Session Service consumes tokens to create gameplay sessions.
-- **External:** PostgreSQL for account data, Redis for transient session data. Account is the sole writer of its canonical generation projections; the owner-local [Account generation snapshot projection](./runtime-and-data.md#account-generation-snapshot-projection) defines its exact storage, reprojection and readback consequences. This boundary does not grant Game Session write authority or establish production authorization, reset recovery or deployed Redis readiness.
+- **External:** PostgreSQL for account data, Redis for transient session data. Account is the sole writer of its canonical generation projections; the owner-local [Account generation snapshot projection](./runtime-and-data.md#account-generation-snapshot-projection) and [tenant generation snapshot projection](./runtime-and-data.md#tenant-generation-snapshot-projection) define their exact storage, reprojection and readback consequences. These boundaries do not grant Game Session write authority or establish production authorization, reset recovery or deployed Redis readiness.
 
 > See [**Gateway Architecture**](../../system-architecture-gateway.md),
 [**Deployment Environments**](../../infrastructure/deployment-environments.md),
