@@ -19,6 +19,7 @@ import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionResult;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -34,6 +35,8 @@ import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEvent
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer;
+import net.firedevops.firemud.accountservice.service.AccountMembershipLifecycleService;
+import net.firedevops.firemud.accountservice.service.AccountMembershipSourceReader;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.AccountTenantAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.impl.AccountServiceImpl;
@@ -97,6 +100,7 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
   @Autowired private DSLContext dsl;
   @Autowired private AccountService accountService;
   @Autowired private AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer;
+  @Autowired private AccountMembershipLifecycleService membershipLifecycleService;
   @Autowired private AccountAuthorityGenerationRepository authorityGenerationRepository;
   @Autowired private AccountAuthorityOutboxRepository authorityOutboxRepository;
   @Autowired private AccountRepository accountRepository;
@@ -120,6 +124,53 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
     RuntimeMembershipSnapshotDto before = readRuntimeMembershipSnapshot(fixture);
     var immutableMembershipEvent = before.sourceEvent();
     byte[] immutableMembershipBytes = immutableMembershipEvent.canonicalJsonUtf8();
+    Map<String, Object> membershipRowBeforeSourceRead = membershipRow(fixture);
+    Map<String, Object> membershipPairBeforeSourceRead = membershipPairAuthorityRow(fixture);
+    Map<String, Object> membershipGenerationBeforeSourceRead = membershipGenerationRow(fixture);
+    long fenceBeforeSourceRead = accountIssuanceFence(fixture);
+    Map<String, Object> fenceRowBeforeSourceRead = accountIssuanceFenceRow(fixture);
+    var beforeMembershipSource =
+        membershipSourceReader().readCurrent(fixture.accountUuid(), fixture.tenantUuid());
+    assertThat(beforeMembershipSource.accountId()).isEqualTo(fixture.accountUuid());
+    assertThat(beforeMembershipSource.tenantId()).isEqualTo(fixture.tenantUuid());
+    assertThat(beforeMembershipSource.sourceState().scope())
+        .isEqualTo(AuthorityScope.membership(fixture.accountUuid(), fixture.tenantUuid()));
+    assertThat(beforeMembershipSource.sourceState().generation()).isEqualTo(1L);
+    assertThat(beforeMembershipSource.sourceState().sourceVersion()).isEqualTo(1L);
+    assertThat(beforeMembershipSource.sourceState().issuanceFence().accountId())
+        .isEqualTo(fixture.accountUuid());
+    assertThat(beforeMembershipSource.sourceState().issuanceFence().value())
+        .isEqualTo(fenceBeforeSourceRead);
+    assertThat(beforeMembershipSource.snapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+    assertThat(
+            beforeMembershipSource.snapshot().membershipBaseline().membershipAuthorityGeneration())
+        .isEqualTo("1");
+    assertThat(beforeMembershipSource.snapshot().sourceEvent().eventId())
+        .isEqualTo(immutableMembershipEvent.eventId());
+    assertThat(beforeMembershipSource.snapshot().sourceEvent().outboxSequence()).isEqualTo("1");
+    assertThat(beforeMembershipSource.snapshot().sourceEvent().eventDigest())
+        .isEqualTo(immutableMembershipEvent.eventDigest());
+    assertThat(beforeMembershipSource.snapshot().sourceEvent().outboxStreamKey())
+        .isEqualTo(membershipStreamKey(fixture));
+    assertThat(beforeMembershipSource.snapshot().sourceEvent().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+    assertThat(beforeMembershipSource.snapshot().sourceEvent().membershipAuthorityGeneration())
+        .isEqualTo("1");
+    assertThat(beforeMembershipSource.snapshot().sourceEvent().canonicalJsonUtf8())
+        .containsExactly(immutableMembershipBytes);
+    assertThat(beforeMembershipSource.snapshot().outboxCheckpoints())
+        .isEqualTo(before.outboxCheckpoints());
+    assertThat(beforeMembershipSource.snapshot().outboxSourceEvidence())
+        .isEqualTo(before.outboxSourceEvidence());
+    assertThat(membershipRow(fixture)).isEqualTo(membershipRowBeforeSourceRead);
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(membershipPairBeforeSourceRead);
+    assertThat(membershipGenerationRow(fixture)).isEqualTo(membershipGenerationBeforeSourceRead);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(fenceBeforeSourceRead);
+    assertThat(accountIssuanceFenceRow(fixture)).isEqualTo(fenceRowBeforeSourceRead);
+    assertThat(countMembershipRows(fixture)).isEqualTo(1L);
+    assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(1L);
+    assertThat(countStreamEvents(membershipStreamKey(fixture))).isEqualTo(1L);
     assertThat(before.membershipExists()).isTrue();
     assertThat(before.gameplayAdmissionAllowed()).isTrue();
     assertThat(before.authorityTuple().issuerAuthGeneration()).isEqualTo("1");
@@ -258,6 +309,50 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
     assertThat(readback.sourceEvent().canonicalJsonUtf8())
         .containsExactly(immutableMembershipBytes);
 
+    var retainedZeroFixture = fixture();
+    RuntimeMembershipSnapshotDto retainedZeroBefore =
+        readRuntimeMembershipSnapshot(retainedZeroFixture);
+    Map<String, Object> retainedZeroPair = membershipPairAuthorityRow(retainedZeroFixture);
+    Map<String, Object> retainedZeroMembershipGeneration =
+        membershipGenerationRow(retainedZeroFixture);
+    long retainedZeroFence = accountIssuanceFence(retainedZeroFixture);
+    Map<String, Object> retainedZeroFenceRow = accountIssuanceFenceRow(retainedZeroFixture);
+    long retainedZeroTenantGeneration =
+        readTenantAuthority(retainedZeroFixture.tenantUuid()).generation();
+    var retainedZero =
+        membershipSourceReader()
+            .readCurrent(retainedZeroFixture.accountUuid(), retainedZeroFixture.tenantUuid());
+    assertThat(retainedZero.accountId()).isEqualTo(retainedZeroFixture.accountUuid());
+    assertThat(retainedZero.tenantId()).isEqualTo(retainedZeroFixture.tenantUuid());
+    assertThat(retainedZero.sourceState().scope())
+        .isEqualTo(
+            AuthorityScope.membership(
+                retainedZeroFixture.accountUuid(), retainedZeroFixture.tenantUuid()));
+    assertThat(retainedZero.sourceState().generation()).isEqualTo(1L);
+    assertThat(retainedZero.sourceState().sourceVersion()).isEqualTo(1L);
+    assertThat(retainedZero.sourceState().issuanceFence().value()).isEqualTo(retainedZeroFence);
+    assertThat(retainedZero.snapshot().membershipExists()).isFalse();
+    assertThat(retainedZero.snapshot().gameplayAdmissionAllowed()).isFalse();
+    assertThat(retainedZero.snapshot().membershipBaseline().membershipLifecycleState())
+        .isEqualTo("MISSING");
+    assertThat(retainedZero.snapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(retainedZeroFixture.tenantUuid().toString(), "1"));
+    assertThat(retainedZero.snapshot().sourceEvent()).isNull();
+    assertThat(retainedZero.snapshot().outboxCheckpoints())
+        .isEqualTo(retainedZeroBefore.outboxCheckpoints());
+    assertThat(retainedZero.snapshot().outboxSourceEvidence())
+        .isEqualTo(retainedZeroBefore.outboxSourceEvidence());
+    assertThat(membershipPairAuthorityRow(retainedZeroFixture)).isEqualTo(retainedZeroPair);
+    assertThat(membershipGenerationRow(retainedZeroFixture))
+        .isEqualTo(retainedZeroMembershipGeneration);
+    assertThat(readTenantAuthority(retainedZeroFixture.tenantUuid()).generation())
+        .isEqualTo(retainedZeroTenantGeneration);
+    assertThat(accountIssuanceFence(retainedZeroFixture)).isEqualTo(retainedZeroFence);
+    assertThat(accountIssuanceFenceRow(retainedZeroFixture)).isEqualTo(retainedZeroFenceRow);
+    assertThat(countMembershipRows(retainedZeroFixture)).isZero();
+    assertThat(countMembershipTransitionReceipts(retainedZeroFixture)).isZero();
+    assertThat(countStreamEvents(membershipStreamKey(retainedZeroFixture))).isZero();
+
     JoinFixture neverJoined = fixture();
     UUID neverJoinedTenantRequestId = UUID.randomUUID();
     var neverJoinedTenantEvent =
@@ -304,6 +399,129 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Current issuer source event differs from its generation");
     assertThat(membershipEventBytes(fixture)).containsExactly(immutableMembershipBytes);
+  }
+
+  @Test
+  void membershipSourceReaderReadsRetainedInactiveRetryAndReactivationWithoutMutation() {
+    JoinFixture fixture = fixture();
+    JoinPublicProductionResult joined = join(fixture);
+    assertThat(joined.success()).isTrue();
+
+    String leftRequestId = "membership-source-left-" + UUID.randomUUID();
+    MembershipTransitionReceipt committedLeft =
+        membershipLifecycleService.leave(fixture.accountId(), fixture.tenantId(), leftRequestId);
+    Map<String, Object> inactiveMembership = membershipRow(fixture);
+    Map<String, Object> inactivePair = membershipPairAuthorityRow(fixture);
+    Map<String, Object> inactiveGeneration = membershipGenerationRow(fixture);
+    long inactiveFence = accountIssuanceFence(fixture);
+    Map<String, Object> inactiveFenceRow = accountIssuanceFenceRow(fixture);
+    byte[] leftEventBytes = membershipEventBytes(fixture, 2L);
+    long inactiveReceiptCount = countMembershipTransitionReceipts(fixture);
+    long inactiveEventCount = countStreamEvents(membershipStreamKey(fixture));
+
+    var inactive =
+        membershipSourceReader().readCurrent(fixture.accountUuid(), fixture.tenantUuid());
+    assertThat(inactive.sourceState().scope())
+        .isEqualTo(AuthorityScope.membership(fixture.accountUuid(), fixture.tenantUuid()));
+    assertThat(inactive.sourceState().generation()).isEqualTo(2L);
+    assertThat(inactive.sourceState().sourceVersion()).isEqualTo(2L);
+    assertThat(inactive.sourceState().issuanceFence().value()).isEqualTo(inactiveFence);
+    assertThat(inactive.snapshot().membershipExists()).isTrue();
+    assertThat(inactive.snapshot().gameplayAdmissionAllowed()).isFalse();
+    assertThat(inactive.snapshot().membershipBaseline().membershipLifecycleState())
+        .isEqualTo("INACTIVE");
+    assertThat(inactive.snapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "3"));
+    assertThat(inactive.snapshot().membershipBaseline().membershipAuthorityGeneration())
+        .isEqualTo("2");
+    assertThat(inactive.snapshot().sourceEvent().requestId()).isEqualTo(leftRequestId);
+    assertThat(inactive.snapshot().sourceEvent().outboxSequence()).isEqualTo("2");
+    assertThat(inactive.snapshot().sourceEvent().canonicalJsonUtf8())
+        .containsExactly(leftEventBytes);
+    assertThat(inactive.snapshot().outboxCheckpoints())
+        .contains(
+            new AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry(
+                membershipStreamKey(fixture), "2"));
+    assertThat(inactive.snapshot().outboxSourceEvidence())
+        .anySatisfy(
+            evidence -> {
+              assertThat(evidence.outboxStreamKey()).isEqualTo(membershipStreamKey(fixture));
+              assertThat(evidence.outboxSequence()).isEqualTo("2");
+              assertThat(evidence.eventDigest())
+                  .isEqualTo(inactive.snapshot().sourceEvent().eventDigest());
+              assertThat(evidence.canonicalEventJson().getBytes(StandardCharsets.UTF_8))
+                  .containsExactly(leftEventBytes);
+            });
+    assertThat(membershipRow(fixture)).isEqualTo(inactiveMembership);
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(inactivePair);
+    assertThat(membershipGenerationRow(fixture)).isEqualTo(inactiveGeneration);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(inactiveFence);
+    assertThat(accountIssuanceFenceRow(fixture)).isEqualTo(inactiveFenceRow);
+    assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(inactiveReceiptCount);
+    assertThat(countStreamEvents(membershipStreamKey(fixture))).isEqualTo(inactiveEventCount);
+
+    assertThat(
+            membershipLifecycleService.leave(
+                fixture.accountId(), fixture.tenantId(), leftRequestId))
+        .isEqualTo(committedLeft);
+    var inactiveRetry =
+        membershipSourceReader().readCurrent(fixture.accountUuid(), fixture.tenantUuid());
+    assertThat(inactiveRetry.snapshot().membershipBaseline())
+        .isEqualTo(inactive.snapshot().membershipBaseline());
+    assertThat(inactiveRetry.snapshot().sourceEvent().canonicalJsonUtf8())
+        .containsExactly(leftEventBytes);
+    assertThat(membershipRow(fixture)).isEqualTo(inactiveMembership);
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(inactivePair);
+    assertThat(membershipGenerationRow(fixture)).isEqualTo(inactiveGeneration);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(inactiveFence);
+    assertThat(accountIssuanceFenceRow(fixture)).isEqualTo(inactiveFenceRow);
+    assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(inactiveReceiptCount);
+    assertThat(countStreamEvents(membershipStreamKey(fixture))).isEqualTo(inactiveEventCount);
+
+    JoinFixture reactivation = fixtureForMembership(fixture);
+    JoinPublicProductionResult reactivated = join(reactivation);
+    assertThat(reactivated.success()).isTrue();
+    assertThat(reactivated.outcomeCode()).isEqualTo("JOINED");
+    var active = membershipSourceReader().readCurrent(fixture.accountUuid(), fixture.tenantUuid());
+    assertThat(active.sourceState().generation()).isEqualTo(3L);
+    assertThat(active.sourceState().sourceVersion()).isEqualTo(3L);
+    assertThat(active.snapshot().membershipExists()).isTrue();
+    assertThat(active.snapshot().gameplayAdmissionAllowed()).isTrue();
+    assertThat(active.snapshot().membershipBaseline().membershipLifecycleState())
+        .isEqualTo("ACTIVE");
+    assertThat(active.snapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "4"));
+    assertThat(active.snapshot().membershipBaseline().membershipAuthorityGeneration())
+        .isEqualTo("3");
+    assertThat(active.snapshot().outboxCheckpoints())
+        .contains(
+            new AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry(
+                membershipStreamKey(fixture), "3"));
+
+    Map<String, Object> activeMembership = membershipRow(fixture);
+    Map<String, Object> activePair = membershipPairAuthorityRow(fixture);
+    Map<String, Object> activeGeneration = membershipGenerationRow(fixture);
+    long activeFence = accountIssuanceFence(fixture);
+    Map<String, Object> activeFenceRow = accountIssuanceFenceRow(fixture);
+    long activeReceiptCount = countMembershipTransitionReceipts(fixture);
+    long activeEventCount = countStreamEvents(membershipStreamKey(fixture));
+    assertThat(
+            membershipLifecycleService.leave(
+                fixture.accountId(), fixture.tenantId(), leftRequestId))
+        .isEqualTo(committedLeft);
+    var activeRetry =
+        membershipSourceReader().readCurrent(fixture.accountUuid(), fixture.tenantUuid());
+    assertThat(activeRetry.snapshot().membershipBaseline())
+        .isEqualTo(active.snapshot().membershipBaseline());
+    assertThat(activeRetry.snapshot().sourceEvent().canonicalJsonUtf8())
+        .containsExactly(active.snapshot().sourceEvent().canonicalJsonUtf8());
+    assertThat(membershipRow(fixture)).isEqualTo(activeMembership);
+    assertThat(membershipPairAuthorityRow(fixture)).isEqualTo(activePair);
+    assertThat(membershipGenerationRow(fixture)).isEqualTo(activeGeneration);
+    assertThat(accountIssuanceFence(fixture)).isEqualTo(activeFence);
+    assertThat(accountIssuanceFenceRow(fixture)).isEqualTo(activeFenceRow);
+    assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(activeReceiptCount);
+    assertThat(countStreamEvents(membershipStreamKey(fixture))).isEqualTo(activeEventCount);
   }
 
   private JoinFixture fixture() {
@@ -400,6 +618,45 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
         new JoinPublicProductionRequest(fixture.scope().connectScopeId(), fixture.requestId()));
   }
 
+  private JoinFixture fixtureForMembership(JoinFixture original) {
+    String requestId = "current-authority-reactivate-" + UUID.randomUUID();
+    DirectTextCallerContext caller =
+        new DirectTextCallerContext(
+            original.accountId(),
+            original.tenantId(),
+            REALM_ID,
+            NAMESPACE_ID,
+            "SHARED",
+            GAME_INSTANCE_ID,
+            "current-authority-reactivate-session-" + UUID.randomUUID(),
+            requestId);
+    DirectTextJoinTarget target =
+        new DirectTextJoinTarget(
+            original.tenantId(),
+            REALM_ID,
+            WORLD_SLUG,
+            REALM_SLUG,
+            NAMESPACE_ID,
+            "SHARED",
+            GAME_INSTANCE_ID,
+            CATALOG_REVISION,
+            POINTER_VERSION);
+    DirectTextJoinScope scope = accountService.issueDirectTextConnectScope(caller, target);
+    return new JoinFixture(
+        original.accountId(),
+        original.accountUuid(),
+        original.tenantId(),
+        original.tenantUuid(),
+        requestId,
+        caller,
+        scope);
+  }
+
+  private AccountMembershipSourceReader membershipSourceReader() {
+    return new AccountMembershipSourceReader(
+        membershipAuthorityEventProducer, authorityGenerationRepository, transactionManager);
+  }
+
   private RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(JoinFixture fixture) {
     return new TransactionTemplate(transactionManager)
         .execute(
@@ -411,6 +668,11 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
   private ScopeState readAccountAuthority(UUID accountUuid) {
     return new TransactionTemplate(transactionManager)
         .execute(status -> authorityGenerationRepository.read(AuthorityScope.account(accountUuid)));
+  }
+
+  private ScopeState readTenantAuthority(UUID tenantUuid) {
+    return new TransactionTemplate(transactionManager)
+        .execute(status -> authorityGenerationRepository.read(AuthorityScope.tenant(tenantUuid)));
   }
 
   private Account readAccount(long accountId) {
@@ -433,11 +695,16 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
   }
 
   private byte[] membershipEventBytes(JoinFixture fixture) {
+    return membershipEventBytes(fixture, 1L);
+  }
+
+  private byte[] membershipEventBytes(JoinFixture fixture, long sequence) {
     return Objects.requireNonNull(
             dsl.resultQuery(
                     "SELECT payload FROM account_authority_outbox_events WHERE outbox_stream_key = ? "
-                        + "AND outbox_sequence = 1",
-                    membershipStreamKey(fixture))
+                        + "AND outbox_sequence = ?",
+                    membershipStreamKey(fixture),
+                    sequence)
                 .fetchOne())
         .get("payload", byte[].class);
   }
@@ -450,6 +717,74 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
                 fixture.accountId(),
                 fixture.tenantId())
             .fetchOne(0, Long.class));
+  }
+
+  private long countMembershipTransitionReceipts(JoinFixture fixture) {
+    return Objects.requireNonNull(
+        dsl.resultQuery(
+                "SELECT COUNT(*) FROM account_membership_transition_receipts "
+                    + "WHERE account_id = ? AND tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne(0, Long.class));
+  }
+
+  private Map<String, Object> membershipRow(JoinFixture fixture) {
+    var row =
+        dsl.resultQuery(
+                "SELECT xmin::text AS row_xmin, * FROM account_tenant_membership "
+                    + "WHERE account_id = ? AND tenant_id = ?",
+                fixture.accountId(),
+                fixture.tenantId())
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
+  }
+
+  private Map<String, Object> membershipPairAuthorityRow(JoinFixture fixture) {
+    var row =
+        dsl.resultQuery(
+                "SELECT xmin::text AS row_xmin, * FROM account_membership_pair_authority "
+                    + "WHERE account_uuid = ? AND tenant_uuid = ?",
+                fixture.accountUuid(),
+                fixture.tenantUuid())
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
+  }
+
+  private Map<String, Object> membershipGenerationRow(JoinFixture fixture) {
+    var row =
+        dsl.resultQuery(
+                "SELECT xmin::text AS row_xmin, * FROM account_authority_generations "
+                    + "WHERE scope_kind = 'MEMBERSHIP' AND account_uuid = ? AND tenant_uuid = ?",
+                fixture.accountUuid(),
+                fixture.tenantUuid())
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
+  }
+
+  private long accountIssuanceFence(JoinFixture fixture) {
+    Long fence =
+        dsl.resultQuery(
+                "SELECT issuance_fence FROM account_authority_issuance_fences "
+                    + "WHERE account_uuid = ?",
+                fixture.accountUuid())
+            .fetchOne(0, Long.class);
+    assertThat(fence).isNotNull();
+    return fence;
+  }
+
+  private Map<String, Object> accountIssuanceFenceRow(JoinFixture fixture) {
+    var row =
+        dsl.resultQuery(
+                "SELECT xmin::text AS row_xmin, * FROM account_authority_issuance_fences "
+                    + "WHERE account_uuid = ?",
+                fixture.accountUuid())
+            .fetchOne();
+    assertThat(row).isNotNull();
+    return row.intoMap();
   }
 
   private long countStreamEvents(String streamKey) {

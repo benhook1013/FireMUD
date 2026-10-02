@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.Optional;
+import java.util.UUID;
 import org.assertj.core.api.Assertions;
 import org.jooq.Condition;
 import org.jooq.DSLContext;
@@ -154,6 +155,23 @@ class GameInstanceRepositoryTest {
       assertEquals("SCRIPT_PIN_STATE_INVALID: " + tuple[3], error.getMessage());
     }
 
+    verifyNoInteractions(dsl);
+  }
+
+  @Test
+  void newSaveRejectsCallerSuppliedGameInstanceUuidBeforeDatabaseAccess() {
+    DSLContext dsl = mock(DSLContext.class);
+    GameInstanceRepository repository = new GameInstanceRepository(dsl);
+    net.firedevops.firemud.gamesession.entity.GameInstance instance =
+        new net.firedevops.firemud.gamesession.entity.GameInstance();
+    instance.setTenantId(3L);
+    instance.setOwnerAccountId("123e4567-e89b-12d3-a456-426614174000");
+    instance.setGameInstanceUuid(UUID.fromString("123e4567-e89b-12d3-a456-426614174001"));
+
+    IllegalArgumentException error =
+        assertThrows(IllegalArgumentException.class, () -> repository.save(instance));
+
+    assertEquals("New game instance UUIDs are allocated by Game Session", error.getMessage());
     verifyNoInteractions(dsl);
   }
 }

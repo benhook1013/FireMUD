@@ -8,32 +8,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.authority.IssuerAuthorityProjectionV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
+import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.ProjectionCaptureReceipt;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.SourceReadback;
 import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.SourceSnapshot;
 
 /** Pure decision layer for the derived Game Session issuer-authority projection. */
 public final class IssuerAuthorityProjectionTransitions {
   public static final String KEY_PREFIX = "session:game:auth:issuer-generation:v1:";
-  public static final String SCHEMA_VERSION = "game-session-auth-issuer-projection/v1";
+  public static final String SCHEMA_VERSION = IssuerAuthorityProjectionV1Codec.SCHEMA_VERSION;
 
   private static final String EVENT_ID_PREFIX = "account-issuer-authority-event-v1:";
   private static final BigInteger ZERO = BigInteger.ZERO;
   private static final BigInteger ONE = BigInteger.ONE;
-
-  private static final Set<String> BASE_FIELDS =
-      Set.of(
-          "schemaVersion",
-          "issuerId",
-          "issuerAuthGeneration",
-          "lastAppliedSourceOutboxSequence",
-          "sourceOutboxStreamKey",
-          "appliedAt",
-          "appliedSourceEvidence");
-  private static final Set<String> POSITIVE_FIELDS = Set.of("sourceEventId", "sourceEventDigest");
 
   private IssuerAuthorityProjectionTransitions() {}
 
@@ -165,6 +156,150 @@ public final class IssuerAuthorityProjectionTransitions {
     } catch (IllegalArgumentException malformed) {
       return new Quarantine(observed, QuarantineReason.MALFORMED_ACCOUNT_READBACK);
     }
+  }
+
+  /**
+   * Reconciles a valid local projection against one privately verified Account capture and its
+   * matching current readback. A captured checkpoint may bridge a locally missed event range;
+   * ordinary selected-event delivery remains contiguous through {@link #decide}.
+   */
+  public static Decision reconcile(
+      Map<String, ?> existingProjection,
+      ProjectionCaptureReceipt capture,
+      SourceReadback current,
+      String appliedAt) {
+    Optional<Map<String, Object>> observed = immutableObserved(existingProjection);
+    ExistingProjection existing = null;
+    if (existingProjection != null) {
+      try {
+        existing = parseExistingProjection(existingProjection);
+      } catch (IllegalArgumentException malformed) {
+        return new Quarantine(observed, QuarantineReason.MALFORMED_EXISTING_PROJECTION);
+      }
+    }
+
+    final Checkpoint captured;
+    try {
+      captured = verifyCaptureAndCurrent(capture, current);
+    } catch (EvidenceRejected rejected) {
+      return new Quarantine(observed, rejected.reason());
+    } catch (IllegalArgumentException malformed) {
+      return new Quarantine(observed, QuarantineReason.MALFORMED_CAPTURE_EVIDENCE);
+    }
+
+    if (existing == null) {
+      try {
+        requireAppliedAt(appliedAt);
+        return new Mutation(
+            Optional.empty(),
+            projectionFor(captured, appliedAt),
+            MutationKind.CAPTURE_RECONCILIATION);
+      } catch (EvidenceRejected rejected) {
+        return new Quarantine(Optional.empty(), rejected.reason());
+      }
+    }
+
+    if (!existing.issuerId().equals(captured.issuerId())
+        || !existing.streamKey().equals(captured.streamKey())) {
+      return new Quarantine(observed, QuarantineReason.ISSUER_OR_STREAM_CHANGED);
+    }
+
+    int sequenceOrder = existing.sequence().compareTo(captured.sequence());
+    if (sequenceOrder > 0) {
+      return new Quarantine(observed, QuarantineReason.CAPTURE_PROJECTION_AHEAD);
+    }
+    if (existing.generation().compareTo(captured.generation()) > 0
+        || existing.sourceVersion().compareTo(captured.sourceVersion()) > 0) {
+      return new Quarantine(observed, QuarantineReason.CAPTURE_SOURCE_REGRESSED);
+    }
+
+    if (sequenceOrder == 0) {
+      if (!existing.generation().equals(captured.generation())
+          || !existing.sourceVersion().equals(captured.sourceVersion())
+          || !sameEvent(existing.latestEvent(), captured.latestEvent())) {
+        return new Quarantine(observed, QuarantineReason.CAPTURE_SAME_CHECKPOINT_DISAGREEMENT);
+      }
+      return new NoOp(NoOpReason.CAPTURE_ALREADY_INSTALLED);
+    }
+
+    if (captured.sourceVersion().compareTo(existing.sourceVersion()) <= 0) {
+      return new Quarantine(observed, QuarantineReason.CAPTURE_SOURCE_REGRESSED);
+    }
+    try {
+      requireAppliedAt(appliedAt);
+      return new Mutation(
+          observed, projectionFor(captured, appliedAt), MutationKind.CAPTURE_RECONCILIATION);
+    } catch (EvidenceRejected rejected) {
+      return new Quarantine(observed, rejected.reason());
+    }
+  }
+
+  private static Checkpoint verifyCaptureAndCurrent(
+      ProjectionCaptureReceipt capture, SourceReadback current) {
+    if (capture == null
+        || capture.operationUUID() == null
+        || capture.requestUUID() == null
+        || capture.issuerId() == null
+        || capture.callerWorkloadIdentity() == null
+        || capture.projectionKey() == null
+        || capture.requestDigest() == null
+        || capture.capturedSource() == null
+        || current == null
+        || current.targetNamespace() == null
+        || current.targetNamespace().isBlank()) {
+      throw reject(QuarantineReason.MALFORMED_CAPTURE_EVIDENCE);
+    }
+
+    UUID nil = new UUID(0L, 0L);
+    if (nil.equals(capture.operationUUID())
+        || nil.equals(capture.requestUUID())
+        || !capture.requestUUID().toString().equals(current.requestId())) {
+      throw reject(QuarantineReason.CAPTURE_BINDING_MISMATCH);
+    }
+    String expectedCaller =
+        "spiffe://firemud/ns/" + current.targetNamespace() + "/sa/game-session-service";
+    String expectedKey = IssuerAuthorityProjectionRedisContract.keyForIssuer(capture.issuerId());
+    if (capture.issuerId().isBlank()
+        || !expectedCaller.equals(capture.callerWorkloadIdentity())
+        || !expectedKey.equals(capture.projectionKey())
+        || capture.requestDigestVersion() != IssuerProjectionReconciliationRequestDigestV1.VERSION
+        || !IssuerProjectionReconciliationRequestDigestV1.digest(
+                capture.issuerId(),
+                capture.callerWorkloadIdentity(),
+                capture.projectionKey(),
+                capture.requestUUID())
+            .equals(capture.requestDigest())) {
+      throw reject(QuarantineReason.CAPTURE_BINDING_MISMATCH);
+    }
+
+    VerifiedReadback verifiedCurrent = verifyReadback(current);
+    if (verifiedCurrent.selectedEvent().isPresent()) {
+      throw reject(QuarantineReason.CAPTURE_REQUIRES_CURRENT_READBACK);
+    }
+    Checkpoint captured = verifySnapshot(capture.capturedSource());
+    Checkpoint currentCheckpoint = verifiedCurrent.snapshot();
+    if (!capture.issuerId().equals(captured.issuerId())
+        || !sameCheckpoint(captured, currentCheckpoint)) {
+      throw reject(QuarantineReason.CAPTURE_CURRENT_SOURCE_MISMATCH);
+    }
+    return captured;
+  }
+
+  private static boolean sameCheckpoint(Checkpoint left, Checkpoint right) {
+    return left.issuerId().equals(right.issuerId())
+        && left.streamKey().equals(right.streamKey())
+        && left.generation().equals(right.generation())
+        && left.sourceVersion().equals(right.sourceVersion())
+        && left.sequence().equals(right.sequence())
+        && sameEvent(left.latestEvent(), right.latestEvent());
+  }
+
+  private static boolean sameEvent(
+      IssuerGenerationAuthorityEvent left, IssuerGenerationAuthorityEvent right) {
+    if (left == null || right == null) {
+      return left == right;
+    }
+    return left.canonicalJson().equals(right.canonicalJson());
   }
 
   private static VerifiedReadback verifyReadback(SourceReadback readback) {
@@ -331,12 +466,12 @@ public final class IssuerAuthorityProjectionTransitions {
     Map<String, Object> fields = new LinkedHashMap<>();
     fields.put("schemaVersion", SCHEMA_VERSION);
     fields.put("issuerId", issuerId);
-    fields.put("issuerAuthGeneration", issuerGeneration);
+    fields.put("lastAppliedIssuerGeneration", issuerGeneration);
     fields.put("lastAppliedSourceOutboxSequence", sequence);
-    fields.put("sourceOutboxStreamKey", streamKey);
+    fields.put("outboxStreamKey", streamKey);
     if (latestEvent != null) {
-      fields.put("sourceEventId", latestEvent.eventId());
-      fields.put("sourceEventDigest", latestEvent.eventDigest());
+      fields.put("lastAppliedSourceEventId", latestEvent.eventId());
+      fields.put("lastAppliedSourceEventDigest", latestEvent.eventDigest());
     }
     fields.put("appliedAt", appliedAt);
     fields.put("appliedSourceEvidence", appliedSourceEvidence);
@@ -344,97 +479,15 @@ public final class IssuerAuthorityProjectionTransitions {
   }
 
   private static ExistingProjection parseExistingProjection(Map<String, ?> supplied) {
-    if (supplied == null) {
-      throw new IllegalArgumentException("projection is absent");
-    }
-    String schema = requiredString(supplied, "schemaVersion");
-    String issuer = requiredString(supplied, "issuerId");
-    String generationText = requiredString(supplied, "issuerAuthGeneration");
-    String sequenceText = requiredString(supplied, "lastAppliedSourceOutboxSequence");
-    String stream = requiredString(supplied, "sourceOutboxStreamKey");
-    String appliedAt = requiredString(supplied, "appliedAt");
-    if (!SCHEMA_VERSION.equals(schema) || issuer.isBlank() || appliedAt.isBlank()) {
-      throw new IllegalArgumentException("projection identity or schema is malformed");
-    }
-
-    BigInteger generation = positiveDecimal(generationText, "projection generation");
-    BigInteger sequence = nonnegativeDecimal(sequenceText, "projection sequence");
-    String expectedStream =
-        IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + issuer;
-    if (!expectedStream.equals(stream)) {
-      throw new IllegalArgumentException("projection stream identity is malformed");
-    }
-
-    Set<String> expectedFields = new java.util.HashSet<>(BASE_FIELDS);
-    IssuerGenerationAuthorityEvent latest = null;
-    BigInteger sourceVersion = ONE;
-    Object evidenceValue = supplied.get("appliedSourceEvidence");
-    if (!(evidenceValue instanceof Map<?, ?> evidence)) {
-      throw new IllegalArgumentException("projection source evidence is malformed");
-    }
-    if (sequence.equals(ZERO)) {
-      if (!generation.equals(ONE) || !evidence.isEmpty()) {
-        throw new IllegalArgumentException("zero checkpoint projection is contradictory");
-      }
-    } else {
-      expectedFields.addAll(POSITIVE_FIELDS);
-      if (evidence.size() != 1) {
-        throw new IllegalArgumentException("projection must retain its current source checkpoint");
-      }
-      Object canonicalValue = evidence.get(sequenceText);
-      if (!(canonicalValue instanceof String canonicalEvent)) {
-        throw new IllegalArgumentException("projection current source evidence is absent");
-      }
-      latest = verifiedProjectionEvent(canonicalEvent);
-      if (!sameSource(latest, issuer, stream)
-          || !sequence.equals(positiveDecimal(latest.outboxSequence(), "projection event sequence"))
-          || !generation.equals(
-              positiveDecimal(latest.issuerAuthGeneration(), "projection event generation"))
-          || !requiredString(supplied, "sourceEventId").equals(latest.eventId())
-          || !requiredString(supplied, "sourceEventDigest").equals(latest.eventDigest())) {
-        throw new IllegalArgumentException("projection event does not match its checkpoint");
-      }
-      sourceVersion = positiveDecimal(latest.sourceVersion(), "projection event source version");
-    }
-    if (!supplied.keySet().equals(expectedFields)) {
-      throw new IllegalArgumentException("projection fields do not match the declared schema");
-    }
-    validateEvidenceMapKeys(evidence, sequence, sequenceText);
-    return new ExistingProjection(issuer, generation, sourceVersion, sequence, stream, latest);
-  }
-
-  private static IssuerGenerationAuthorityEvent verifiedProjectionEvent(String canonicalEvent) {
-    try {
-      IssuerGenerationAuthorityEvent event =
-          IssuerGenerationAuthorityEventV1Codec.verify(canonicalEvent);
-      if (!event.canonicalJson().equals(canonicalEvent)) {
-        throw new IllegalArgumentException("projection event is not canonical");
-      }
-      return verifyEvent(event);
-    } catch (EvidenceRejected rejected) {
-      throw new IllegalArgumentException("projection event evidence is malformed", rejected);
-    }
-  }
-
-  private static void validateEvidenceMapKeys(
-      Map<?, ?> evidence, BigInteger sequence, String sequenceText) {
-    for (Map.Entry<?, ?> entry : evidence.entrySet()) {
-      if (!(entry.getKey() instanceof String key) || !(entry.getValue() instanceof String)) {
-        throw new IllegalArgumentException("projection applied-source evidence is malformed");
-      }
-      positiveDecimal(key, "projection evidence sequence");
-      if (!sequence.equals(ZERO) && !sequenceText.equals(key)) {
-        throw new IllegalArgumentException("projection evidence is not the current checkpoint");
-      }
-    }
-  }
-
-  private static String requiredString(Map<String, ?> fields, String name) {
-    Object value = fields.get(name);
-    if (!(value instanceof String text)) {
-      throw new IllegalArgumentException("projection field " + name + " must be a string");
-    }
-    return text;
+    IssuerAuthorityProjectionV1Codec.Projection projection =
+        IssuerAuthorityProjectionV1Codec.verify(supplied);
+    return new ExistingProjection(
+        projection.issuerId(),
+        projection.generation(),
+        projection.sourceVersion(),
+        projection.sequence(),
+        projection.streamKey(),
+        projection.latestEvent().orElse(null));
   }
 
   private static BigInteger positiveDecimal(String value, String label) {
@@ -543,17 +596,25 @@ public final class IssuerAuthorityProjectionTransitions {
 
   public enum MutationKind {
     BOOTSTRAP,
-    ADVANCE
+    ADVANCE,
+    CAPTURE_RECONCILIATION
   }
 
   public enum NoOpReason {
     EXACT_DUPLICATE,
-    VERIFIED_HISTORICAL_DUPLICATE
+    VERIFIED_HISTORICAL_DUPLICATE,
+    CAPTURE_ALREADY_INSTALLED
   }
 
   public enum QuarantineReason {
     APPLIED_AT_REQUIRED,
     BOOTSTRAP_REQUIRES_CURRENT_READBACK,
+    CAPTURE_BINDING_MISMATCH,
+    CAPTURE_CURRENT_SOURCE_MISMATCH,
+    CAPTURE_PROJECTION_AHEAD,
+    CAPTURE_REQUIRES_CURRENT_READBACK,
+    CAPTURE_SAME_CHECKPOINT_DISAGREEMENT,
+    CAPTURE_SOURCE_REGRESSED,
     CURRENT_CHECKPOINT_CONFLICT,
     CURRENT_CHECKPOINT_REGRESSED,
     DUPLICATE_EVENT_CONFLICT,
@@ -562,6 +623,7 @@ public final class IssuerAuthorityProjectionTransitions {
     EVENT_SOURCE_VERSION_REGRESSED,
     HISTORICAL_EVENT_PROGRESS_CONFLICT,
     ISSUER_OR_STREAM_CHANGED,
+    MALFORMED_CAPTURE_EVIDENCE,
     MALFORMED_ACCOUNT_READBACK,
     MALFORMED_EXISTING_PROJECTION,
     MISSING_EXISTING_PROJECTION,

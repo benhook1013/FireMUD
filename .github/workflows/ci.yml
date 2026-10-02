@@ -1007,7 +1007,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Run Account issuer readback socket mTLS component proof
+      - name: Run Account issuer readback and acknowledgment socket mTLS component proof
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
           ./gradlew :game-session-service:crossServiceTest \
@@ -1017,6 +1017,14 @@ jobs:
             --strict \
             --require-suite crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#exactWorkloadIdentitiesCarryCurrentAndHistoricalReadbacksOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#exactWorkloadIdentitiesCarryZeroAndPositiveCaptureReceiptsOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#exactGameSessionPeerCarriesTheClosedInstallationAcknowledgmentOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#acknowledgment caller "wrong-service"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#acknowledgment caller "wrong-namespace"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture caller "wrong-service"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture caller "wrong-namespace"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture server "game-session"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#capture server "wrong-account-namespace"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#missingClientCertificateFailsTheRequiredTlsHandshakeBeforeProducerAccess()' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#[1] clientIdentity = "wrong-service"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcMtlsCrossServiceTest#[2] clientIdentity = "wrong-namespace"' \
@@ -1033,7 +1041,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Run Account PostgreSQL issuer readback socket mTLS composition proof
+      - name: Run Account PostgreSQL issuer readback and acknowledgment socket mTLS composition proof
         if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
         run: |
           ./gradlew :game-session-service:crossServiceTest \
@@ -1043,6 +1051,25 @@ jobs:
             --strict \
             --require-suite crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresIssuerSourceReturnsBootstrapCurrentAndHistoricalEvidenceOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresCapturePreservesZeroAndOriginalPositiveReceiptAfterLaterSourceAdvance()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#concurrentExactPostgresCapturesFromSeparateSocketClientsReturnOneDurableReceipt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresCaptureRejectsMalformedAndMissingSourceRequestsWithoutSqlMutation()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#postgresZeroAndPositiveInstallationsReceiveFullDurableAcknowledgmentsOverSocketMtls()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#exactAcknowledgmentRetryReturnsOriginalAfterDiscardedResponseAndLaterSourceProgress()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#concurrentExactAcknowledgmentsReturnOneV44ResultOverSeparateSocketClients()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#firstAcknowledgmentOfCaptureThatIsStaleAfterSourceAdvanceIsDeniedWithoutAckRow()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#rawSamePeerAcknowledgmentRejectsChangedProjectionBytesAndCaptureBinding()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#acknowledgment server "game-session"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#acknowledgment server "wrong-account-namespace"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capturedLatestCheckpointInstallsAcrossMissedEventsThenOrdinaryDeliveryIsContiguous()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#zeroCheckpointInstallsWithoutEventEvidenceThenAcceptsSequenceOne()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#exactInstallRetryPreservesOriginalReceiptProjectionBytesAndAppliedAt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#concurrentExactInstallersDoNotDuplicateAccountSourceOrCaptureRows()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capturedSourceThatAdvancesBeforeStoreWriteReturnsNoVerifiedReceipt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#sourceAdvanceBetweenRedisWriteAndFinalAccountReadbackWithholdsReceipt()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#redisAuthenticationRefusalLeavesCapturedAccountReceiptAndSourceUntouched()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capture postgres caller "wrong-service"' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#capture postgres caller "wrong-namespace"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#[1] clientIdentity = "wrong-service"' \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest#[2] clientIdentity = "wrong-namespace"' \
             game-session-service
@@ -1123,6 +1150,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#gapAndAuthenticatedOlderDuplicateHaveDistinctNoMutationOutcomes()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#staleExpectedBytesAreNonMutatingThroughTheRegisteredOwnerScript()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#unknownOrDuplicateJsonFieldsQuarantineWithoutChangingBytesOrTtl()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#obsoletePersistedAliasesQuarantineWithoutChangingBytesOrTtl()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#expiringProjectionIsQuarantinedWithoutChangingItsBytesOrExpiration()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#ownerPrincipalCannotInvokeEvalDirectly()' \
             game-session-service
@@ -1141,12 +1169,47 @@ jobs:
         run: |
           ./gradlew :game-session-service:integrationTest \
             --tests net.firedevops.firemud.gamesession.repository.GameInstanceOwnerUuidMigrationIntegrationTest \
+            --tests net.firedevops.firemud.gamesession.repository.GameInstanceUuidIdentityIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite net.firedevops.firemud.gamesession.repository.GameInstanceOwnerUuidMigrationIntegrationTest \
             --require-case 'net.firedevops.firemud.gamesession.repository.GameInstanceOwnerUuidMigrationIntegrationTest#migrationPreservesNumericHistoryAndStoresCanonicalOwnerUuid()' \
+            --require-suite net.firedevops.firemud.gamesession.repository.GameInstanceUuidIdentityIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamesession.repository.GameInstanceUuidIdentityIntegrationTest#freshRepositoryIdentityIsPersistedAndRetainedRowsRemainUnmapped()' \
             game-session-service
+
+      - name: Upload Game Session instance UUID PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-session-instance-uuid-postgresql-proof-${{ github.sha }}
+          path: |
+            services/game-session-service/build/test-results/integrationTest/TEST-*GameInstanceOwnerUuidMigrationIntegrationTest.xml
+            services/game-session-service/build/test-results/integrationTest/TEST-*GameInstanceUuidIdentityIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run Account canonical membership identity PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.repository.AccountTenantMembershipCanonicalIdentityIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountTenantMembershipCanonicalIdentityIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountTenantMembershipCanonicalIdentityIntegrationTest#migrationPreservesRetainedMembershipAndCanonicalRowsUseExactUuidAndSourceEvidence()' \
+            account-service
+
+      - name: Upload Account canonical membership identity PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-canonical-membership-identity-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountTenantMembershipCanonicalIdentityIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Run Account persisted UUID authentication PostgreSQL component proof
         if: ${{ matrix.module == 'account-service' }}
@@ -1178,6 +1241,32 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#exportAccountRejectsMalformedAccountIdWithInvalidArgumentEnvelope()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#updateProfileRejectsZeroTenantIdWithInvalidArgumentEnvelope()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly()' \
+            account-service
+
+      - name: Run Account issuer installation acknowledgment PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.acknowledgesProvedZeroBaselineWithExactBytesAndNoSourceMutation' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.acknowledgesCompletePositiveCheckpointAndRetainsSourceHistory' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.concurrentExactAcknowledgmentsReturnOneDurableOriginalResult' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.exactRetryAfterLaterSourceAdvanceReturnsOriginalAcknowledgment' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.committedAcknowledgmentWithMissingPostCommitReadbackRecoversOnExactRetry' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.staleFirstAcknowledgmentAndChangedBindingsOrProjectionEvidenceDenyWithoutInsertion' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.ambientTransactionsAndDirectSqlGuardsRejectAcknowledgmentMutation' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.storedAcknowledgmentRejectsDirectUpdateAndDelete' \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#acknowledgesProvedZeroBaselineWithExactBytesAndNoSourceMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#acknowledgesCompletePositiveCheckpointAndRetainsSourceHistory()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#concurrentExactAcknowledgmentsReturnOneDurableOriginalResult()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#exactRetryAfterLaterSourceAdvanceReturnsOriginalAcknowledgment()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#committedAcknowledgmentWithMissingPostCommitReadbackRecoversOnExactRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#staleFirstAcknowledgmentAndChangedBindingsOrProjectionEvidenceDenyWithoutInsertion()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#ambientTransactionsAndDirectSqlGuardsRejectAcknowledgmentMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#storedAcknowledgmentRejectsDirectUpdateAndDelete()' \
             account-service
 
       - name: Run Game Session command Account UUID storage PostgreSQL component proof
@@ -1279,6 +1368,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#installsPristineAccountBaselineFromCurrentDurableSourceAndReadsItBackExactly()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#accountCoordinationPrincipalCannotInvokeEvalDirectly()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#projectsActualPasswordResetAndLogoutAllCheckpointsWithoutRewritingSqlHistory()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#committedPasswordResetReceiptSurvivesCoordinationAuthFailureExactRetryAndProjection()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#unknownAccountCannotSynthesizeProjectionOrChangeSourceRows()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#malformedExpiringAndAheadRedisValuesAreNeverOverwritten()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#staleSourceCandidateCannotReplaceAProjectionFromANewerAccountCommit()' \
@@ -1291,6 +1381,54 @@ jobs:
         with:
           name: account-generation-projection-postgresql-redis-proof-${{ github.sha }}
           path: services/account-service/build/test-results/integrationTest/TEST-*AccountGenerationProjectionPostgresRedisIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify Account tenant generation projection PostgreSQL and Redis proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest#installsOnlyTheProvenPristineTenantBaselineAndReadsBackExactBytes()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest#projectsCompleteSourceEventReplaysExactlyAndRepairsOnlyTheMissingRedisKey()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest#unknownAndAssociatedButUnenrolledTenantsCannotSynthesizeABaseline()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest#sourceAdvanceAfterCandidateReadReturnsNonconvergedWithoutChangingSqlHistory()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest#staleCandidateCannotReplaceAProjectionFromANewerTenantCommit()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest#malformedExpiringAheadAndSameCheckpointRedisValuesAreQuarantinedWithoutWrites()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.TenantGenerationProjectionPostgresRedisIntegrationTest#accountCoordinationPrincipalCanUseOnlyTenantProjectionKeysAndCannotInvokeEval()' \
+            account-service
+
+      - name: Upload Account tenant generation projection PostgreSQL and Redis proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-tenant-generation-projection-postgresql-redis-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*TenantGenerationProjectionPostgresRedisIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify Account membership generation projection PostgreSQL and Redis proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#existingOnlyZeroBaselineProjectsWithoutAdmissionOrSqlMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#unknownAndAssociatedUnenrolledPairsCannotSynthesizeProjectionState()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#retainedJoinLeftAndReactivationProjectExactIndependentSourceAxes()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#sourceAdvanceBetweenCandidateAndFreshReadbackReturnsNonconverged()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#staleCandidateCannotReplaceNewerSourceProjection()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#aheadMalformedSameCheckpointAndExpiringRedisStatesAreDeniedWithoutSourceWrites()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#coordinationPrincipalCannotReadOtherOwnersOrInvokeEval()' \
+            account-service
+
+      - name: Upload Account membership generation projection PostgreSQL and Redis proof
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-membership-generation-projection-postgresql-redis-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*MembershipGenerationProjectionPostgresRedisIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 
@@ -1316,6 +1454,41 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#unavailablePostCommitReadDoesNotUndoAndExactRetryRecoversWithoutAdvancingAgain()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#generationAndSourceVersionOverflowFailBeforeAnyMutation()' \
             account-service
+
+      - name: Verify Account issuer reconciliation capture PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#capturesProvedZeroBaselineWithoutSourceOrOutboxWrites()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#capturesCompletePositiveCheckpointWithIndependentSourceCounters()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#committedCaptureWithLostPostCommitReadbackRecoversTheSameReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#exactRetryReturnsOriginalPositiveReceiptAfterLaterSourceAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#concurrentExactCapturesReturnOneDurableOperation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#captureAndSourceAdvanceSerializeOnOneIssuerFenceWithoutHybridSnapshot()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#invalidBindingsAndMissingAuthorityDenyWithoutEnrollment()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#durableReceiptsRejectUpdateAndDelete()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionReconciliationPostgresIntegrationTest#databaseRejectsIncompleteAndContradictoryPositiveReceiptEvidenceWithoutMutation()' \
+            account-service
+
+      - name: Upload Account issuer reconciliation capture PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-issuer-reconciliation-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*IssuerProjectionReconciliationPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Account issuer installation acknowledgment PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-issuer-installation-acknowledgment-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*IssuerProjectionAcknowledgmentPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload Account issuer authority PostgreSQL proof results
         if: ${{ always() && matrix.module == 'account-service' }}
@@ -1386,6 +1559,7 @@ jobs:
             --strict \
             --require-suite net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#postJoinSnapshotCarriesCurrentCompositeSourcesWithoutRewritingMembershipEvent()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#membershipSourceReaderReadsRetainedInactiveRetryAndReactivationWithoutMutation()' \
             account-service
 
       - name: Upload Account current recipient source composition PostgreSQL proof
@@ -1489,7 +1663,37 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadUsesFreshUuidAssociationWithoutInventingRetainedAlias()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadRejectsUnmappedTenantUuidWithoutEnrollment()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#strictExistingMembershipReadDeniesFreshAssociationWithoutEnrollmentOrMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#membershipSourceReaderRejectsAmbientAccountTransaction()' \
             account-service
+
+      - name: Upload Account existing-only membership source PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-existing-membership-source-postgresql-proof-${{ github.sha }}
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountFreshUuidMembershipSnapshotIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify Game Session LOGIN fixture isolation proof
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest#loginCallsAccountServiceAndReturnsOk()' \
+            game-session-service
+
+      - name: Upload Game Session LOGIN fixture isolation proof
+        if: ${{ always() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-session-login-fixture-proof-${{ github.sha }}
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionLoginIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: 🔎 Verify Game Session PostgreSQL proof case
         if: ${{ matrix.module == 'game-session-service' }}

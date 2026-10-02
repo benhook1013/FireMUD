@@ -16,6 +16,7 @@ import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.jooq.DSLContext;
+import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
@@ -88,8 +89,25 @@ class AccountRepositoryIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     AccountJoinOperationRepository joinOperations =
         new AccountJoinOperationRepository(transactionAwareDsl);
+    LegacyTenantSourceEvidence legacyTenantSourceEvidence =
+        new LegacyTenantSourceEvidence(transactionAwareDsl);
+    AccountAuthorityGenerationRepository authorityGenerationRepository =
+        new AccountAuthorityGenerationRepository(transactionAwareDsl);
+    ApprovedLegacyTenantAssociationRepository approvedTenantAssociations =
+        new ApprovedLegacyTenantAssociationRepository(
+            transactionAwareDsl,
+            legacyTenantSourceEvidence,
+            "account-service",
+            authorityGenerationRepository);
+    AccountTenantIdentityResolver tenantIdentityResolver =
+        new AccountTenantIdentityResolver(
+            approvedTenantAssociations, legacyTenantSourceEvidence, "account-service");
     AccountTenantMembershipRepository memberships =
-        new AccountTenantMembershipRepository(transactionAwareDsl);
+        new AccountTenantMembershipRepository(
+            transactionAwareDsl,
+            new AccountRepository(transactionAwareDsl),
+            tenantIdentityResolver,
+            new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "account-service"));
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
     long accountId =
         Objects.requireNonNull(
@@ -960,18 +978,41 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(profileBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(m)::text FROM "
+                "SELECT (to_jsonb(m) - 'tenant_uuid' - 'tenant_provenance_kind' "
+                    + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text FROM "
                     + schema
                     + ".account_tenant_membership m WHERE account_id = ?",
                 firstAccountId))
         .isEqualTo(membershipBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(m)::text FROM "
+                "SELECT (to_jsonb(m) - 'tenant_uuid' - 'tenant_provenance_kind' "
+                    + "- 'tenant_source_operation_id' - 'tenant_provenance_digest')::text FROM "
                     + schema
                     + ".account_tenant_membership m WHERE account_id = ?",
                 secondAccountId))
         .isEqualTo(explicitMembershipBefore);
+    String membershipTenantIdentityQuery =
+        "SELECT tenant_uuid, tenant_provenance_kind, tenant_source_operation_id, "
+            + "tenant_provenance_digest FROM "
+            + schema
+            + ".account_tenant_membership WHERE account_id = ?";
+    Record firstMembershipAfter =
+        Objects.requireNonNull(
+            dsl.resultQuery(membershipTenantIdentityQuery, firstAccountId).fetchOne());
+    assertThat(firstMembershipAfter.get("tenant_uuid", UUID.class)).isNull();
+    assertThat(firstMembershipAfter.get("tenant_provenance_kind", String.class))
+        .isEqualTo("UNBRIDGED_RETAINED");
+    assertThat(firstMembershipAfter.get("tenant_source_operation_id", UUID.class)).isNull();
+    assertThat(firstMembershipAfter.get("tenant_provenance_digest", String.class)).isNull();
+    Record secondMembershipAfter =
+        Objects.requireNonNull(
+            dsl.resultQuery(membershipTenantIdentityQuery, secondAccountId).fetchOne());
+    assertThat(secondMembershipAfter.get("tenant_uuid", UUID.class)).isNull();
+    assertThat(secondMembershipAfter.get("tenant_provenance_kind", String.class))
+        .isEqualTo("UNBRIDGED_RETAINED");
+    assertThat(secondMembershipAfter.get("tenant_source_operation_id", UUID.class)).isNull();
+    assertThat(secondMembershipAfter.get("tenant_provenance_digest", String.class)).isNull();
     assertThat(
             jsonRow(
                 "SELECT to_jsonb(j)::text FROM "

@@ -151,6 +151,31 @@ public final class AccountIssuerAuthorityEventProducer {
     return readback;
   }
 
+  /**
+   * Reads the current issuer source inside the reconciliation service's already-owned transaction.
+   *
+   * <p>This package-private bridge preserves the same issuer-row fence while a reconciliation
+   * receipt is selected or inserted. It does not expose another public read contract.
+   */
+  IssuerAuthoritySnapshot readCurrentForProjectionReconciliation(String requestedIssuerId) {
+    requireExactIssuer(requestedIssuerId);
+    requireActiveOwnerTransaction();
+    return readCurrentInTransaction();
+  }
+
+  /**
+   * Reads one retained positive source event under the reconciliation transaction's issuer fence.
+   */
+  IssuerAuthorityEventReadback readCommittedEventForProjectionReconciliation(
+      String requestedIssuerId, long outboxSequence) {
+    requireExactIssuer(requestedIssuerId);
+    if (outboxSequence <= 0L) {
+      throw new IllegalArgumentException("Issuer outbox sequence must be positive");
+    }
+    requireActiveOwnerTransaction();
+    return readCommittedEventInTransaction(outboxSequence);
+  }
+
   private IssuerGenerationAuthorityEvent advanceInOwnerTransaction(
       UUID requestId, long expectedGeneration, long expectedSourceVersion) {
     ScopeState current = readLockedIssuerState();
@@ -539,6 +564,13 @@ public final class AccountIssuerAuthorityEventProducer {
     if (TransactionSynchronizationManager.isActualTransactionActive()) {
       throw new IllegalStateException(
           "Issuer authority producer must own its Account transaction without an ambient transaction");
+    }
+  }
+
+  private void requireActiveOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Issuer reconciliation source access requires an active Account owner transaction");
     }
   }
 
