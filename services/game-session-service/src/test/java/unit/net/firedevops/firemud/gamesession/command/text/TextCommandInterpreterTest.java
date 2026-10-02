@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
@@ -72,6 +73,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolv
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -89,6 +91,7 @@ import org.mockito.Mockito;
 class TextCommandInterpreterTest {
   private static final String ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String CANONICAL_TENANT_UUID = "7c958a3d-401e-47ee-8df8-351988b6ce26";
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final EntityManagementClient entityManagementClient =
@@ -106,6 +109,8 @@ class TextCommandInterpreterTest {
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final LookCacheService lookCacheService = Mockito.mock(LookCacheService.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver =
+      Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
   private final ModerationPolicyClient moderationPolicyClient =
       Mockito.mock(ModerationPolicyClient.class);
   private final MoveCommandHandler moveHandler = Mockito.mock(MoveCommandHandler.class);
@@ -157,6 +162,8 @@ class TextCommandInterpreterTest {
 
   @BeforeEach
   void setUp() {
+    when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(UUID.fromString(CANONICAL_TENANT_UUID)));
     sessionContextService.save(bootstrapShell(1L, 1L));
     meterRegistry.clear();
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
@@ -171,7 +178,7 @@ class TextCommandInterpreterTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          ACCOUNT_ID, 22L, "1")
+                          ACCOUNT_ID, 22L, CANONICAL_TENANT_UUID, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -184,7 +191,15 @@ class TextCommandInterpreterTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+        .thenAnswer(
+            invocation ->
+                GetRealmAccessGrantForRuntimeResponse.newBuilder()
+                    .setGranted(true)
+                    .setAccountId(invocation.getArgument(0))
+                    .setTenantId(invocation.getArgument(1))
+                    .setWorldSlug(invocation.getArgument(2))
+                    .setRealmSlug(invocation.getArgument(3))
+                    .build());
     when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
@@ -193,7 +208,7 @@ class TextCommandInterpreterTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
@@ -376,6 +391,7 @@ class TextCommandInterpreterTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,

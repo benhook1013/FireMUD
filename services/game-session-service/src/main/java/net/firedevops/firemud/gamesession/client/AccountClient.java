@@ -337,7 +337,7 @@ public final class AccountClient
 
   public GetTenantEntitlementsForRuntimeResponse getTenantEntitlementsForRuntime(
       String tenantId, String requestId) {
-    if (stub() == null) {
+    if (!AccountIds.isCanonicalNonNilUuid(tenantId) || stub() == null) {
       return entitlementAuthorityUnavailable();
     }
     GetTenantEntitlementsForRuntimeRequest request =
@@ -370,7 +370,9 @@ public final class AccountClient
 
   public GetRealmAccessGrantForRuntimeResponse getRealmAccessGrantForRuntime(
       String accountId, String tenantId, String worldSlug, String realmSlug, String requestId) {
-    if (stub() == null) {
+    if (!AccountIds.isCanonicalNonNilUuid(accountId)
+        || !AccountIds.isCanonicalNonNilUuid(tenantId)
+        || stub() == null) {
       return realmAccessGrantUnavailable();
     }
     GetRealmAccessGrantForRuntimeRequest request =

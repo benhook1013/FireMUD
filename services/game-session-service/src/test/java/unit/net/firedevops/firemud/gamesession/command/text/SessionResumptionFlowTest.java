@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -57,6 +58,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceActivityResolv
 import net.firedevops.firemud.gamesession.service.GameplayPresenceLifecycleService;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PlayerCommandHistoryStorageService;
+import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -74,6 +76,7 @@ import org.mockito.Mockito;
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String CANONICAL_TENANT_UUID = "7c958a3d-401e-47ee-8df8-351988b6ce26";
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
   private static final String PLAY_PAYLOAD = "PLAY demo";
   private static final String LOOK_PAYLOAD = "LOOK";
@@ -82,6 +85,8 @@ class SessionResumptionFlowTest {
   private final GameInstanceRepository instanceRepository =
       Mockito.mock(GameInstanceRepository.class);
   private final AccountClient accountClient = Mockito.mock(AccountClient.class);
+  private final RetainedRuntimeTenantUuidResolver retainedRuntimeTenantUuidResolver =
+      Mockito.mock(RetainedRuntimeTenantUuidResolver.class);
   private final EntityManagementClient entityManagementClient =
       Mockito.mock(EntityManagementClient.class);
   private final ModerationPolicyClient moderationPolicyClient =
@@ -141,6 +146,8 @@ class SessionResumptionFlowTest {
 
   @BeforeEach
   void setUp() {
+    when(retainedRuntimeTenantUuidResolver.resolveCanonicalTenantId(22L))
+        .thenReturn(Optional.of(UUID.fromString(CANONICAL_TENANT_UUID)));
     sessionContextService.save(bootstrapShell(1L, 1L));
     sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
@@ -173,7 +180,7 @@ class SessionResumptionFlowTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          "550e8400-e29b-41d4-a716-446655440000", 22L, "1")
+                          "550e8400-e29b-41d4-a716-446655440000", 22L, CANONICAL_TENANT_UUID, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -186,7 +193,15 @@ class SessionResumptionFlowTest {
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString()))
-        .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
+        .thenAnswer(
+            invocation ->
+                GetRealmAccessGrantForRuntimeResponse.newBuilder()
+                    .setGranted(true)
+                    .setAccountId(invocation.getArgument(0))
+                    .setTenantId(invocation.getArgument(1))
+                    .setWorldSlug(invocation.getArgument(2))
+                    .setRealmSlug(invocation.getArgument(3))
+                    .build());
     when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
@@ -195,7 +210,7 @@ class SessionResumptionFlowTest {
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
+                .setTenantId(CANONICAL_TENANT_UUID)
                 .setGameplayAvailable(true)
                 .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
@@ -285,6 +300,7 @@ class SessionResumptionFlowTest {
             worldCatalog,
             gameLogicProperties,
             accountClient,
+            retainedRuntimeTenantUuidResolver,
             entityManagementClient,
             moderationPolicyClient,
             firstPartyConnectContextRegistry,
@@ -465,21 +481,11 @@ class SessionResumptionFlowTest {
         .thenAnswer(
             invocation -> {
               var response =
-                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                      "550e8400-e29b-41d4-a716-446655440000", 22L, "2");
+                  net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                      .activeWithoutPlayerRole(
+                          "550e8400-e29b-41d4-a716-446655440000", 22L, CANONICAL_TENANT_UUID, "2");
               var deniedResponse =
-                  response.toBuilder()
-                      .setGameplayAdmissionAllowed(false)
-                      .setMembershipAuthorityGeneration("2")
-                      .setMembershipBaseline(
-                          response.getMembershipBaseline().toBuilder()
-                              .setMembershipAuthorityGeneration("2"))
-                      .setAuthorityTuple(
-                          response.getAuthorityTuple().toBuilder()
-                              .putMembershipAuthorityGeneration(
-                                  "00000000-0000-0000-0000-000000000022", "2"))
-                      .setEvaluatedAt(Instant.now().toString())
-                      .build();
+                  response.toBuilder().setEvaluatedAt(Instant.now().toString()).build();
               return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
                   .echoRequestId(deniedResponse, invocation.getArgument(0));
             });

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.RuntimeAuthorityTuple;
 import net.firedevops.firemud.account.v1.RuntimeMembershipBaseline;
@@ -24,6 +25,52 @@ public final class RuntimeMembershipTestFixtures {
   public static GetTenantMembershipForRuntimeResponse active(
       String accountId, long tenantId, String membershipVersion) {
     return complete(accountId, tenantId, true, "ACTIVE", true, membershipVersion);
+  }
+
+  /** Builds a complete membership carrier for an explicitly supplied canonical tenant UUID. */
+  public static GetTenantMembershipForRuntimeResponse active(
+      String accountId,
+      long retainedTenantKey,
+      String canonicalTenantId,
+      String membershipVersion) {
+    requireCanonicalTenantId(canonicalTenantId);
+    requirePositiveRetainedTenantKey(retainedTenantKey);
+    return completeWithTenant(
+        accountId,
+        canonicalTenantId,
+        canonicalTenantId,
+        true,
+        "ACTIVE",
+        true,
+        membershipVersion,
+        "1",
+        "1",
+        "1",
+        false,
+        List.of("player"));
+  }
+
+  /** Builds complete active membership authority with no player role for denial-path tests. */
+  public static GetTenantMembershipForRuntimeResponse activeWithoutPlayerRole(
+      String accountId,
+      long retainedTenantKey,
+      String canonicalTenantId,
+      String membershipVersion) {
+    requireCanonicalTenantId(canonicalTenantId);
+    requirePositiveRetainedTenantKey(retainedTenantKey);
+    return completeWithTenant(
+        accountId,
+        canonicalTenantId,
+        canonicalTenantId,
+        true,
+        "ACTIVE",
+        true,
+        membershipVersion,
+        "1",
+        "1",
+        "1",
+        false,
+        List.of("designer"));
   }
 
   public static GetTenantMembershipForRuntimeResponse missing(String accountId, long tenantId) {
@@ -115,8 +162,36 @@ public final class RuntimeMembershipTestFixtures {
       String outboxSequence,
       boolean callerBoundAuthorityInvalidated,
       List<String> roles) {
-    String accountUuid = accountId;
     String tenantUuid = uuid(tenantId);
+    return completeWithTenant(
+        accountId,
+        tenantUuid,
+        Long.toString(tenantId),
+        exists,
+        lifecycle,
+        admitted,
+        membershipVersion,
+        membershipAuthorityGeneration,
+        issuanceFence,
+        outboxSequence,
+        callerBoundAuthorityInvalidated,
+        roles);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse completeWithTenant(
+      String accountId,
+      String tenantUuid,
+      String requestTenantId,
+      boolean exists,
+      String lifecycle,
+      boolean admitted,
+      String membershipVersion,
+      String membershipAuthorityGeneration,
+      String issuanceFence,
+      String outboxSequence,
+      boolean callerBoundAuthorityInvalidated,
+      List<String> roles) {
+    String accountUuid = accountId;
     String membershipStream = STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
     List<RuntimeOutboxCheckpoint> checkpoints =
         new ArrayList<>(
@@ -145,7 +220,7 @@ public final class RuntimeMembershipTestFixtures {
             .setAccountId(accountUuid)
             .setTenantId(tenantUuid)
             .setRequestAccountId(accountId)
-            .setRequestTenantId(Long.toString(tenantId))
+            .setRequestTenantId(requestTenantId)
             .setAuthorityAvailability("AVAILABLE")
             .setMembershipExists(exists)
             .setMembershipLifecycleState(lifecycle)
@@ -201,6 +276,21 @@ public final class RuntimeMembershipTestFixtures {
               .setCanonicalEventJson(event.canonicalJson()));
     }
     return response.build();
+  }
+
+  private static void requireCanonicalTenantId(String tenantId) {
+    if (tenantId == null
+        || tenantId.isBlank()
+        || !UUID.fromString(tenantId).toString().equals(tenantId)
+        || new UUID(0L, 0L).toString().equals(tenantId)) {
+      throw new IllegalArgumentException("test canonical tenant ID must be a non-nil UUID");
+    }
+  }
+
+  private static void requirePositiveRetainedTenantKey(long retainedTenantKey) {
+    if (retainedTenantKey <= 0L) {
+      throw new IllegalArgumentException("test retained tenant key must be positive");
+    }
   }
 
   private static RuntimeOutboxCheckpoint checkpoint(String streamKey, String sequence) {

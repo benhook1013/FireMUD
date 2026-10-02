@@ -227,6 +227,62 @@ public class GameSessionRetainedTenantAssociationRepository {
     return Optional.empty();
   }
 
+  /**
+   * Reads the canonical tenant UUID for one positive retained Game Session tenant key.
+   *
+   * <p>The lookup is committed-outcome read-only. It validates the complete immutable receipt and
+   * confirms that the operation, request, canonical UUID, and retained key all cross-read to the
+   * same association row before returning the UUID.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public Optional<UUID> readCanonicalTenantIdByRetainedTenantKey(
+      long legacyGameSessionTenantId, String exactNamespace) {
+    if (!GrpcPeerIdentity.isValidNamespace(workloadNamespace)) {
+      throw new IllegalStateException("Game Session workload namespace is invalid");
+    }
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Retained-tenant association read requires a committed-outcome owner read");
+    }
+    requirePositive(legacyGameSessionTenantId, "legacyGameSessionTenantId");
+    requireNamespace(exactNamespace);
+    if (!workloadNamespace.equals(exactNamespace)) {
+      throw new IllegalArgumentException(
+          "exactNamespace must match the configured Game Session workload namespace");
+    }
+
+    Record row = findByLegacyKey(exactNamespace, legacyGameSessionTenantId);
+    if (row == null) {
+      return Optional.empty();
+    }
+
+    AssociationReceipt receipt = toValidatedReceipt(row);
+    UUID operationId = receipt.operationId();
+    UUID associationRequestId = receipt.associationRequestId();
+    UUID canonicalTenantId = receipt.approval().canonicalTenantId();
+    if (receipt.approval().legacyGameSessionTenantIdValue() != legacyGameSessionTenantId
+        || !receipt.approval().targetNamespace().equals(exactNamespace)) {
+      throw new InvalidAssociationEvidenceException(
+          "Retained-tenant key lookup contradicts its exact namespace or key");
+    }
+
+    requireSameAssociationRow(findByOperationId(operationId), operationId, "operation");
+    requireSameAssociationRow(
+        findByRequest(exactNamespace, associationRequestId), operationId, "request");
+    requireSameAssociationRow(
+        findByCanonicalTenant(exactNamespace, canonicalTenantId), operationId, "canonical UUID");
+    requireSameAssociationRow(
+        findByLegacyKey(exactNamespace, legacyGameSessionTenantId), operationId, "retained key");
+    return Optional.of(canonicalTenantId);
+  }
+
+  private void requireSameAssociationRow(Record row, UUID operationId, String identityLabel) {
+    if (row == null || !operationId.equals(row.get(OPERATION_ID))) {
+      throw new InvalidAssociationEvidenceException(
+          "Retained-tenant association " + identityLabel + " cross-read is contradictory");
+    }
+  }
+
   private AssociationReceipt requireExactRetry(
       Record row,
       UUID associationRequestId,

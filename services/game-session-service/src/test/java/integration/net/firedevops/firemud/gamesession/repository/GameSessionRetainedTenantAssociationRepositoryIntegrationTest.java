@@ -136,6 +136,111 @@ class GameSessionRetainedTenantAssociationRepositoryIntegrationTest {
   }
 
   @Test
+  void retainedKeyLookupReturnsHistoricalUuidOnlyForExactNamespaceAndKey() {
+    Fixture fixture = fixture();
+    fixture.seedInstance(42L, 420L, "runtime-before-association");
+    GameSessionRetainedTenantSnapshot snapshot = fixture.capture(42L);
+    LegacyGameSessionTenantAssociationReceipt approval =
+        fixture.approval(uuid(101), uuid(201), 42L, snapshot);
+    fixture.register(uuid(301), approval);
+
+    assertThat(fixture.repository.readCanonicalTenantIdByRetainedTenantKey(42L, NAMESPACE))
+        .contains(uuid(201));
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.repository.readCanonicalTenantIdByRetainedTenantKey(
+                            42L, NAMESPACE)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("committed-outcome owner read");
+    assertThat(fixture.repository.readCanonicalTenantIdByRetainedTenantKey(999L, NAMESPACE))
+        .isEmpty();
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET runtime_version = ? WHERE id = ?",
+        "runtime-after-association",
+        420L);
+    assertThat(fixture.repository.readCanonicalTenantIdByRetainedTenantKey(42L, NAMESPACE))
+        .contains(uuid(201));
+
+    GameSessionRetainedTenantAssociationRepository foreignNamespaceRepository =
+        new GameSessionRetainedTenantAssociationRepository(
+            fixture.dsl, fixture.snapshotRepository, "other-namespace");
+    assertThat(
+            foreignNamespaceRepository.readCanonicalTenantIdByRetainedTenantKey(
+                42L, "other-namespace"))
+        .isEmpty();
+    assertThatThrownBy(
+            () ->
+                fixture.repository.readCanonicalTenantIdByRetainedTenantKey(42L, "other-namespace"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("configured Game Session workload namespace");
+    assertThat(fixture.dsl.fetchCount(ASSOCIATIONS)).isEqualTo(1);
+  }
+
+  @Test
+  void retainedKeyLookupRejectsMalformedAndContradictoryPersistedRows() {
+    Fixture malformedFixture = fixture();
+    malformedFixture.seedInstance(42L, 420L, "runtime-malformed");
+    malformedFixture.register(
+        uuid(301),
+        malformedFixture.approval(uuid(101), uuid(201), 42L, malformedFixture.capture(42L)));
+    disableAssociationImmutabilityTrigger(malformedFixture);
+    try {
+      malformedFixture.dsl.execute(
+          "UPDATE game_session_retained_tenant_association SET approved_by = ? "
+              + "WHERE target_namespace = ? AND legacy_game_session_tenant_id = ?",
+          "changed-reviewer",
+          NAMESPACE,
+          42L);
+    } finally {
+      enableAssociationImmutabilityTrigger(malformedFixture);
+    }
+    assertThatThrownBy(
+            () ->
+                malformedFixture.repository.readCanonicalTenantIdByRetainedTenantKey(
+                    42L, NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+
+    Fixture contradictoryFixture = fixture();
+    contradictoryFixture.seedInstance(43L, 430L, "runtime-contradictory");
+    contradictoryFixture.register(
+        uuid(302),
+        contradictoryFixture.approval(
+            uuid(102), uuid(202), 43L, contradictoryFixture.capture(43L)));
+    disableAssociationImmutabilityTrigger(contradictoryFixture);
+    try {
+      contradictoryFixture.dsl.execute(
+          "UPDATE game_session_retained_tenant_association "
+              + "SET legacy_game_session_tenant_id = ? "
+              + "WHERE target_namespace = ? AND legacy_game_session_tenant_id = ?",
+          44L,
+          NAMESPACE,
+          43L);
+    } finally {
+      enableAssociationImmutabilityTrigger(contradictoryFixture);
+    }
+    assertThatThrownBy(
+            () ->
+                contradictoryFixture.repository.readCanonicalTenantIdByRetainedTenantKey(
+                    44L, NAMESPACE))
+        .isInstanceOf(InvalidAssociationEvidenceException.class);
+  }
+
+  private void disableAssociationImmutabilityTrigger(Fixture fixture) {
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_retained_tenant_association "
+            + "DISABLE TRIGGER game_session_retained_tenant_association_immutable");
+  }
+
+  private void enableAssociationImmutabilityTrigger(Fixture fixture) {
+    fixture.dsl.execute(
+        "ALTER TABLE game_session_retained_tenant_association "
+            + "ENABLE TRIGGER game_session_retained_tenant_association_immutable");
+  }
+
+  @Test
   void changedRequestAndOneToOneClaimConflictsLeaveNoPartialRows() {
     Fixture fixture = fixture();
     fixture.seedInstance(42L, 420L, "runtime-42");
