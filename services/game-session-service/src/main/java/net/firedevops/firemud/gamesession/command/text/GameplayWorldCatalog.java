@@ -173,7 +173,7 @@ public final class GameplayWorldCatalog {
   /** Reads the current realm catalog and records the exact response-local ordinal targets. */
   public RealmDiscoverySnapshot readRealmDiscoverySnapshot(WorldView world) {
     Objects.requireNonNull(world, "world must not be null");
-    return realmDiscoverySnapshot(world, visibleRealms(world));
+    return realmDiscoverySnapshot(world, publicProductionRealms(world));
   }
 
   /** Builds a REALMS snapshot whose ordinals match the filtered response entries. */
@@ -181,6 +181,8 @@ public final class GameplayWorldCatalog {
       WorldView world, List<RealmView> responseRealms) {
     Objects.requireNonNull(world, "world must not be null");
     List<RealmView> visibleCatalogRealms = visibleRealms(world);
+    List<RealmView> publicCatalogRealms =
+        visibleCatalogRealms.stream().filter(RealmView::publicProductionRealm).toList();
     List<RealmView> safeResponseRealms =
         List.copyOf(Objects.requireNonNull(responseRealms, "responseRealms must not be null"));
     if (safeResponseRealms.stream().anyMatch(realm -> !visibleCatalogRealms.contains(realm))) {
@@ -198,9 +200,9 @@ public final class GameplayWorldCatalog {
               realm.pointerVersion(),
               realmTargetFingerprint(world, realm)));
     }
-    List<RealmOrdinalTarget> catalogTargets = new ArrayList<>(visibleCatalogRealms.size());
-    for (int index = 0; index < visibleCatalogRealms.size(); index++) {
-      RealmView realm = visibleCatalogRealms.get(index);
+    List<RealmOrdinalTarget> catalogTargets = new ArrayList<>(publicCatalogRealms.size());
+    for (int index = 0; index < publicCatalogRealms.size(); index++) {
+      RealmView realm = publicCatalogRealms.get(index);
       catalogTargets.add(
           new RealmOrdinalTarget(
               index + 1,
@@ -672,6 +674,10 @@ public final class GameplayWorldCatalog {
       return List.of();
     }
     return world.realms().stream().filter(RealmView::visible).toList();
+  }
+
+  private List<RealmView> publicProductionRealms(WorldView world) {
+    return visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
   }
 
   public List<WorldView> visibleWorlds() {

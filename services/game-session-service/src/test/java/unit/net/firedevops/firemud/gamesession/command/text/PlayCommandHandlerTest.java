@@ -454,6 +454,60 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void numericWorldSelectorUsesInjectedAuthorityClockForSnapshotLookup() {
+    Instant authorityNow = Instant.parse("2000-01-02T03:04:05Z");
+    Clock authorityClock = Clock.fixed(authorityNow, ZoneOffset.UTC);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayWorldCatalog.DiscoverySnapshot snapshot = worldCatalog.readDiscoverySnapshot();
+    DirectTextConnectScopeSessionStore scopeStore =
+        Mockito.spy(DirectTextConnectScopeSessionStore.inMemoryForTest());
+    scopeStore.replaceWorldSnapshot(
+        context.sessionId(),
+        context.accountId(),
+        snapshot.catalogFingerprint(),
+        snapshot.ordinalTargets(),
+        authorityNow);
+    PlayCommandHandler clockHandler = handlerWithClock(authorityClock, scopeStore);
+
+    PlayCommandHandlingResult result =
+        clockHandler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("1"), "PLAY 1"));
+
+    assertThat(result.commandResult().errorCode()).isNotEqualTo("CONNECT_SCOPE_MISMATCH");
+    Mockito.verify(scopeStore).worldsSnapshot(context, authorityNow);
+  }
+
+  @Test
+  void numericRealmSelectorUsesInjectedAuthorityClockForSnapshotLookup() {
+    Instant authorityNow = Instant.parse("2000-01-02T03:04:05Z");
+    Clock authorityClock = Clock.fixed(authorityNow, ZoneOffset.UTC);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayWorldCatalog.WorldView world = worldCatalog.resolveWorld("demo").orElseThrow();
+    GameplayWorldCatalog.RealmDiscoverySnapshot snapshot =
+        worldCatalog.readRealmDiscoverySnapshot(world);
+    DirectTextConnectScopeSessionStore scopeStore =
+        Mockito.spy(DirectTextConnectScopeSessionStore.inMemoryForTest());
+    scopeStore.replaceRealmSnapshot(
+        context,
+        "demo",
+        22L,
+        "demo",
+        snapshot.catalogFingerprint(),
+        snapshot.ordinalTargets(),
+        List.of(),
+        authorityNow);
+    PlayCommandHandler clockHandler = handlerWithClock(authorityClock, scopeStore);
+
+    clockHandler.handle(
+        "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "999"), "PLAY demo 999"));
+
+    Mockito.verify(scopeStore).realmsSnapshot(context, 22L, "demo", authorityNow);
+  }
+
+  @Test
   void numericWorldPlayTreatsUnrecognizedSecondSelectorAsCharacterWhenDefaultRealmIsUnambiguous() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
@@ -3249,6 +3303,11 @@ class PlayCommandHandlerTest {
   }
 
   private PlayCommandHandler handlerWithClock(Clock clock) {
+    return handlerWithClock(clock, connectScopeSessionStore);
+  }
+
+  private PlayCommandHandler handlerWithClock(
+      Clock clock, DirectTextConnectScopeSessionStore scopeStore) {
     return new PlayCommandHandler(
         sessionAuthenticationService,
         sessionContextService,
@@ -3262,7 +3321,7 @@ class PlayCommandHandlerTest {
         gameplayPresenceLifecycleService,
         scriptEventPublisher,
         meterRegistry,
-        connectScopeSessionStore,
+        scopeStore,
         clock);
   }
 

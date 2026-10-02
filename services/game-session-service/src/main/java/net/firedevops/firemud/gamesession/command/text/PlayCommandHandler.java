@@ -4,7 +4,6 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Clock;
-import java.time.Instant;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -1259,7 +1258,8 @@ public class PlayCommandHandler {
     }
     Optional<DirectTextConnectScopeSessionStore.WorldsSnapshot> maybeSnapshot;
     try {
-      maybeSnapshot = connectScopeSessionStore.worldsSnapshot(context, Instant.now());
+      maybeSnapshot =
+          connectScopeSessionStore.worldsSnapshot(context, authorityEvaluationClock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return new WorldSelectorResolution.Unavailable();
@@ -1308,7 +1308,8 @@ public class PlayCommandHandler {
     Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeSnapshot;
     try {
       maybeSnapshot =
-          connectScopeSessionStore.realmsSnapshot(context, tenantId, world.slug(), Instant.now());
+          connectScopeSessionStore.realmsSnapshot(
+              context, tenantId, world.slug(), authorityEvaluationClock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return new RealmSelectorResolution.Unavailable();
