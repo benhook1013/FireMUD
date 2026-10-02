@@ -166,14 +166,19 @@ for readme in readmes:
             raise SystemExit(f"{workflow_versions}: GH_VERSION is not numeric")
         if tuple(int(part) for part in version_parts) < (2, 63, 0):
             raise SystemExit(f"{workflow_versions}: GH_VERSION must be >= 2.63.0")
-        prerequisite = (
-            "The `pr-review`, `report-worktree-pr-topology.sh`, and "
-            "`maintenance/cloc-report.py pr` entrypoints "
-            "require GitHub CLI `gh` >= 2.63.0 "
-            "because they request the `baseRefOid` field; the repository workflow pin is "
-            f"`GH_VERSION={gh_version}`."
+        prerequisite_fragments = (
+            "`pr-review`",
+            "`report-worktree-pr-topology.sh`",
+            "`maintenance/cloc-report.py pr`",
+            "require GitHub CLI `gh` >= 2.63.0",
+            "`baseRefOid`",
+            "`config/workflow-tool-versions.env`",
+            "`GH_VERSION`",
         )
-        if prerequisite not in text:
+        if not any(
+            all(fragment in line for fragment in prerequisite_fragments)
+            for line in text.splitlines()
+        ):
             raise SystemExit(
                 f"{readme}: reporter GitHub CLI/baseRefOid prerequisite note is missing"
             )

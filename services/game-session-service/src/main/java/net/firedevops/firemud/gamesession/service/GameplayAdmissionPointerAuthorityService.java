@@ -8,6 +8,8 @@ public interface GameplayAdmissionPointerAuthorityService {
 
   List<GameplayAdmissionPointerSnapshot> listPointersForTenants(List<Long> tenantIds);
 
+  List<GameplayAdmissionPointerSnapshot> listPointersByTenant(long tenantId);
+
   Optional<GameplayAdmissionPointerSnapshot> findPointer(
       long tenantId, String worldSlug, String realmSlug);
 

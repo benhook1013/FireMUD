@@ -9,9 +9,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -74,7 +76,7 @@ import org.mockito.Mockito;
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
-  private static final String PLAY_PAYLOAD = "PLAY demo";
+  private static final String PLAY_PAYLOAD = "PLAY demo production";
   private static final String LOOK_PAYLOAD = "LOOK";
 
   private final CommandService commandService = Mockito.mock(CommandService.class);
@@ -556,7 +558,10 @@ class SessionResumptionFlowTest {
 
     interpreter.interpret("1", command, false);
     interpreter.interpret(
-        "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"), false);
+        "1",
+        new TextCommand(
+            TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"),
+        false);
     sessionContextService.evictIdentity(22L, 1L, 7001L);
 
     TextCommandInterpretationResult staleRetry = interpreter.interpret("2", command, false);
@@ -607,7 +612,14 @@ class SessionResumptionFlowTest {
         publicProductionRealm,
         false,
         "SHARED",
-        "ALLOW_NEW");
+        "ALLOW_NEW",
+        1L,
+        stableUuid("realm:" + tenantId + ":" + worldSlug + ":" + realmSlug),
+        stableUuid("shared-namespace:" + tenantId));
+  }
+
+  private static UUID stableUuid(String value) {
+    return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
   }
 
   private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {

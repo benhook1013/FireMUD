@@ -41,6 +41,12 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
     }
     List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers =
         bootstrapProperties.getPointers();
+    if (pointers != null && pointers.isEmpty()) {
+      LOGGER.warn(
+          "Skipping gameplay admission pointer bootstrap because no pointer seeds are configured; "
+              + "admission remains closed");
+      return;
+    }
     validateSeeds(pointers);
     LOGGER.warn(
         "Skipping configured gameplay admission pointer bootstrap because owner-validated "
@@ -49,7 +55,7 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
 
   private static void validateSeeds(
       List<GameplayAdmissionPointerBootstrapProperties.PointerSeed> pointers) {
-    if (pointers == null || pointers.isEmpty()) {
+    if (pointers == null) {
       throw new IllegalArgumentException("Gameplay admission pointer bootstrap seeds are required");
     }
 

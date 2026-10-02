@@ -14,13 +14,11 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
-import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import org.junit.jupiter.api.Test;
 
 class GameSessionAdmissionPointerControlPlaneServiceTest {
@@ -33,10 +31,7 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
     when(authorityService.findLatestPointerAudit(2L, "tenant-b", "production"))
         .thenReturn(Optional.of(audit(tenantB)));
     GameSessionAdmissionPointerControlPlaneService controlPlaneService =
-        new GameSessionAdmissionPointerControlPlaneService(
-            mock(GameInstanceRepository.class),
-            authorityService,
-            mock(VersionUpgradePreparationService.class));
+        new GameSessionAdmissionPointerControlPlaneService(authorityService);
 
     var response = controlPlaneService.listAdmissionPointers(List.of(2L));
 
@@ -101,10 +96,7 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
     DatabaseGameplayAdmissionPointerAuthorityService authorityService =
         new DatabaseGameplayAdmissionPointerAuthorityService(pointerRepository, eventRepository);
     GameSessionAdmissionPointerControlPlaneService controlPlaneService =
-        new GameSessionAdmissionPointerControlPlaneService(
-            mock(GameInstanceRepository.class),
-            authorityService,
-            mock(VersionUpgradePreparationService.class));
+        new GameSessionAdmissionPointerControlPlaneService(authorityService);
 
     assertThrows(
         AdmissionPointerAuditUnavailableException.class,

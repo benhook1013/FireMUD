@@ -3,6 +3,7 @@ import fcntl
 import io
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -98,7 +99,12 @@ class ReviewRecordsCliTest(unittest.TestCase):
         metadata = records.attempt("legacy-controller-round")["metadata"]
         arguments = ["subagent", "complete", "--run-id", "legacy-controller-round", "--actor", "root verified"]
         for title in ("Admission selection race", "Stopped historical evidence"):
-            arguments += ["--finding-json", json.dumps({"title": title, "decision": "accepted", "reason": "verified"})]
+            arguments += [
+                "--finding-json",
+                json.dumps(
+                    {"title": title, "severity": "Major", "decision": "accepted", "reason": "verified"}
+                ),
+            ]
         arguments += ["--database", str(self.database)]
         code, result = self.invoke(*arguments)
         self.assertEqual(code, 0, result)
@@ -225,14 +231,28 @@ class ReviewRecordsCliTest(unittest.TestCase):
             {
                 "title": "Bound the retry",
                 "detail": "Exact candidate is retained",
+                "severity": "Critical",
                 "decision": "accepted",
                 "reason": "Owned by this PR",
             },
             {
                 "title": "Another owner must repair proof",
+                "severity": "Major",
                 "decision": "routed",
                 "reason": "Belongs to target",
                 "target_pr": 2895,
+            },
+            {
+                "title": "Rejected bounded concern",
+                "severity": "Minor",
+                "decision": "rejected",
+                "reason": "Not valid",
+            },
+            {
+                "title": "Rejected cosmetic concern",
+                "severity": "Trivial",
+                "decision": "rejected",
+                "reason": "Not valid",
             },
         )
         arguments = ["subagent", "complete", "--run-id", "subagent.review-1", "--actor", "Overseer"]
@@ -241,15 +261,231 @@ class ReviewRecordsCliTest(unittest.TestCase):
         arguments.extend(("--database", str(self.database)))
         code, completed = self.invoke(*arguments)
         self.assertEqual(code, 0)
-        self.assertEqual(completed["result"]["run"]["counts"], {"found": 2, "accepted": 1, "routed": 1})
+        self.assertEqual(completed["result"]["run"]["counts"], {"found": 4, "accepted": 1, "routed": 1})
         code, replay = self.invoke(*arguments)
         self.assertEqual(code, 0)
         self.assertTrue(replay["result"]["run"]["idempotent_replay"])
         history = SqliteReviewRecords(self.database).history(2893)
         self.assertEqual(history["attempts"][0]["state"], "completed")
         self.assertEqual(history["runs"][0]["channel"], "subagent")
-        self.assertEqual(len(history["findings"]), 2)
+        self.assertEqual(len(history["findings"]), 4)
+        self.assertEqual(
+            {finding["title"]: finding["display_severity"] for finding in history["findings"]},
+            {item["title"]: item["severity"] for item in items},
+        )
         self.assertEqual(history["routes"][0]["target_pr"], 2895)
+        self.assertEqual(history["routes"][0]["display_severity"], "Major")
+        incoming = SqliteReviewRecords(self.database).history(2895)["routes"]
+        self.assertEqual(incoming[0]["display_severity"], "Major")
+        self.assertEqual(
+            SqliteReviewRecords(self.database).list_routes(target_pr=2895)[0]["display_severity"],
+            "Major",
+        )
+        changed = list(arguments)
+        changed[changed.index(json.dumps(items[0]))] = json.dumps({**items[0], "severity": "Major"})
+        code, conflict = self.invoke(*changed)
+        self.assertEqual(code, 2)
+        self.assertIn("different immutable content", conflict["error"])
+        self.assertEqual(SqliteReviewRecords(self.database).history(2893)["runs"][0]["counts"], {
+            "found": 4,
+            "accepted": 1,
+            "routed": 1,
+        })
+        with sqlite3.connect(self.database) as connection:
+            payload_before = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent.review-1'"
+            ).fetchone()[0]
+        route_key = "subagent:subagent.review-1:finding:2"
+        code, severity = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "subagent.review-1",
+            "--finding-key",
+            route_key,
+            "--severity",
+            "Critical",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, severity)
+        self.assertEqual(severity["result"]["previous_severity"], "Major")
+        self.assertEqual(severity["result"]["severity"], "Critical")
+        self.assertEqual(severity["result"]["run_id"], "subagent.review-1")
+        self.assertEqual(severity["result"]["source_finding_key"], route_key)
+        self.assertEqual(severity["result"]["source_pr"], 2893)
+        self.assertEqual(severity["result"]["source_channel"], "subagent")
+        self.assertTrue(severity["result"]["changed"])
+        code, replay = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "subagent.review-1",
+            "--finding-key",
+            route_key,
+            "--severity",
+            "Critical",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, replay)
+        self.assertFalse(replay["result"]["changed"])
+        self.assertEqual(replay["result"]["previous_severity"], "Critical")
+        code, completed_replay = self.invoke(*arguments)
+        self.assertEqual(code, 0, completed_replay)
+        self.assertTrue(completed_replay["result"]["run"]["idempotent_replay"])
+        records = SqliteReviewRecords(self.database)
+        self.assertEqual(records.history(2893)["routes"][0]["display_severity"], "Critical")
+        self.assertEqual(records.history(2895)["routes"][0]["display_severity"], "Critical")
+        self.assertEqual(records.list_routes(target_pr=2895)[0]["display_severity"], "Critical")
+        self.assertEqual(records.history(2893)["runs"][0]["counts"], {
+            "found": 4,
+            "accepted": 1,
+            "routed": 1,
+        })
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent.review-1'"
+                ).fetchone()[0],
+                payload_before,
+            )
+
+    def test_subagent_completion_requires_exact_severity_labels(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "subagent.severity-validation"
+        self.invoke(
+            "subagent",
+            "start",
+            "--pr",
+            "2893",
+            "--run-id",
+            run_id,
+            "--reviewer",
+            "Luna",
+            "--scope",
+            "narrow",
+            "--database",
+            str(self.database),
+        )
+        invalid_findings = (
+            {"title": "Missing", "decision": "rejected", "reason": "invalid"},
+            {"title": "Mixed case", "severity": "major", "decision": "rejected", "reason": "invalid"},
+            {"title": "Unknown", "severity": "Blocker", "decision": "rejected", "reason": "invalid"},
+            {"title": "List", "severity": ["Major"], "decision": "rejected", "reason": "invalid"},
+            {"title": "Object", "severity": {"label": "Major"}, "decision": "rejected", "reason": "invalid"},
+        )
+        for finding in invalid_findings:
+            with self.subTest(finding=finding):
+                code, result = self.invoke(
+                    "subagent",
+                    "complete",
+                    "--run-id",
+                    run_id,
+                    "--actor",
+                    "Overseer",
+                    "--finding-json",
+                    json.dumps(finding),
+                    "--database",
+                    str(self.database),
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("severity", result["error"])
+        records = SqliteReviewRecords(self.database)
+        self.assertEqual(records.attempt(run_id)["state"], "started")
+        self.assertEqual(records.history(2893)["runs"], [])
+
+    def test_historical_subagent_finding_may_retain_unspecified_severity(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        result = records.import_completed_run(
+            run_id="historical-subagent-unspecified-severity",
+            source_pr=2893,
+            channel="subagent",
+            findings=(FindingObservation("historical-finding", "Retained historical finding"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "historical-finding",
+                    "decision_id": "historical-finding-decision",
+                    "decision": "rejected",
+                    "actor": "historical import",
+                    "reason": "retained without inferred severity",
+                },
+            ),
+        )
+        self.assertEqual(result["counts"], {"found": 1, "accepted": 0, "routed": 0})
+        finding = records.history(2893)["findings"][0]
+        self.assertIn("display_severity", finding)
+        self.assertIsNone(finding["display_severity"])
+        with sqlite3.connect(self.database) as connection:
+            payload_before = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                ("historical-subagent-unspecified-severity",),
+            ).fetchone()[0]
+        code, updated = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "historical-subagent-unspecified-severity",
+            "--finding-key",
+            "historical-finding",
+            "--severity",
+            "Minor",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, updated)
+        self.assertIsNone(updated["result"]["previous_severity"])
+        self.assertEqual(records.history(2893)["findings"][0]["display_severity"], "Minor")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                    ("historical-subagent-unspecified-severity",),
+                ).fetchone()[0],
+                payload_before,
+            )
+
+    def test_set_severity_unknown_identity_fails_without_changing_observation(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        records.import_completed_run(
+            run_id="severity-exact-identity",
+            source_pr=2893,
+            channel="manual",
+            findings=(FindingObservation("known-finding", "Known finding"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "known-finding",
+                    "decision_id": "known-finding-decision",
+                    "decision": "rejected",
+                    "actor": "historical import",
+                    "reason": "retained",
+                },
+            ),
+        )
+        for run_id, finding_key in (("missing-run", "known-finding"), ("severity-exact-identity", "missing")):
+            with self.subTest(run_id=run_id, finding_key=finding_key):
+                code, result = self.invoke(
+                    "source",
+                    "set-severity",
+                    "--run-id",
+                    run_id,
+                    "--finding-key",
+                    finding_key,
+                    "--severity",
+                    "Trivial",
+                    "--database",
+                    str(self.database),
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("exact run", result["error"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT display_severity FROM finding_observations WHERE run_id = 'severity-exact-identity'"
+                ).fetchone()[0]
+            )
 
     def test_subagent_completion_replay_preserves_attempt_finish_time_without_prior_run(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
@@ -290,6 +526,9 @@ class ReviewRecordsCliTest(unittest.TestCase):
             SqliteReviewRecords(self.database).history(2893)["runs"][0]["finished_at"],
             expected_finished_at,
         )
+        history = SqliteReviewRecords(self.database).history(2893)
+        self.assertEqual(history["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(history["findings"], [])
 
     def test_records_source_resolve_records_exact_accepted_fix_without_changing_counts(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))

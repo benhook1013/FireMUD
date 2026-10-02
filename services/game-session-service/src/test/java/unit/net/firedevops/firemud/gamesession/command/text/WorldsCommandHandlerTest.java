@@ -12,6 +12,7 @@ import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -24,6 +25,17 @@ class WorldsCommandHandlerTest {
       new WorldsCommandHandler(
           TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
           entityManagementClient);
+
+  @BeforeEach
+  void setUp() {
+    // The default demo realm is the tenant's sole public-production target.
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(false);
+  }
 
   @Test
   void browseViewReturnsStructuredWorldList() {
@@ -38,14 +50,15 @@ class WorldsCommandHandlerTest {
     assertThat(response.worlds()).hasSize(2);
     assertThat(response.worlds().get(0).slug()).isEqualTo("demo");
     assertThat(response.worlds().get(0).displayName()).isEqualTo("Demo World");
+    assertThat(response.worlds().get(1).slug()).isEqualTo("sandbox");
     assertThat(response.worlds().get(1).displayName()).isEqualTo("Builder Sandbox");
   }
 
   @Test
   void browseRealmsReturnsStructuredRealmList() {
-    RealmBrowseViewOutput response = handler.browseRealms("sandbox").orElseThrow();
+    RealmBrowseViewOutput response = handler.browseRealms("demo").orElseThrow();
 
-    assertThat(response.worldSlug()).isEqualTo("sandbox");
+    assertThat(response.worldSlug()).isEqualTo("demo");
     assertThat(response.realms()).hasSize(1);
     assertThat(response.realms().get(0).realmSlug()).isEqualTo("production");
     assertThat(response.realms().get(0).stateScope()).isEqualTo("SHARED");
