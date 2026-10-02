@@ -26,10 +26,16 @@ class PaymentGrpcServiceTest {
     PaymentGrpcService service = new PaymentGrpcService(meterRegistry);
     CreatePaymentIntentRequest intent =
         CreatePaymentIntentRequest.newBuilder()
-            .setTenantId("1").setAccountId("2").setAmountCents(500).build();
+            .setTenantId("1")
+            .setAccountId("2")
+            .setAmountCents(500)
+            .build();
     CreateDonationRequest donation =
         CreateDonationRequest.newBuilder()
-            .setTenantId("1").setAccountId("2").setAmountCents(100).build();
+            .setTenantId("1")
+            .setAccountId("2")
+            .setAmountCents(100)
+            .build();
     RefundPaymentRequest refund =
         RefundPaymentRequest.newBuilder().setTenantId("1").setPaymentId("9").build();
     List<CreatePaymentIntentResponse> intents = new ArrayList<>();
