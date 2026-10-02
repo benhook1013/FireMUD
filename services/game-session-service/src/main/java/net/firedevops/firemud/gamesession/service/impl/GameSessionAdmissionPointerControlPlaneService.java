@@ -2,10 +2,12 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
@@ -43,15 +45,24 @@ final class GameSessionAdmissionPointerControlPlaneService {
                 .filter(
                     pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
                 .toList();
+    List<PointerAuditKey> auditKeys =
+        pointers.stream()
+            .map(
+                pointer ->
+                    new PointerAuditKey(
+                        pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug()))
+            .distinct()
+            .toList();
+    Map<PointerAuditKey, GameplayAdmissionPointerAuditEntry> latestAudits =
+        gameplayAdmissionPointerAuthorityService.findLatestPointerAudits(auditKeys);
     List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
             .map(
                 pointer -> {
-                  GameplayAdmissionPointerAuditEntry latestAudit =
-                      gameplayAdmissionPointerAuthorityService
-                          .findLatestPointerAudit(
-                              pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug())
-                          .orElse(null);
+                  PointerAuditKey key =
+                      new PointerAuditKey(
+                          pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
+                  GameplayAdmissionPointerAuditEntry latestAudit = latestAudits.get(key);
                   if (latestAudit == null) {
                     throw new AdmissionPointerAuditUnavailableException(
                         "Admission pointer audit unavailable for current pointer "

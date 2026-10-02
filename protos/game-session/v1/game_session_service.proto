@@ -1158,9 +1158,13 @@ message SetAdmissionPointerRequest {
   string actor_principal = 11;
   string reason = 12;
   string control_plane_request_id = 13;
+  // Existing-row mutations require both expected revisions to match the current row. Creating a
+  // missing row is supported only with both fields explicitly present as zero. Optional presence
+  // does not enable the currently disabled public mutation RPC or imply valid mutation semantics.
   optional int64 expected_pointer_version = 14;
   string prepared_version_upgrade_id = 15;
   bool public_production_realm = 16;
+  // Must be supplied with expected_pointer_version under the same existing-row or creation rules.
   optional int64 expected_catalog_revision = 17;
 }
 
@@ -1178,7 +1182,11 @@ message ExecutePreparedVersionCutoverRequest {
   string actor_principal = 6;
   string reason = 7;
   string control_plane_request_id = 8;
+  // Existing-row mutations require both expected revisions to match the current row. Creating a
+  // missing row is supported only with both fields explicitly present as zero. Optional presence
+  // does not enable the currently disabled public mutation RPC or imply valid mutation semantics.
   optional int64 expected_pointer_version = 9;
+  // Must be supplied with expected_pointer_version under the same existing-row or creation rules.
   optional int64 expected_catalog_revision = 10;
 }
 

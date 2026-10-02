@@ -3,8 +3,10 @@ package net.firedevops.firemud.gamesession.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
@@ -13,6 +15,7 @@ import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatc
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import org.springframework.stereotype.Service;
@@ -188,6 +191,22 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     return eventRepository
         .findLatestByTenantIdAndWorldSlugAndRealmSlug(tenantId, worldSlug, realmSlug)
         .map(this::toAuditEntry);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Map<PointerAuditKey, GameplayAdmissionPointerAuditEntry> findLatestPointerAudits(
+      List<PointerAuditKey> keys) {
+    if (keys.isEmpty()) {
+      return Map.of();
+    }
+    return eventRepository.findLatestByPointerKeys(keys).stream()
+        .collect(
+            Collectors.toMap(
+                event ->
+                    new PointerAuditKey(
+                        event.getTenantId(), event.getWorldSlug(), event.getRealmSlug()),
+                this::toAuditEntry));
   }
 
   private GameplayAdmissionPointerAuditEntry toAuditEntry(GameplayAdmissionPointerEvent event) {

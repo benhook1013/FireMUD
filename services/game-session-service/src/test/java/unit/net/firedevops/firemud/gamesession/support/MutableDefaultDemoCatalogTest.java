@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
@@ -214,6 +216,12 @@ class MutableDefaultDemoCatalogTest {
     public Optional<GameplayAdmissionPointerAuditEntry> findLatestPointerAudit(
         long tenantId, String worldSlug, String realmSlug) {
       return Optional.empty();
+    }
+
+    @Override
+    public Map<PointerAuditKey, GameplayAdmissionPointerAuditEntry> findLatestPointerAudits(
+        List<PointerAuditKey> keys) {
+      return Map.of();
     }
   }
 }

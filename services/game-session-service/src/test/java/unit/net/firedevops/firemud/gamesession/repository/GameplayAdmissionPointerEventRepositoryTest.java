@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -46,6 +47,56 @@ class GameplayAdmissionPointerEventRepositoryTest {
       assertEquals(12L, events.get(1).getCatalogRevision());
       assertEquals(realmId, events.get(1).getRealmId());
       assertEquals(namespaceId, events.get(1).getPlayableStateNamespaceId());
+    }
+  }
+
+  @Test
+  void findsLatestAuditByIdForExactMixedTenantPointerKeys() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-event-latest-batch;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerEventRepository repository =
+          new GameplayAdmissionPointerEventRepository(dsl);
+
+      GameplayAdmissionPointerEvent newestTenantNine = event("2026-09-10T00:00:00Z");
+      repository.save(newestTenantNine);
+      GameplayAdmissionPointerEvent tenantTen = event("2026-09-08T00:00:00Z");
+      tenantTen.setTenantId(10L);
+      repository.save(tenantTen);
+      GameplayAdmissionPointerEvent otherRealm = event("2026-09-07T00:00:00Z");
+      otherRealm.setRealmSlug("playtest");
+      repository.save(otherRealm);
+      GameplayAdmissionPointerEvent latestById = event("2026-09-01T00:00:00Z");
+      repository.save(latestById);
+      GameplayAdmissionPointerEvent outsideSelection = event("2026-09-11T00:00:00Z");
+      outsideSelection.setTenantId(11L);
+      repository.save(outsideSelection);
+
+      List<GameplayAdmissionPointerEvent> latest =
+          repository.findLatestByPointerKeys(
+              List.of(
+                  new PointerAuditKey(9L, "demo", "production"),
+                  new PointerAuditKey(10L, "demo", "production"),
+                  new PointerAuditKey(9L, "demo", "playtest")));
+      var byKey =
+          latest.stream()
+              .collect(
+                  java.util.stream.Collectors.toMap(
+                      audit ->
+                          new PointerAuditKey(
+                              audit.getTenantId(), audit.getWorldSlug(), audit.getRealmSlug()),
+                      GameplayAdmissionPointerEvent::getControlPlaneRequestId));
+
+      assertEquals(3, latest.size());
+      assertEquals(
+          "request-2026-09-01T00:00:00Z", byKey.get(new PointerAuditKey(9L, "demo", "production")));
+      assertEquals(
+          "request-2026-09-08T00:00:00Z",
+          byKey.get(new PointerAuditKey(10L, "demo", "production")));
+      assertEquals(
+          "request-2026-09-07T00:00:00Z", byKey.get(new PointerAuditKey(9L, "demo", "playtest")));
     }
   }
 
