@@ -74,6 +74,8 @@ import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.security.ReloadableJwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.jooq.exception.ConfigurationException;
+import org.jooq.exception.MappingException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -3283,13 +3285,15 @@ class AccountServiceImplTest {
     verifyNoInteractions(accountConnectScopeRepository);
   }
 
-  @Test
-  void issueDirectTextConnectScopePropagatesUnexpectedRuntimeFailureWithoutMintingScope() {
-    IllegalStateException cause = new IllegalStateException("subscription mapping failed");
+  @ParameterizedTest
+  @ValueSource(strings = {"illegal-state", "jooq-mapping", "jooq-configuration"})
+  void issueDirectTextConnectScopePropagatesUnexpectedRuntimeFailureWithoutMintingScope(
+      String failureType) {
+    RuntimeException cause = unexpectedEntitlementFailure(failureType);
     when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
 
-    IllegalStateException propagated =
-        assertThrows(IllegalStateException.class, this::issueDirectTextConnectScopeForTest);
+    RuntimeException propagated =
+        assertThrows(RuntimeException.class, this::issueDirectTextConnectScopeForTest);
 
     assertSame(cause, propagated);
     verifyNoInteractions(accountConnectScopeRepository);
@@ -3437,17 +3441,20 @@ class AccountServiceImplTest {
     assertSame(cause, exception.getCause());
   }
 
-  @Test
-  void getTenantEntitlementsForRuntimePropagatesUnexpectedRuntimeFailureByIdentity() {
-    IllegalStateException cause = new IllegalStateException("subscription mapping failed");
+  @ParameterizedTest
+  @ValueSource(strings = {"illegal-state", "jooq-mapping", "jooq-configuration"})
+  void getTenantEntitlementsForRuntimePropagatesUnexpectedRuntimeFailureByIdentity(
+      String failureType) {
+    RuntimeException cause = unexpectedEntitlementFailure(failureType);
     when(subscriptionRepository.findByTenantId(7L)).thenThrow(cause);
 
-    IllegalStateException propagated =
+    RuntimeException propagated =
         assertThrows(
-            IllegalStateException.class,
+            RuntimeException.class,
             () -> service.getTenantEntitlementsForRuntime(7L, "req-entitlement-runtime-failure"));
 
     assertSame(cause, propagated);
+    verifyNoInteractions(accountConnectScopeRepository);
   }
 
   @Test
@@ -6326,6 +6333,15 @@ class AccountServiceImplTest {
         "Recent ordinary reauthentication is required; login-factor changes are unavailable until Account implements its evidence mechanism",
         exception.getReason());
     org.mockito.Mockito.verifyNoInteractions(accountRepository);
+  }
+
+  private static RuntimeException unexpectedEntitlementFailure(String failureType) {
+    return switch (failureType) {
+      case "illegal-state" -> new IllegalStateException("subscription mapping failed");
+      case "jooq-mapping" -> new MappingException("subscription mapping failed");
+      case "jooq-configuration" -> new ConfigurationException("subscription query misconfigured");
+      default -> throw new IllegalArgumentException("Unknown entitlement failure type");
+    };
   }
 
   private static Account directTextAccount() {
