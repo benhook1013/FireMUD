@@ -65,6 +65,12 @@ def _exact_sha(value: str) -> str:
     return value
 
 
+def _source_fix_sha(value: str) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", value):
+        raise argparse.ArgumentTypeError("must be a full 40- or 64-character commit SHA")
+    return value
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dev-tools/pr-review")
     parser.add_argument(
@@ -221,11 +227,27 @@ def _parser() -> argparse.ArgumentParser:
     source_resolve.add_argument("--run-id", required=True)
     source_resolve.add_argument("--finding-key", required=True)
     source_resolve.add_argument("--resolution-id", required=True)
-    source_resolve.add_argument("--fix-sha", required=True, type=_exact_sha)
+    source_resolve.add_argument("--fix-sha", required=True, type=_source_fix_sha)
     source_resolve.add_argument("--actor", required=True)
     source_resolve.add_argument("--proof-note", required=True)
     source_resolve.add_argument("--resolved-at")
     records_database(source_resolve)
+
+    source_correct_resolution = source_subcommands.add_parser(
+        "correct-resolution", help="append an audited correction to one exact source-fix proof SHA"
+    )
+    source_correct_resolution.add_argument("--source-pr", required=True, type=_positive_int)
+    source_correct_resolution.add_argument("--run-id", required=True)
+    source_correct_resolution.add_argument("--finding-key", required=True)
+    source_correct_resolution.add_argument("--resolution-id", required=True)
+    source_correct_resolution.add_argument("--expected-fix-sha", required=True, type=_source_fix_sha)
+    source_correct_resolution.add_argument("--fix-sha", required=True, type=_source_fix_sha)
+    source_correct_resolution.add_argument("--correction-id", required=True)
+    source_correct_resolution.add_argument("--actor", required=True)
+    source_correct_resolution.add_argument("--reason", required=True)
+    source_correct_resolution.add_argument("--proof-note", required=True)
+    source_correct_resolution.add_argument("--corrected-at")
+    records_database(source_correct_resolution)
 
     cli_decisions = record_commands.add_parser(
         "cli-decision", help="record one captured CLI finding decision without a TSV file"
@@ -1008,6 +1030,20 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 reason=args.reason,
                 target_pr=args.target_pr,
                 decided_at=args.decided_at,
+            )
+        elif args.source_command == "correct-resolution":
+            result = store.correct_source_resolution(
+                args.run_id,
+                args.finding_key,
+                source_pr=args.source_pr,
+                resolution_id=args.resolution_id,
+                expected_fix_sha=args.expected_fix_sha,
+                fix_sha=args.fix_sha,
+                correction_id=args.correction_id,
+                actor=args.actor,
+                reason=args.reason,
+                proof_note=args.proof_note,
+                corrected_at=args.corrected_at,
             )
         else:
             result = store.record_source_resolution(

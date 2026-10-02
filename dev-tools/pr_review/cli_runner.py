@@ -750,11 +750,12 @@ def _validate_target(
         timeout=git_timeout_seconds,
     )
     diff_base = live_base if force else target.parent.head_sha
+    diff_head = candidate_sha if force or not target.default_base_front else child_head
     merge_base = _unique_merge_base(
         runner,
         source_root,
         diff_base,
-        child_head if target.default_base_front else candidate_sha,
+        diff_head,
         timeout=git_timeout_seconds,
     )
     if not force and not target.default_base_front:
@@ -1110,6 +1111,7 @@ def run_cli_review(
                     "actual_base_ref": review_base_ref,
                     "actual_base_sha": live.base_sha,
                     "merge_base": merge_base,
+                    "published_merge_base": published_merge_base,
                     "published_files": published_files,
                     "candidate_files": candidate_files,
                     "published_status": published_status,
@@ -1143,6 +1145,7 @@ def run_cli_review(
                     "actual_base_ref": review_base_ref,
                     "actual_base_sha": live.base_sha,
                     "merge_base": merge_base,
+                    "published_merge_base": published_merge_base,
                     "patch_identity": candidate_patch_identity,
                     "candidate_files": str(candidate_files),
                     "published_files": str(published_files),

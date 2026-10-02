@@ -203,6 +203,7 @@ class FakeCommands:
         merge_base=None,
         merge_conflict=False,
         merge_tree=CONTEXT,
+        merge_bases=None,
     ):
         self.root = root
         self.delay = delay
@@ -224,6 +225,7 @@ class FakeCommands:
         self.merge_base = merge_base or PARENT
         self.merge_conflict = merge_conflict
         self.merge_tree = merge_tree
+        self.merge_bases = merge_bases or {}
         self.timeout_calls = []
         self.test_worktrees = set()
         self.records = None
@@ -289,8 +291,9 @@ class FakeCommands:
                 return CompletedProcess(args, 0, output, b"" if not text else "")
             if git_args == ["rev-list", "--count", f"{HEAD}..{self.candidate}"]:
                 return CompletedProcess(args, 0, "1\n", "")
-            if git_args[:3] == ["merge-base", "--all", PARENT]:
-                return CompletedProcess(args, 0, f"{self.merge_base}\n", "")
+            if git_args[:2] == ["merge-base", "--all"]:
+                selected_base = self.merge_bases.get((git_args[2], git_args[3]), self.merge_base)
+                return CompletedProcess(args, 0, f"{selected_base}\n", "")
             if git_args[:3] == ["merge-base", "--is-ancestor", HEAD]:
                 return CompletedProcess(args, 0, "", "")
             if git_args[:3] == ["merge-base", "--is-ancestor", PARENT]:
@@ -1309,7 +1312,16 @@ class CliReviewRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / ".git").mkdir()
-            commands = FakeCommands(root, parent_is_ancestor=False, merge_base=BASE)
+            commands = FakeCommands(
+                root,
+                parent_is_ancestor=False,
+                merge_base=BASE,
+                review_output=(
+                    '{"type":"start","reviewType":"full"}\n'
+                    '{"type":"complete","status":"review_completed",'
+                    '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                ),
+            )
             live = FakeGitHub()
             live.mergeable = "UNKNOWN"
             selected = target(
@@ -1325,16 +1337,7 @@ class CliReviewRunnerTests(unittest.TestCase):
                 selected,
                 github=live,
                 source_root=root,
-                runner=FakeCommands(
-                    root,
-                    parent_is_ancestor=False,
-                    merge_base=BASE,
-                    review_output=(
-                        '{"type":"start","reviewType":"full"}\n'
-                        '{"type":"complete","status":"review_completed",'
-                        '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
-                    ),
-                ),
+                runner=commands,
                 force=True,
             )
 
@@ -1352,7 +1355,10 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(metadata["configured_parent_pr"], 41)
             self.assertEqual(metadata["candidate_warnings"], ["stack reconciliation is PARENT_MOVED"])
             self.assertTrue(metadata["force_acknowledged"])
-            self.assertFalse(any("ancestor" in " ".join(call[0]).lower() for call in commands.calls))
+            self.assertNotIn(
+                ("git", "-C", str(root), "merge-base", "--is-ancestor", "d" * 40, HEAD),
+                [call[0] for call in commands.calls],
+            )
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1430,6 +1436,46 @@ class CliReviewRunnerTests(unittest.TestCase):
             self.assertEqual(metadata["parent_sha"], BASE)
             self.assertEqual(metadata["candidate_warnings"], ["current default-base merge proof is missing"])
             self.assertFalse(any("merge-tree" in args for args in command_args))
+
+    def test_force_default_base_local_candidate_records_candidate_merge_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".git").mkdir()
+            commands = FakeCommands(
+                root,
+                candidate=CANDIDATE,
+                parent_is_ancestor=False,
+                merge_base=OLDER_BASE,
+                merge_bases={(BASE, CANDIDATE): OLDER_BASE, (BASE, HEAD): BASE},
+                review_output=(
+                    '{"type":"start","reviewType":"full"}\n'
+                    '{"type":"complete","status":"review_completed",'
+                    '"findings":0,"reviewedFiles":["src/Representative.java"]}\n'
+                ),
+            )
+
+            result = run_cli_review(
+                target(default_base_front=True),
+                github=FakeGitHub(),
+                source_root=root,
+                runner=commands,
+                force=True,
+            )
+
+            metadata = json.loads((result.capture_dir / "metadata.json").read_text())
+            command_args = [call[0] for call in commands.calls]
+            self.assertEqual(result.merge_base, OLDER_BASE)
+            self.assertEqual(metadata["merge_base"], OLDER_BASE)
+            self.assertEqual(metadata["review_base_sha"], OLDER_BASE)
+            self.assertEqual(metadata["published_merge_base"], BASE)
+            self.assertIn(
+                ("git", "-C", str(root), "merge-base", "--all", BASE, CANDIDATE),
+                command_args,
+            )
+            self.assertIn(
+                ("git", "-C", str(root), "merge-base", "--all", BASE, HEAD),
+                command_args,
+            )
 
     def test_direct_default_front_rejects_a_published_tree_that_differs_from_selected_proof(self):
         with tempfile.TemporaryDirectory() as directory:
