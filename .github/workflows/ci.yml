@@ -1318,6 +1318,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Verify Account membership generation projection PostgreSQL and Redis proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#existingOnlyZeroBaselineProjectsWithoutAdmissionOrSqlMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#unknownAndAssociatedUnenrolledPairsCannotSynthesizeProjectionState()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#retainedJoinLeftAndReactivationProjectExactIndependentSourceAxes()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#sourceAdvanceBetweenCandidateAndFreshReadbackReturnsNonconverged()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#staleCandidateCannotReplaceNewerSourceProjection()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#aheadMalformedSameCheckpointAndExpiringRedisStatesAreDeniedWithoutSourceWrites()' \
+            --require-case 'net.firedevops.firemud.accountservice.MembershipGenerationProjectionPostgresRedisIntegrationTest#coordinationPrincipalCannotReadOtherOwnersOrInvokeEval()' \
+            account-service
+
+      - name: Upload Account membership generation projection PostgreSQL and Redis proof
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-membership-generation-projection-postgresql-redis-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*MembershipGenerationProjectionPostgresRedisIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Verify Account issuer authority PostgreSQL proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |
@@ -1525,6 +1549,24 @@ jobs:
           path: |
             services/account-service/build/test-results/integrationTest/TEST-*AccountFreshUuidMembershipSnapshotIntegrationTest.xml
             services/account-service/build/test-results/integrationTest/TEST-*AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verify Game Session LOGIN fixture isolation proof
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest \
+            --require-case 'net.firedevops.firemud.gamesession.GameSessionLoginIntegrationTest#loginCallsAccountServiceAndReturnsOk()' \
+            game-session-service
+
+      - name: Upload Game Session LOGIN fixture isolation proof
+        if: ${{ always() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-session-login-fixture-proof-${{ github.sha }}
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionLoginIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 

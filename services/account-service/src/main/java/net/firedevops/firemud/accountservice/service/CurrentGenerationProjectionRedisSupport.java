@@ -120,9 +120,10 @@ final class CurrentGenerationProjectionRedisSupport {
 
   private static void requireSupportedDescriptor(RedisScriptDescriptor descriptor) {
     if (descriptor != AccountGenerationProjectionRedisContract.descriptor()
-        && descriptor != TenantGenerationProjectionRedisContract.descriptor()) {
+        && descriptor != TenantGenerationProjectionRedisContract.descriptor()
+        && descriptor != MembershipGenerationProjectionRedisContract.descriptor()) {
       throw new IllegalStateException(
-          "Only Account and tenant current-generation projection scripts may use this client");
+          "Only Account, tenant, and membership current-generation projection scripts may use this client");
     }
     if (!"account-service".equals(descriptor.owner())
         || !"account_coord_app".equals(descriptor.principal())
