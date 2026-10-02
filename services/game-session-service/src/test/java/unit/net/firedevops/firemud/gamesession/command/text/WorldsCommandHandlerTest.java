@@ -30,6 +30,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -46,6 +47,17 @@ class WorldsCommandHandlerTest {
       new WorldsCommandHandler(
           TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties),
           entityManagementClient);
+
+  @BeforeEach
+  void setUp() {
+    // The default demo realm is the tenant's sole public-production target.
+    gameplayCatalogProperties
+        .getWorlds()
+        .get(1)
+        .getRealms()
+        .getFirst()
+        .setPublicProductionRealm(false);
+  }
 
   @Test
   void browseViewReturnsStructuredWorldList() {
@@ -66,9 +78,9 @@ class WorldsCommandHandlerTest {
 
   @Test
   void browseRealmsReturnsStructuredRealmList() {
-    RealmBrowseViewOutput response = handler.browseRealms("sandbox").orElseThrow();
+    RealmBrowseViewOutput response = handler.browseRealms("demo").orElseThrow();
 
-    assertThat(response.worldSlug()).isEqualTo("sandbox");
+    assertThat(response.worldSlug()).isEqualTo("demo");
     assertThat(response.realms()).hasSize(1);
     assertThat(response.realms().get(0).realmSlug()).isEqualTo("production");
     assertThat(response.realms().get(0).stateScope()).isEqualTo("SHARED");
@@ -985,10 +997,13 @@ class WorldsCommandHandlerTest {
     GameplayAdmissionPointerSnapshot pointerA = admissionPointer(1L);
     GameplayAdmissionPointerSnapshot pointerB = admissionPointer(2L);
     AtomicInteger pointerReads = new AtomicInteger();
-    Mockito.when(authorityService.listPointers())
+    Mockito.when(authorityService.listPointers()).thenReturn(List.of(pointerA));
+    Mockito.when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
-            invocation ->
-                pointerReads.getAndIncrement() == 0 ? List.of(pointerA) : List.of(pointerB));
+            invocation -> {
+              pointerReads.incrementAndGet();
+              return List.of(pointerB);
+            });
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             new GameplayWorldCatalog(authorityService),
@@ -1002,7 +1017,7 @@ class WorldsCommandHandlerTest {
     assertThat(result)
         .isEqualTo(
             WorldsCommandHandler.CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
-    assertThat(pointerReads).hasValue(2);
+    assertThat(pointerReads).hasValue(1);
     Mockito.verifyNoInteractions(entityManagementClient);
   }
 

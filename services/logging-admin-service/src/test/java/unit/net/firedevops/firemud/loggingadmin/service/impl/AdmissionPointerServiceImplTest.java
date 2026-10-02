@@ -108,6 +108,57 @@ class AdmissionPointerServiceImplTest {
   }
 
   @Test
+  void listPointersRejectsMalformedRealmIdAsUpstreamFailure() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    AdmissionPointerControlPlaneEntry entry =
+        pointerEntry("demo", "production", 2L, 7L, 3L).toBuilder().setRealmId("invalid").build();
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
+        .thenReturn(ListAdmissionPointersResponse.newBuilder().addPointers(entry).build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.listPointers());
+
+    assertEquals(500, ex.getStatusCode().value());
+    assertEquals("realm_id from Game Session must be a UUID", ex.getReason());
+    assertEquals(IllegalArgumentException.class, ex.getCause().getClass());
+  }
+
+  @Test
+  void listPointersRejectsMalformedPlayableStateNamespaceIdAsUpstreamFailure() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    AdmissionPointerControlPlaneEntry entry =
+        pointerEntry("demo", "production", 2L, 7L, 3L).toBuilder()
+            .setPlayableStateNamespaceId("invalid")
+            .build();
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
+        .thenReturn(ListAdmissionPointersResponse.newBuilder().addPointers(entry).build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.listPointers());
+
+    assertEquals(500, ex.getStatusCode().value());
+    assertEquals("playable_state_namespace_id from Game Session must be a UUID", ex.getReason());
+    assertEquals(IllegalArgumentException.class, ex.getCause().getClass());
+  }
+
+  @Test
+  void listPointersMapsBlankOptionalIdentityFieldsToNull() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    AdmissionPointerControlPlaneEntry entry =
+        pointerEntry("demo", "production", 2L, 7L, 3L).toBuilder()
+            .setRealmId(" ")
+            .setPlayableStateNamespaceId("")
+            .build();
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
+        .thenReturn(ListAdmissionPointersResponse.newBuilder().addPointers(entry).build());
+
+    AdmissionPointerDto result = service.listPointers().getFirst();
+
+    assertNull(result.realmId());
+    assertNull(result.playableStateNamespaceId());
+  }
+
+  @Test
   void listPointersMapsUnavailableAuthorityToServiceUnavailable() {
     SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))

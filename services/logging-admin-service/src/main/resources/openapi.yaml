@@ -1238,8 +1238,10 @@ components:
           type: string
         tenantId:
           type: integer
+          format: int64
         gameInstanceId:
           type: integer
+          format: int64
         pointerVersion:
           type: integer
           format: int64

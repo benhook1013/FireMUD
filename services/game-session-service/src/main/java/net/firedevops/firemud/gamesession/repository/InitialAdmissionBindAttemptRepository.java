@@ -118,10 +118,17 @@ public class InitialAdmissionBindAttemptRepository {
             .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.HOLD_ID, holdId)
             .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.HOLD_FENCE, holdFence)
             .set(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.UPDATED_AT, toLocalDateTime(now))
-            .where(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.ATTEMPT_ID.eq(attempt.attemptId()))
+            .where(
+                GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT
+                    .ATTEMPT_ID
+                    .eq(attempt.attemptId())
+                    .and(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.HOLD_ID.isNull())
+                    .and(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.HOLD_FENCE.isNull())
+                    .and(GAMEPLAY_INITIAL_ADMISSION_BIND_ATTEMPT.STATUS.eq(Status.PENDING.name())))
             .execute();
     if (updated != 1) {
-      throw new IllegalStateException("Initial admission attempt disappeared while attaching hold");
+      throw new IllegalStateException(
+          "Initial admission attempt was not pending with an unattached hold");
     }
     return findByTenantAndRequestId(attempt.tenantId(), attempt.initialAdmissionRequestId())
         .orElseThrow();
@@ -223,16 +230,10 @@ public class InitialAdmissionBindAttemptRepository {
     record.setCreatedAt(toLocalDateTime(now));
     record.setUpdatedAt(toLocalDateTime(now));
     record.store();
-    return findPointerById(record.getId()).orElseThrow();
+    return findPointerById(record.getId().longValue()).orElseThrow();
   }
 
   public Optional<GameplayAdmissionPointer> findPointerById(long pointerId) {
-    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
-        .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(pointerId))
-        .fetchOptional(this::toPointer);
-  }
-
-  private Optional<GameplayAdmissionPointer> findPointerById(Long pointerId) {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
         .where(GAMEPLAY_ADMISSION_POINTER.ID.eq(pointerId))
         .fetchOptional(this::toPointer);

@@ -806,17 +806,24 @@ class SqliteProviderImportsTest(unittest.TestCase):
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(record), encoding="utf-8")
 
-        imported = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
-            self.records,
-            repo=REPO,
-            pr_number=PR,
-            checkpoint=checkpoint,
-            actor="reviewer",
-            common=self.common,
-            scope="broad",
-            hosted_payload=payload,
-        )
+        proof_method = pr_review.runtime.LiveEvidence._hosted_zero_reply_proof
+        with patch.object(
+            pr_review.runtime.LiveEvidence,
+            "_hosted_zero_reply_proof",
+            wraps=proof_method,
+        ) as zero_reply_proof:
+            imported = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=checkpoint,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+                hosted_payload=payload,
+            )
 
+        self.assertEqual(zero_reply_proof.call_args.args[3:5], (REPO, PR))
         self.assertEqual(imported["provider_id"], "trigger:101")
         self.assertEqual(imported["counts"], {"found": 0, "accepted": 0, "routed": 0})
         self.assertEqual(set(imported["archive_artifacts"]), {"hosted_comments", "hosted_review", "metadata"})

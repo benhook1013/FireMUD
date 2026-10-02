@@ -54,8 +54,19 @@ services:
   game-session-service:
     environment:
       <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+      FIREMUD_SMOKE_RUN_ID: ${FIREMUD_SMOKE_RUN_ID:-}
+      FIREMUD_SMOKE_COMPOSE_PROJECT_NAME: ${FIREMUD_SMOKE_COMPOSE_PROJECT_NAME:-}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED: ${FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED:-false}
+      FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH: /app/run-owned-initial-admission-capability.json
     volumes:
       - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-session-service:/app/certs:ro
+      - type: bind
+        source: ${FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH:-/dev/null}
+        target: /app/run-owned-initial-admission-capability.json
+        read_only: true
+        bind:
+          create_host_path: false
 
   logging-admin-service:
     environment:

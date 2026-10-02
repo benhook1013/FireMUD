@@ -96,14 +96,8 @@ class PlayCommandHandlerTest {
                 List.of(
                     realm("production", "Live Realm", 22L, 2L, true, true),
                     realm("preview", "Preview Realm", 22L, 41L, true, true)))));
-    // The catalogue contract permits one public-production realm per tenant. Keep the sandbox
-    // production realm non-public so these tests can exercise its explicit non-public path.
-    gameplayCatalogProperties
-        .getWorlds()
-        .get(1)
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(false);
+    // Demo is this tenant's sole public-production realm; sandbox remains explicitly selectable.
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0).setPublicProductionRealm(false);
     handler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -780,10 +774,13 @@ class PlayCommandHandlerTest {
     GameplayAdmissionPointerSnapshot pointerA = admissionPointer(1L);
     GameplayAdmissionPointerSnapshot pointerB = admissionPointer(2L);
     AtomicInteger pointerReads = new AtomicInteger();
-    when(authorityService.listPointers())
+    when(authorityService.listPointers()).thenReturn(List.of(pointerA));
+    when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
-            invocation ->
-                pointerReads.getAndIncrement() == 0 ? List.of(pointerA) : List.of(pointerB));
+            invocation -> {
+              pointerReads.incrementAndGet();
+              return List.of(pointerB);
+            });
     GameplayWorldCatalog authorityBackedCatalog = new GameplayWorldCatalog(authorityService);
     PlayCommandHandler authorityBackedHandler =
         new PlayCommandHandler(
@@ -810,7 +807,7 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
-    assertThat(pointerReads).hasValue(2);
+    assertThat(pointerReads).hasValue(1);
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -827,12 +824,11 @@ class PlayCommandHandlerTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     AtomicInteger pointerReads = new AtomicInteger();
-    when(authorityService.listPointers())
+    when(authorityService.listPointers()).thenReturn(List.of(admissionPointer(1L)));
+    when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
             invocation -> {
-              if (pointerReads.getAndIncrement() == 0) {
-                return List.of(admissionPointer(1L));
-              }
+              pointerReads.incrementAndGet();
               if ("throw".equals(failureMode)) {
                 throw new IllegalStateException("authority down on final read");
               }
@@ -868,7 +864,7 @@ class PlayCommandHandlerTest {
         .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE);
     assertThat(((ErrorOutput) result.outputs().getFirst().payload()).messageKey())
         .isEqualTo("error.play.authority-unavailable");
-    assertThat(pointerReads).hasValue(2);
+    assertThat(pointerReads).hasValue(1);
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -981,12 +977,15 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playUsesSelectedTenantAuthorityWhenAnotherTenantInWorldHasNoPublicProductionRealm() {
+  void playUsesSelectedTenantAuthorityWhenAnotherTenantHasNoPublicProductionRealm() {
+    gameplayCatalogProperties.setWorlds(new ArrayList<>(gameplayCatalogProperties.getWorlds()));
     gameplayCatalogProperties
         .getWorlds()
-        .getFirst()
-        .getRealms()
-        .add(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false));
+        .add(
+            world(
+                "maintenance",
+                "Maintenance World",
+                List.of(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false))));
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1012,7 +1011,16 @@ class PlayCommandHandlerTest {
         .getWorlds()
         .getFirst()
         .getRealms()
-        .add(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false));
+        .getFirst()
+        .setPublicProductionRealm(false);
+    gameplayCatalogProperties.setWorlds(new ArrayList<>(gameplayCatalogProperties.getWorlds()));
+    gameplayCatalogProperties
+        .getWorlds()
+        .add(
+            world(
+                "other-public",
+                "Other Public World",
+                List.of(realm("production", "Live Realm", 23L, 99L, true, false))));
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1021,7 +1029,7 @@ class PlayCommandHandlerTest {
         handler.handle(
             "1",
             new TextCommand(
-                TextCommandType.PLAY, List.of("demo", "maintenance"), "PLAY demo maintenance"));
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
