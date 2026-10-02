@@ -1920,6 +1920,31 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void listAdmissionPointersKeepsEmptyListAsAdminAllTenantRequest() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(authorityService.listPointers()).thenReturn(List.of());
+    GameSessionControlPlaneGrpcService service =
+        admissionPointerControlPlaneService(authorityService);
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.getDefaultInstance(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("", responseRef.get().getError().getCode());
+    assertEquals(0, responseRef.get().getPointersCount());
+    Mockito.verify(authorityService).listPointers();
+    Mockito.verify(authorityService, Mockito.never()).listPointersForTenants(Mockito.anyList());
+  }
+
+  @Test
   void listAdmissionPointersAllowsScopedCallerOnlyForRequestedTenantBeforeAuditValidation() {
     SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
     GameplayAdmissionPointerAuthorityService authorityService =
@@ -1953,6 +1978,35 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void listAdmissionPointersDeduplicatesTenantIdsBeforeDispatch() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot requestedPointer = scopedAdmissionPointer(2L, "tenant-b");
+    Mockito.when(authorityService.listPointersForTenants(List.of(2L)))
+        .thenReturn(List.of(requestedPointer));
+    Mockito.when(authorityService.findLatestPointerAudit(2L, "tenant-b", "production"))
+        .thenReturn(Optional.of(scopedAdmissionPointerAudit(requestedPointer)));
+    GameSessionControlPlaneGrpcService service =
+        admissionPointerControlPlaneService(authorityService);
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("2").addTenantIds("2").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("", responseRef.get().getError().getCode());
+    assertEquals(1, responseRef.get().getPointersCount());
+    Mockito.verify(authorityService).listPointersForTenants(List.of(2L));
+    Mockito.verify(authorityService).findLatestPointerAudit(2L, "tenant-b", "production");
+  }
+
+  @Test
   void listAdmissionPointersRejectsScopedCallerRequestingAnotherTenant() {
     SessionContext.setContext("7", List.of(), Map.of("2", List.of("moderator")));
     GameplayAdmissionPointerAuthorityService authorityService =
@@ -1963,6 +2017,28 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     service.listAdmissionPointers(
         ListAdmissionPointersRequest.newBuilder().addTenantIds("1").build(),
+        new NoopObserver<>() {
+          @Override
+          public void onNext(ListAdmissionPointersResponse value) {
+            responseRef.set(value);
+          }
+        });
+
+    assertEquals("PERMISSION_DENIED", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(authorityService);
+  }
+
+  @Test
+  void listAdmissionPointersRejectsUnauthorizedTenantEvenWhenDuplicated() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameSessionControlPlaneGrpcService service =
+        admissionPointerControlPlaneService(authorityService);
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+
+    service.listAdmissionPointers(
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("1").addTenantIds("1").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {

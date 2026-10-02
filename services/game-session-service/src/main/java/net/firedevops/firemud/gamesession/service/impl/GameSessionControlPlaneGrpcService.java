@@ -278,6 +278,7 @@ public final class GameSessionControlPlaneGrpcService
     List<Long> validatedTenantIds =
         tenantIds.stream()
             .map(tenantId -> ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_ids"))
+            .distinct()
             .toList();
     for (long tenantId : validatedTenantIds) {
       if (!SessionContext.hasTenantAccess(tenantId)) {

@@ -5,11 +5,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.impl.DatabaseGameplayAdmissionPointerAuthorityService;
@@ -75,8 +77,11 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
     assertThat(initial.catalogRevision()).isEqualTo(1L);
     assertThat(fixture.service().listPointerAudit(TENANT_ID, WORLD_SLUG, REALM_SLUG)).hasSize(1);
 
-    CountDownLatch transactionsReady = new CountDownLatch(2);
-    CountDownLatch startWriters = new CountDownLatch(1);
+    CountDownLatch winningTransactionReady = new CountDownLatch(1);
+    CountDownLatch releaseWinningTransaction = new CountDownLatch(1);
+    CountDownLatch competingTransactionReady = new CountDownLatch(1);
+    AtomicInteger winningBackendPid = new AtomicInteger();
+    AtomicInteger competingBackendPid = new AtomicInteger();
     ExecutorService executor =
         Executors.newFixedThreadPool(
             2,
@@ -86,23 +91,90 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
               return thread;
             });
     Future<MutationAttempt> first =
-        submitMutation(
-            executor,
-            fixture,
-            transactionsReady,
-            startWriters,
-            mutation("Concurrent World A", INITIAL_GAME_INSTANCE_ID, 1L, 1L, "writer-a"));
+        executor.submit(
+            () -> {
+              try {
+                GameplayAdmissionPointerSnapshot snapshot =
+                    fixture
+                        .transactionTemplate()
+                        .execute(
+                            status -> {
+                              fixture.dsl().execute("SET LOCAL statement_timeout = '30000ms'");
+                              var backendPidRecord =
+                                  Objects.requireNonNull(
+                                      fixture.dsl().fetchOne("select pg_backend_pid()"),
+                                      "Winning backend PID query returned no row");
+                              winningBackendPid.set(
+                                  Objects.requireNonNull(
+                                      backendPidRecord.get(0, Integer.class),
+                                      "Winning backend PID query returned no value"));
+                              GameplayAdmissionPointerSnapshot updated =
+                                  fixture
+                                      .service()
+                                      .upsertPointer(
+                                          mutation(
+                                              "Concurrent World A",
+                                              INITIAL_GAME_INSTANCE_ID,
+                                              1L,
+                                              1L,
+                                              "writer-a"));
+                              winningTransactionReady.countDown();
+                              awaitLatch(
+                                  releaseWinningTransaction,
+                                  "release of winning pointer transaction");
+                              return updated;
+                            });
+                return new MutationAttempt(snapshot, null);
+              } catch (Throwable failure) {
+                return new MutationAttempt(null, failure);
+              }
+            });
     Future<MutationAttempt> second =
-        submitMutation(
-            executor,
-            fixture,
-            transactionsReady,
-            startWriters,
-            mutation("Concurrent World B", INITIAL_GAME_INSTANCE_ID, 1L, 1L, "writer-b"));
+        executor.submit(
+            () -> {
+              try {
+                GameplayAdmissionPointerSnapshot snapshot =
+                    fixture
+                        .transactionTemplate()
+                        .execute(
+                            status -> {
+                              fixture.dsl().execute("SET LOCAL statement_timeout = '30000ms'");
+                              var backendPidRecord =
+                                  Objects.requireNonNull(
+                                      fixture.dsl().fetchOne("select pg_backend_pid()"),
+                                      "Competing backend PID query returned no row");
+                              competingBackendPid.set(
+                                  Objects.requireNonNull(
+                                      backendPidRecord.get(0, Integer.class),
+                                      "Competing backend PID query returned no value"));
+                              competingTransactionReady.countDown();
+                              awaitLatch(
+                                  winningTransactionReady,
+                                  "winning pointer transaction to acquire and hold its row lock");
+                              return fixture
+                                  .service()
+                                  .upsertPointer(
+                                      mutation(
+                                          "Concurrent World B",
+                                          INITIAL_GAME_INSTANCE_ID,
+                                          1L,
+                                          1L,
+                                          "writer-b"));
+                            });
+                return new MutationAttempt(snapshot, null);
+              } catch (Throwable failure) {
+                return new MutationAttempt(null, failure);
+              }
+            });
 
     try {
-      assertThat(transactionsReady.await(10, TimeUnit.SECONDS)).isTrue();
-      startWriters.countDown();
+      assertThat(winningTransactionReady.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(competingTransactionReady.await(10, TimeUnit.SECONDS)).isTrue();
+      assertThat(winningBackendPid.get()).isPositive();
+      assertThat(competingBackendPid.get()).isPositive();
+      assertThat(competingBackendPid.get()).isNotEqualTo(winningBackendPid.get());
+      awaitPostgresRowLockWait(fixture.dsl(), competingBackendPid.get(), winningBackendPid.get());
+      releaseWinningTransaction.countDown();
 
       List<MutationAttempt> attempts =
           List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
@@ -127,7 +199,7 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
       assertThat(audit.get(0).catalogRevision()).isEqualTo(current.catalogRevision());
       assertThat(audit.get(0).worldDisplayName()).isEqualTo(current.worldDisplayName());
     } finally {
-      startWriters.countDown();
+      releaseWinningTransaction.countDown();
       executor.shutdownNow();
       assertThat(executor.awaitTermination(10, TimeUnit.SECONDS)).isTrue();
     }
@@ -196,41 +268,45 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
         .containsExactlyElementsOf(initialAudit);
   }
 
-  private static Future<MutationAttempt> submitMutation(
-      ExecutorService executor,
-      Fixture fixture,
-      CountDownLatch transactionsReady,
-      CountDownLatch startWriters,
-      GameplayAdmissionPointerMutation mutation) {
-    return executor.submit(
-        () -> {
-          try {
-            GameplayAdmissionPointerSnapshot snapshot =
-                fixture
-                    .transactionTemplate()
-                    .execute(
-                        status -> {
-                          fixture.dsl().execute("SET LOCAL statement_timeout = '10000ms'");
-                          transactionsReady.countDown();
-                          awaitWriterStart(startWriters);
-                          return fixture.service().upsertPointer(mutation);
-                        });
-            return new MutationAttempt(snapshot, null);
-          } catch (AdmissionPointerVersionMismatchException exception) {
-            return new MutationAttempt(null, exception);
-          }
-        });
+  private static void awaitPostgresRowLockWait(DSLContext dsl, int waiterPid, int blockerPid) {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+    boolean blockedByWinner = false;
+    while (System.nanoTime() < deadline) {
+      var lockWaitRecord =
+          Objects.requireNonNull(
+              dsl.fetchOne(
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
+                      + "AND wait_event_type = 'Lock' AND query ILIKE '%FOR UPDATE%' "
+                      + "AND ? = ANY(pg_blocking_pids(pid)))",
+                  waiterPid, blockerPid),
+              "PostgreSQL lock-wait query returned no row");
+      blockedByWinner =
+          Objects.requireNonNull(
+              lockWaitRecord.get(0, Boolean.class), "PostgreSQL lock-wait query returned no value");
+      if (blockedByWinner) {
+        break;
+      }
+      try {
+        Thread.sleep(10L);
+      } catch (InterruptedException exception) {
+        Thread.currentThread().interrupt();
+        throw new IllegalStateException(
+            "Interrupted while observing PostgreSQL row lock wait", exception);
+      }
+    }
+    assertThat(blockedByWinner)
+        .as("competing backend waits on a PostgreSQL lock held by the winning transaction")
+        .isTrue();
   }
 
-  private static void awaitWriterStart(CountDownLatch startWriters) {
+  private static void awaitLatch(CountDownLatch latch, String awaitedState) {
     try {
-      if (!startWriters.await(10, TimeUnit.SECONDS)) {
-        throw new IllegalStateException("Timed out waiting for competing pointer writers to start");
+      if (!latch.await(30, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Timed out waiting for " + awaitedState);
       }
     } catch (InterruptedException exception) {
       Thread.currentThread().interrupt();
-      throw new IllegalStateException(
-          "Interrupted while waiting to start pointer writer", exception);
+      throw new IllegalStateException("Interrupted while waiting for " + awaitedState, exception);
     }
   }
 

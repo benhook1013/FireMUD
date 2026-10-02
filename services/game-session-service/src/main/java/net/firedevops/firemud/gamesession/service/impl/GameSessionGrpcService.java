@@ -846,7 +846,7 @@ public final class GameSessionGrpcService
     if (!trimmed.matches("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")) {
       throw new IllegalArgumentException("worldSlug must be a valid selector");
     }
-    return worldSelector;
+    return trimmed;
   }
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {
