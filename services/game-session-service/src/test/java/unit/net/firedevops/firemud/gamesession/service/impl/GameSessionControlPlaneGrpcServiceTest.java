@@ -1520,68 +1520,12 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
-  void executePreparedVersionCutoverIsIdempotentAfterSameRequestAlreadyMovedPointer() {
+  void
+      executePreparedVersionCutoverReturnsPointerVersionMismatchWhenCatalogPreconditionsAreUnsupported() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    Mockito.when(authorityService.findPointer(1L, "demo", "production"))
-        .thenReturn(
-            Optional.of(
-                new GameplayAdmissionPointerSnapshot(
-                    "demo",
-                    "Demo World",
-                    "production",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW")));
-    Mockito.when(authorityService.listPointerAudit(1L, "demo", "production"))
-        .thenReturn(
-            List.of(
-                new GameplayAdmissionPointerAuditEntry(
-                    "demo",
-                    "production",
-                    "Demo World",
-                    "Live Realm",
-                    1L,
-                    7L,
-                    3L,
-                    true,
-                    true,
-                    false,
-                    "SHARED",
-                    "ALLOW_NEW",
-                    "tester",
-                    "cutover",
-                    "req-1",
-                    "pvu-1",
-                    Instant.parse("2026-04-16T00:00:00Z"))));
     VersionUpgradePreparationService versionUpgradePreparationService =
         Mockito.mock(VersionUpgradePreparationService.class);
-    Mockito.when(versionUpgradePreparationService.getPreparedVersionUpgrade(1L, "pvu-1"))
-        .thenReturn(
-            new net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto(
-                "pvu-1",
-                "prep-req-1",
-                1L,
-                5L,
-                7L,
-                9L,
-                "ld-9",
-                "remap-1",
-                "COMPATIBLE",
-                List.of(),
-                List.of("WORLD", "ENTITY"),
-                Instant.parse("2026-04-16T00:00:00Z"),
-                List.of(),
-                7L,
-                3L,
-                Instant.parse("2026-04-16T00:00:01Z"),
-                "req-1"));
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     GameSessionControlPlaneGrpcService service =
         controlPlaneService(

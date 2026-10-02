@@ -711,6 +711,52 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void getAdmissionPointerReturnsHiddenMetadataWithoutPublicCardinalityAuthorization() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot hiddenRealm =
+        authorityPointer("private", "preview", 7L, 66L, false, true);
+    Mockito.when(pointerAuthorityService.findPointer(7L, "private", "preview"))
+        .thenReturn(java.util.Optional.of(hiddenRealm));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+    AtomicReference<GetAdmissionPointerResponse> response = new AtomicReference<>();
+
+    service.getAdmissionPointer(
+        GetAdmissionPointerRequest.newBuilder()
+            .setTenantId("7")
+            .setWorldSlug("private")
+            .setRealmSlug("preview")
+            .build(),
+        new StreamObserver<>() {
+          @Override
+          public void onNext(GetAdmissionPointerResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable t) {
+            fail(t);
+          }
+
+          @Override
+          public void onCompleted() {}
+        });
+
+    assertFalse(response.get().hasError());
+    assertFalse(response.get().getAdmissionPointer().getVisible());
+    assertEquals(true, response.get().getAdmissionPointer().getPublicProductionRealm());
+    assertEquals(
+        hiddenRealm.catalogRevision(), response.get().getAdmissionPointer().getCatalogRevision());
+    assertEquals(
+        hiddenRealm.realmId().toString(), response.get().getAdmissionPointer().getRealmId());
+    assertEquals(
+        hiddenRealm.playableStateNamespaceId().toString(),
+        response.get().getAdmissionPointer().getPlayableStateNamespaceId());
+    Mockito.verify(pointerAuthorityService).findPointer(7L, "private", "preview");
+    Mockito.verify(pointerAuthorityService, Mockito.never()).listPointers();
+  }
+
+  @Test
   void gameplayCatalogRpcReturnsCanonicalRealmData() {
     PingService pingService = Mockito.mock(PingService.class);
     GameInstanceService gameInstanceService = Mockito.mock(GameInstanceService.class);

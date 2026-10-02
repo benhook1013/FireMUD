@@ -22,6 +22,8 @@ import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Client for communicating with the Logging & Admin Service. */
@@ -29,6 +31,8 @@ import org.springframework.stereotype.Component;
 public class LoggingAdminClient
     extends AbstractReloadingBlockingGrpcClient<
         LoggingAdminServiceGrpc.LoggingAdminServiceBlockingStub> {
+  private static final Logger logger = LoggerFactory.getLogger(LoggingAdminClient.class);
+
   public LoggingAdminClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
@@ -114,18 +118,26 @@ public class LoggingAdminClient
   /** Existing deferred-commerce path remains best effort until its own outbox convergence. */
   public void logPayment(long tenantId, long accountId, long transactionId) {
     String payload = "{\"accountId\":" + accountId + ",\"transactionId\":" + transactionId + "}";
-    deliver(
-        new AccountAuditEnvelope(
-            UUID.randomUUID(),
-            "tenant",
-            tenantId,
-            "account-service",
-            "PAYMENT_TXN",
-            Instant.now(),
-            1,
-            1,
-            AccountAuditDigest.ofPayload(payload),
-            payload));
+    try {
+      deliver(
+          new AccountAuditEnvelope(
+              UUID.randomUUID(),
+              "tenant",
+              tenantId,
+              "account-service",
+              "PAYMENT_TXN",
+              Instant.now(),
+              1,
+              1,
+              AccountAuditDigest.ofPayload(payload),
+              payload));
+    } catch (RuntimeException ignored) {
+      logger.warn(
+          "Deferred payment audit delivery failed for tenantId={} accountId={} transactionId={}",
+          tenantId,
+          accountId,
+          transactionId);
+    }
   }
 
   public record AuditDeliveryResult(String receiptId, String logEventId, boolean minimized) {}

@@ -65,6 +65,8 @@ import tools.jackson.databind.json.JsonMapper;
 public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(AccountGrpcService.class);
   private static final int MAX_ACCOUNT_IDS_PER_REQUEST = 100;
+  private static final String AUTHORITY_UNAVAILABLE_MESSAGE =
+      "Account authority unavailable; retry later";
   private final PingService pingService;
   private final AccountService accountService;
   private final MeterRegistry meterRegistry;
@@ -138,6 +140,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (InvalidRequestException | IllegalArgumentException ex) {
       response.setError(
           appError("IssueDirectTextConnectScope", "INVALID_ARGUMENT", ex.getMessage()));
+    } catch (RuntimeException ignored) {
+      response.setError(
+          appError(
+              "IssueDirectTextConnectScope", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE));
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();
@@ -179,6 +185,10 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     } catch (InvalidRequestException | IllegalArgumentException ex) {
       response.setError(
           appError("JoinPublicProductionMembership", "INVALID_ARGUMENT", ex.getMessage()));
+    } catch (RuntimeException ignored) {
+      response.setError(
+          appError(
+              "JoinPublicProductionMembership", "AUTH_UNAVAILABLE", AUTHORITY_UNAVAILABLE_MESSAGE));
     }
     responseObserver.onNext(response.build());
     responseObserver.onCompleted();

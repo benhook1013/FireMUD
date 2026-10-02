@@ -154,7 +154,7 @@ class GameplayAdmissionPointerBootstrapInitializerTest {
   }
 
   @Test
-  void initializerIsRegisteredAfterAuditIdentityBecomesComplete() {
+  void initializerIsRegisteredAsSpringComponent() {
     assertTrue(
         GameplayAdmissionPointerBootstrapInitializer.class.isAnnotationPresent(Component.class));
   }

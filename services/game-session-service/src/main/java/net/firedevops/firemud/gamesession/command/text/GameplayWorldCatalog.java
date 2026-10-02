@@ -51,19 +51,23 @@ public final class GameplayWorldCatalog {
   }
 
   public static GameplayWorldCatalog forWorldViews(List<WorldView> worlds) {
-    return new GameplayWorldCatalog(() -> normalizeWorlds(worlds));
+    return new GameplayWorldCatalog(() -> worlds);
   }
 
   public static GameplayWorldCatalog forWorldSupplier(Supplier<List<WorldView>> worldSupplier) {
-    return new GameplayWorldCatalog(() -> normalizeWorlds(worldSupplier.get()));
+    return new GameplayWorldCatalog(worldSupplier);
   }
 
   public WorldsViewOutput browseView() {
-    return new WorldsViewOutput(worldEntries());
+    return new WorldsViewOutput(worldEntries(loadWorldSnapshot()));
   }
 
   public Optional<RealmBrowseViewOutput> browseRealms(String worldSelector) {
-    return resolveWorld(worldSelector)
+    if (worldSelector == null || worldSelector.isBlank()) {
+      return Optional.empty();
+    }
+    CatalogSnapshot snapshot = loadWorldSnapshot();
+    return resolveWorld(worldSelector, snapshot)
         .map(world -> new RealmBrowseViewOutput(world.slug(), realmEntries(world)));
   }
 
@@ -71,8 +75,12 @@ public final class GameplayWorldCatalog {
     if (selector == null || selector.isBlank()) {
       return Optional.empty();
     }
-    List<WorldView> visibleWorlds = visibleWorlds();
-    List<WorldView> indexedWorlds = discoverableWorlds();
+    return resolveWorld(selector, loadWorldSnapshot());
+  }
+
+  private Optional<WorldView> resolveWorld(String selector, CatalogSnapshot snapshot) {
+    List<WorldView> visibleWorlds = visibleWorlds(snapshot);
+    List<WorldView> indexedWorlds = discoverableWorlds(snapshot);
     try {
       int index = Integer.parseInt(selector);
       if (index >= 1 && index <= indexedWorlds.size()) {
@@ -144,6 +152,17 @@ public final class GameplayWorldCatalog {
     if (visibleRealms.isEmpty()) {
       return Optional.empty();
     }
+    return resolveDefaultRealm(world, loadWorldSnapshot());
+  }
+
+  private Optional<RealmView> resolveDefaultRealm(WorldView world, CatalogSnapshot snapshot) {
+    if (world == null) {
+      return Optional.empty();
+    }
+    List<RealmView> visibleRealms = visibleRealms(world);
+    if (visibleRealms.isEmpty()) {
+      return Optional.empty();
+    }
     List<RealmView> publicProductionRealms =
         visibleRealms.stream().filter(RealmView::publicProductionRealm).toList();
     if (publicProductionRealms.size() > 1) {
@@ -151,13 +170,20 @@ public final class GameplayWorldCatalog {
     }
     if (publicProductionRealms.size() == 1) {
       RealmView publicRealm = publicProductionRealms.getFirst();
-      return hasValidPublicProductionRealm(publicRealm.tenantId())
+      return publicProductionRealmCardinality(snapshot, publicRealm.tenantId())
+              == PublicProductionRealmCardinality.EXACTLY_ONE
           ? Optional.of(publicRealm)
           : Optional.empty();
     }
     // Non-public presentation remains available only when its tenant has an unambiguous public
     // production realm elsewhere in the catalog; zero or multiple public targets never default.
-    return visibleRealms.stream().allMatch(realm -> hasValidPublicProductionRealm(realm.tenantId()))
+    return visibleRealms.stream()
+            .map(RealmView::tenantId)
+            .distinct()
+            .allMatch(
+                tenantId ->
+                    publicProductionRealmCardinality(snapshot, tenantId)
+                        == PublicProductionRealmCardinality.EXACTLY_ONE)
         ? Optional.of(visibleRealms.getFirst())
         : Optional.empty();
   }
@@ -169,14 +195,13 @@ public final class GameplayWorldCatalog {
     if (tenantId <= 0L) {
       return PublicProductionRealmCardinality.ZERO;
     }
-    long count =
-        normalizeWorlds(worldSupplier.get()).stream()
-            .flatMap(world -> world.realms().stream())
-            .filter(realm -> realm.tenantId() == tenantId)
-            .filter(this::isPlayerAddressable)
-            .filter(RealmView::publicProductionRealm)
-            .count();
-    return switch (Long.compare(count, 1L)) {
+    return publicProductionRealmCardinality(loadWorldSnapshot(), tenantId);
+  }
+
+  private PublicProductionRealmCardinality publicProductionRealmCardinality(
+      CatalogSnapshot snapshot, long tenantId) {
+    return switch (Long.compare(
+        snapshot.publicProductionRealmCounts().getOrDefault(tenantId, 0L), 1L)) {
       case -1 -> PublicProductionRealmCardinality.ZERO;
       case 0 -> PublicProductionRealmCardinality.EXACTLY_ONE;
       default -> PublicProductionRealmCardinality.MULTIPLE;
@@ -191,11 +216,17 @@ public final class GameplayWorldCatalog {
   /** Returns whether each tenant represented by this world has unambiguous public routing. */
   public boolean hasValidPublicProductionRealm(WorldView world) {
     List<RealmView> visibleRealms = visibleRealms(world);
-    return !visibleRealms.isEmpty()
-        && visibleRealms.stream()
-            .map(RealmView::tenantId)
-            .distinct()
-            .allMatch(this::hasValidPublicProductionRealm);
+    if (visibleRealms.isEmpty()) {
+      return false;
+    }
+    CatalogSnapshot snapshot = loadWorldSnapshot();
+    return visibleRealms.stream()
+        .map(RealmView::tenantId)
+        .distinct()
+        .allMatch(
+            tenantId ->
+                publicProductionRealmCardinality(snapshot, tenantId)
+                    == PublicProductionRealmCardinality.EXACTLY_ONE);
   }
 
   public boolean requiresExplicitRealmSelection(WorldView world) {
@@ -203,8 +234,9 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RealmView> resolveRealmByRuntimeTarget(long tenantId, long gameInstanceId) {
+    CatalogSnapshot snapshot = loadWorldSnapshot();
     List<RealmView> matches =
-        normalizeWorlds(worldSupplier.get()).stream()
+        snapshot.worlds().stream()
             .flatMap(world -> world.realms().stream())
             .filter(realm -> realm.tenantId() == tenantId)
             .filter(realm -> realm.gameInstanceId() == gameInstanceId)
@@ -213,8 +245,9 @@ public final class GameplayWorldCatalog {
   }
 
   public Optional<RuntimeRealmTarget> resolveRuntimeTarget(long tenantId, long gameInstanceId) {
+    CatalogSnapshot snapshot = loadWorldSnapshot();
     List<RuntimeRealmTarget> matches =
-        normalizeWorlds(worldSupplier.get()).stream()
+        snapshot.worlds().stream()
             .flatMap(
                 world ->
                     world.realms().stream()
@@ -237,7 +270,7 @@ public final class GameplayWorldCatalog {
     }
     String normalizedWorld = worldSlug.trim().toLowerCase(Locale.ROOT);
     String normalizedRealm = realmSlug.trim().toLowerCase(Locale.ROOT);
-    return visibleWorlds().stream()
+    return visibleWorlds(loadWorldSnapshot()).stream()
         .filter(world -> normalizedWorld.equals(world.slug().toLowerCase(Locale.ROOT)))
         .flatMap(
             world ->
@@ -261,9 +294,11 @@ public final class GameplayWorldCatalog {
   }
 
   public List<WorldView> visibleWorlds() {
-    return normalizeWorlds(worldSupplier.get()).stream()
-        .filter(this::hasVisibleRealmEntries)
-        .toList();
+    return visibleWorlds(loadWorldSnapshot());
+  }
+
+  private List<WorldView> visibleWorlds(CatalogSnapshot snapshot) {
+    return snapshot.worlds().stream().filter(this::hasVisibleRealmEntries).toList();
   }
 
   /**
@@ -334,11 +369,11 @@ public final class GameplayWorldCatalog {
     }
   }
 
-  private List<WorldsViewOutput.WorldEntry> worldEntries() {
-    List<WorldView> worlds = discoverableWorlds();
+  private List<WorldsViewOutput.WorldEntry> worldEntries(CatalogSnapshot snapshot) {
+    List<WorldView> worlds = discoverableWorlds(snapshot);
     ArrayList<WorldsViewOutput.WorldEntry> entries = new ArrayList<>(worlds.size());
     for (WorldView world : worlds) {
-      RealmView defaultRealm = defaultRealm(world);
+      RealmView defaultRealm = defaultRealm(world, snapshot);
       entries.add(
           new WorldsViewOutput.WorldEntry(
               entries.size() + 1,
@@ -372,9 +407,9 @@ public final class GameplayWorldCatalog {
     return world != null && !visibleRealms(world).isEmpty();
   }
 
-  private List<WorldView> discoverableWorlds() {
-    return visibleWorlds().stream()
-        .filter(world -> resolveDefaultRealm(world).isPresent())
+  private List<WorldView> discoverableWorlds(CatalogSnapshot snapshot) {
+    return visibleWorlds(snapshot).stream()
+        .filter(world -> resolveDefaultRealm(world, snapshot).isPresent())
         .toList();
   }
 
@@ -386,8 +421,21 @@ public final class GameplayWorldCatalog {
         && realm.tenantId() > 0L;
   }
 
-  private RealmView defaultRealm(WorldView world) {
-    return resolveDefaultRealm(world).orElseThrow();
+  private RealmView defaultRealm(WorldView world, CatalogSnapshot snapshot) {
+    return resolveDefaultRealm(world, snapshot).orElseThrow();
+  }
+
+  private CatalogSnapshot loadWorldSnapshot() {
+    List<WorldView> worlds = normalizeWorlds(worldSupplier.get());
+    Map<Long, Long> publicProductionRealmCounts = new HashMap<>();
+    for (WorldView world : worlds) {
+      for (RealmView realm : world.realms()) {
+        if (isPlayerAddressable(realm) && realm.publicProductionRealm()) {
+          publicProductionRealmCounts.merge(realm.tenantId(), 1L, Long::sum);
+        }
+      }
+    }
+    return new CatalogSnapshot(worlds, Map.copyOf(publicProductionRealmCounts));
   }
 
   private static List<WorldView> normalizeWorlds(List<WorldView> worlds) {
@@ -513,6 +561,9 @@ public final class GameplayWorldCatalog {
         input.realmId(),
         input.playableStateNamespaceId());
   }
+
+  private record CatalogSnapshot(
+      List<WorldView> worlds, Map<Long, Long> publicProductionRealmCounts) {}
 
   public record WorldView(String slug, String displayName, List<RealmView> realms) {
     public WorldView {
