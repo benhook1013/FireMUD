@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
@@ -64,6 +65,27 @@ class GameplayAdmissionPointerRepositoryTest {
       assertEquals(99L, replaced.getGameInstanceId());
       assertEquals(sharedRealmId, replaced.getRealmId());
       assertEquals(sharedNamespaceId, replaced.getPlayableStateNamespaceId());
+    }
+  }
+
+  @Test
+  void tenantScopedPointerListExcludesOtherTenants() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-tenant-list;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+      repository.save(pointer(8L, 55L, "SHARED", "production"));
+
+      var scoped = repository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of(8L));
+
+      assertEquals(1, scoped.size());
+      assertEquals(8L, scoped.getFirst().getTenantId());
+      assertEquals(2, repository.findAllByOrderByWorldSlugAscRealmSlugAsc().size());
+      assertEquals(
+          List.of(), repository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of()));
     }
   }
 
@@ -130,13 +152,23 @@ class GameplayAdmissionPointerRepositoryTest {
       GameplayAdmissionPointerEvent laterWriteWithSkewedClock =
           pointerEvent("2026-09-29T09:00:00Z");
       GameplayAdmissionPointerEvent secondSaved = repository.save(laterWriteWithSkewedClock);
+      GameplayAdmissionPointerEvent otherTenantWrite = pointerEvent("2026-09-29T11:00:00Z");
+      otherTenantWrite.setTenantId(8L);
+      repository.save(otherTenantWrite);
 
       var audit =
           repository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(7L, "demo", "production");
+      var latest =
+          repository
+              .findLatestByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production")
+              .orElseThrow();
 
+      assertEquals(2, audit.size());
       assertEquals(secondSaved.getId(), audit.getFirst().getId());
       assertEquals(firstSaved.getId(), audit.get(1).getId());
       assertEquals(Instant.parse("2026-09-29T09:00:00Z"), audit.getFirst().getOccurredAt());
+      assertEquals(secondSaved.getId(), latest.getId());
+      assertEquals(Instant.parse("2026-09-29T09:00:00Z"), latest.getOccurredAt());
     }
   }
 
