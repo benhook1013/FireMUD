@@ -1695,6 +1695,59 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DELETE FROM review_artifacts WHERE attempt_id = ? AND kind = 'cli_events'", (run_id,))
         self.assertNotIn("display_severity", self.records.history(2828)["findings"][0])
 
+    def test_stored_cli_severity_overrides_provider_projection(self) -> None:
+        self.test_native_cli_capture_snapshot_binds_attempt_run_artifacts_and_decisions()
+        run_id = "run.native-snapshot"
+        key = f"cli-run:{run_id}:finding:1"
+        self.assertEqual(self.records.history(2828)["findings"][0]["display_severity"], "Major")
+
+        updated = self.records.set_source_severity(run_id, key, severity="Trivial")
+
+        self.assertEqual(updated["previous_severity"], None)
+        self.assertTrue(updated["changed"])
+        self.assertEqual(self.records.history(2828)["findings"][0]["display_severity"], "Trivial")
+        with sqlite3.connect(self.database) as connection:
+            content = connection.execute(
+                "SELECT content FROM review_artifacts WHERE attempt_id = ? AND kind = 'cli_events'",
+                (run_id,),
+            ).fetchone()[0]
+            lines = content.splitlines()
+            event = json.loads(lines[0])
+            event["severity"] = "critical"
+            lines[0] = json.dumps(event)
+            connection.execute(
+                "UPDATE review_artifacts SET content = ? WHERE attempt_id = ? AND kind = 'cli_events'",
+                ("\n".join(lines), run_id),
+            )
+        self.assertEqual(self.records.history(2828)["findings"][0]["display_severity"], "Trivial")
+
+    def test_route_severity_uses_latest_observation_without_mixing_runs(self) -> None:
+        self.bootstrap()
+        key = "repeated-routed-finding"
+        self.records.record_run(
+            run_id="older-severity-run",
+            source_pr=2828,
+            channel="subagent",
+            findings=(self.observation(key, "routed", target_pr=2879),),
+            started_at="2026-10-01T00:00:00Z",
+        )
+        self.records.record_run(
+            run_id="newer-severity-run",
+            source_pr=2828,
+            channel="subagent",
+            findings=(self.observation(key, "routed", target_pr=2879),),
+            started_at="2026-10-02T00:00:00Z",
+        )
+
+        self.records.set_source_severity("older-severity-run", key, severity="Major")
+
+        self.assertIsNone(self.records.history(2828)["routes"][0]["display_severity"])
+        self.assertIsNone(self.records.history(2879)["routes"][0]["display_severity"])
+        self.records.set_source_severity("newer-severity-run", key, severity="Trivial")
+        self.assertEqual(self.records.history(2828)["routes"][0]["display_severity"], "Trivial")
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_severity"], "Trivial")
+        self.assertEqual(self.records.list_routes(target_pr=2879)[0]["display_severity"], "Trivial")
+
     def test_started_cli_association_cannot_be_read_as_legacy_sql_snapshot(self) -> None:
         self.bootstrap()
         run_id = "run.started-snapshot"
@@ -2335,11 +2388,17 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 ).fetchone()[0],
                 payload_before,
             )
+        updated = self.records.set_source_severity(
+            "v8-retained-subagent-run",
+            "v8-retained-finding",
+            severity="Minor",
+        )
+        self.assertIsNone(updated["previous_severity"])
         replay = self.records.import_completed_run(**imported)
         self.assertTrue(replay["idempotent_replay"])
         history = self.records.history(2828)
         self.assertEqual(history["runs"][0]["counts"], {"found": 1, "accepted": 0, "routed": 0})
-        self.assertIsNone(history["findings"][0]["display_severity"])
+        self.assertEqual(history["findings"][0]["display_severity"], "Minor")
 
     def test_completed_import_is_atomic_when_a_later_route_conflicts(self) -> None:
         self.bootstrap()

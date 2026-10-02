@@ -1922,6 +1922,52 @@ class SqliteReviewRecords:
             "idempotent_replay": False,
         }
 
+    def set_source_severity(
+        self,
+        run_id: str,
+        source_finding_key: str,
+        *,
+        severity: str,
+    ) -> dict[str, Any]:
+        """Set display-only severity for one exact persisted finding observation."""
+
+        run_id = _safe_identifier(run_id, "run_id", maximum=100)
+        source_finding_key = _safe_identifier(source_finding_key, "source_finding_key", maximum=200)
+        if not isinstance(severity, str) or severity not in {"Critical", "Major", "Minor", "Trivial"}:
+            raise ReviewRecordsError("severity is invalid")
+        try:
+            with self._write_connection() as connection:
+                observation = connection.execute(
+                    "SELECT o.finding_id, o.source_pr, o.source_channel, o.display_severity "
+                    "FROM finding_observations o JOIN findings f USING (finding_id) "
+                    "WHERE o.run_id = ? AND f.source_finding_key = ?",
+                    (run_id, source_finding_key),
+                ).fetchone()
+                if observation is None:
+                    raise ReviewRecordsError("source finding was not observed in that exact run")
+                finding_id, source_pr, source_channel, previous_severity = observation
+                changed = previous_severity != severity
+                if changed:
+                    connection.execute(
+                        "UPDATE finding_observations SET display_severity = ? "
+                        "WHERE run_id = ? AND finding_id = ?",
+                        (severity, run_id, finding_id),
+                    )
+        except ReviewRecordsError:
+            raise
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError("cannot set source finding severity") from exc
+        return {
+            "run_id": run_id,
+            "finding_id": finding_id,
+            "source_pr": source_pr,
+            "source_channel": source_channel,
+            "source_finding_key": source_finding_key,
+            "previous_severity": previous_severity,
+            "severity": severity,
+            "changed": changed,
+        }
+
     @staticmethod
     def _source_resolution_corrections(
         connection: sqlite3.Connection, resolution_id: str, original_sha: str
@@ -3191,7 +3237,11 @@ class SqliteReviewRecords:
                         "created_at": row[7],
                         "updated_at": row[8],
                         "title": row[9],
-                        **({"display_severity": row[10]} if row[3] == "subagent" else {}),
+                        **(
+                            {"display_severity": row[10]}
+                            if row[3] == "subagent" or row[10] is not None
+                            else {}
+                        ),
                     }
                     for row in rows
                 ]
@@ -3345,7 +3395,8 @@ class SqliteReviewRecords:
                 cache[cache_key] = reader(connection, run_id, record["source_pr"])
             presentation = cache[cache_key].get(record["source_finding_key"])
             if presentation:
-                record["display_severity"] = presentation["display_severity"]
+                if "display_severity" not in record:
+                    record["display_severity"] = presentation["display_severity"]
                 if (_unusable_hosted_title(title) or title in presentation.get("classification_titles", ())) and presentation.get("display_title"):
                     record["display_title"] = presentation["display_title"]
                 if presentation.get("display_title_is_excerpt") and title == presentation.get("display_title"):
@@ -3595,7 +3646,11 @@ class SqliteReviewRecords:
                     "created_at": row[7],
                     "updated_at": row[8],
                     "title": row[9],
-                    **({"display_severity": row[10]} if row[3] == "subagent" else {}),
+                    **(
+                        {"display_severity": row[10]}
+                        if row[3] == "subagent" or row[10] is not None
+                        else {}
+                    ),
                     "target_history": targets,
                     "decisions": decisions,
                     "resolutions": resolutions,
@@ -3719,7 +3774,7 @@ class SqliteReviewRecords:
             "disposition": row[7],
             "route_id": row[8],
         }
-        if row[3] == "subagent":
+        if row[3] == "subagent" or row[9] is not None:
             record["display_severity"] = row[9]
         return record
 

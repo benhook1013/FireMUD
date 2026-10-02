@@ -3,6 +3,7 @@ import fcntl
 import io
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -290,6 +291,65 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "accepted": 1,
             "routed": 1,
         })
+        with sqlite3.connect(self.database) as connection:
+            payload_before = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent.review-1'"
+            ).fetchone()[0]
+        route_key = "subagent:subagent.review-1:finding:2"
+        code, severity = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "subagent.review-1",
+            "--finding-key",
+            route_key,
+            "--severity",
+            "Critical",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, severity)
+        self.assertEqual(severity["result"]["previous_severity"], "Major")
+        self.assertEqual(severity["result"]["severity"], "Critical")
+        self.assertEqual(severity["result"]["run_id"], "subagent.review-1")
+        self.assertEqual(severity["result"]["source_finding_key"], route_key)
+        self.assertEqual(severity["result"]["source_pr"], 2893)
+        self.assertEqual(severity["result"]["source_channel"], "subagent")
+        self.assertTrue(severity["result"]["changed"])
+        code, replay = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "subagent.review-1",
+            "--finding-key",
+            route_key,
+            "--severity",
+            "Critical",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, replay)
+        self.assertFalse(replay["result"]["changed"])
+        self.assertEqual(replay["result"]["previous_severity"], "Critical")
+        code, completed_replay = self.invoke(*arguments)
+        self.assertEqual(code, 0, completed_replay)
+        self.assertTrue(completed_replay["result"]["run"]["idempotent_replay"])
+        records = SqliteReviewRecords(self.database)
+        self.assertEqual(records.history(2893)["routes"][0]["display_severity"], "Critical")
+        self.assertEqual(records.history(2895)["routes"][0]["display_severity"], "Critical")
+        self.assertEqual(records.list_routes(target_pr=2895)[0]["display_severity"], "Critical")
+        self.assertEqual(records.history(2893)["runs"][0]["counts"], {
+            "found": 4,
+            "accepted": 1,
+            "routed": 1,
+        })
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent.review-1'"
+                ).fetchone()[0],
+                payload_before,
+            )
 
     def test_subagent_completion_requires_exact_severity_labels(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
@@ -357,6 +417,75 @@ class ReviewRecordsCliTest(unittest.TestCase):
         finding = records.history(2893)["findings"][0]
         self.assertIn("display_severity", finding)
         self.assertIsNone(finding["display_severity"])
+        with sqlite3.connect(self.database) as connection:
+            payload_before = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                ("historical-subagent-unspecified-severity",),
+            ).fetchone()[0]
+        code, updated = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "historical-subagent-unspecified-severity",
+            "--finding-key",
+            "historical-finding",
+            "--severity",
+            "Minor",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, updated)
+        self.assertIsNone(updated["result"]["previous_severity"])
+        self.assertEqual(records.history(2893)["findings"][0]["display_severity"], "Minor")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                    ("historical-subagent-unspecified-severity",),
+                ).fetchone()[0],
+                payload_before,
+            )
+
+    def test_set_severity_unknown_identity_fails_without_changing_observation(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        records.import_completed_run(
+            run_id="severity-exact-identity",
+            source_pr=2893,
+            channel="manual",
+            findings=(FindingObservation("known-finding", "Known finding"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "known-finding",
+                    "decision_id": "known-finding-decision",
+                    "decision": "rejected",
+                    "actor": "historical import",
+                    "reason": "retained",
+                },
+            ),
+        )
+        for run_id, finding_key in (("missing-run", "known-finding"), ("severity-exact-identity", "missing")):
+            with self.subTest(run_id=run_id, finding_key=finding_key):
+                code, result = self.invoke(
+                    "source",
+                    "set-severity",
+                    "--run-id",
+                    run_id,
+                    "--finding-key",
+                    finding_key,
+                    "--severity",
+                    "Trivial",
+                    "--database",
+                    str(self.database),
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("exact run", result["error"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT display_severity FROM finding_observations WHERE run_id = 'severity-exact-identity'"
+                ).fetchone()[0]
+            )
 
     def test_subagent_completion_replay_preserves_attempt_finish_time_without_prior_run(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))

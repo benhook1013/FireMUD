@@ -77,6 +77,11 @@ class SqliteBackupTest(unittest.TestCase):
             actor="fixture reviewer",
             reason="owned by the source PR",
         )
+        records.set_source_severity(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            severity="Trivial",
+        )
         records.finalize_run("backup-fixture-run")
         records.record_source_resolution(
             "backup-fixture-run",
@@ -135,7 +140,7 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertEqual(sorted(run["run_id"] for run in history["runs"]),
                          ["backup-fixture-run", "backup-provider-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
-        self.assertEqual(history["findings"][0]["display_severity"], "Major")
+        self.assertEqual(history["findings"][0]["display_severity"], "Trivial")
         self.assertEqual(history["source_resolutions"][0]["fix_sha"], "d" * 40)
         self.assertEqual(history["source_resolutions"][0]["effective_fix_sha"], "e" * 40)
         self.assertEqual(len(history["source_resolution_corrections"]), 1)

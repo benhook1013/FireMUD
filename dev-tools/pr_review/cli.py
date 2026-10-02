@@ -249,6 +249,18 @@ def _parser() -> argparse.ArgumentParser:
     source_correct_resolution.add_argument("--corrected-at")
     records_database(source_correct_resolution)
 
+    source_set_severity = source_subcommands.add_parser(
+        "set-severity", help="set display severity on one exact recorded source finding"
+    )
+    source_set_severity.add_argument("--run-id", required=True)
+    source_set_severity.add_argument("--finding-key", required=True)
+    source_set_severity.add_argument(
+        "--severity",
+        required=True,
+        choices=("Critical", "Major", "Minor", "Trivial"),
+    )
+    records_database(source_set_severity)
+
     cli_decisions = record_commands.add_parser(
         "cli-decision", help="record one captured CLI finding decision without a TSV file"
     )
@@ -1055,6 +1067,12 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 reason=args.reason,
                 proof_note=args.proof_note,
                 corrected_at=args.corrected_at,
+            )
+        elif args.source_command == "set-severity":
+            result = store.set_source_severity(
+                args.run_id,
+                args.finding_key,
+                severity=args.severity,
             )
         else:
             result = store.record_source_resolution(
