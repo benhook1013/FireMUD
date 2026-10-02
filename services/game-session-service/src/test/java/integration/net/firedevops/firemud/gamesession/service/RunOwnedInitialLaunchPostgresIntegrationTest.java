@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
 import java.sql.SQLException;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -62,17 +63,21 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
       long secondId = second.get(15, TimeUnit.SECONDS);
       assertThat(firstId).isEqualTo(secondId);
       assertThat(
-              dsl.fetchOne(
-                      "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
-                          + "AND run_owned_start_request_id = ?",
-                      TENANT_ID,
-                      REQUEST_ID)
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
+                              + "AND run_owned_start_request_id = ?",
+                          TENANT_ID,
+                          REQUEST_ID),
+                      "expected run-owned allocation count row")
                   .get(0, Long.class))
           .isEqualTo(1L);
       assertThat(
-              dsl.fetchOne(
-                      "SELECT run_owned_start_request_digest FROM game_instances WHERE id = ?",
-                      firstId)
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT run_owned_start_request_digest FROM game_instances WHERE id = ?",
+                          firstId),
+                      "expected allocated run-owned game instance row")
                   .get(0, String.class))
           .isEqualTo(REQUEST_DIGEST);
 
@@ -91,10 +96,12 @@ class RunOwnedInitialLaunchPostgresIntegrationTest {
       assertThat(savedOrdinaryOne.getRunOwnedStartRequestId()).isNull();
       assertThat(savedOrdinaryTwo.getRunOwnedStartRequestId()).isNull();
       assertThat(
-              dsl.fetchOne(
-                      "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
-                          + "AND run_owned_start_request_id IS NULL",
-                      TENANT_ID)
+              Objects.requireNonNull(
+                      dsl.fetchOne(
+                          "SELECT count(*) FROM game_instances WHERE tenant_id = ? "
+                              + "AND run_owned_start_request_id IS NULL",
+                          TENANT_ID),
+                      "expected ordinary game-instance count row")
                   .get(0, Long.class))
           .isEqualTo(2L);
     }

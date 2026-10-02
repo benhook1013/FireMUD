@@ -54,10 +54,7 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
     assertInvalid(validJson().replace(RUN_ID, "different-run"));
     assertInvalid(validJson().replace(OPERATION_ID, "not-a-uuid"));
     assertInvalid(
-        validJson()
-            .replace(
-                "\"operationId\": \"" + OPERATION_ID + "\"",
-                "\"operationId\": null"));
+        validJson().replace("\"operationId\": \"" + OPERATION_ID + "\"", "\"operationId\": null"));
     assertInvalid(validJson().replace("\"tenantId\": 7", "\"tenantId\": \"7\""));
     assertInvalid(
         validJson().replace("\"stateScope\": \"SHARED\"", "\"stateScope\": \"ISOLATED\""));
@@ -127,27 +124,27 @@ class RunOwnedInitialAdmissionFixtureCapabilityTest {
 
   private static String validJson() {
     return """
-        {
-          "schema": "%s",
-          "runId": "%s",
-          "composeProjectName": "%s",
-          "operationId": "%s",
-          "tenantId": 7,
-          "gameTemplateId": 17,
-          "ownerAccountId": 27,
-          "worldSlug": "demo",
-          "worldDisplayName": "Demo World",
-          "realmSlug": "production",
-          "realmDisplayName": "Live Realm",
-          "visible": true,
-          "publicProductionRealm": true,
-          "requiresCharacterSelection": false,
-          "stateScope": "SHARED",
-          "characterCreationPolicy": "ALLOW_NEW",
-          "gameSessionLeafSha256": "%s",
-          "gameSessionUriSan": "%s",
-          "caCertificateSha256": "%s"
-        }
+        {%n\
+          "schema": "%s",%n\
+          "runId": "%s",%n\
+          "composeProjectName": "%s",%n\
+          "operationId": "%s",%n\
+          "tenantId": 7,%n\
+          "gameTemplateId": 17,%n\
+          "ownerAccountId": 27,%n\
+          "worldSlug": "demo",%n\
+          "worldDisplayName": "Demo World",%n\
+          "realmSlug": "production",%n\
+          "realmDisplayName": "Live Realm",%n\
+          "visible": true,%n\
+          "publicProductionRealm": true,%n\
+          "requiresCharacterSelection": false,%n\
+          "stateScope": "SHARED",%n\
+          "characterCreationPolicy": "ALLOW_NEW",%n\
+          "gameSessionLeafSha256": "%s",%n\
+          "gameSessionUriSan": "%s",%n\
+          "caCertificateSha256": "%s"%n\
+        }%n\
         """
         .formatted(
             RunOwnedInitialAdmissionFixtureCapability.CAPABILITY_SCHEMA,

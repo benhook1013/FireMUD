@@ -48,7 +48,7 @@ import org.mockito.MockedStatic;
 class RunOwnedInitialAdmissionFixtureCoordinatorTest {
   private static final String RUN_ID = "compose-smoke-2939";
   private static final String PROJECT_NAME = "firemud-smoke-compose-smoke-2939";
-  private static final String CAPABILITY_PATH = "/fixture/capability.json";
+  private static final String CAPABILITY_PATH = "fixture/capability.json";
   private static final String OPERATION_ID = "d2db8478-9c56-42ab-99c2-9fbead6841ba";
   private static final UUID REALM_ID = UUID.fromString("23d39978-9d44-4e1a-8659-998ff9239b01");
   private static final UUID NAMESPACE_ID = UUID.fromString("ed1b4d88-81f8-4404-af7c-9a5dc91d3043");

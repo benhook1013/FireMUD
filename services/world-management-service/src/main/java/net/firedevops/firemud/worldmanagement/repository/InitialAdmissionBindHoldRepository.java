@@ -1,5 +1,6 @@
 package net.firedevops.firemud.worldmanagement.repository;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -13,6 +14,10 @@ import org.jooq.Result;
 import org.springframework.stereotype.Repository;
 
 @Repository
+@SuppressFBWarnings(
+    value = "EI_EXPOSE_REP2",
+    justification =
+        "The injected DSLContext is shared Spring infrastructure for repository transaction participation.")
 public class InitialAdmissionBindHoldRepository {
   private static final String SELECT_COLUMNS =
       "hold_id, hold_fence, tenant_id, realm_uuid, playable_state_namespace_uuid, "
