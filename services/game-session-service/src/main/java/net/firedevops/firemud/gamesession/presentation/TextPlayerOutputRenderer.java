@@ -462,9 +462,7 @@ public class TextPlayerOutputRenderer {
     if (output.friends().isEmpty()) {
       return "Friends "
           + output.filter().toUpperCase(java.util.Locale.ROOT)
-          + " [0/"
-          + output.totalCount()
-          + "]: no matching friends.";
+          + ": no matching friends.";
     }
     String body =
         output.friends().stream()
@@ -483,14 +481,7 @@ public class TextPlayerOutputRenderer {
     if ("ALL".equalsIgnoreCase(output.filter())) {
       return body;
     }
-    return "Friends "
-        + output.filter().toUpperCase(java.util.Locale.ROOT)
-        + " ["
-        + output.matchCount()
-        + "/"
-        + output.totalCount()
-        + "]:\n"
-        + body;
+    return "Friends " + output.filter().toUpperCase(java.util.Locale.ROOT) + ":\n" + body;
   }
 
   private String renderFriendDetailView(FriendDetailViewOutput output) {

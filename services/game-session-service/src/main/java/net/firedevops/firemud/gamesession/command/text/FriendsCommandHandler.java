@@ -427,8 +427,7 @@ public class FriendsCommandHandler {
     List<FriendPresenceViewOutput.Entry> mapped =
         canonicalFiltered ? allEntries : allEntries.stream().filter(filter::matches).toList();
     int totalCount = response.getTotalCount() > 0 ? response.getTotalCount() : allEntries.size();
-    int matchCount = response.getMatchCount() > 0 ? response.getMatchCount() : mapped.size();
-    return new FriendPresenceViewOutput(filter.name(), totalCount, matchCount, mapped);
+    return new FriendPresenceViewOutput(filter.name(), totalCount, mapped);
   }
 
   private FriendPresenceViewOutput.Entry toEntry(int ordinal, FriendRosterEntry entry) {
