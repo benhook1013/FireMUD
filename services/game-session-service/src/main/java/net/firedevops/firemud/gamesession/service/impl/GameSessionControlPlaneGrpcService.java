@@ -915,6 +915,16 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
+      if (isPersistenceAvailabilityFailure(ex)) {
+        logger.warn("GetGameInstanceRuntimeState persistence unavailable", ex);
+        GetGameInstanceRuntimeStateResponse response =
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setError(admissionPointerAuthorityUnavailableError("GetGameInstanceRuntimeState"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       logger.error("GetGameInstanceRuntimeState failed", ex);
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()

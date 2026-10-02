@@ -942,6 +942,100 @@ class GameSessionControlPlaneGrpcServiceTest {
   }
 
   @Test
+  void getGameInstanceRuntimeStateReturnsAuthorityUnavailableForPersistenceAvailabilityFailures() {
+    List<RuntimeException> unavailableFailures =
+        List.of(
+            new org.jooq.exception.DataAccessException(
+                "runtime database unavailable",
+                new java.sql.SQLException("connection lost", "08006")),
+            new org.springframework.dao.QueryTimeoutException("runtime query timed out"));
+
+    for (RuntimeException failure : unavailableFailures) {
+      RuntimeRegionStatusRepository runtimeRepository =
+          Mockito.mock(RuntimeRegionStatusRepository.class);
+      Mockito.when(runtimeRepository.findByTenantIdAndRegionId(1L, "region-7")).thenThrow(failure);
+      SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+      GameSessionControlPlaneGrpcService service =
+          controlPlaneService(
+              Mockito.mock(GameInstanceRepository.class),
+              Mockito.mock(GameplayCommandRepository.class),
+              runtimeRepository,
+              Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+              Mockito.mock(InstanceCutoverCompatibilityService.class),
+              Mockito.mock(VersionUpgradePreparationService.class),
+              Mockito.mock(TickService.class),
+              new SimpleMeterRegistry());
+
+      AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
+      service.getGameInstanceRuntimeState(
+          GetGameInstanceRuntimeStateRequest.newBuilder()
+              .setTenantId("1")
+              .setGameInstanceId("7")
+              .setRegionId("region-7")
+              .build(),
+          new NoopObserver<>() {
+            @Override
+            public void onNext(GetGameInstanceRuntimeStateResponse value) {
+              responseRef.set(value);
+            }
+          });
+
+      assertNotNull(responseRef.get());
+      assertEquals("AUTHORITY_UNAVAILABLE", responseRef.get().getError().getCode());
+      assertFalse(responseRef.get().hasRuntimeState());
+      Mockito.verify(runtimeRepository).findByTenantIdAndRegionId(1L, "region-7");
+    }
+  }
+
+  @Test
+  void getGameInstanceRuntimeStateKeepsUnexpectedPersistenceFailuresInternal() {
+    List<RuntimeException> unexpectedFailures =
+        List.of(
+            new IllegalStateException("runtime state mapper failed"),
+            new org.jooq.exception.DataAccessException(
+                "runtime integrity failure",
+                new java.sql.SQLException("unique violation", "23505")),
+            new org.jooq.exception.DataAccessException(
+                "runtime query failure", new java.sql.SQLException("malformed query", "42601")));
+
+    for (RuntimeException failure : unexpectedFailures) {
+      RuntimeRegionStatusRepository runtimeRepository =
+          Mockito.mock(RuntimeRegionStatusRepository.class);
+      Mockito.when(runtimeRepository.findByTenantIdAndRegionId(1L, "region-7")).thenThrow(failure);
+      SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+      GameSessionControlPlaneGrpcService service =
+          controlPlaneService(
+              Mockito.mock(GameInstanceRepository.class),
+              Mockito.mock(GameplayCommandRepository.class),
+              runtimeRepository,
+              Mockito.mock(GameplayAdmissionPointerAuthorityService.class),
+              Mockito.mock(InstanceCutoverCompatibilityService.class),
+              Mockito.mock(VersionUpgradePreparationService.class),
+              Mockito.mock(TickService.class),
+              new SimpleMeterRegistry());
+
+      AtomicReference<GetGameInstanceRuntimeStateResponse> responseRef = new AtomicReference<>();
+      service.getGameInstanceRuntimeState(
+          GetGameInstanceRuntimeStateRequest.newBuilder()
+              .setTenantId("1")
+              .setGameInstanceId("7")
+              .setRegionId("region-7")
+              .build(),
+          new NoopObserver<>() {
+            @Override
+            public void onNext(GetGameInstanceRuntimeStateResponse value) {
+              responseRef.set(value);
+            }
+          });
+
+      assertNotNull(responseRef.get());
+      assertEquals("INTERNAL", responseRef.get().getError().getCode());
+      assertFalse(responseRef.get().hasRuntimeState());
+      Mockito.verify(runtimeRepository).findByTenantIdAndRegionId(1L, "region-7");
+    }
+  }
+
+  @Test
   void getGameInstanceRuntimeStateRejectsZeroGameInstanceId() {
     GameInstanceRepository repository = Mockito.mock(GameInstanceRepository.class);
     GameplayAdmissionPointerAuthorityService authorityService =
