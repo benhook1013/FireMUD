@@ -323,13 +323,17 @@ public class AccountTenantMembershipRepository {
             ACCOUNT_TENANT_MEMBERSHIP.ID,
             ACCOUNT_TENANT_MEMBERSHIP.ACCOUNT_ID,
             ACCOUNT_TENANT_MEMBERSHIP.TENANT_ID,
-            org.jooq.impl.DSL.field("account_tenant_membership.tenant_uuid", UUID.class),
             org.jooq.impl.DSL.field(
-                "account_tenant_membership.tenant_provenance_kind", String.class),
+                org.jooq.impl.DSL.name("account_tenant_membership", "tenant_uuid"), UUID.class),
             org.jooq.impl.DSL.field(
-                "account_tenant_membership.tenant_source_operation_id", UUID.class),
+                org.jooq.impl.DSL.name("account_tenant_membership", "tenant_provenance_kind"),
+                String.class),
             org.jooq.impl.DSL.field(
-                "account_tenant_membership.tenant_provenance_digest", String.class),
+                org.jooq.impl.DSL.name("account_tenant_membership", "tenant_source_operation_id"),
+                UUID.class),
+            org.jooq.impl.DSL.field(
+                org.jooq.impl.DSL.name("account_tenant_membership", "tenant_provenance_digest"),
+                String.class),
             ACCOUNT_TENANT_MEMBERSHIP.GAMEPLAY_ADMISSION_ALLOWED,
             ACCOUNT_TENANT_MEMBERSHIP.LIFECYCLE_STATE,
             ACCOUNT_TENANT_MEMBERSHIP.MEMBERSHIP_VERSION,

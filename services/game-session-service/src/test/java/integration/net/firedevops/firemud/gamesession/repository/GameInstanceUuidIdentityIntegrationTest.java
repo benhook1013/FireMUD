@@ -127,7 +127,7 @@ class GameInstanceUuidIdentityIntegrationTest {
                       "UPDATE game_instances SET game_instance_uuid = NULL WHERE id = ?",
                       saved.getId()))
           .isInstanceOf(DataAccessException.class)
-          .hasMessageContaining("game_instances_game_instance_uuid_immutable");
+          .hasMessageContaining("Game Session game_instance_uuid identity is immutable");
       assertThatThrownBy(
               () ->
                   dsl.execute(
@@ -135,7 +135,7 @@ class GameInstanceUuidIdentityIntegrationTest {
                       UUID.fromString("123e4567-e89b-12d3-a456-426614174099"),
                       saved.getId()))
           .isInstanceOf(DataAccessException.class)
-          .hasMessageContaining("game_instances_game_instance_uuid_immutable");
+          .hasMessageContaining("Game Session game_instance_uuid identity is immutable");
       assertThatThrownBy(
               () ->
                   dsl.execute(
@@ -143,7 +143,7 @@ class GameInstanceUuidIdentityIntegrationTest {
                       UUID.fromString("123e4567-e89b-12d3-a456-426614174099"),
                       RETAINED_INSTANCE_ID))
           .isInstanceOf(DataAccessException.class)
-          .hasMessageContaining("game_instances_game_instance_uuid_immutable");
+          .hasMessageContaining("Game Session game_instance_uuid identity is immutable");
       assertThat(
               dsl.resultQuery(
                       "SELECT game_instance_uuid FROM game_instances WHERE id = ?", saved.getId())
