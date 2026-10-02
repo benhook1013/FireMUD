@@ -47,17 +47,19 @@ class WorldsCommandHandlerTest {
 
   @Test
   void browseViewReturnsStructuredWorldList() {
-    gameplayCatalogProperties
-        .getWorlds()
-        .get(1)
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(false);
+    GameplayCatalogProperties.World demoWorld = world("demo", 22L, 1L, false);
+    demoWorld.setDisplayName("Demo World");
+    GameplayCatalogProperties.World sandboxWorld = world("sandbox", 23L, 2L, true);
+    sandboxWorld.setDisplayName("Builder Sandbox");
+    gameplayCatalogProperties.setWorlds(List.of(demoWorld, sandboxWorld));
+
     WorldsViewOutput response = handler.browseView();
 
-    assertThat(response.worlds()).hasSize(1);
+    assertThat(response.worlds()).hasSize(2);
     assertThat(response.worlds().get(0).slug()).isEqualTo("demo");
     assertThat(response.worlds().get(0).displayName()).isEqualTo("Demo World");
+    assertThat(response.worlds().get(1).slug()).isEqualTo("sandbox");
+    assertThat(response.worlds().get(1).displayName()).isEqualTo("Builder Sandbox");
   }
 
   @Test
@@ -616,6 +618,12 @@ class WorldsCommandHandlerTest {
         .getFirst()
         .getRealms()
         .getFirst()
+        .setPublicProductionRealm(false);
+    gameplayCatalogProperties
+        .getWorlds()
+        .getFirst()
+        .getRealms()
+        .getFirst()
         .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
     gameplayCatalogProperties
         .getWorlds()
@@ -821,6 +829,7 @@ class WorldsCommandHandlerTest {
   void browseCharactersRedactsPrivateOnlyWorldWithoutPublicProductionRealm() {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
     properties.setWorlds(List.of(world("preview", 22L, 2L, false)));
+    properties.getWorlds().getFirst().getRealms().getFirst().setPublicProductionRealm(false);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
 
@@ -2107,6 +2116,7 @@ class WorldsCommandHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);

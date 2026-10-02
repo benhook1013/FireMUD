@@ -34,6 +34,7 @@ class CommunicationWebSocketCrossServiceTest {
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
+  private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
   private static final String FIRST_PARTY_CONNECT_SECRET = "cross-service-connect-context-secret";
@@ -739,7 +740,7 @@ class CommunicationWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.proxyGatewayDriverFactory(
                 gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
             "actor-conn",
-            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-conn",
             namedAdmission(SORA_EMAIL, "Sora"),
             "observer-conn",
@@ -910,6 +911,7 @@ class CommunicationWebSocketCrossServiceTest {
       STACK =
           GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
               .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
+              .mapAccountId("nyx@example.com", NYX_ACCOUNT_ID)
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
               .withGameSessionProps(

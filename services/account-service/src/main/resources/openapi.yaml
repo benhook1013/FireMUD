@@ -5,9 +5,11 @@ info:
     API for user accounts and authentication. The obsolete caller-asserted
     POST /accounts/{accountId}/external route is removed and denied at the
     public edge; no provider-linking route is available until the
-    server-verified global-account flow and its proof converge. The public
-    POST /auth/bootstrap/join facade is target-only and denied until Account
-    recovery, PostgreSQL, and direct text-client proof are complete.
+    server-verified global-account flow and its proof converge. Account's
+    POST /auth/bootstrap/join facade and local operation are implemented;
+    external Gateway exposure remains blocked pending JOIN recovery and
+    reconciliation (#2848), PostgreSQL runtime proof, and direct text-client
+    end-to-end proof.
   version: 1.0.0
   license:
     name: PolyForm Noncommercial License 1.0.0

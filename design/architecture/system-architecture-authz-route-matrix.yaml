@@ -3666,6 +3666,7 @@ routes:
     route: CreateLogEvent
     transport: grpc
     scope: account
+    route_status: target_not_currently_routable
     classification: internal_workload
     auth_path: exact_mtls_workload
     issued_token_state: none
@@ -3679,10 +3680,14 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
     end_user_token_required: false
+    implementation_status:
+      known_drift:
+        - local_Account_mTLS_receiver_and_atomic_receipt_projection_are_implemented; long_running_activation_requires_retention_lifecycle_and_PostgreSQL_end_to_end_proof
   - service: logging-admin-service
     route: ReadLogEventReceipt
     transport: grpc
     scope: account
+    route_status: target_not_currently_routable
     classification: internal_workload
     auth_path: exact_mtls_workload
     issued_token_state: none
@@ -3696,6 +3701,9 @@ routes:
     mtls_callers:
       any_of: ["spiffe://firemud/ns/{namespace}/sa/account-service"]
     end_user_token_required: false
+    implementation_status:
+      known_drift:
+        - local_Account_mTLS_receipt_readback_is_implemented_but_not_invoked_by_Account; historical_evidence_retention_lifecycle_and_PostgreSQL_end_to_end_proof_remain_activation_gates
   - service: game-session-service
     route: ToggleFeatureFlag
     transport: grpc

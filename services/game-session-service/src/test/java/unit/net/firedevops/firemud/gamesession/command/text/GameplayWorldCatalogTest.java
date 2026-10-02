@@ -376,6 +376,23 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void browseViewUsesOneWorldSnapshotForDefaultRealmAndCardinalityChecks() {
+    AtomicInteger supplierCalls = new AtomicInteger();
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () ->
+                supplierCalls.getAndIncrement() == 0
+                    ? List.of(worldWithRealm("demo", "production", 7L, true))
+                    : List.of(worldWithRealm("demo", "preview", 7L, false)));
+
+    assertThat(catalog.browseView().worlds())
+        .extracting(
+            net.firedevops.firemud.gamesession.presentation.WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("demo");
+    assertThat(supplierCalls).hasValue(1);
+  }
+
+  @Test
   void closedVisiblePublicRealmStillCountsAsTheTenantPublicRealm() {
     GameplayWorldCatalog catalog =
         GameplayWorldCatalog.forWorldViews(
