@@ -71,18 +71,9 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   SetAdmissionPointerResponse setAdmissionPointer(
       long tenantId, long targetGameInstanceId, SetAdmissionPointerRequest request) {
-    GameplayAdmissionPointerSnapshot currentPointer =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
-            .orElse(null);
-    if (currentPointer != null) {
-      throw new AdmissionPointerMutationPreconditionException(
-          "admission-pointer updates are temporarily disabled until catalog revision "
-              + "preconditions are supported");
-    }
     throw new AdmissionPointerMutationPreconditionException(
-        "admission-pointer creation is temporarily disabled until catalog revision and "
-            + "stable realm/namespace identity preconditions are supported");
+        "SetAdmissionPointer is disabled until catalog revision and stable realm/namespace "
+            + "identity preconditions are supported");
   }
 
   ExecutePreparedVersionCutoverResponse executePreparedVersionCutover(
