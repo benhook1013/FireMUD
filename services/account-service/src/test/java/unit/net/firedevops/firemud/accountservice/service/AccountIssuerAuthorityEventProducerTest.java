@@ -34,6 +34,9 @@ class AccountIssuerAuthorityEventProducerTest {
     assertThatThrownBy(() -> producer.readCurrent(OTHER_ISSUER_ID))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("exact configured issuer");
+    assertThatThrownBy(() -> producer.readCommittedEvent(OTHER_ISSUER_ID, 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("exact configured issuer");
 
     collaborators.verifyUnused();
   }
@@ -52,6 +55,9 @@ class AccountIssuerAuthorityEventProducerTest {
     assertThatThrownBy(() -> producer.advance(ISSUER_ID, UUID.randomUUID(), 1L, 0L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("must be positive");
+    assertThatThrownBy(() -> producer.readCommittedEvent(ISSUER_ID, 0L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("sequence must be positive");
 
     collaborators.verifyUnused();
   }
@@ -113,6 +119,9 @@ class AccountIssuerAuthorityEventProducerTest {
 
     try {
       assertThatThrownBy(() -> producer.readCurrent(ISSUER_ID))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("without an ambient transaction");
+      assertThatThrownBy(() -> producer.readCommittedEvent(ISSUER_ID, 1L))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("without an ambient transaction");
       assertThatThrownBy(() -> producer.advance(ISSUER_ID, UUID.randomUUID(), 1L, 1L))
@@ -186,6 +195,56 @@ class AccountIssuerAuthorityEventProducerTest {
             ISSUER_ID, 2L, 2L, STREAM_KEY, 1L, Optional.of(matchingEvent));
     assertThat(validShape.latestEvent()).isPresent();
     assertThat(validShape.latestEvent().orElseThrow()).isSameAs(matchingEvent);
+  }
+
+  @Test
+  void historicalReadbackBindsAnOlderExactEventToTheCurrentSnapshot() {
+    IssuerGenerationAuthorityEvent historical = event(ISSUER_ID, UUID.randomUUID(), 1L, 2L, 3L);
+    IssuerGenerationAuthorityEvent latest = event(ISSUER_ID, UUID.randomUUID(), 4L, 5L, 7L);
+    AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot current =
+        new AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot(
+            ISSUER_ID, 5L, 7L, STREAM_KEY, 4L, Optional.of(latest));
+
+    AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback readback =
+        new AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback(current, historical);
+
+    assertThat(readback.currentSnapshot()).isSameAs(current);
+    assertThat(readback.requestedEvent()).isSameAs(historical);
+  }
+
+  @Test
+  void historicalReadbackRejectsWrongIssuerStreamAndEventsAheadOfCurrentSnapshot() {
+    IssuerGenerationAuthorityEvent latest = event(ISSUER_ID, UUID.randomUUID(), 2L, 3L, 4L);
+    IssuerGenerationAuthorityEvent differentLatest =
+        event(ISSUER_ID, UUID.randomUUID(), 2L, 3L, 4L);
+    AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot current =
+        new AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot(
+            ISSUER_ID, 3L, 4L, STREAM_KEY, 2L, Optional.of(latest));
+
+    assertThatThrownBy(
+            () ->
+                new AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback(
+                    current, event(OTHER_ISSUER_ID, UUID.randomUUID(), 1L, 2L, 2L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("does not bind");
+    assertThatThrownBy(
+            () ->
+                new AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback(
+                    current, event(ISSUER_ID, UUID.randomUUID(), 3L, 3L, 4L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("ahead of the current snapshot");
+    assertThatThrownBy(
+            () ->
+                new AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback(
+                    current, event(ISSUER_ID, UUID.randomUUID(), 1L, 4L, 4L)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("ahead of the current snapshot");
+    assertThatThrownBy(
+            () ->
+                new AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback(
+                    current, differentLatest))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("differs from the current snapshot checkpoint");
   }
 
   private AccountIssuerAuthorityEventProducer newProducer(

@@ -79,6 +79,7 @@ dependencies {
     testImplementation(libs.grpc.inprocess)
     testImplementation(testFixtures(project(":game-session-service")))
     testImplementation(project(":game-logic-service"))
+    add("crossServiceTestImplementation", project(":account-service"))
 }
 
 tasks.named<BootRun>("bootRun") {

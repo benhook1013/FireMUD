@@ -10,7 +10,9 @@ import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
@@ -100,6 +102,157 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     assertThat(fixture.producer().readCurrent(ISSUER_ID).latestEvent()).isPresent();
     assertSameEvent(second, fixture.producer().readCurrent(ISSUER_ID).latestEvent().orElseThrow());
     assertThat(countEvents(fixture, STREAM_KEY)).isEqualTo(2L);
+  }
+
+  @Test
+  void exactHistoricalReadReturnsTheRequestedEventAndCurrentSourceCheckpoint() {
+    Fixture fixture = newFixture();
+    seedIssuer(fixture);
+    UUID firstRequest = UUID.randomUUID();
+    IssuerGenerationAuthorityEvent first =
+        fixture.producer().advance(ISSUER_ID, firstRequest, 1L, 1L);
+    IssuerGenerationAuthorityEvent second =
+        fixture.producer().advance(ISSUER_ID, UUID.randomUUID(), 2L, 2L);
+
+    AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback readback =
+        fixture.producer().readCommittedEvent(ISSUER_ID, 1L);
+
+    assertSameEvent(first, readback.requestedEvent());
+    assertThat(readback.currentSnapshot().issuerAuthGeneration()).isEqualTo(3L);
+    assertThat(readback.currentSnapshot().sourceVersion()).isEqualTo(3L);
+    assertThat(readback.currentSnapshot().outboxSequence()).isEqualTo(2L);
+    assertThat(readback.currentSnapshot().latestEvent()).isPresent();
+    assertSameEvent(second, readback.currentSnapshot().latestEvent().orElseThrow());
+  }
+
+  @Test
+  void historicalReadDenialsDoNotMutateAndMissingRetainedEventFailsClosed() {
+    Fixture fixture = newFixture();
+    seedIssuer(fixture);
+    fixture.producer().advance(ISSUER_ID, UUID.randomUUID(), 1L, 1L);
+    fixture.producer().advance(ISSUER_ID, UUID.randomUUID(), 2L, 2L);
+    StoredState before = snapshot(fixture);
+
+    assertThatThrownBy(
+            () -> fixture.producer().readCommittedEvent("https://other.example.test/issuer", 1L))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> fixture.producer().readCommittedEvent(ISSUER_ID, 0L))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> fixture.producer().readCommittedEvent(ISSUER_ID, 3L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ahead of the current checkpoint");
+    assertThat(snapshot(fixture)).isEqualTo(before);
+
+    Fixture missingHistorical = newFixture();
+    seedIssuer(missingHistorical);
+    missingHistorical.producer().advance(ISSUER_ID, UUID.randomUUID(), 1L, 1L);
+    missingHistorical.producer().advance(ISSUER_ID, UUID.randomUUID(), 2L, 2L);
+    missingHistorical
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events "
+                + "DISABLE TRIGGER account_authority_outbox_event_update");
+    missingHistorical
+        .setupDsl()
+        .execute(
+            "DELETE FROM account_authority_outbox_events "
+                + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+            STREAM_KEY);
+    missingHistorical
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events "
+                + "ENABLE TRIGGER account_authority_outbox_event_update");
+    StoredState afterFixtureCorruption = snapshot(missingHistorical);
+
+    assertThatThrownBy(() -> missingHistorical.producer().readCommittedEvent(ISSUER_ID, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("retained issuer event is missing");
+    assertThat(snapshot(missingHistorical)).isEqualTo(afterFixtureCorruption);
+
+    Fixture malformedHistorical = newFixture();
+    seedIssuer(malformedHistorical);
+    malformedHistorical.producer().advance(ISSUER_ID, UUID.randomUUID(), 1L, 1L);
+    malformedHistorical.producer().advance(ISSUER_ID, UUID.randomUUID(), 2L, 2L);
+    malformedHistorical
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events "
+                + "DISABLE TRIGGER account_authority_outbox_event_update");
+    malformedHistorical
+        .setupDsl()
+        .execute(
+            "UPDATE account_authority_outbox_events SET payload = ? "
+                + "WHERE outbox_stream_key = ? AND outbox_sequence = 1",
+            "not-json".getBytes(java.nio.charset.StandardCharsets.UTF_8),
+            STREAM_KEY);
+    malformedHistorical
+        .setupDsl()
+        .execute(
+            "ALTER TABLE account_authority_outbox_events "
+                + "ENABLE TRIGGER account_authority_outbox_event_update");
+    StoredState afterMalformedFixture = snapshot(malformedHistorical);
+
+    assertThatThrownBy(() -> malformedHistorical.producer().readCommittedEvent(ISSUER_ID, 1L))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("event JSON is malformed");
+    assertThat(snapshot(malformedHistorical)).isEqualTo(afterMalformedFixture);
+  }
+
+  @Test
+  void concurrentHistoricalReadWaitsForIssuerRowFenceAndReturnsCommittedCurrentState()
+      throws Exception {
+    Fixture fixture = newFixture();
+    seedIssuer(fixture);
+    IssuerGenerationAuthorityEvent first =
+        fixture.producer().advance(ISSUER_ID, UUID.randomUUID(), 1L, 1L);
+    UUID secondRequest = UUID.randomUUID();
+    CountDownLatch sourceLocked = new CountDownLatch(1);
+    CountDownLatch releaseAdvance = new CountDownLatch(1);
+    CountDownLatch readStarted = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<?> advance =
+          executor.submit(
+              () ->
+                  transaction(
+                      fixture.transaction(),
+                      () -> {
+                        ScopeState current =
+                            fixture.generations().read(AuthorityScope.issuer(ISSUER_ID));
+                        sourceLocked.countDown();
+                        await(releaseAdvance);
+                        ScopeState advanced = fixture.generations().advance(current, null);
+                        appendSeedEvent(
+                            fixture,
+                            secondRequest,
+                            advanced.generation(),
+                            advanced.sourceVersion());
+                        return null;
+                      }));
+      assertThat(sourceLocked.await(20, TimeUnit.SECONDS)).isTrue();
+      Future<AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback> read =
+          executor.submit(
+              () -> {
+                readStarted.countDown();
+                return fixture.producer().readCommittedEvent(ISSUER_ID, 1L);
+              });
+      assertThat(readStarted.await(20, TimeUnit.SECONDS)).isTrue();
+      assertThatThrownBy(() -> read.get(300, TimeUnit.MILLISECONDS))
+          .isInstanceOf(TimeoutException.class);
+
+      releaseAdvance.countDown();
+      advance.get(45, TimeUnit.SECONDS);
+      AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback readback =
+          read.get(45, TimeUnit.SECONDS);
+      assertSameEvent(first, readback.requestedEvent());
+      assertThat(readback.currentSnapshot().issuerAuthGeneration()).isEqualTo(3L);
+      assertThat(readback.currentSnapshot().sourceVersion()).isEqualTo(3L);
+      assertThat(readback.currentSnapshot().outboxSequence()).isEqualTo(2L);
+    } finally {
+      releaseAdvance.countDown();
+      executor.shutdownNow();
+    }
   }
 
   @Test
@@ -241,6 +394,9 @@ class IssuerAuthorityProducerPostgresIntegrationTest {
     forceIssuerCounters(fixture, 3L, 3L);
 
     assertThatThrownBy(() -> fixture.producer().readCurrent(ISSUER_ID))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Latest issuer source event differs");
+    assertThatThrownBy(() -> fixture.producer().readCommittedEvent(ISSUER_ID, 1L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("Latest issuer source event differs");
   }

@@ -811,6 +811,8 @@ Because gameplay services do not validate end-user JWTs, they consume the worklo
 
 **Implementation status:** The typed `PlayerExecutionContext` shape below is target-only; current wire consumers remain on flat fields plus legacy `session_attestation` carriage. Convergence and consumer proof belong to [ADR 0024](./decisions/adr-0024-trusted-gameplay-workload-delegation.md) and the adopting service contracts, including the current [Game Logic API](./microservices/game-logic-service/api-contracts.md) and [Entity Management API](./microservices/entity-management-service/api-contracts.md); this note does not copy those schemas.
 
+The current legacy gameplay attestation carries the canonical non-nil Account UUID unchanged and compares it exactly; it must not parse that identity as a numeric runtime selector. Its retained runtime tenant key, session, character, instance and pointer dimensions remain their existing numeric identities, distinct from Account's canonical tenant UUID authority boundary. This current-path correction does not implement the typed workload handoff or authorize a numeric-to-UUID association by inference. Internal probes retain their separate non-player identity semantics.
+
 When one trusted gameplay workload calls another on behalf of a player, the request carries a typed protobuf `PlayerExecutionContext` with the required subset of:
 
 - `accountId`

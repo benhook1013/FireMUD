@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.service;
 
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
@@ -126,6 +127,30 @@ public final class AccountIssuerAuthorityEventProducer {
     return snapshot;
   }
 
+  /**
+   * Reads one exact retained immutable event together with the current source and checkpoint
+   * evidence that bounds it, all while holding the issuer source row lock.
+   *
+   * <p>The historical event is returned only as historical evidence. Callers must use {@link
+   * IssuerAuthorityEventReadback#currentSnapshot()} for current source decisions.
+   */
+  public IssuerAuthorityEventReadback readCommittedEvent(
+      String requestedIssuerId, long outboxSequence) {
+    requireExactIssuer(requestedIssuerId);
+    if (outboxSequence <= 0L) {
+      throw new IllegalArgumentException("Issuer outbox sequence must be positive");
+    }
+    requireNoAmbientTransaction();
+
+    IssuerAuthorityEventReadback readback =
+        ownerTransaction.execute(status -> readCommittedEventInTransaction(outboxSequence));
+    if (readback == null) {
+      throw new IllegalStateException(
+          "Issuer authority event readback transaction returned no state");
+    }
+    return readback;
+  }
+
   private IssuerGenerationAuthorityEvent advanceInOwnerTransaction(
       UUID requestId, long expectedGeneration, long expectedSourceVersion) {
     ScopeState current = readLockedIssuerState();
@@ -249,6 +274,41 @@ public final class AccountIssuerAuthorityEventProducer {
         outboxStreamKey,
         history.sequence(),
         history.event());
+  }
+
+  private IssuerAuthorityEventReadback readCommittedEventInTransaction(long outboxSequence) {
+    ScopeState current = readLockedIssuerState();
+    LatestEvidence currentHistory = requireCurrentHistoryMatches(current);
+    if (outboxSequence > currentHistory.sequence()) {
+      throw new IllegalStateException("Requested issuer event is ahead of the current checkpoint");
+    }
+    Event requested =
+        outboxRepository
+            .findEvent(outboxStreamKey, outboxSequence)
+            .orElseThrow(
+                () -> new IllegalStateException("Requested retained issuer event is missing"));
+    IssuerGenerationAuthorityEvent verified = verifyStoredEventWithoutRequest(requested);
+    requireHistoricalEventIsRetained(requested, current, currentHistory);
+    if (requested.outboxSequence() != outboxSequence) {
+      throw new IllegalStateException(
+          "Requested issuer event sequence differs from its lookup key");
+    }
+
+    IssuerAuthoritySnapshot currentSnapshot =
+        new IssuerAuthoritySnapshot(
+            exactIssuerId,
+            current.generation(),
+            current.sourceVersion(),
+            outboxStreamKey,
+            currentHistory.sequence(),
+            currentHistory.event());
+    if (outboxSequence == currentHistory.sequence()
+        && (currentHistory.event().isEmpty()
+            || !sameEvent(verified, currentHistory.event().orElseThrow()))) {
+      throw new IllegalStateException(
+          "Requested latest issuer event differs from current source checkpoint evidence");
+    }
+    return new IssuerAuthorityEventReadback(currentSnapshot, verified);
   }
 
   private ScopeState readLockedIssuerState() {
@@ -464,8 +524,7 @@ public final class AccountIssuerAuthorityEventProducer {
 
   private void requireExactIssuer(String requestedIssuerId) {
     if (!exactIssuerId.equals(requestedIssuerId)) {
-      throw new IllegalArgumentException(
-          "Issuer authority request must name the exact configured issuer");
+      throw new IssuerMismatchException();
     }
   }
 
@@ -505,6 +564,15 @@ public final class AccountIssuerAuthorityEventProducer {
         && first.sourceVersion().equals(second.sourceVersion())
         && first.eventDigest().equals(second.eventDigest())
         && MessageDigest.isEqual(first.canonicalJsonUtf8(), second.canonicalJsonUtf8());
+  }
+
+  /** A caller selected an issuer other than this producer's configured authority. */
+  public static final class IssuerMismatchException extends IllegalArgumentException {
+    private static final long serialVersionUID = 1L;
+
+    public IssuerMismatchException() {
+      super("Issuer authority request must name the exact configured issuer");
+    }
   }
 
   /** Current exact source evidence; the event is omitted when the proven checkpoint is zero. */
@@ -550,6 +618,58 @@ public final class AccountIssuerAuthorityEventProducer {
                   "Issuer authority snapshot event differs from its checkpoint");
             }
           });
+    }
+  }
+
+  /**
+   * Exact retained event evidence tied to the current issuer source/checkpoint snapshot.
+   *
+   * <p>This shape proves only owner-local source evidence; it does not establish source
+   * authentication, transport authenticity, consumer provenance, or issuer authorization.
+   */
+  public record IssuerAuthorityEventReadback(
+      IssuerAuthoritySnapshot currentSnapshot, IssuerGenerationAuthorityEvent requestedEvent) {
+    public IssuerAuthorityEventReadback {
+      currentSnapshot =
+          Objects.requireNonNull(currentSnapshot, "current issuer authority snapshot is required");
+      requestedEvent =
+          Objects.requireNonNull(requestedEvent, "requested issuer authority event is required");
+      if (currentSnapshot.outboxSequence() <= 0L
+          || !currentSnapshot.issuerId().equals(requestedEvent.issuerId())
+          || !("issuer/" + currentSnapshot.issuerId()).equals(requestedEvent.sourceScope())
+          || !currentSnapshot.outboxStreamKey().equals(requestedEvent.outboxStreamKey())) {
+        throw new IllegalArgumentException(
+            "Requested issuer event does not bind a positive current issuer snapshot");
+      }
+
+      BigInteger requestedSequence = parsePositiveCounter(requestedEvent.outboxSequence());
+      BigInteger currentSequence = BigInteger.valueOf(currentSnapshot.outboxSequence());
+      BigInteger requestedGeneration = parsePositiveCounter(requestedEvent.issuerAuthGeneration());
+      BigInteger requestedSourceVersion = parsePositiveCounter(requestedEvent.sourceVersion());
+      if (requestedSequence.compareTo(currentSequence) > 0
+          || requestedGeneration.compareTo(
+                  BigInteger.valueOf(currentSnapshot.issuerAuthGeneration()))
+              > 0
+          || requestedSourceVersion.compareTo(BigInteger.valueOf(currentSnapshot.sourceVersion()))
+              > 0) {
+        throw new IllegalArgumentException(
+            "Requested historical issuer event is ahead of the current snapshot");
+      }
+
+      if (requestedSequence.equals(currentSequence)
+          && (currentSnapshot.latestEvent().isEmpty()
+              || !sameEvent(requestedEvent, currentSnapshot.latestEvent().orElseThrow()))) {
+        throw new IllegalArgumentException(
+            "Requested latest issuer event differs from the current snapshot checkpoint");
+      }
+    }
+
+    private static BigInteger parsePositiveCounter(String value) {
+      if (value == null || !value.matches("[1-9][0-9]*")) {
+        throw new IllegalArgumentException(
+            "Issuer event counters must be canonical positive integers");
+      }
+      return new BigInteger(value);
     }
   }
 
