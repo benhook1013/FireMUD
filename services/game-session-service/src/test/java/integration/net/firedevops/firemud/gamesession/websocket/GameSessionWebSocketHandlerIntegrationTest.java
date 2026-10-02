@@ -61,6 +61,7 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.RetainedRuntimeTenantUuidResolver;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.test.GameInstanceTestFixtures;
+import net.firedevops.firemud.gamesession.test.stubs.GameDesignStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketDriver;
 import net.firedevops.firemud.gamesession.testsupport.GameplayWebSocketScenarios;
@@ -75,6 +76,7 @@ import net.firedevops.firemud.worldmanagement.v1.TerminateWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleSnapshot;
 import net.firedevops.firemud.worldmanagement.v1.WorldInstanceLifecycleStatus;
 import org.jooq.DSLContext;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -154,10 +156,26 @@ class GameSessionWebSocketHandlerIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+  private static final GameDesignStubServer gameDesignStub = startGameDesignStub();
+
   @DynamicPropertySource
   static void registerProperties(DynamicPropertyRegistry registry) {
     PostgresBackedServiceTestSupport.registerPostgresService(
         registry, postgres, "game_session_service");
+    registry.add("firemud.services.gameDesignService", gameDesignStub::endpoint);
+  }
+
+  @AfterAll
+  static void closeGameDesignStub() {
+    gameDesignStub.close();
+  }
+
+  private static GameDesignStubServer startGameDesignStub() {
+    try {
+      return new GameDesignStubServer(0);
+    } catch (java.io.IOException exception) {
+      throw new ExceptionInInitializerError(exception);
+    }
   }
 
   @LocalServerPort private int port;
@@ -349,7 +367,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .build())
         .when(entityManagementClient)
         .listCharactersByAccount(
-            eq("22"), eq("123"), eq("1"), eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
+            eq("22"),
+            eq("f2ed193b-12c1-4c96-bcad-c162229af440"),
+            eq("1"),
+            eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED));
     when(commandService.enqueue(org.mockito.ArgumentMatchers.anyString(), eq("LOGIN"), eq(false)))
         .thenReturn(CommandEnqueueResult.success());
     when(commandService.enqueue(
