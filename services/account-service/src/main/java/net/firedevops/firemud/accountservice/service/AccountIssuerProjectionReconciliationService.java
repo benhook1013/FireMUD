@@ -143,6 +143,37 @@ public final class AccountIssuerProjectionReconciliationService {
     return committed;
   }
 
+  /**
+   * Reads and validates the exact original capture while retaining the issuer fence for an
+   * acknowledgment owner transaction.
+   *
+   * <p>This is an internal bridge for the installation acknowledgment. The caller must own its
+   * explicit Account transaction; this method does not open or join one.
+   */
+  CaptureReadback readCapturedForAcknowledgmentInOwnerTransaction(
+      String requestedIssuerId, String authenticatedWorkloadIdentity, UUID requestId) {
+    requireExactIssuer(requestedIssuerId);
+    requireAuthenticatedWorkloadIdentity(authenticatedWorkloadIdentity);
+    requireRequestId(requestId);
+    if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Issuer acknowledgment capture read requires an active Account owner transaction");
+    }
+
+    // Keep the same issuer fence used by capture held through capture and retained-history reads.
+    IssuerAuthoritySnapshot current = source.readCurrentForProjectionReconciliation(exactIssuerId);
+    Receipt receipt =
+        repository
+            .findByIssuerAndRequestId(exactIssuerId, requestId)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Issuer projection acknowledgment references a missing capture"));
+    requireOriginalBindings(receipt, authenticatedWorkloadIdentity, requestId);
+    requireRetainedEvidence(receipt, current);
+    return new CaptureReadback(receipt, current);
+  }
+
   private void requireOriginalBindings(Receipt receipt, String callerIdentity, UUID requestId) {
     String projectionKey = PROJECTION_KEY_PREFIX + exactIssuerId;
     String expectedDigest =
@@ -228,8 +259,7 @@ public final class AccountIssuerProjectionReconciliationService {
     return value;
   }
 
-  private static boolean sameSnapshot(
-      IssuerAuthoritySnapshot first, IssuerAuthoritySnapshot second) {
+  static boolean sameSnapshot(IssuerAuthoritySnapshot first, IssuerAuthoritySnapshot second) {
     if (first == null || second == null) {
       return false;
     }
@@ -245,7 +275,7 @@ public final class AccountIssuerProjectionReconciliationService {
         || sameEvent(first.latestEvent().orElseThrow(), second.latestEvent().orElseThrow());
   }
 
-  private static boolean sameEvent(
+  static boolean sameEvent(
       IssuerGenerationAuthorityEvent first, IssuerGenerationAuthorityEvent second) {
     return first != null
         && second != null
@@ -283,5 +313,12 @@ public final class AccountIssuerProjectionReconciliationService {
       throw new IllegalStateException("Issuer reconciliation transaction returned no receipt");
     }
     return receipt;
+  }
+
+  record CaptureReadback(Receipt receipt, IssuerAuthoritySnapshot currentSnapshot) {
+    CaptureReadback {
+      Objects.requireNonNull(receipt, "issuer reconciliation receipt is required");
+      Objects.requireNonNull(currentSnapshot, "current issuer snapshot is required");
+    }
   }
 }

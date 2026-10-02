@@ -723,7 +723,20 @@ class AccountIssuerAuthorityGrpcPostgresMtlsCrossServiceTest {
           .satisfies(failure -> assertThat(exceptionMessageChain(failure)).contains("WRONGPASS"));
       DatabaseState capturedSource = new DatabaseState(1L, 1L, 1L, 1L);
       assertDatabaseState(account, capturedSource);
-      assertThat(producer.readCurrent(ISSUER_ID)).isEqualTo(sourceBeforeRefusal);
+      IssuerAuthoritySnapshot sourceAfterRefusal = producer.readCurrent(ISSUER_ID);
+      assertThat(sourceAfterRefusal.issuerId()).isEqualTo(sourceBeforeRefusal.issuerId());
+      assertThat(sourceAfterRefusal.issuerAuthGeneration())
+          .isEqualTo(sourceBeforeRefusal.issuerAuthGeneration());
+      assertThat(sourceAfterRefusal.sourceVersion()).isEqualTo(sourceBeforeRefusal.sourceVersion());
+      assertThat(sourceAfterRefusal.outboxStreamKey())
+          .isEqualTo(sourceBeforeRefusal.outboxStreamKey());
+      assertThat(sourceAfterRefusal.outboxSequence())
+          .isEqualTo(sourceBeforeRefusal.outboxSequence());
+      assertThat(sourceBeforeRefusal.latestEvent()).isPresent();
+      assertThat(sourceAfterRefusal.latestEvent()).isPresent();
+      assertSameEvent(
+          sourceBeforeRefusal.latestEvent().orElseThrow(),
+          sourceAfterRefusal.latestEvent().orElseThrow());
 
       ProjectionCaptureReceipt retained =
           fixture.client().captureProjection(RECONCILE_REDIS_REFUSAL_REQUEST_ID);

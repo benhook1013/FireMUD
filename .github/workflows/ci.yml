@@ -1198,6 +1198,32 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#publicRegistrationCreatesGlobalIdentityAndDurablePlatformAuditOnly()' \
             account-service
 
+      - name: Run Account issuer installation acknowledgment PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.acknowledgesProvedZeroBaselineWithExactBytesAndNoSourceMutation' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.acknowledgesCompletePositiveCheckpointAndRetainsSourceHistory' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.concurrentExactAcknowledgmentsReturnOneDurableOriginalResult' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.exactRetryAfterLaterSourceAdvanceReturnsOriginalAcknowledgment' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.committedAcknowledgmentWithMissingPostCommitReadbackRecoversOnExactRetry' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.staleFirstAcknowledgmentAndChangedBindingsOrProjectionEvidenceDenyWithoutInsertion' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.ambientTransactionsAndDirectSqlGuardsRejectAcknowledgmentMutation' \
+            --tests 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest.storedAcknowledgmentRejectsDirectUpdateAndDelete' \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#acknowledgesProvedZeroBaselineWithExactBytesAndNoSourceMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#acknowledgesCompletePositiveCheckpointAndRetainsSourceHistory()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#concurrentExactAcknowledgmentsReturnOneDurableOriginalResult()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#exactRetryAfterLaterSourceAdvanceReturnsOriginalAcknowledgment()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#committedAcknowledgmentWithMissingPostCommitReadbackRecoversOnExactRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#staleFirstAcknowledgmentAndChangedBindingsOrProjectionEvidenceDenyWithoutInsertion()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#ambientTransactionsAndDirectSqlGuardsRejectAcknowledgmentMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerProjectionAcknowledgmentPostgresIntegrationTest#storedAcknowledgmentRejectsDirectUpdateAndDelete()' \
+            account-service
+
       - name: Run Game Session command Account UUID storage PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}
         run: |
@@ -1407,6 +1433,15 @@ jobs:
         with:
           name: account-issuer-reconciliation-postgresql-proof-${{ github.sha }}
           path: services/account-service/build/test-results/integrationTest/TEST-*IssuerProjectionReconciliationPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload Account issuer installation acknowledgment PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-issuer-installation-acknowledgment-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*IssuerProjectionAcknowledgmentPostgresIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 

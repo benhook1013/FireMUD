@@ -8,8 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.authority.IssuerAuthorityProjectionV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
 import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
@@ -20,23 +20,11 @@ import net.firedevops.firemud.gamesession.client.AccountIssuerAuthorityClient.So
 /** Pure decision layer for the derived Game Session issuer-authority projection. */
 public final class IssuerAuthorityProjectionTransitions {
   public static final String KEY_PREFIX = "session:game:auth:issuer-generation:v1:";
-  public static final String SCHEMA_VERSION = "game-session-auth-issuer-projection/v1";
+  public static final String SCHEMA_VERSION = IssuerAuthorityProjectionV1Codec.SCHEMA_VERSION;
 
   private static final String EVENT_ID_PREFIX = "account-issuer-authority-event-v1:";
   private static final BigInteger ZERO = BigInteger.ZERO;
   private static final BigInteger ONE = BigInteger.ONE;
-
-  private static final Set<String> BASE_FIELDS =
-      Set.of(
-          "schemaVersion",
-          "issuerId",
-          "lastAppliedIssuerGeneration",
-          "lastAppliedSourceOutboxSequence",
-          "outboxStreamKey",
-          "appliedAt",
-          "appliedSourceEvidence");
-  private static final Set<String> POSITIVE_FIELDS =
-      Set.of("lastAppliedSourceEventId", "lastAppliedSourceEventDigest");
 
   private IssuerAuthorityProjectionTransitions() {}
 
@@ -491,98 +479,15 @@ public final class IssuerAuthorityProjectionTransitions {
   }
 
   private static ExistingProjection parseExistingProjection(Map<String, ?> supplied) {
-    if (supplied == null) {
-      throw new IllegalArgumentException("projection is absent");
-    }
-    String schema = requiredString(supplied, "schemaVersion");
-    String issuer = requiredString(supplied, "issuerId");
-    String generationText = requiredString(supplied, "lastAppliedIssuerGeneration");
-    String sequenceText = requiredString(supplied, "lastAppliedSourceOutboxSequence");
-    String stream = requiredString(supplied, "outboxStreamKey");
-    String appliedAt = requiredString(supplied, "appliedAt");
-    if (!SCHEMA_VERSION.equals(schema) || issuer.isBlank() || appliedAt.isBlank()) {
-      throw new IllegalArgumentException("projection identity or schema is malformed");
-    }
-
-    BigInteger generation = positiveDecimal(generationText, "projection generation");
-    BigInteger sequence = nonnegativeDecimal(sequenceText, "projection sequence");
-    String expectedStream =
-        IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + issuer;
-    if (!expectedStream.equals(stream)) {
-      throw new IllegalArgumentException("projection stream identity is malformed");
-    }
-
-    Set<String> expectedFields = new java.util.HashSet<>(BASE_FIELDS);
-    IssuerGenerationAuthorityEvent latest = null;
-    BigInteger sourceVersion = ONE;
-    Object evidenceValue = supplied.get("appliedSourceEvidence");
-    if (!(evidenceValue instanceof Map<?, ?> evidence)) {
-      throw new IllegalArgumentException("projection source evidence is malformed");
-    }
-    if (sequence.equals(ZERO)) {
-      if (!generation.equals(ONE) || !evidence.isEmpty()) {
-        throw new IllegalArgumentException("zero checkpoint projection is contradictory");
-      }
-    } else {
-      expectedFields.addAll(POSITIVE_FIELDS);
-      if (evidence.size() != 1) {
-        throw new IllegalArgumentException("projection must retain its current source checkpoint");
-      }
-      Object canonicalValue = evidence.get(sequenceText);
-      if (!(canonicalValue instanceof String canonicalEvent)) {
-        throw new IllegalArgumentException("projection current source evidence is absent");
-      }
-      latest = verifiedProjectionEvent(canonicalEvent);
-      if (!sameSource(latest, issuer, stream)
-          || !sequence.equals(positiveDecimal(latest.outboxSequence(), "projection event sequence"))
-          || !generation.equals(
-              positiveDecimal(latest.issuerAuthGeneration(), "projection event generation"))
-          || !requiredString(supplied, "lastAppliedSourceEventId").equals(latest.eventId())
-          || !requiredString(supplied, "lastAppliedSourceEventDigest")
-              .equals(latest.eventDigest())) {
-        throw new IllegalArgumentException("projection event does not match its checkpoint");
-      }
-      sourceVersion = positiveDecimal(latest.sourceVersion(), "projection event source version");
-    }
-    if (!supplied.keySet().equals(expectedFields)) {
-      throw new IllegalArgumentException("projection fields do not match the declared schema");
-    }
-    validateEvidenceMapKeys(evidence, sequence, sequenceText);
-    return new ExistingProjection(issuer, generation, sourceVersion, sequence, stream, latest);
-  }
-
-  private static IssuerGenerationAuthorityEvent verifiedProjectionEvent(String canonicalEvent) {
-    try {
-      IssuerGenerationAuthorityEvent event =
-          IssuerGenerationAuthorityEventV1Codec.verify(canonicalEvent);
-      if (!event.canonicalJson().equals(canonicalEvent)) {
-        throw new IllegalArgumentException("projection event is not canonical");
-      }
-      return verifyEvent(event);
-    } catch (EvidenceRejected rejected) {
-      throw new IllegalArgumentException("projection event evidence is malformed", rejected);
-    }
-  }
-
-  private static void validateEvidenceMapKeys(
-      Map<?, ?> evidence, BigInteger sequence, String sequenceText) {
-    for (Map.Entry<?, ?> entry : evidence.entrySet()) {
-      if (!(entry.getKey() instanceof String key) || !(entry.getValue() instanceof String)) {
-        throw new IllegalArgumentException("projection applied-source evidence is malformed");
-      }
-      positiveDecimal(key, "projection evidence sequence");
-      if (!sequence.equals(ZERO) && !sequenceText.equals(key)) {
-        throw new IllegalArgumentException("projection evidence is not the current checkpoint");
-      }
-    }
-  }
-
-  private static String requiredString(Map<String, ?> fields, String name) {
-    Object value = fields.get(name);
-    if (!(value instanceof String text)) {
-      throw new IllegalArgumentException("projection field " + name + " must be a string");
-    }
-    return text;
+    IssuerAuthorityProjectionV1Codec.Projection projection =
+        IssuerAuthorityProjectionV1Codec.verify(supplied);
+    return new ExistingProjection(
+        projection.issuerId(),
+        projection.generation(),
+        projection.sourceVersion(),
+        projection.sequence(),
+        projection.streamKey(),
+        projection.latestEvent().orElse(null));
   }
 
   private static BigInteger positiveDecimal(String value, String label) {
