@@ -180,13 +180,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
                     .contains("ERROR JOIN_REQUIRED")
                     .contains(
-                        "Membership is required before PLAY; joining this world is not available yet."))) {
+                        "Membership is required before PLAY. "
+                            + "Run REALMS <world> first, then JOIN <world>."))) {
       assertThat(scenario.responses())
           .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"))
           .anyMatch(
               response ->
                   response.contains(
-                      "Membership is required before PLAY; joining this world is not available yet."));
+                      "Membership is required before PLAY. "
+                          + "Run REALMS <world> first, then JOIN <world>."));
     }
   }
 

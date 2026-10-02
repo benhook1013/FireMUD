@@ -286,54 +286,57 @@ done
 
 # Mount only runtime material. Protected callers receive their own leaf, not
 # the other protected services' private keys. No projection includes ca.key.
-[[ ! -L "$RUNTIME_DIR" ]] || {
-  echo "refusing symlink as local Compose runtime projection: $RUNTIME_DIR" >&2
-  exit 1
-}
-mkdir -p "$RUNTIME_DIR"
-chmod 755 "$RUNTIME_DIR"
 runtime_files=(ca.crt client.crt client.key server.crt server.key dev-ca.pem dev-cert.pem dev-key.pem)
 runtime_profiles=(default "${workloads[@]}")
-while IFS= read -r -d '' existing_path; do
-  [[ ! -L "$existing_path" ]] || {
-    echo "refusing symlink in local Compose runtime projection: $existing_path" >&2
+if [[ -e "$RUNTIME_DIR" || -L "$RUNTIME_DIR" ]]; then
+  [[ ! -L "$RUNTIME_DIR" && -d "$RUNTIME_DIR" ]] || {
+    echo "refusing symlink or non-directory local Compose runtime projection: $RUNTIME_DIR" >&2
     exit 1
   }
-  profile_name="${existing_path##*/}"
-  approved=false
-  for profile in "${runtime_profiles[@]}"; do
-    if [[ "$profile_name" == "$profile" && -d "$existing_path" ]]; then
-      approved=true
-      break
-    fi
-  done
-  [[ "$approved" == "true" ]] || {
-    echo "refusing unapproved entry in local Compose runtime projection: $profile_name" >&2
-    exit 1
-  }
-done < <(find "$RUNTIME_DIR" -mindepth 1 -maxdepth 1 -print0)
+  while IFS= read -r -d '' existing_path; do
+    [[ ! -L "$existing_path" ]] || {
+      echo "refusing symlink in local Compose runtime projection: $existing_path" >&2
+      exit 1
+    }
+    profile_name="${existing_path##*/}"
+    approved=false
+    for profile in "${runtime_profiles[@]}"; do
+      if [[ "$profile_name" == "$profile" && -d "$existing_path" ]]; then
+        approved=true
+        break
+      fi
+    done
+    [[ "$approved" == "true" ]] || {
+      echo "refusing unapproved entry in local Compose runtime projection: $profile_name" >&2
+      exit 1
+    }
+  done < <(find "$RUNTIME_DIR" -mindepth 1 -maxdepth 1 -print0)
+fi
 
-for workload in "${workloads[@]}"; do
-  profile_dir="$RUNTIME_DIR/$workload"
+# Preflight every existing destination across all profiles before any
+# projection directory chmod or file copy can mutate an aliased inode.
+for profile in "${runtime_profiles[@]}"; do
+  profile_dir="$RUNTIME_DIR/$profile"
   [[ ! -L "$profile_dir" ]] || {
     echo "refusing symlink in local Compose runtime projection: $profile_dir" >&2
     exit 1
   }
-  mkdir -p "$profile_dir/workloads"
-done
-
-for profile in "${runtime_profiles[@]}"; do
-  profile_dir="$RUNTIME_DIR/$profile"
-  [[ ! -L "$profile_dir" && ! -L "$profile_dir/workloads" ]] || {
-    echo "refusing symlink in local Compose runtime projection: $profile_dir" >&2
+  if [[ -e "$profile_dir" && ! -d "$profile_dir" ]]; then
+    echo "refusing unapproved entry in local Compose runtime projection: $profile_dir" >&2
     exit 1
-  }
-  mkdir -p "$profile_dir"
-  chmod 755 "$profile_dir"
+  fi
+  [[ -d "$profile_dir" ]] || continue
+
   expected_profile_files=(ca.crt client.crt client.key server.crt server.key dev-ca.pem dev-cert.pem dev-key.pem)
   if [[ "$profile" != "default" ]]; then
-    mkdir -p "$profile_dir/workloads"
-    chmod 755 "$profile_dir/workloads"
+    if [[ -L "$profile_dir/workloads" ]]; then
+      echo "refusing symlink in local Compose runtime projection: $profile_dir/workloads" >&2
+      exit 1
+    fi
+    if [[ -e "$profile_dir/workloads" && ! -d "$profile_dir/workloads" ]]; then
+      echo "refusing unapproved file in local Compose runtime projection: $profile/workloads" >&2
+      exit 1
+    fi
     expected_profile_files+=(workloads "workloads/$profile.crt" "workloads/$profile.key")
   fi
 
@@ -358,8 +361,31 @@ for profile in "${runtime_profiles[@]}"; do
       echo "refusing unapproved file in local Compose runtime projection: $profile/$relative_path" >&2
       exit 1
     }
+    if [[ -f "$existing_path" ]]; then
+      link_count="$(stat -c '%h' -- "$existing_path")"
+      if ((link_count > 1)); then
+        echo "refusing hard-linked file in local Compose runtime projection: $existing_path" >&2
+        exit 1
+      fi
+    fi
   done < <(find "$profile_dir" -mindepth 1 -print0)
+done
 
+# The complete existing projection passed preflight, so directory setup and
+# copy/chmod operations can now proceed without changing unrelated hard links.
+mkdir -p "$RUNTIME_DIR"
+chmod 755 "$RUNTIME_DIR"
+for workload in "${workloads[@]}"; do
+  mkdir -p "$RUNTIME_DIR/$workload/workloads"
+done
+
+for profile in "${runtime_profiles[@]}"; do
+  profile_dir="$RUNTIME_DIR/$profile"
+  mkdir -p "$profile_dir"
+  chmod 755 "$profile_dir"
+  if [[ "$profile" != "default" ]]; then
+    chmod 755 "$profile_dir/workloads"
+  fi
   for file in "${runtime_files[@]}"; do
     [[ -f "$CERT_DIR/$file" ]] || {
       echo "missing runtime certificate material: $CERT_DIR/$file" >&2
@@ -370,7 +396,6 @@ for profile in "${runtime_profiles[@]}"; do
   if [[ "$profile" != "default" ]]; then
     cp "$WORKLOAD_DIR/$profile.crt" "$profile_dir/workloads/$profile.crt"
     cp "$WORKLOAD_DIR/$profile.key" "$profile_dir/workloads/$profile.key"
-    chmod 755 "$profile_dir/workloads"
     chmod 644 "$profile_dir/workloads/$profile.crt" "$profile_dir/workloads/$profile.key"
   fi
   chmod 644 "$profile_dir"/*.crt "$profile_dir"/*.key "$profile_dir"/*.pem

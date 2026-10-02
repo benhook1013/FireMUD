@@ -89,7 +89,6 @@ public final class GameplayWorldCatalog {
               ordinal,
               world.slug(),
               world.displayName(),
-              defaultRealm.gameInstanceId(),
               defaultRealm.requiresCharacterSelection()));
       targets.add(
           new WorldOrdinalTarget(
@@ -783,7 +782,6 @@ public final class GameplayWorldCatalog {
               entries.size() + 1,
               world.slug(),
               world.displayName(),
-              defaultRealm.gameInstanceId(),
               defaultRealm.requiresCharacterSelection()));
     }
     return List.copyOf(entries);

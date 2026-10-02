@@ -899,7 +899,9 @@ class TextPlayerOutputRendererTest {
             renderer.render(
                 PlayerOutput.error(
                     "JOIN_REQUIRED", "fallback", "error.play.join-required", java.util.Map.of())))
-        .isEqualTo("ERROR JOIN_REQUIRED Membership is required before PLAY. Use JOIN <world>.");
+        .isEqualTo(
+            "ERROR JOIN_REQUIRED Membership is required before PLAY. "
+                + "Run REALMS <world> first, then JOIN <world>.");
     assertThat(
             renderer.render(
                 PlayerOutput.error(
@@ -1068,9 +1070,9 @@ class TextPlayerOutputRendererTest {
                 PlayerOutput.view(
                     new WorldsViewOutput(
                         List.of(
-                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false),
+                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", false),
                             new WorldsViewOutput.WorldEntry(
-                                2, "sandbox", "Builder Sandbox", 2L, true))))));
+                                2, "sandbox", "Builder Sandbox", true))))));
 
     assertThat(rendered)
         .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");

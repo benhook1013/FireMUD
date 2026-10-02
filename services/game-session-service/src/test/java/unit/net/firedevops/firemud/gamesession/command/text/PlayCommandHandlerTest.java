@@ -2975,6 +2975,13 @@ class PlayCommandHandlerTest {
         .isEqualTo(GameplayStageCommandConstants.JOIN_REQUIRED_MESSAGE);
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
         .isEqualTo("error.play.join-required");
+    TextPlayerOutputRenderer renderer = new TextPlayerOutputRenderer(new PresentationProperties());
+    assertThat(renderer.render(result.outputs().get(0), "fr"))
+        .isEqualTo(
+            "ERROR JOIN_REQUIRED Une adhésion est requise avant PLAY. Consultez d’abord REALMS <monde>, puis utilisez JOIN <monde>.");
+    assertThat(renderer.render(result.outputs().get(0), "de"))
+        .isEqualTo(
+            "ERROR JOIN_REQUIRED Membership is required before PLAY. Run REALMS <world> first, then JOIN <world>.");
     assertThat(
             meterRegistry
                 .counter("gamesession.session.resume_denied", "reason", "join_required")

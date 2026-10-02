@@ -7,6 +7,7 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
@@ -60,8 +61,7 @@ public class AccountAuditOutboxRepository {
   }
 
   /** Locks one exact Account JOIN transition envelope for transaction-local reconciliation. */
-  public Optional<AccountAuditEnvelope> findJoinEnvelopeForUpdate(
-      UUID auditEventId, long tenantId) {
+  public Optional<JoinAuditEvidence> findJoinEnvelopeForUpdate(UUID auditEventId, long tenantId) {
     if (auditEventId == null || tenantId <= 0) {
       throw new IllegalArgumentException("JOIN audit identity and tenant are required");
     }
@@ -75,15 +75,30 @@ public class AccountAuditOutboxRepository {
                 .and(ACCOUNT_AUDIT_OUTBOX.PRODUCER_SERVICE.eq("account-service"))
                 .and(ACCOUNT_AUDIT_OUTBOX.EVENT_TYPE.eq("ACCOUNT_JOINED_PUBLIC_PRODUCTION")))
         .forUpdate()
-        .fetchOptional(this::toEnvelope);
+        .fetchOptional(
+            row ->
+                new JoinAuditEvidence(
+                    toEnvelope(row),
+                    row.getDeliveryStatus(),
+                    row.getReceiverAuditProjectionVersion(),
+                    row.getReceiverReceiptId(),
+                    row.getReceiverLogEventId()));
   }
 
   public void markDelivered(
       UUID auditEventId, String receiptId, String logEventId, boolean minimized) {
+    if (auditEventId == null
+        || receiptId == null
+        || receiptId.isBlank()
+        || logEventId == null
+        || logEventId.isBlank()) {
+      throw new IllegalArgumentException("Verified audit delivery requires nonblank identity");
+    }
     var update =
         dsl.update(ACCOUNT_AUDIT_OUTBOX)
             .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_RECEIPT_ID, receiptId)
             .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_LOG_EVENT_ID, logEventId)
+            .set(ACCOUNT_AUDIT_OUTBOX.RECEIVER_AUDIT_PROJECTION_VERSION, 1)
             .set(ACCOUNT_AUDIT_OUTBOX.DELIVERY_STATUS, minimized ? "MINIMIZED" : "COMMITTED")
             .set(ACCOUNT_AUDIT_OUTBOX.LAST_ATTEMPT_AT, toLocalDateTime(Instant.now()));
     if (minimized) {
@@ -121,5 +136,16 @@ public class AccountAuditOutboxRepository {
         row.getPayloadDigestVersion(),
         row.getPayloadDigest(),
         row.getPayload());
+  }
+
+  public record JoinAuditEvidence(
+      AccountAuditEnvelope envelope,
+      String deliveryStatus,
+      Integer auditProjectionVersion,
+      String receiptId,
+      String projectionId) {
+    public JoinAuditEvidence {
+      Objects.requireNonNull(envelope, "envelope");
+    }
   }
 }

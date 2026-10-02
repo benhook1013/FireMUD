@@ -169,6 +169,7 @@ class LoggingAdminGrpcServiceAuthTest {
 
     assertNotNull(ref.get());
     assertEquals("77", ref.get().getLogEventId());
+    assertEquals(1, ref.get().getAuditProjectionVersion());
     assertEquals(
         net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM,
         ref.get().getScope());
@@ -272,6 +273,10 @@ class LoggingAdminGrpcServiceAuthTest {
         "account-service",
         () -> service.readLogEventReceipt(validReadRequest(), responseObserver(response, error)));
 
+    assertNotNull(response.get());
+    assertEquals("receipt-1", response.get().getReceiptId());
+    assertEquals("77", response.get().getLogEventId());
+    assertEquals(1, response.get().getAuditProjectionVersion());
     assertEquals(
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
             .ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE,
