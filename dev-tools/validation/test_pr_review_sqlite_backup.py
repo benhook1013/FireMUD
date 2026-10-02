@@ -21,7 +21,7 @@ from pr_review.sqlite_backup import (
     restore_remote_backup,
     restore_snapshot,
 )
-from pr_review.sqlite_review_records import FindingObservation, SqliteReviewRecords
+from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 
 
@@ -87,6 +87,19 @@ class SqliteBackupTest(unittest.TestCase):
             proof_note="Verified fix proof for backup readback",
             resolved_at="2026-09-29T01:02:00Z",
         )
+        records.correct_source_resolution(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            source_pr=123,
+            resolution_id="backup-fixture-resolution",
+            expected_fix_sha="d" * 40,
+            fix_sha="e" * 40,
+            correction_id="backup-fixture-resolution-correction",
+            actor="fixture operator",
+            reason="Correct a synthetic source SHA transcription",
+            proof_note="The corrected synthetic commit identity is retained in the fixture",
+            corrected_at="2026-09-29T01:03:00Z",
+        )
         records.start_attempt(
             attempt_id="run.backupfixture", source_pr=123, channel="cli",
             candidate_sha="a" * 40, started_at="2026-09-29T01:00:00Z",
@@ -122,6 +135,8 @@ class SqliteBackupTest(unittest.TestCase):
                          ["backup-fixture-run", "backup-provider-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
         self.assertEqual(history["source_resolutions"][0]["fix_sha"], "d" * 40)
+        self.assertEqual(history["source_resolutions"][0]["effective_fix_sha"], "e" * 40)
+        self.assertEqual(len(history["source_resolution_corrections"]), 1)
         self.assertEqual([attempt["state"] for attempt in history["attempts"]], ["completed"])
         self.assertEqual(history["provider_origins"][0]["checkpoint_id"], 123456)
         self.assertEqual(history["imported_artifacts"][0]["kind"], "cli_events")
@@ -464,7 +479,38 @@ class SqliteBackupTest(unittest.TestCase):
             self.assertEqual(connection.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
         destination = self.root / "orphan-resolution-restore.sqlite3"
 
-        with self.assertRaisesRegex(BackupError, "indexed review-history readback"):
+        with self.assertRaisesRegex(BackupError, "broken SQLite foreign-key references"):
+            restore_snapshot(malformed, destination)
+        self.assertFalse(destination.exists())
+
+    def test_broken_source_resolution_correction_chain_fails_proof_history_and_restore(self) -> None:
+        malformed = self.root / "broken-source-resolution-correction.sqlite3"
+        with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:
+            connection.backup(copied)
+        with sqlite3.connect(malformed) as connection:
+            connection.execute(
+                "UPDATE source_finding_resolution_corrections SET expected_fix_sha = ?",
+                ("f" * 40,),
+            )
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+        records = SqliteReviewRecords(malformed)
+        self.assertEqual(
+            records.source_resolution_status(
+                "backup-fixture-run",
+                source_pr=123,
+                source_channel="manual",
+                source_head="c" * 40,
+                accepted_count=1,
+            ),
+            "pending",
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "correction history is malformed"):
+            records.history(123)
+
+        destination = self.root / "broken-correction-restore.sqlite3"
+        with self.assertRaisesRegex(BackupError, "failed FireMUD SQLite schema or logical readback validation"):
             restore_snapshot(malformed, destination)
         self.assertFalse(destination.exists())
 

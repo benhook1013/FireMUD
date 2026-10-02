@@ -85,6 +85,10 @@ _EXPECTED_COLUMNS = {
         "resolution_id", "run_id", "finding_id", "source_pr", "source_channel", "outcome", "fix_sha",
         "actor", "proof_note", "resolved_at",
     ),
+    "source_finding_resolution_corrections": (
+        "sequence", "correction_id", "resolution_id", "expected_fix_sha", "corrected_fix_sha",
+        "actor", "reason", "proof_note", "corrected_at",
+    ),
     "review_attempts": (
         "attempt_id", "source_pr", "channel", "candidate_sha", "state", "started_at", "finished_at",
         "duration_seconds", "exit_status", "trigger_id", "provider_review_id", "checkpoint_id",
@@ -112,6 +116,7 @@ _EXPECTED_INDEXES = {
     "review_runs_source_pr_idx", "routes_target_status_idx", "review_attempts_pr_idx",
     "source_corrections_finding_idx", "provider_origins_source_idx", "historical_gaps_source_idx",
     "source_finding_resolutions_pr_idx",
+    "source_finding_resolution_corrections_resolution_idx",
 }
 _TEXT_COLUMNS = {
     "controller_metadata": (),
@@ -127,6 +132,10 @@ _TEXT_COLUMNS = {
     "source_finding_resolutions": (
         "resolution_id", "run_id", "finding_id", "source_channel", "outcome", "fix_sha", "actor",
         "proof_note", "resolved_at",
+    ),
+    "source_finding_resolution_corrections": (
+        "correction_id", "resolution_id", "expected_fix_sha", "corrected_fix_sha", "actor", "reason",
+        "proof_note", "corrected_at",
     ),
     "review_attempts": ("attempt_id", "channel", "candidate_sha", "state", "started_at", "finished_at", "trigger_id", "provider_review_id", "checkpoint_id", "run_id", "diagnostic", "metadata_json"),
     "review_artifacts": ("attempt_id", "kind", "content", "source_sha256"),
@@ -460,6 +469,8 @@ def _validate_database(path: Path, label: str) -> None:
         with closing(sqlite3.connect(uri, uri=True, timeout=10)) as connection:
             connection.execute("PRAGMA query_only = ON")
             _require_integrity(connection, label)
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise BackupError(f"{label} contains broken SQLite foreign-key references")
             _require_allowlisted_schema(connection)
             _screen_persisted_text(connection)
 
@@ -479,6 +490,8 @@ def _validate_database(path: Path, label: str) -> None:
                     "UNION SELECT source_pr FROM routes UNION SELECT target_pr FROM routes WHERE target_pr IS NOT NULL "
                     "UNION SELECT resolution_pr FROM resolutions "
                     "UNION SELECT source_pr FROM source_finding_resolutions "
+                    "UNION SELECT r.source_pr FROM source_finding_resolution_corrections c "
+                    "JOIN source_finding_resolutions r USING (resolution_id) "
                     "UNION SELECT source_pr FROM historical_provider_gaps"
                 )
             }
@@ -518,6 +531,10 @@ def _validate_database(path: Path, label: str) -> None:
                     connection.execute(
                         "SELECT COUNT(*) FROM source_finding_resolutions WHERE source_pr = ?", (pr,)
                     ).fetchone()[0],
+                    connection.execute(
+                        "SELECT COUNT(*) FROM source_finding_resolution_corrections c "
+                        "JOIN source_finding_resolutions r USING (resolution_id) WHERE r.source_pr = ?", (pr,)
+                    ).fetchone()[0],
                 )
             actual = (
                 len(history["runs"]), len(history["findings"]),
@@ -526,6 +543,7 @@ def _validate_database(path: Path, label: str) -> None:
                 len(history["imported_artifacts"]), len(history["historical_gaps"]),
                 len(history["historical_gap_artifacts"]),
                 len(history["source_resolutions"]),
+                len(history["source_resolution_corrections"]),
             )
             if actual != expected:
                 raise BackupError("indexed review-history readback does not match persisted record counts")
