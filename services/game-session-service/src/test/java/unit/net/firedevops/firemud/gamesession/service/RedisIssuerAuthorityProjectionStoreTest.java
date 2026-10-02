@@ -132,6 +132,16 @@ class RedisIssuerAuthorityProjectionStoreTest {
 
       assertThat(result.outcome()).isEqualTo(RedisIssuerAuthorityProjectionStore.Outcome.APPLIED);
       ProjectionSnapshot projection = result.snapshot().orElseThrow();
+      assertThat(projection.json())
+          .contains("\"lastAppliedIssuerGeneration\"")
+          .contains("\"outboxStreamKey\"")
+          .contains("\"lastAppliedSourceOutboxSequence\"")
+          .doesNotContain("\"lastAppliedSourceEventId\"")
+          .doesNotContain("\"lastAppliedSourceEventDigest\"")
+          .doesNotContain("\"issuerAuthGeneration\"")
+          .doesNotContain("\"sourceOutboxStreamKey\"")
+          .doesNotContain("\"sourceEventId\"")
+          .doesNotContain("\"sourceEventDigest\"");
       InOrder order = inOrder(scriptingCommands);
       order.verify(scriptingCommands).scriptLoad(any(byte[].class));
       order

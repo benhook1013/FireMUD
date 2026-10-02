@@ -163,8 +163,18 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
     assertThat(bootstrap.outcome()).isEqualTo(Outcome.APPLIED);
     ProjectionSnapshot firstSnapshot = bootstrap.snapshot().orElseThrow();
     assertThat(firstSnapshot.key()).isEqualTo(key());
-    assertThat(parse(firstSnapshot.json()).path("lastAppliedSourceOutboxSequence").asText())
-        .isEqualTo("1");
+    JsonNode firstProjection = parse(firstSnapshot.json());
+    assertThat(firstProjection.path("lastAppliedIssuerGeneration").asText()).isEqualTo("2");
+    assertThat(firstProjection.path("lastAppliedSourceOutboxSequence").asText()).isEqualTo("1");
+    assertThat(firstProjection.path("outboxStreamKey").asText()).isEqualTo(first.outboxStreamKey());
+    assertThat(firstProjection.path("lastAppliedSourceEventId").asText())
+        .isEqualTo(first.eventId());
+    assertThat(firstProjection.path("lastAppliedSourceEventDigest").asText())
+        .isEqualTo(first.eventDigest());
+    assertThat(firstProjection.has("issuerAuthGeneration")).isFalse();
+    assertThat(firstProjection.has("sourceOutboxStreamKey")).isFalse();
+    assertThat(firstProjection.has("sourceEventId")).isFalse();
+    assertThat(firstProjection.has("sourceEventDigest")).isFalse();
     assertThat(adminTemplate.opsForValue().get(key())).isEqualTo(firstSnapshot.json());
     assertThat(adminTemplate.getExpire(key(), TimeUnit.MILLISECONDS)).isEqualTo(-1L);
 
@@ -191,7 +201,15 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
 
     assertThat(bootstrap.outcome()).isEqualTo(Outcome.APPLIED);
     JsonNode projection = parse(bootstrap.snapshot().orElseThrow().json());
+    assertThat(projection.path("lastAppliedIssuerGeneration").asText()).isEqualTo("1");
     assertThat(projection.path("lastAppliedSourceOutboxSequence").asText()).isEqualTo("0");
+    assertThat(projection.path("outboxStreamKey").asText())
+        .isEqualTo(
+            IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + issuerId);
+    assertThat(projection.has("lastAppliedSourceEventId")).isFalse();
+    assertThat(projection.has("lastAppliedSourceEventDigest")).isFalse();
+    assertThat(projection.has("issuerAuthGeneration")).isFalse();
+    assertThat(projection.has("sourceOutboxStreamKey")).isFalse();
     assertThat(projection.has("sourceEventId")).isFalse();
     assertThat(projection.has("sourceEventDigest")).isFalse();
     assertThat(projection.path("appliedSourceEvidence").isEmpty()).isTrue();
@@ -258,6 +276,28 @@ class IssuerAuthorityProjectionRedisIntegrationTest {
     assertThat(duplicateProperty.outcome()).isEqualTo(Outcome.QUARANTINED);
     assertThat(adminTemplate.opsForValue().get(key)).isEqualTo(duplicatePropertyJson);
     assertThat(adminTemplate.getExpire(key, TimeUnit.MILLISECONDS)).isEqualTo(-1L);
+  }
+
+  @Test
+  void obsoletePersistedAliasesQuarantineWithoutChangingBytesOrTtl() throws Exception {
+    IssuerGenerationAuthorityEvent first = event("1", "2", "3", 10);
+    ApplyResult bootstrap = store.apply(readback("2", "3", "1", first, null), "stable-time");
+    String canonicalJson = bootstrap.snapshot().orElseThrow().json();
+    String obsoleteJson =
+        canonicalJson
+            .replace("\"lastAppliedIssuerGeneration\"", "\"issuerAuthGeneration\"")
+            .replace("\"outboxStreamKey\"", "\"sourceOutboxStreamKey\"")
+            .replace("\"lastAppliedSourceEventId\"", "\"sourceEventId\"")
+            .replace("\"lastAppliedSourceEventDigest\"", "\"sourceEventDigest\"");
+    adminTemplate.opsForValue().set(key(), obsoleteJson);
+
+    ApplyResult result =
+        store.apply(readback("2", "3", "1", first, first), "ignored-for-obsolete-alias");
+
+    assertThat(result.outcome()).isEqualTo(Outcome.QUARANTINED);
+    assertThat(result.detail()).contains("MALFORMED_STORED_JSON");
+    assertThat(adminTemplate.opsForValue().get(key())).isEqualTo(obsoleteJson);
+    assertThat(adminTemplate.getExpire(key(), TimeUnit.MILLISECONDS)).isEqualTo(-1L);
   }
 
   @Test

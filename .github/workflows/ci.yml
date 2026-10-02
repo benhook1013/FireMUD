@@ -1123,6 +1123,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#gapAndAuthenticatedOlderDuplicateHaveDistinctNoMutationOutcomes()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#staleExpectedBytesAreNonMutatingThroughTheRegisteredOwnerScript()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#unknownOrDuplicateJsonFieldsQuarantineWithoutChangingBytesOrTtl()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#obsoletePersistedAliasesQuarantineWithoutChangingBytesOrTtl()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#expiringProjectionIsQuarantinedWithoutChangingItsBytesOrExpiration()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.IssuerAuthorityProjectionRedisIntegrationTest#ownerPrincipalCannotInvokeEvalDirectly()' \
             game-session-service
@@ -1279,6 +1280,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#installsPristineAccountBaselineFromCurrentDurableSourceAndReadsItBackExactly()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#accountCoordinationPrincipalCannotInvokeEvalDirectly()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#projectsActualPasswordResetAndLogoutAllCheckpointsWithoutRewritingSqlHistory()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#committedPasswordResetReceiptSurvivesCoordinationAuthFailureExactRetryAndProjection()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#unknownAccountCannotSynthesizeProjectionOrChangeSourceRows()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#malformedExpiringAndAheadRedisValuesAreNeverOverwritten()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountGenerationProjectionPostgresRedisIntegrationTest#staleSourceCandidateCannotReplaceAProjectionFromANewerAccountCommit()' \

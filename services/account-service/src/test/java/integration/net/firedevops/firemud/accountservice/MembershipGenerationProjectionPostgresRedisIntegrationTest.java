@@ -532,9 +532,12 @@ class MembershipGenerationProjectionPostgresRedisIntegrationTest {
     ObjectNode ahead = (ObjectNode) parse(current.json());
     ahead.put("sourceVersion", "2");
     String aheadJson = writeJson(ahead);
+    // This is contradictory ahead-counter evidence at the unchanged checkpoint, not a later source.
+    assertThat(MembershipGenerationProjection.parse(aheadJson).toJson()).isEqualTo(aheadJson);
     adminTemplate.opsForValue().set(current.key(), aheadJson);
     ApplyResult aheadResult = store.refreshCurrent(fixture.accountUuid(), fixture.tenantUuid());
-    assertThat(aheadResult.outcome()).isEqualTo(Outcome.STALE_SOURCE);
+    assertThat(aheadResult.outcome()).isEqualTo(Outcome.QUARANTINED);
+    assertThat(aheadResult.detail()).contains("SAME_CHECKPOINT_DISAGREEMENT");
     assertThat(adminTemplate.opsForValue().get(current.key())).isEqualTo(aheadJson);
     assertThat(sourceSqlState(fixture.account(), fixture.tenantUuid(), fixture.legacyTenantId()))
         .isEqualTo(sourceBeforePoison);

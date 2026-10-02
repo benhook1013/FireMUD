@@ -49,11 +49,30 @@ class IssuerAuthorityProjectionTransitionsTest {
     assertThat(mutation.nextProjection())
         .containsEntry("schemaVersion", IssuerAuthorityProjectionTransitions.SCHEMA_VERSION)
         .containsEntry("issuerId", ISSUER_ID)
-        .containsEntry("issuerAuthGeneration", "1")
+        .containsEntry("lastAppliedIssuerGeneration", "1")
         .containsEntry("lastAppliedSourceOutboxSequence", "0")
+        .containsEntry(
+            "outboxStreamKey",
+            IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "issuer/" + ISSUER_ID)
         .containsEntry("appliedAt", "2026-10-02T11:00:00Z")
         .containsEntry("appliedSourceEvidence", Map.of());
-    assertThat(mutation.nextProjection()).doesNotContainKeys("sourceEventId", "sourceEventDigest");
+    assertThat(mutation.nextProjection())
+        .doesNotContainKeys(
+            "lastAppliedSourceEventId",
+            "lastAppliedSourceEventDigest",
+            "issuerAuthGeneration",
+            "sourceOutboxStreamKey",
+            "sourceEventId",
+            "sourceEventDigest");
+    assertThat(mutation.nextProjection().keySet())
+        .containsExactlyInAnyOrder(
+            "schemaVersion",
+            "issuerId",
+            "lastAppliedIssuerGeneration",
+            "lastAppliedSourceOutboxSequence",
+            "outboxStreamKey",
+            "appliedAt",
+            "appliedSourceEvidence");
   }
 
   @Test
@@ -66,12 +85,27 @@ class IssuerAuthorityProjectionTransitionsTest {
             IssuerAuthorityProjectionTransitions.bootstrap(readback, "stable-time");
 
     assertThat(mutation.nextProjection())
-        .containsEntry("issuerAuthGeneration", "92")
+        .containsEntry("lastAppliedIssuerGeneration", "92")
         .containsEntry("lastAppliedSourceOutboxSequence", "7")
-        .containsEntry("sourceEventId", event.eventId())
-        .containsEntry("sourceEventDigest", event.eventDigest())
+        .containsEntry("outboxStreamKey", event.outboxStreamKey())
+        .containsEntry("lastAppliedSourceEventId", event.eventId())
+        .containsEntry("lastAppliedSourceEventDigest", event.eventDigest())
         .containsEntry("appliedSourceEvidence", Map.of("7", event.canonicalJson()));
-    assertThat(mutation.nextProjection()).doesNotContainKey("admitted");
+    assertThat(mutation.nextProjection())
+        .doesNotContainKey("admitted")
+        .doesNotContainKeys(
+            "issuerAuthGeneration", "sourceOutboxStreamKey", "sourceEventId", "sourceEventDigest");
+    assertThat(mutation.nextProjection().keySet())
+        .containsExactlyInAnyOrder(
+            "schemaVersion",
+            "issuerId",
+            "lastAppliedIssuerGeneration",
+            "lastAppliedSourceOutboxSequence",
+            "outboxStreamKey",
+            "lastAppliedSourceEventId",
+            "lastAppliedSourceEventDigest",
+            "appliedAt",
+            "appliedSourceEvidence");
   }
 
   @Test
@@ -123,10 +157,11 @@ class IssuerAuthorityProjectionTransitionsTest {
         .isEqualTo(IssuerAuthorityProjectionTransitions.MutationKind.ADVANCE);
     assertThat(mutation.expectedProjection()).contains(existing);
     assertThat(mutation.nextProjection())
-        .containsEntry("issuerAuthGeneration", "80")
+        .containsEntry("lastAppliedIssuerGeneration", "80")
         .containsEntry("lastAppliedSourceOutboxSequence", "5")
-        .containsEntry("sourceEventId", next.eventId())
-        .containsEntry("sourceEventDigest", next.eventDigest())
+        .containsEntry("outboxStreamKey", next.outboxStreamKey())
+        .containsEntry("lastAppliedSourceEventId", next.eventId())
+        .containsEntry("lastAppliedSourceEventDigest", next.eventDigest())
         .containsEntry("appliedSourceEvidence", Map.of("5", next.canonicalJson()));
   }
 
@@ -142,7 +177,7 @@ class IssuerAuthorityProjectionTransitionsTest {
             IssuerAuthorityProjectionTransitions.decide(existing, readback, "stable-applied-at");
 
     assertThat(mutation.nextProjection())
-        .containsEntry("issuerAuthGeneration", "81")
+        .containsEntry("lastAppliedIssuerGeneration", "81")
         .containsEntry("lastAppliedSourceOutboxSequence", "5");
   }
 
@@ -167,7 +202,7 @@ class IssuerAuthorityProjectionTransitionsTest {
     IssuerGenerationAuthorityEvent first = event("1", "2", "2", 22, ISSUER_ID);
     Map<String, Object> validProjection = bootstrapProjection("2", "2", "1", first);
     Map<String, Object> malformedProjection = new LinkedHashMap<>(validProjection);
-    malformedProjection.put("issuerAuthGeneration", "02");
+    malformedProjection.put("lastAppliedIssuerGeneration", "02");
     IssuerGenerationAuthorityEvent next = event("2", "2", "3", 23, ISSUER_ID);
     SourceReadback readback = readback(ISSUER_ID, "2", "3", "2", next, next);
 
@@ -180,6 +215,27 @@ class IssuerAuthorityProjectionTransitionsTest {
         .isEqualTo(
             IssuerAuthorityProjectionTransitions.QuarantineReason.MALFORMED_EXISTING_PROJECTION);
     assertThat(decision.expectedProjection()).contains(malformedProjection);
+  }
+
+  @Test
+  void obsoleteStoredAliasesQuarantineBeforeConsideringAccountEvent() throws Exception {
+    IssuerGenerationAuthorityEvent first = event("1", "2", "2", 22, ISSUER_ID);
+    Map<String, Object> validProjection = bootstrapProjection("2", "2", "1", first);
+    Map<String, Object> obsoleteProjection = new LinkedHashMap<>(validProjection);
+    obsoleteProjection.remove("lastAppliedIssuerGeneration");
+    obsoleteProjection.put("issuerAuthGeneration", "2");
+    IssuerGenerationAuthorityEvent next = event("2", "2", "3", 23, ISSUER_ID);
+    SourceReadback readback = readback(ISSUER_ID, "2", "3", "2", next, next);
+
+    IssuerAuthorityProjectionTransitions.Quarantine decision =
+        (IssuerAuthorityProjectionTransitions.Quarantine)
+            IssuerAuthorityProjectionTransitions.decide(
+                obsoleteProjection, readback, "stable-applied-at");
+
+    assertThat(decision.reason())
+        .isEqualTo(
+            IssuerAuthorityProjectionTransitions.QuarantineReason.MALFORMED_EXISTING_PROJECTION);
+    assertThat(decision.expectedProjection()).contains(obsoleteProjection);
   }
 
   @Test
@@ -285,8 +341,8 @@ class IssuerAuthorityProjectionTransitionsTest {
 
     assertThat(mutation.nextProjection())
         .containsEntry("lastAppliedSourceOutboxSequence", sequence.toString())
-        .containsEntry("issuerAuthGeneration", generation)
-        .containsEntry("sourceEventId", next.eventId());
+        .containsEntry("lastAppliedIssuerGeneration", generation)
+        .containsEntry("lastAppliedSourceEventId", next.eventId());
   }
 
   private static Map<String, Object> bootstrapProjection(

@@ -28,12 +28,13 @@ public final class IssuerAuthorityProjectionTransitions {
       Set.of(
           "schemaVersion",
           "issuerId",
-          "issuerAuthGeneration",
+          "lastAppliedIssuerGeneration",
           "lastAppliedSourceOutboxSequence",
-          "sourceOutboxStreamKey",
+          "outboxStreamKey",
           "appliedAt",
           "appliedSourceEvidence");
-  private static final Set<String> POSITIVE_FIELDS = Set.of("sourceEventId", "sourceEventDigest");
+  private static final Set<String> POSITIVE_FIELDS =
+      Set.of("lastAppliedSourceEventId", "lastAppliedSourceEventDigest");
 
   private IssuerAuthorityProjectionTransitions() {}
 
@@ -331,12 +332,12 @@ public final class IssuerAuthorityProjectionTransitions {
     Map<String, Object> fields = new LinkedHashMap<>();
     fields.put("schemaVersion", SCHEMA_VERSION);
     fields.put("issuerId", issuerId);
-    fields.put("issuerAuthGeneration", issuerGeneration);
+    fields.put("lastAppliedIssuerGeneration", issuerGeneration);
     fields.put("lastAppliedSourceOutboxSequence", sequence);
-    fields.put("sourceOutboxStreamKey", streamKey);
+    fields.put("outboxStreamKey", streamKey);
     if (latestEvent != null) {
-      fields.put("sourceEventId", latestEvent.eventId());
-      fields.put("sourceEventDigest", latestEvent.eventDigest());
+      fields.put("lastAppliedSourceEventId", latestEvent.eventId());
+      fields.put("lastAppliedSourceEventDigest", latestEvent.eventDigest());
     }
     fields.put("appliedAt", appliedAt);
     fields.put("appliedSourceEvidence", appliedSourceEvidence);
@@ -349,9 +350,9 @@ public final class IssuerAuthorityProjectionTransitions {
     }
     String schema = requiredString(supplied, "schemaVersion");
     String issuer = requiredString(supplied, "issuerId");
-    String generationText = requiredString(supplied, "issuerAuthGeneration");
+    String generationText = requiredString(supplied, "lastAppliedIssuerGeneration");
     String sequenceText = requiredString(supplied, "lastAppliedSourceOutboxSequence");
-    String stream = requiredString(supplied, "sourceOutboxStreamKey");
+    String stream = requiredString(supplied, "outboxStreamKey");
     String appliedAt = requiredString(supplied, "appliedAt");
     if (!SCHEMA_VERSION.equals(schema) || issuer.isBlank() || appliedAt.isBlank()) {
       throw new IllegalArgumentException("projection identity or schema is malformed");
@@ -390,8 +391,9 @@ public final class IssuerAuthorityProjectionTransitions {
           || !sequence.equals(positiveDecimal(latest.outboxSequence(), "projection event sequence"))
           || !generation.equals(
               positiveDecimal(latest.issuerAuthGeneration(), "projection event generation"))
-          || !requiredString(supplied, "sourceEventId").equals(latest.eventId())
-          || !requiredString(supplied, "sourceEventDigest").equals(latest.eventDigest())) {
+          || !requiredString(supplied, "lastAppliedSourceEventId").equals(latest.eventId())
+          || !requiredString(supplied, "lastAppliedSourceEventDigest")
+              .equals(latest.eventDigest())) {
         throw new IllegalArgumentException("projection event does not match its checkpoint");
       }
       sourceVersion = positiveDecimal(latest.sourceVersion(), "projection event source version");
