@@ -145,7 +145,7 @@ public class FriendsCommandHandler {
 
   private boolean isPlayerSafeFilter(FriendListFilter filter) {
     return switch (filter) {
-      case OFFLINE, PRIVATE, UNSPECIFIED_SCOPE -> false;
+      case OFFLINE, PUBLIC, FRIENDS_ONLY, PRIVATE, UNSPECIFIED_SCOPE -> false;
       default -> true;
     };
   }
@@ -592,7 +592,7 @@ public class FriendsCommandHandler {
               "INVALID",
               FriendListFilter.ALL,
               null,
-              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|PUBLIC|FRIENDS_ONLY|SHARED|ISOLATED]");
+              "FRIENDS [ADD|REMOVE|SHOW|SUMMARY|VISIBILITY|ONLINE|RECENT|SHARED|ISOLATED]");
     };
   }
 

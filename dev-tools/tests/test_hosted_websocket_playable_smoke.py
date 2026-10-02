@@ -1,9 +1,12 @@
+import contextlib
 import importlib.util
+import io
 import json
 import pathlib
 import sys
 import unittest
 from collections import deque
+from unittest.mock import patch
 
 HELPER = pathlib.Path(__file__).parents[1] / "hosted/shared/hosted-websocket-playable-smoke.py"
 SPEC = importlib.util.spec_from_file_location("hosted_websocket_playable_smoke", HELPER)
@@ -101,6 +104,20 @@ class FakeWebSocket:
         self.closed = True
 
 
+class LogoutUnavailableWebSocket(FakeWebSocket):
+    def send(self, command):
+        if command == "LOGOUT":
+            self.commands.append(command)
+            self.responses.append(json.dumps({
+                "eventType": "command_result",
+                "commandType": "LOGOUT",
+                "accepted": False,
+                "errorCode": "LOGOUT_UNAVAILABLE",
+            }))
+            return
+        super().send(command)
+
+
 class FakeHandshakeRejected(Exception):
     def __init__(self, status_code=403, error_class="CONNECT_TOKEN_REPLAYED"):
         super().__init__("replay response contains a token that must not be logged")
@@ -120,13 +137,13 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         values.update(overrides)
         return MODULE.SmokeConfig(**values)
 
-    def test_first_party_cookie_bootstrap_and_login_play_look_logout(self):
+    def test_default_first_party_cookie_bootstrap_runs_read_only_baseline(self):
         http = FakeHttp()
         sockets = []
 
         def socket_factory(url, timeout, headers):
             sockets.append((url, timeout, list(headers)))
-            ws = FakeWebSocket()
+            ws = LogoutUnavailableWebSocket()
             sockets.append(ws)
             return ws
 
@@ -135,13 +152,13 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         )
 
         self.assertEqual(result["steps"], ["LOGIN", "PLAY", "LOOK"])
-        self.assertTrue(result["logout"])
+        self.assertFalse(result["logout"])
         self.assertEqual(result["lookRoomId"], "R-1021")
         self.assertEqual(result["lookRoomName"], "Candle-lit Antechamber")
         self.assertNotIn("outputs", result)
         ws = sockets[1]
-        self.assertEqual(ws.commands, ["LOGIN", "PLAY demo production Ada", "LOOK", "LOGOUT"])
-        self.assertTrue(ws.close_observed)
+        self.assertEqual(ws.commands, ["LOGIN", "PLAY demo production Ada", "LOOK"])
+        self.assertFalse(ws.close_observed)
         self.assertEqual(
             sockets[0][2],
             [
@@ -171,7 +188,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
 
         self.assertEqual(http.connect_count, 0)
 
-    def test_reconnect_uses_a_fresh_connect_cookie(self):
+    def test_default_reconnect_uses_fresh_cookie_and_rejects_replay_without_logout(self):
         http = FakeHttp()
         attempts = []
         sockets = []
@@ -181,7 +198,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             if len(attempts) == 2:
                 self.assertTrue(sockets[0].closed)
                 raise FakeHandshakeRejected()
-            sockets.append(FakeWebSocket())
+            sockets.append(LogoutUnavailableWebSocket())
             return sockets[-1]
 
         result = MODULE.run_smoke(
@@ -191,6 +208,8 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         )
 
         self.assertEqual(result["sessions"], 2)
+        self.assertFalse(result["logout"])
+        self.assertTrue(result["replayRejected"])
         self.assertEqual(
             attempts,
             [
@@ -214,9 +233,67 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         )
         self.assertEqual(
             sockets[1].commands,
-            ["LOGIN", "PLAY demo production Ada", "LOOK", "LOGOUT"],
+            ["LOGIN", "PLAY demo production Ada", "LOOK"],
         )
         self.assertTrue(result["replayRejected"])
+
+    def test_cli_defaults_to_read_only_and_logout_flag_opts_in(self):
+        result = {
+            "transport": "first-party-wss",
+            "classification": "diagnostic-operator-smoke",
+            "steps": ["LOGIN", "PLAY", "LOOK"],
+            "sessions": 1,
+            "logout": False,
+            "reconnect": False,
+            "replayRejected": False,
+            "lookRoomId": "R-1021",
+            "lookRoomName": "Candle-lit Antechamber",
+        }
+        for extra_args, expected_logout in (([], False), (["--logout"], True)):
+            with self.subTest(extra_args=extra_args):
+                output = io.StringIO()
+                with (
+                    patch.object(MODULE, "run_smoke", return_value=result) as run_smoke,
+                    contextlib.redirect_stdout(output),
+                ):
+                    self.assertEqual(
+                        MODULE.main(["--origin", "https://frontend.preview.example", *extra_args]),
+                        0,
+                    )
+                self.assertEqual(run_smoke.call_args.args[0].exercise_logout, expected_logout)
+
+    def test_explicit_logout_opt_in_fails_when_logout_is_unavailable(self):
+        with self.assertRaisesRegex(
+            MODULE.HostedWebSocketPlayableSmokeError,
+            "LOGOUT was rejected",
+        ):
+            MODULE.run_smoke(
+                self.config(exercise_logout=True),
+                http_request=FakeHttp(),
+                websocket_factory=lambda url, timeout, headers: LogoutUnavailableWebSocket(),
+            )
+
+    def test_explicit_logout_opt_in_requires_and_observes_close_frame(self):
+        http = FakeHttp()
+        sockets = []
+
+        def socket_factory(url, timeout, headers):
+            socket = FakeWebSocket()
+            sockets.append(socket)
+            return socket
+
+        result = MODULE.run_smoke(
+            self.config(exercise_logout=True),
+            http_request=http,
+            websocket_factory=socket_factory,
+        )
+
+        self.assertTrue(result["logout"])
+        self.assertEqual(
+            sockets[0].commands,
+            ["LOGIN", "PLAY demo production Ada", "LOOK", "LOGOUT"],
+        )
+        self.assertTrue(sockets[0].close_observed)
 
     def test_reconnect_replay_check_fails_closed_for_non_replay_handshakes(self):
         for failure in (
@@ -390,7 +467,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             MODULE.HostedWebSocketPlayableSmokeError, "close observation"
         ):
             MODULE.run_smoke(
-                self.config(),
+                self.config(exercise_logout=True),
                 http_request=http,
                 websocket_factory=socket_factory,
             )

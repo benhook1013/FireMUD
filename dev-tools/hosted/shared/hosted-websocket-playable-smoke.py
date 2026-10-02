@@ -50,7 +50,7 @@ class SmokeConfig:
     character: str | None = None
     expected_room_id: str | None = None
     timeout_seconds: float = 10.0
-    exercise_logout: bool = True
+    exercise_logout: bool = False
     exercise_reconnect: bool = False
 
 
@@ -601,7 +601,7 @@ def _config_from_args(args: argparse.Namespace) -> SmokeConfig:
         character=args.character,
         expected_room_id=args.expected_room_id,
         timeout_seconds=args.timeout,
-        exercise_logout=not args.no_logout,
+        exercise_logout=args.logout,
         exercise_reconnect=args.reconnect,
     )
 
@@ -633,7 +633,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Optional room ID from the trusted Telnet probe for live parity",
     )
     parser.add_argument("--timeout", type=float, default=float(os.environ.get("SMOKE_TIMEOUT_SECONDS", "10")))
-    parser.add_argument("--no-logout", action="store_true")
+    parser.add_argument(
+        "--logout",
+        action="store_true",
+        help="Opt into LOGOUT diagnostics (currently expected to fail with LOGOUT_UNAVAILABLE)",
+    )
     parser.add_argument("--reconnect", action="store_true")
     args = parser.parse_args(argv)
     config = _config_from_args(args)

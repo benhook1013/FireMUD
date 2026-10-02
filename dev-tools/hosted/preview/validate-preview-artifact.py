@@ -1469,7 +1469,6 @@ def _frontend_ingress_paths() -> list[dict]:
         {"path": "/auth", "pathType": "Prefix", "backend": gateway},
         {"path": "/api", "pathType": "Prefix", "backend": gateway},
         {"path": "/ws/game", "pathType": "Prefix", "backend": gateway},
-        {"path": "/assets", "pathType": "Prefix", "backend": gateway},
         {"path": "/", "pathType": "Prefix", "backend": frontend},
     ]
 
@@ -2403,7 +2402,7 @@ def validate_ingress(
     paths = _require_mapping_list(
         http.get("paths"), f"{ingress_path}.rules[0].http.paths"
     )
-    if len(paths) != (6 if frontend_enabled else 1):
+    if len(paths) != (5 if frontend_enabled else 1):
         fail("Ingress/firemud-preview has an unexpected route set")
     if frontend_enabled:
         if paths != _frontend_ingress_paths():
