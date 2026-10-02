@@ -89,8 +89,8 @@ public class HelpCommandHandler {
           success(
               "JOIN <world>\n"
                   + "Join the public-production membership for a world after LOGIN.\n"
-                  + "Use REALMS <world> first, then JOIN before PLAY.\n"
-                  + "Character browsing is currently unavailable; PLAY requires a known character when selection is needed.");
+                  + "Use REALMS <world> first, then JOIN to confirm membership.\n"
+                  + "Character browsing and gameplay entry are currently unavailable.");
       case "REALMS" ->
           success(
               "REALMS <world>\n"

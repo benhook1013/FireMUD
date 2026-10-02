@@ -123,7 +123,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
         net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
         List.of(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.notice(
-                "Membership is ready. Continue with PLAY <world> [realm] <character> using a known character; character browsing is currently unavailable.",
+                "Membership confirmed. Character browsing and gameplay entry are currently unavailable.",
                 "notice.join.success",
                 java.util.Map.of())));
   }
