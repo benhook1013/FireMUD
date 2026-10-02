@@ -1065,6 +1065,34 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: 🔎 Verify Account password reset PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest \
+            --require-suite net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest#commitsPasswordTokenAuthorityFenceClosedEventAndImmutableReceiptTogether()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest#exactRetryRecoversLostResponseWithoutAnySecondMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest#concurrentExactRetriesCommitOneSourceMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest#changedRetryConflictsAndConsecutiveResetsRequireExactPriorSourceProof()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest#appendAndReceiptReadbackFailuresRollBackEveryEarlierMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest#issuanceFenceOverflowRollsBackTokenPasswordAuthorityAndOutbox()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#concurrentPasswordResetAttemptsRecoverOneExactCommit()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest#passwordResetRollbackPreservesEveryAtomicSourceComponent()' \
+            account-service
+
+      - name: 📤 Upload Account password reset PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-password-reset-postgresql-proof-${{ github.sha }}
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-integration.net.firedevops.firemud.accountservice.PasswordResetAuthorityProducerPostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-net.firedevops.firemud.accountservice.AccountApplicationIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: 🔎 Verify Account PostgreSQL proof cases
         if: ${{ matrix.module == 'account-service' }}
         run: |
