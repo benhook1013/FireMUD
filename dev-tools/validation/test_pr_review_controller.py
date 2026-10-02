@@ -3452,19 +3452,7 @@ class ControllerTests(unittest.TestCase):
         ):
             with self.subTest(channel=channel, terminal=terminal):
                 if channel == "hosted":
-                    active = {
-                        "pr": 1,
-                        "head": HEAD_1,
-                        "checkpoint": "trigger:45",
-                        "trigger_id": 45,
-                        "response_id": 46,
-                        "state": "active",
-                        "active_reservation": True,
-                        "held": True,
-                        "unstable": False,
-                        "attributable": True,
-                        "terminal": False,
-                        "reason": HOSTED_ACTIVE_RESPONSE_REASON,
+                    record = {
                         "anchor": {
                             "pr": 1,
                             "child_head": HEAD_1,
@@ -3472,8 +3460,24 @@ class ControllerTests(unittest.TestCase):
                             "parent_head": BASE,
                             "merge_base": BASE,
                             "patch_id": f"patch-{HEAD_1[:4]}",
-                        },
+                        }
                     }
+                    state = SimpleNamespace(
+                        state="active",
+                        head_sha=HEAD_1,
+                        trigger_comment_id=45,
+                        response_id=46,
+                        terminal=False,
+                        attributed=True,
+                        reason=HOSTED_ACTIVE_RESPONSE_REASON,
+                    )
+                    live_evidence = LiveEvidence("owner/repo", LiveGitHub("owner/repo"))
+                    with (
+                        patch.object(hosted, "current_trigger_record_paths", return_value=[Path("/trigger.json")]),
+                        patch.object(hosted, "load_trigger_reservation", return_value=record),
+                        patch.object(hosted, "trigger_state", return_value=state),
+                    ):
+                        active = live_evidence._current_hosted_history(1, HEAD_1, {}, set())[0]
                 else:
                     active = {
                         "pr": 1,
