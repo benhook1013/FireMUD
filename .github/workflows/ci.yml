@@ -1097,6 +1097,7 @@ jobs:
             --strict \
             --require-suite crossservice.net.firedevops.firemud.gamesession.AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest \
             --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest#realMembershipSnapshotAndSequenceZeroBaselineCrossPostgresAndAuthenticatedSocket()' \
+            --require-case 'crossservice.net.firedevops.firemud.gamesession.AccountMembershipAuthorityGrpcPostgresMtlsCrossServiceTest#retainedInactiveLeftAndReactivationSnapshotsCrossPostgresAndAuthenticatedSocket()' \
             game-session-service
 
       - name: Upload Account membership PostgreSQL readback socket mTLS proof results
