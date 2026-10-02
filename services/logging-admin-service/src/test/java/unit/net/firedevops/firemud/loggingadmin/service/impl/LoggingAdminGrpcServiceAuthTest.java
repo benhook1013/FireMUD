@@ -1,23 +1,49 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Timestamp;
+import io.grpc.Context;
+import io.grpc.Metadata;
+import io.grpc.MethodDescriptor;
+import io.grpc.ServerCall;
+import io.grpc.ServerCallHandler;
 import io.grpc.Status;
+import io.grpc.protobuf.ProtoUtils;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
+import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.security.AuthTokenInterceptor;
+import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.common.security.SessionContext;
+import net.firedevops.firemud.loggingadmin.config.AccountAuditGrpcAuthConfiguration;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptDto;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptOutcome;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptStatus;
+import net.firedevops.firemud.loggingadmin.dto.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
+import net.firedevops.firemud.loggingadmin.service.AuditReceiptNotFoundException;
+import net.firedevops.firemud.loggingadmin.service.AuditStorageUnavailableException;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -29,16 +55,53 @@ import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyRequest;
 import net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse;
 import net.firedevops.firemud.loggingadmin.v1.QueryLogsRequest;
 import net.firedevops.firemud.loggingadmin.v1.QueryLogsResponse;
+import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptRequest;
+import net.firedevops.firemud.loggingadmin.v1.ReadLogEventReceiptResponse;
 import net.firedevops.firemud.loggingadmin.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.loggingadmin.v1.ToggleFeatureFlagResponse;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.autoconfigure.context.ConfigurationPropertiesAutoConfiguration;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
 class LoggingAdminGrpcServiceAuthTest {
   @AfterEach
   void tearDown() {
     SessionContext.clear();
+  }
+
+  @Test
+  void auditMethodsBypassJwtRequirementButOtherMethodsRemainProtected() {
+    new ApplicationContextRunner()
+        .withConfiguration(
+            AutoConfigurations.of(
+                ConfigurationPropertiesAutoConfiguration.class,
+                CommonSecurityAutoConfiguration.class))
+        .withUserConfiguration(AccountAuditGrpcAuthConfiguration.class)
+        .withPropertyValues(
+            "firemud.auth.jwt-secret=testsecretkeytestsecretkeytest1234",
+            "firemud.auth.grpc.public-methods[0]=logging_admin.v1.LoggingAdminService/Ping")
+        .run(
+            context -> {
+              assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
+              GrpcAuthProperties properties = context.getBean(GrpcAuthProperties.class);
+              assertThat(properties.getPublicMethods())
+                  .containsExactly("logging_admin.v1.LoggingAdminService/Ping");
+              AuthTokenInterceptor interceptor = context.getBean(AuthTokenInterceptor.class);
+              assertTrue(
+                  passesWithoutBearer(
+                      interceptor, "logging_admin.v1.LoggingAdminService/CreateLogEvent"));
+              assertTrue(
+                  passesWithoutBearer(
+                      interceptor, "logging_admin.v1.LoggingAdminService/ReadLogEventReceipt"));
+              assertTrue(
+                  passesWithoutBearer(interceptor, "logging_admin.v1.LoggingAdminService/Ping"));
+              assertFalse(
+                  passesWithoutBearer(
+                      interceptor, "logging_admin.v1.LoggingAdminService/QueryLogs"));
+            });
   }
 
   @Test
@@ -73,18 +136,170 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void createLogEventFailsClosedWithoutInvokingLegacyWriter() {
+  void accountMtlSPeerCreatesReceiptWithoutJwtOrAdminRole() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    assertCreateLogEventUnavailable(validCreateLogEventRequest(), logEventService);
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    String digest = digest("{\"accountId\":42}".getBytes(StandardCharsets.UTF_8));
+    when(logEventService.createLogEvent(any()))
+        .thenReturn(
+            new AccountAuditReceiptDto(
+                AccountAuditScope.PLATFORM,
+                null,
+                "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
+                "receipt-1",
+                77L,
+                1,
+                1,
+                digest,
+                AccountAuditReceiptStatus.COMMITTED,
+                AccountAuditReceiptOutcome.ACCEPTED));
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            logEventService,
+            moderationService,
+            new SimpleMeterRegistry(),
+            "firemud");
+
+    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    invokeWithPeer(
+        "account-service",
+        () -> service.createLogEvent(validCreateRequest(), responseObserver(ref, error)));
+
+    assertNotNull(ref.get());
+    assertEquals("77", ref.get().getLogEventId());
+    assertEquals(1, ref.get().getAuditProjectionVersion());
+    assertEquals(
+        net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM,
+        ref.get().getScope());
+    assertEquals(
+        net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus
+            .ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED,
+        ref.get().getStatus());
+    assertEquals(
+        net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
+            .ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED,
+        ref.get().getOutcome());
+    assertNull(error.get());
+    verify(logEventService).createLogEvent(any());
+    verify(moderationService, never()).applyAction(any());
   }
 
   @Test
-  void createLogEventFailsClosedBeforeTypedRequestValidation() {
+  void adminJwtClaimsDoNotAuthorizeAuditIngressWithoutAccountPeer() {
+    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    CreateLogEventRequest unsupportedDigestVersion =
-        validCreateLogEventRequest().toBuilder().setPayloadDigestVersion(2).build();
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
 
-    assertCreateLogEventUnavailable(unsupportedDigestVersion, logEventService);
+    service.createLogEvent(validCreateRequest(), responseObserver(response, error));
+
+    assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
+    verifyNoInteractions(logEventService);
+  }
+
+  @Test
+  void jwtClaimNamingAccountServiceCannotOverrideWrongMtlsPeer() {
+    SessionContext.setContext(null, List.of(), Map.of(), true, "account-service", "instance-1");
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "game-session-service",
+        () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
+
+    assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
+    verifyNoInteractions(logEventService);
+  }
+
+  @Test
+  void accountAuditRejectsAccountServicePeerFromOtherNamespace() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "other",
+        "account-service",
+        () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
+
+    assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
+    verifyNoInteractions(logEventService);
+  }
+
+  @Test
+  void receiptReadReturnsCanonicalNotFoundStatus() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    when(logEventService.readLogEventReceipt(any())).thenThrow(new AuditReceiptNotFoundException());
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "account-service",
+        () -> service.readLogEventReceipt(validReadRequest(), responseObserver(response, error)));
+
+    assertEquals(Status.Code.NOT_FOUND, Status.fromThrowable(error.get()).getCode());
+    assertNull(response.get());
+  }
+
+  @Test
+  void accountMtlSPeerCanReadTypedReceiptWithoutJwt() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    String digest = digest("{\"accountId\":42}".getBytes(StandardCharsets.UTF_8));
+    when(logEventService.readLogEventReceipt(any()))
+        .thenReturn(
+            new AccountAuditReceiptDto(
+                AccountAuditScope.PLATFORM,
+                null,
+                "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
+                "receipt-1",
+                77L,
+                1,
+                1,
+                digest,
+                AccountAuditReceiptStatus.COMMITTED,
+                AccountAuditReceiptOutcome.DUPLICATE));
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "account-service",
+        () -> service.readLogEventReceipt(validReadRequest(), responseObserver(response, error)));
+
+    assertNotNull(response.get());
+    assertEquals("receipt-1", response.get().getReceiptId());
+    assertEquals("77", response.get().getLogEventId());
+    assertEquals(1, response.get().getAuditProjectionVersion());
+    assertEquals(
+        net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
+            .ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE,
+        response.get().getOutcome());
+    assertNull(error.get());
+    verify(logEventService).readLogEventReceipt(any());
+  }
+
+  @Test
+  void auditStorageFailureReturnsCanonicalUnavailableStatus() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    when(logEventService.createLogEvent(any()))
+        .thenThrow(new AuditStorageUnavailableException(new IllegalStateException("database")));
+    LoggingAdminGrpcService service = newService(logEventService);
+    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "account-service",
+        () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
+
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
+    assertNull(response.get());
   }
 
   @Test
@@ -223,6 +438,25 @@ class LoggingAdminGrpcServiceAuthTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(logQueryService);
+  }
+
+  @Test
+  void createLogEventMapsUnsupportedDigestVersionRejectionToInvalidArgument() {
+    LogEventService logEventService = Mockito.mock(LogEventService.class);
+    when(logEventService.createLogEvent(any()))
+        .thenThrow(new IllegalArgumentException("payloadDigestVersion must be 1"));
+    LoggingAdminGrpcService service = newService(logEventService);
+
+    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    CreateLogEventRequest request =
+        validCreateRequest().toBuilder().setPayloadDigestVersion(2).build();
+    invokeWithPeer(
+        "account-service", () -> service.createLogEvent(request, responseObserver(ref, error)));
+
+    assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(error.get()).getCode());
+    assertNull(ref.get());
+    verify(logEventService).createLogEvent(argThat(dto -> dto.payloadDigestVersion() == 2));
   }
 
   @Test
@@ -570,55 +804,113 @@ class LoggingAdminGrpcServiceAuthTest {
     verifyNoInteractions(moderationService);
   }
 
-  private static void assertCreateLogEventUnavailable(
-      CreateLogEventRequest request, LogEventService logEventService) {
-    ModerationService moderationService = Mockito.mock(ModerationService.class);
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            logEventService,
-            moderationService,
-            new SimpleMeterRegistry());
-
-    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
-    AtomicReference<Throwable> error = new AtomicReference<>();
-    service.createLogEvent(
-        request,
-        new StreamObserver<>() {
-          @Override
-          public void onNext(CreateLogEventResponse value) {
-            response.set(value);
-          }
-
-          @Override
-          public void onError(Throwable throwable) {
-            error.set(throwable);
-          }
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNull(response.get());
-    assertNotNull(error.get());
-    assertEquals(Status.Code.UNIMPLEMENTED, Status.fromThrowable(error.get()).getCode());
-    verifyNoInteractions(logEventService, moderationService);
+  private static LoggingAdminGrpcService newService(LogEventService logEventService) {
+    return new LoggingAdminGrpcService(
+        Mockito.mock(LogQueryService.class),
+        logEventService,
+        Mockito.mock(ModerationService.class),
+        new SimpleMeterRegistry(),
+        "firemud");
   }
 
-  private static CreateLogEventRequest validCreateLogEventRequest() {
-    ByteString payload = ByteString.copyFromUtf8("{}");
+  private static boolean passesWithoutBearer(
+      AuthTokenInterceptor interceptor, String fullMethodName) {
+    MethodDescriptor<CreateLogEventRequest, CreateLogEventResponse> descriptor =
+        MethodDescriptor.<CreateLogEventRequest, CreateLogEventResponse>newBuilder()
+            .setType(MethodDescriptor.MethodType.UNARY)
+            .setFullMethodName(fullMethodName)
+            .setRequestMarshaller(ProtoUtils.marshaller(CreateLogEventRequest.getDefaultInstance()))
+            .setResponseMarshaller(
+                ProtoUtils.marshaller(CreateLogEventResponse.getDefaultInstance()))
+            .build();
+    @SuppressWarnings("unchecked")
+    ServerCall<CreateLogEventRequest, CreateLogEventResponse> serverCall =
+        (ServerCall<CreateLogEventRequest, CreateLogEventResponse>) Mockito.mock(ServerCall.class);
+    when(serverCall.getMethodDescriptor()).thenReturn(descriptor);
+    AtomicReference<Boolean> callStarted = new AtomicReference<>(false);
+    ServerCallHandler<CreateLogEventRequest, CreateLogEventResponse> next =
+        (call, headers) -> {
+          callStarted.set(true);
+          return new ServerCall.Listener<>() {};
+        };
+
+    interceptor.interceptCall(serverCall, new Metadata(), next);
+    return callStarted.get();
+  }
+
+  private static <T> StreamObserver<T> responseObserver(
+      AtomicReference<T> response, AtomicReference<Throwable> error) {
+    return new StreamObserver<>() {
+      @Override
+      public void onNext(T value) {
+        response.set(value);
+      }
+
+      @Override
+      public void onError(Throwable value) {
+        error.set(value);
+      }
+
+      @Override
+      public void onCompleted() {}
+    };
+  }
+
+  private static void invokeWithPeer(String serviceName, Runnable invocation) {
+    invokeWithPeer("firemud", serviceName, invocation);
+  }
+
+  private static void invokeWithPeer(String namespace, String serviceName, Runnable invocation) {
+    String uri = "spiffe://firemud/ns/" + namespace + "/sa/" + serviceName;
+    Context context =
+        Context.current()
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY, new GrpcPeerIdentity(uri, namespace, serviceName));
+    Context previous = context.attach();
+    try {
+      invocation.run();
+    } finally {
+      context.detach(previous);
+    }
+  }
+
+  private static CreateLogEventRequest validCreateRequest() {
+    ByteString payload = ByteString.copyFrom("{\"accountId\":42}".getBytes(StandardCharsets.UTF_8));
     return CreateLogEventRequest.newBuilder()
         .setScope(
-            net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
-        .setTenantId("1")
+            net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM)
         .setAuditEventId("d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3")
         .setProducerService("account-service")
         .setEventType("ACCOUNT_REGISTERED")
-        .setOccurredAt(Timestamp.newBuilder().setSeconds(1).build())
+        .setOccurredAt(Timestamp.newBuilder().setSeconds(1).setNanos(234567890))
         .setSchemaVersion(1)
         .setPayload(payload)
         .setPayloadDigestVersion(1)
-        .setPayloadDigest("sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")
+        .setPayloadDigest(digest(payload.toByteArray()))
         .build();
+  }
+
+  private static ReadLogEventReceiptRequest validReadRequest() {
+    CreateLogEventRequest create = validCreateRequest();
+    return ReadLogEventReceiptRequest.newBuilder()
+        .setScope(create.getScope())
+        .setAuditEventId(create.getAuditEventId())
+        .setProducerService(create.getProducerService())
+        .setEventType(create.getEventType())
+        .setOccurredAt(create.getOccurredAt())
+        .setSchemaVersion(create.getSchemaVersion())
+        .setPayload(create.getPayload())
+        .setPayloadDigestVersion(create.getPayloadDigestVersion())
+        .setPayloadDigest(create.getPayloadDigest())
+        .build();
+  }
+
+  private static String digest(byte[] payload) {
+    try {
+      return "sha256:"
+          + HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(payload));
+    } catch (NoSuchAlgorithmException ex) {
+      throw new IllegalStateException(ex);
+    }
   }
 }
