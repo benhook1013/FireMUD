@@ -366,6 +366,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setPayloadDigest(receipt.payloadDigest())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
+        .setAuditProjectionVersion(1)
         .build();
   }
 
@@ -382,6 +383,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setPayloadDigest(receipt.payloadDigest())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
+        .setAuditProjectionVersion(1)
         .build();
   }
 

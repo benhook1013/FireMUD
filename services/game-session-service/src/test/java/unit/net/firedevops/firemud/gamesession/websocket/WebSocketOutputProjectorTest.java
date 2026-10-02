@@ -34,6 +34,7 @@ import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
+import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.Test;
@@ -155,6 +156,38 @@ class WebSocketOutputProjectorTest {
     assertThat(realmJson.path("characterCreationPolicy").asText()).isEqualTo("ALLOW_NEW");
     assertThat(realmJson.has("gameInstanceId")).isFalse();
     assertThat(output.screenBufferEligible()).isFalse();
+  }
+
+  @Test
+  void firstPartyWorldsCommandDoesNotExposeRuntimeTarget() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    GameplayCatalogProperties catalog = new GameplayCatalogProperties();
+    catalog.setWorlds(List.of(catalog.getWorlds().getFirst()));
+    WorldsViewOutput worlds = TestGameplayWorldCatalogs.fromProperties(catalog).browseView();
+    PlayerOutput output = PlayerOutput.view(worlds);
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
+            new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of(output)),
+            List.of(output),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    JsonNode outputJson = json.path("outputs").get(0);
+    JsonNode worldJson = outputJson.path("payload").path("worlds").get(0);
+    assertThat(json.path("commandType").asText()).isEqualTo("WORLDS");
+    assertThat(outputJson.path("payloadType").asText()).isEqualTo("worlds_view");
+    assertThat(worldJson.path("ordinal").asInt()).isEqualTo(1);
+    assertThat(worldJson.path("slug").asText()).isEqualTo("demo");
+    assertThat(worldJson.path("displayName").asText()).isEqualTo("Demo World");
+    assertThat(worldJson.has("gameInstanceId")).isFalse();
   }
 
   @Test

@@ -54,6 +54,8 @@ This target contract is not complete in the current service. The existing `secur
 
 ## Implementation Status
 
+JOIN readback status: the bounded Account worker may terminalize only after the exact operation, scope, membership, immutable audit envelope, and version-1 COMMITTED receiver receipt/projection identity are all positively proved from the same scoped outbox row. Missing, legacy-unversioned, unsupported-version, or minimized delivery evidence leaves the intent pending with retry diagnostics; expiry and attempt limits do not authorize a JOIN replay or terminalization.
+
 Explicit playtest grants remain partial: current Account persistence and internal lookup can support a grant-backed admission read, but expiry bounded by fork lifecycle, tenant-admin create/extend/list/revoke, distinct audited platform break-glass, stable request-idempotent outcomes, retained revocation tombstones, and active-binding ejection are not implemented or end-to-end proved. The target owner contract is [Account-Owned Playtest Grant Contract](#account-owned-playtest-grant-contract); the links in authentication, session behavior, journeys, and trackers retain only their local consequences.
 
 The hosted Creator Party, terms catalog, acceptance/currentness evidence, and changed-term lifecycle are target-only. No current Account route, proto/schema, storage, signer/transfer operation, creator UI, or focused proof implements them; Game Design must not maintain a copied catalog or authorize a creator mutation from a tenant-local flag.
