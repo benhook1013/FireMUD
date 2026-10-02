@@ -3562,7 +3562,10 @@ class ControllerTests(unittest.TestCase):
                 evidence[(1, "cli")].append(active)
                 stopped = controller.store.load()
 
-                with self.assertRaises(ControllerError):
+                with self.assertRaisesRegex(
+                    ControllerError,
+                    "current review evidence is blocked; allocation cannot be promised",
+                ):
                     controller.decide_allocation(
                         action="renew",
                         pr=1,
