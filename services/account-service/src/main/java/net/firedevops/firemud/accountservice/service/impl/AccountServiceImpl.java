@@ -741,6 +741,11 @@ public class AccountServiceImpl implements AccountService {
         accountTenantMembershipRepository
             .findByAccountIdAndTenantId(accountId, scope.tenantId())
             .orElse(null);
+    if (isConnectScopeExpired(scope)) {
+      accountJoinOperationRepository.recordAttemptFailure(
+          requestId, "NOT_EVALUATED", "AUTH_UNAVAILABLE");
+      return pendingJoinFailure(scope, "AUTH_UNAVAILABLE");
+    }
     boolean transitioned = false;
     if (membership == null) {
       membership = new AccountTenantMembership();
