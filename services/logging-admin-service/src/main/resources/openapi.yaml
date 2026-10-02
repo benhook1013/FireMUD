@@ -1810,6 +1810,12 @@ paths:
                     $ref: '#/components/schemas/PreparedVersionUpgradeDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Prepared version-upgrade proof authority is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers/version-upgrades/{tenantId}/{sourceGameInstanceId}/compatibility/{targetVersionId}:
     get:
       summary: Read version cutover compatibility for one source instance and target version
