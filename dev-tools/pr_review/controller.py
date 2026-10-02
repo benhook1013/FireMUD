@@ -5731,7 +5731,16 @@ class ReviewController:
                 raise ControllerError("Git provider returned an empty patch identity")
         except (ControllerError, OSError, ValueError, subprocess.SubprocessError):
             merge_base, patch_id = None, None
-        current = AnchorFacts(pr, item.head, item.base_ref, item.base_tip, merge_base, patch_id)
+        parent_identity = item.base_ref
+        try:
+            for parent_pr in reversed(state.ordered_prs[:state.ordered_prs.index(pr)]):
+                parent = _live(self._require_github().pull_request(parent_pr), parent_pr)
+                if not parent.merged:
+                    parent_identity = stack.ParentLink(pr, parent_pr, parent.head_ref, parent.head).identity
+                    break
+        except (ControllerError, KeyError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError):
+            pass
+        current = AnchorFacts(pr, item.head, parent_identity, item.base_tip, merge_base, patch_id)
         if normalized_head != item.head:
             raise ControllerError("allocation head does not match the live pull-request head")
         if self._head_repository_problem(item):

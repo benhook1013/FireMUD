@@ -1001,6 +1001,42 @@ class ControllerTests(unittest.TestCase):
             fresh_taper=True,
         )
 
+    def test_stacked_human_allocation_keeps_configured_parent_identity_without_reconciliation(self):
+        for exact in (False, True):
+            with self.subTest(exact=exact):
+                controller, evidence = self.hosted_judgment_allocation_fixture()
+                controller.github.values[2] = pr(2, BASE)
+                controller.github.values[1] = pr(1, HEAD_3, base_ref="feature-2", base_tip=BASE)
+                controller.git.heads["feature-2"] = BASE
+                for channel in ("hosted", "cli"):
+                    for row in evidence[(1, channel)]:
+                        if row.get("completed"):
+                            row["parent_identity"] = "2"
+                controller = self.make(
+                    controller.github.values, evidence, heads=controller.git.heads, sqlite=True,
+                )
+                controller.set_stack([2, 1])
+                for channel in ("hosted", "cli"):
+                    controller.decide_stop(pr=2, channel=channel, head=BASE, reason="parent review discovery complete")
+                kwargs = ({"exact_additional_completed": 1} if exact else {
+                    "min_additional_completed": 1, "max_additional_completed": 1, "fresh_taper": True,
+                })
+                with patch.object(controller, "_reconciliation", side_effect=AssertionError("policy has no readiness gate")):
+                    controller.decide_allocation(
+                        action="grant", pr=1, channel="hosted", head=HEAD_3,
+                        reason="review the corrected stacked child", **kwargs,
+                    )
+                saved = controller._state().allocations["1:hosted"]
+                self.assertEqual(saved.parent_identity, "2")
+                self.assertEqual(saved.parent_head, BASE)
+                if not exact:
+                    self.assertEqual(controller.status()["review_targets"]["hosted"]["status"], "READY")
+                    self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
+                    controller.github.values[2] = pr(2, HEAD_1)
+                    controller.git.heads["feature-2"] = HEAD_1
+                    with self.assertRaises(ControllerError):
+                        controller.resolve_hosted_target()
+
     def test_bounded_hosted_allocation_reopens_judgment_required_after_full_stop_audit(self):
         controller, evidence = self.hosted_judgment_allocation_fixture()
 
