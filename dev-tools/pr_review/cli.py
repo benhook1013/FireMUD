@@ -314,9 +314,8 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("hosted", "cli"):
         sub = run_commands.add_parser(name)
         sub.add_argument("--expect-pr", type=_positive_int)
-        if name == "cli":
-            sub.add_argument("--allow-unreconciled", action="store_true")
-            sub.add_argument("--reason")
+        sub.add_argument("--force", action="store_true")
+        sub.add_argument("--reason")
 
     wait = commands.add_parser("wait", help="observe one existing review request without posting another")
     wait_commands = wait.add_subparsers(dest="wait_command", required=True)
@@ -1301,14 +1300,10 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         }, 0
     if args.command == "run":
         if args.run_command == "hosted":
-            return controller.run_hosted(expected_pr=args.expect_pr), 0
-        if args.reason and not args.allow_unreconciled:
-            raise CliError("--reason is only valid with --allow-unreconciled")
-        if args.allow_unreconciled and not args.reason:
-            raise CliError("--allow-unreconciled requires --reason")
+            return controller.run_hosted(expected_pr=args.expect_pr, force=args.force, reason=args.reason), 0
         result = controller.run_cli(
             expected_pr=args.expect_pr,
-            allow_unreconciled=args.allow_unreconciled,
+            force=args.force,
             reason=args.reason,
         )
         return result, int(getattr(result, "exit_status", 0))

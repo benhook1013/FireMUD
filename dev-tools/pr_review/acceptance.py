@@ -556,59 +556,6 @@ class FixtureEvidence:
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         return checkpoint
-    def record_provisional(self, target: ReviewTarget, reason: str) -> None:
-        """Atomically reserve one synthetic child/parent discovery identity."""
-
-        pr = target.snapshot.number
-        head = target.snapshot.head_sha
-        parent_head = target.parent.head_sha
-        with self.lock_path.open("a+", encoding="utf-8") as lock:
-            os.fchmod(lock.fileno(), 0o600)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                recorded = self._recorded()
-                existing = (
-                    *self._values.get((pr, "cli"), ()),
-                    *(item for item in recorded if item.get("channel", "cli") == "cli"),
-                )
-                if any(
-                    item.get("provisional") is True
-                    and item.get("pr") == pr
-                    and item.get("head") == head
-                    and item.get("parent_head") == parent_head
-                    for item in existing
-                ):
-                    raise AcceptanceFixtureError(
-                        "one provisional CLI discovery is already recorded for this exact child/parent identity"
-                    )
-                recorded.append(
-                    {
-                        "pr": pr,
-                        "channel": "cli",
-                        "head": head,
-                        "child_head": head,
-                        "parent_head": parent_head,
-                        "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
-                        "merge_base": target.merge_base,
-                        "patch_id": target.patch_identity,
-                        "checkpoint": f"fixture-provisional-{pr}-{head[:12]}-{parent_head[:12]}",
-                        "completed": False,
-                        "attributable": False,
-                        "anchored": True,
-                        "corrected_state": False,
-                        "provisional": True,
-                        "accepted": 0,
-                        "raw": 0,
-                        "reason": reason,
-                    }
-                )
-                payload = self._sidecar()
-                payload["evidence"] = recorded
-                self._write_sidecar(payload)
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-
-
 class FixtureReviewAdapter:
     """Return deterministic review results without posting or consuming quota."""
 
@@ -622,8 +569,6 @@ class FixtureReviewAdapter:
         configured = self.evidence.next_result(target, self.channel)
         result = dict(configured) if configured is not None else {"status": "dry"}
         checkpoint = self.evidence.record_result(target, self.channel, result)
-        if self.channel == "cli" and kwargs.get("allow_unreconciled"):
-            self.evidence.record_provisional(target, str(kwargs.get("reason", "")))
         return {
             "acceptance_fixture": True,
             "simulated": True,
@@ -632,7 +577,10 @@ class FixtureReviewAdapter:
             "head": target.snapshot.head_sha,
             "parent": target.parent.pr_number or target.parent.ref_name,
             "parent_head": target.parent.head_sha,
-            "provisional": bool(kwargs.get("allow_unreconciled", False)),
+            "provisional": False,
+            "force_acknowledged": bool(kwargs.get("force", False)),
+            "force_reason": kwargs.get("reason"),
+            "candidate_warnings": list(target.candidate_warnings),
             "review_started": False,
             "quota_consumed": False,
             "result": result["status"],

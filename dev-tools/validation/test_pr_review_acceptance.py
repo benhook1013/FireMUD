@@ -445,7 +445,7 @@ class AcceptanceCliTest(unittest.TestCase):
             self.assertEqual(pr["reconciliation"], "UNRECONCILED")
             self.assertIn("fixture has no test-merge tree", pr["reason"])
 
-    def test_second_identical_provisional_cli_run_uses_isolated_evidence_to_fail(self):
+    def test_repeated_forced_cli_runs_are_nonprovisional_and_use_isolated_evidence(self):
         canonical = state.state_path()
         before = canonical_state_snapshot(canonical)
         with tempfile.TemporaryDirectory() as directory:
@@ -456,30 +456,38 @@ class AcceptanceCliTest(unittest.TestCase):
             payload["ancestors"] = []
             payload.pop("test_merge_trees")
             payload["evidence"]["1"]["cli"] = []
+            payload["review_results"] = {
+                "1": {
+                    "cli": [
+                        {"status": "partial", "record_evidence": True},
+                        {"status": "partial", "record_evidence": True},
+                    ]
+                }
+            }
             fixture.write_text(json.dumps(payload), encoding="utf-8")
 
             self.assertEqual(self.run_cli(fixture, isolated, "stack", "set", "1").returncode, 0)
-            command = ("run", "cli", "--expect-pr", "1", "--allow-unreconciled", "--reason", "one isolated discovery")
+            command = ("run", "cli", "--expect-pr", "1", "--force", "--reason", "known stale reconciliation")
             first = self.run_cli(fixture, isolated, *command)
             self.assertEqual(first.returncode, 0, first.stderr)
-            self.assertIn("provisional=True", first.stdout)
+            self.assertIn("force_acknowledged=True", first.stdout)
 
             evidence = self.run_cli(fixture, isolated, "evidence", "1", "--json")
             self.assertEqual(evidence.returncode, 0, evidence.stderr)
             recorded = json.loads(evidence.stdout)["policy"]["cli"]
             self.assertEqual(len(recorded), 1)
-            self.assertTrue(recorded[0]["provisional"])
+            self.assertFalse(recorded[0]["provisional"])
             self.assertFalse(recorded[0]["completed"])
             self.assertFalse(recorded[0]["attributable"])
             self.assertEqual(recorded[0]["head"], HEAD_1)
             self.assertEqual(recorded[0]["parent_head"], BASE)
 
             second = self.run_cli(fixture, isolated, *command)
-            self.assertEqual(second.returncode, 1)
-            self.assertIn("already recorded", second.stderr)
+            self.assertEqual(second.returncode, 0, second.stderr)
+            self.assertIn("force_acknowledged=True", second.stdout)
             self.assertEqual(json.loads(isolated.read_text(encoding="utf-8"))["ordered_prs"], [1])
             sidecar = root / "state.json.fixture-evidence.json"
-            self.assertEqual(len(json.loads(sidecar.read_text(encoding="utf-8"))["evidence"]), 1)
+            self.assertEqual(len(json.loads(sidecar.read_text(encoding="utf-8"))["evidence"]), 2)
             self.assertEqual(canonical_state_snapshot(canonical), before)
 
     def test_legacy_transition_and_fresh_reviews_are_isolated_and_no_quota(self):

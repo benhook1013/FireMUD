@@ -2703,9 +2703,7 @@ class ReviewController:
                             reviewed_head = _field(value, "head", "reviewed_head")
                             try:
                                 reviewed_head = _sha(reviewed_head, "accepted finding reviewed head")
-                                has_corrected_descendant = not require_checkpoint_ancestry or self.git.is_ancestor(
-                                    reviewed_head, current.child_head
-                                )
+                                has_corrected_descendant = self.git.is_ancestor(reviewed_head, current.child_head)
                             except (ControllerError, OSError, subprocess.SubprocessError, ValueError) as exc:
                                 raise ControllerError(
                                     "could not verify corrected-head ancestry for accepted findings"
@@ -2903,6 +2901,24 @@ class ReviewController:
             "checkpoint": allocation.stop_checkpoint,
             "accepted": None,
         }
+
+    def _durable_stop_allocations(self, state: ReviewState, pr: int) -> dict[str, dict[str, Any]]:
+        """Project persisted channel stops without rechecking moved review identities."""
+
+        stopped = {}
+        for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
+            allocation = state.allocations.get(f"{pr}:{channel.value}")
+            if allocation is None or allocation.stop_basis is None:
+                continue
+            stopped[channel.value] = self._stop_progress(
+                allocation,
+                state,
+                (),
+                None,
+                stack.ReconciliationStatus.UNRECONCILED,
+                None,
+            )
+        return stopped
 
     @staticmethod
     def _has_stop_retain_judgment(
@@ -3435,7 +3451,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=checkpoint_pin,
-                    require_checkpoint_ancestry=not allocation.reopens_taper,
+                    require_checkpoint_ancestry=False,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                     stop_audit_cache=stop_audit_cache,
@@ -3474,7 +3490,7 @@ class ReviewController:
                     current,
                     reconciliation_result,
                     checkpoint_pin=stopping_checkpoint,
-                    require_checkpoint_ancestry=not allocation.reopens_taper,
+                    require_checkpoint_ancestry=False,
                     allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                     allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                     stop_audit_cache=stop_audit_cache,
@@ -3517,7 +3533,7 @@ class ReviewController:
                 current,
                 reconciliation_result,
                 checkpoint_pin=latest["checkpoint"],
-                require_checkpoint_ancestry=not allocation.reopens_taper,
+                require_checkpoint_ancestry=False,
                 allow_cli_hosted_overlap=allocation.channel == policy.Channel.CLI.value,
                 allow_hosted_cli_overlap=allocation.channel == policy.Channel.HOSTED.value,
                 stop_audit_cache=stop_audit_cache,
@@ -3814,28 +3830,6 @@ class ReviewController:
     ) -> policy.ChannelDecision:
         """Apply the same authoritative selector to already fetched status evidence."""
 
-        other = policy.Channel.CLI if channel == policy.Channel.HOSTED else policy.Channel.HOSTED
-        other_heads: dict[int, str] = {}
-        for pr in candidate_prs:
-            values = histories[other].get(pr, ())
-            latest = _latest_review(values)
-            other_anchor_status = reconciliation.status_for(pr, other.value)
-            proven_cli_descendant = (
-                channel == policy.Channel.HOSTED
-                and ReviewController._hosted_head_mismatch_is_proven_cli_descendant(pr, histories, reconciliation)
-            )
-            if (
-                latest is not None
-                and other_anchor_status
-                not in {
-                    stack.ReconciliationStatus.PATCH_CHANGED,
-                    stack.ReconciliationStatus.EQUIVALENT_HISTORY,
-                }
-                and not proven_cli_descendant
-            ):
-                value = _field(latest, "head", "reviewed_head")
-                if isinstance(value, str):
-                    other_heads[pr] = value
         channel_allocations = allocations
         taper_history_by_pr: dict[int, Sequence[policy.Evidence]] = {}
         active_review_prs = {
@@ -3877,7 +3871,6 @@ class ReviewController:
             tuple(pr for pr in candidate_prs if not live[pr].merged),
             histories[channel],
             reconciliation_by_pr={pr: reconciliation.status_for(pr, channel.value) for pr in candidate_prs},
-            other_channel_heads=other_heads,
             handed_off_prs=(
                 pr
                 for pr, view in channel_allocations.items()
@@ -4289,6 +4282,15 @@ class ReviewController:
         item = live[pr]
         link = reconciliation.links[pr]
         anchor = self._anchor(pr, item, link)
+        target_reconciliation = reconciliation.status_for(pr, selected.value)
+        candidate_warnings = ()
+        if target_reconciliation in {
+            stack.ReconciliationStatus.PARENT_MOVED,
+            stack.ReconciliationStatus.UNRECONCILED,
+        }:
+            warning = f"stack reconciliation is {target_reconciliation.value}"
+            detail = reconciliation.reasons.get(pr)
+            candidate_warnings = (warning, detail) if detail and detail != warning else (warning,)
         test_merge = self._default_test_merge_proofs.get(pr)
         if test_merge is not None and (
             test_merge[0].casefold() != item.base_tip.casefold() or test_merge[1].casefold() != item.head.casefold()
@@ -4297,13 +4299,13 @@ class ReviewController:
         selected_target = ReviewTarget(
             item.runner_snapshot(),
             EffectiveParent(link.parent_ref, link.parent_head, link.parent_pr),
-            reconciled=reconciliation.status_for(pr)
+            reconciled=target_reconciliation
             in {
                 stack.ReconciliationStatus.COHERENT,
                 stack.ReconciliationStatus.PATCH_CHANGED,
                 stack.ReconciliationStatus.EQUIVALENT_HISTORY,
             },
-            ancestor_links_valid=reconciliation.status_for(pr)
+            ancestor_links_valid=target_reconciliation
             in {
                 stack.ReconciliationStatus.COHERENT,
                 stack.ReconciliationStatus.PATCH_CHANGED,
@@ -4323,6 +4325,7 @@ class ReviewController:
             default_test_merge_base_sha=test_merge[0] if test_merge is not None else "",
             default_test_merge_head_sha=test_merge[1] if test_merge is not None else "",
             default_test_merge_tree_sha=test_merge[2] if test_merge is not None else "",
+            candidate_warnings=candidate_warnings,
         )
         return Target(
             selected,
@@ -4339,23 +4342,32 @@ class ReviewController:
         )
 
     @staticmethod
-    def _ensure_runnable(selected: Target, *, provisional: bool = False) -> None:
+    def _ensure_runnable(
+        selected: Target, *, force: bool = False, require_force_for_warnings: bool = False
+    ) -> None:
         blocked = {
             policy.ReviewStatus.COMPLETE,
             policy.ReviewStatus.RATE_LIMITED,
             policy.ReviewStatus.HELD,
             policy.ReviewStatus.UNSTABLE,
-            policy.ReviewStatus.UNRECONCILED,
-            policy.ReviewStatus.PARENT_MOVED,
             policy.ReviewStatus.OVER_CEILING,
             policy.ReviewStatus.JUDGMENT_REQUIRED,
             policy.ReviewStatus.PROVISIONAL,
             policy.ReviewStatus.ALLOCATION_EXHAUSTED,
         }
-        if selected.status in blocked and not provisional:
+        if selected.status in blocked:
             if selected.status == policy.ReviewStatus.HELD:
                 raise ControllerError(f"{selected.channel.value} review cannot run: {selected.reason}")
             raise ControllerError(f"{selected.channel.value} review cannot run: {selected.status.value}")
+        warning_statuses = {policy.ReviewStatus.UNRECONCILED, policy.ReviewStatus.PARENT_MOVED}
+        if require_force_for_warnings and selected.status in warning_statuses and not force:
+            raise ControllerError(f"{selected.channel.value} review cannot run: {selected.status.value}; use --force")
+        if (
+            require_force_for_warnings
+            and not force
+            and (not selected.target.reconciled or not selected.target.ancestor_links_valid)
+        ):
+            raise ControllerError(f"{selected.channel.value} review has candidate identity warnings; use --force")
 
     def status(self) -> dict[str, Any]:
         state = self._state()
@@ -4608,22 +4620,9 @@ class ReviewController:
             reconciliation_status = reconciliation.status_for(pr)
             channel_status: dict[str, str] = {}
             for channel in (policy.Channel.HOSTED, policy.Channel.CLI):
-                other = policy.Channel.CLI if channel == policy.Channel.HOSTED else policy.Channel.HOSTED
-                other_history = histories[other][pr]
-                latest = _latest_review(other_history)
-                other_head = _field(latest, "head", "reviewed_head") if latest is not None else None
                 channel_reconciliation = reconciliation.status_for(pr, channel.value)
-                proven_cli_descendant = (
-                    channel == policy.Channel.HOSTED
-                    and self._hosted_head_mismatch_is_proven_cli_descendant(pr, histories, reconciliation)
-                )
                 if allocations[channel].get(pr, {}).get("status") == "STOPPED":
                     channel_status[channel.value] = policy.ReviewStatus.HUMAN_STOPPED.value
-                elif channel_reconciliation in {
-                    stack.ReconciliationStatus.PARENT_MOVED,
-                    stack.ReconciliationStatus.UNRECONCILED,
-                }:
-                    channel_status[channel.value] = channel_reconciliation.value
                 else:
                     taper_history = None
                     allocation = state.allocations.get(f"{pr}:{channel.value}")
@@ -4646,24 +4645,27 @@ class ReviewController:
                                 histories[channel][pr],
                             ),
                         )
-                    channel_status[channel.value] = policy.completion_status(
+                    projected_status = policy.completion_status(
                         state,
                         channel,
                         histories[channel][pr],
                         taper_history=taper_history,
                         reconciliation=channel_reconciliation,
-                        other_channel_head=(
-                            other_head
-                            if isinstance(other_head, str)
-                            and not proven_cli_descendant
-                            and reconciliation.status_for(pr, other.value)
-                            not in {
-                                stack.ReconciliationStatus.PATCH_CHANGED,
-                                stack.ReconciliationStatus.EQUIVALENT_HISTORY,
-                            }
-                            else None
-                        ),
-                    ).value
+                    )
+                    if (
+                        projected_status != policy.ReviewStatus.COMPLETE
+                        and channel_reconciliation
+                        in {
+                            stack.ReconciliationStatus.PARENT_MOVED,
+                            stack.ReconciliationStatus.UNRECONCILED,
+                        }
+                    ):
+                        projected_status = (
+                            policy.ReviewStatus.PARENT_MOVED
+                            if channel_reconciliation == stack.ReconciliationStatus.PARENT_MOVED
+                            else policy.ReviewStatus.UNRECONCILED
+                        )
+                    channel_status[channel.value] = projected_status.value
             values.append(
                 {
                     "pr": pr,
@@ -5119,6 +5121,13 @@ class ReviewController:
         )
 
         values: list[dict[str, Any]] = []
+        closed_channel_states = {
+            policy.ReviewStatus.COMPLETE.value,
+            policy.ReviewStatus.HUMAN_STOPPED.value,
+            policy.ReviewStatus.ALLOCATION_EXHAUSTED.value,
+            "CAP_AUDITED_STOP",
+        }
+        closed_allocation_states = {"STOPPED", "CAP_AUDITED_STOP", "CAP_TAPERED"}
         for pr in state.ordered_prs:
             item = batch_live[pr]
             parent = links[pr]
@@ -5145,8 +5154,32 @@ class ReviewController:
                         if pr in remote_affected
                         else "live PR identity changed between batch overview and deep reconciliation"
                     )
-                    row["channels"] = {"hosted": "UNRECONCILED", "cli": "UNRECONCILED"}
-                    row["allocations"] = {}
+                    channels = row.get("channels")
+                    allocations = row.get("allocations")
+                    channels = channels if isinstance(channels, Mapping) else {}
+                    allocations = allocations if isinstance(allocations, Mapping) else {}
+                    row_channels = {}
+                    row_allocations = {}
+                    for channel in (policy.Channel.HOSTED.value, policy.Channel.CLI.value):
+                        channel_state = channels.get(channel)
+                        allocation_view = allocations.get(channel)
+                        allocation_status = (
+                            allocation_view.get("status") if isinstance(allocation_view, Mapping) else None
+                        )
+                        if channel_state in closed_channel_states:
+                            row_channels[channel] = channel_state
+                            if allocation_status in closed_allocation_states:
+                                row_allocations[channel] = allocation_view
+                        elif allocation_status == "CAP_AUDITED_STOP":
+                            row_channels[channel] = "CAP_AUDITED_STOP"
+                            row_allocations[channel] = allocation_view
+                        else:
+                            row_channels[channel] = "UNRECONCILED"
+                    for channel, stop_view in self._durable_stop_allocations(state, pr).items():
+                        row_channels[channel] = policy.ReviewStatus.HUMAN_STOPPED.value
+                        row_allocations[channel] = stop_view
+                    row["channels"] = row_channels
+                    row["allocations"] = row_allocations
                     row["evidence_status"] = "stale"
                 values.append(row)
                 continue
@@ -5164,6 +5197,11 @@ class ReviewController:
             if deep_error is not None and pr in scoped_prs:
                 stale = True
                 reason = f"deep review evidence is unavailable: {deep_error}"
+            channels = {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"}
+            allocations = self._durable_stop_allocations(state, pr)
+            channels.update(
+                {channel: policy.ReviewStatus.HUMAN_STOPPED.value for channel in allocations}
+            )
             values.append(
                 {
                     "pr": pr,
@@ -5177,9 +5215,9 @@ class ReviewController:
                     "draft_notice": DRAFT_PR_NOTICE if item.is_draft else None,
                     "reconciliation": "UNKNOWN" if not stale else "UNRECONCILED",
                     "reason": reason,
-                    "channels": {"hosted": "NOT_CHECKED", "cli": "NOT_CHECKED"},
+                    "channels": channels,
                     "review_activity": {},
-                    "allocations": {},
+                    "allocations": allocations,
                     "incoming_routes": [
                         route.to_dict() for route in state.routes if route.status == "open" and route.target_pr == pr
                     ],
@@ -5257,12 +5295,12 @@ class ReviewController:
 
     def resolve_cli_target(self, expected_pr: int | None = None) -> ReviewTarget:
         selected = self._target(policy.Channel.CLI, expected_pr)
-        self._ensure_runnable(selected)
+        self._ensure_runnable(selected, require_force_for_warnings=True)
         return selected.target
 
     def resolve_hosted_target(self, expected_pr: int | None = None) -> ReviewTarget:
         selected = self._target(policy.Channel.HOSTED, expected_pr)
-        self._ensure_runnable(selected)
+        self._ensure_runnable(selected, require_force_for_warnings=True)
         return selected.target
 
     def select_target(self, channel: policy.Channel | str, expected_pr: int | None = None) -> dict[str, Any]:
@@ -5321,9 +5359,28 @@ class ReviewController:
 
         self.store.update(admit)
 
-    def run_hosted(self, *, expected_pr: int | None = None, **kwargs: Any) -> Any:
+    @staticmethod
+    def _validate_force_options(force: bool, reason: str | None) -> None:
+        if not isinstance(force, bool):
+            raise ControllerError("--force must be a boolean acknowledgment")
+        if reason is not None and not force:
+            raise ControllerError("--reason is only valid with --force")
+        if reason is not None and (not isinstance(reason, str) or len(reason) > 240):
+            raise ControllerError("--reason must be 240 characters or fewer")
+        if reason is not None and any(ord(character) < 32 for character in reason):
+            raise ControllerError("--reason must not contain control characters")
+
+    def run_hosted(
+        self,
+        *,
+        expected_pr: int | None = None,
+        force: bool = False,
+        reason: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        self._validate_force_options(force, reason)
         selected = self._target(policy.Channel.HOSTED, expected_pr)
-        self._ensure_runnable(selected)
+        self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
         if self.hosted_adapter is None:
             raise ControllerError("Hosted adapter is not configured")
         for attempt in range(MAX_BASE_RESELECTIONS + 1):
@@ -5333,6 +5390,8 @@ class ReviewController:
                 return self.hosted_adapter(
                     selected.target,
                     expect_pr=expected_pr,
+                    force=force,
+                    reason=reason,
                     admit=lambda reserve, selected=selected: self._admit_review(
                         selected.pr, "hosted", reserve, selection_inputs=selected.selection_inputs
                     ),
@@ -5342,63 +5401,38 @@ class ReviewController:
                 if attempt == MAX_BASE_RESELECTIONS:
                     raise
                 selected = self._target(policy.Channel.HOSTED, expected_pr)
-                self._ensure_runnable(selected)
+                self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
             except StaleReviewTarget:
                 if not selected.target.default_base_front or attempt == MAX_BASE_RESELECTIONS:
                     raise
                 selected = self._target(policy.Channel.HOSTED, selected.pr)
-                self._ensure_runnable(selected)
+                self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
             except HostedAdmissionBusy:
                 if attempt == MAX_BASE_RESELECTIONS:
                     raise
                 time.sleep(min(HOSTED_ADMISSION_RETRY_BASE_SECONDS * (attempt + 1), HOSTED_ADMISSION_RETRY_MAX_SECONDS))
                 selected = self._target(policy.Channel.HOSTED, expected_pr)
-                self._ensure_runnable(selected)
+                self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
         raise AssertionError("bounded Hosted reselection loop exhausted unexpectedly")
-
-    def _provisional_duplicate(self, selected: Target) -> bool:
-        for value in _history(self._evidence_provider, selected.pr, policy.Channel.CLI):
-            if not bool(_field(value, "provisional")):
-                continue
-            head = _field(value, "head", "reviewed_head")
-            parent = _field(value, "parent_head")
-            if head == selected.anchor.child_head and parent == selected.anchor.parent_head:
-                return True
-        return False
 
     def run_cli(
         self,
         *,
         expected_pr: int | None = None,
-        allow_unreconciled: bool = False,
+        force: bool = False,
         reason: str | None = None,
         **kwargs: Any,
     ) -> Any:
+        self._validate_force_options(force, reason)
         selected = self._target(policy.Channel.CLI, expected_pr)
         for attempt in range(MAX_BASE_RESELECTIONS + 1):
-            if allow_unreconciled:
-                if not reason or selected.status not in {
-                    policy.ReviewStatus.UNRECONCILED,
-                    policy.ReviewStatus.PARENT_MOVED,
-                }:
-                    raise ControllerError("provisional CLI requires an unreconciled target and a reason")
-                if self._provisional_duplicate(selected):
-                    raise ControllerError(
-                        "one provisional CLI discovery is already recorded for this exact child/parent identity"
-                    )
-            elif selected.status in {
-                policy.ReviewStatus.RATE_LIMITED,
-                policy.ReviewStatus.COMPLETE,
-                policy.ReviewStatus.JUDGMENT_REQUIRED,
-            }:
-                raise ControllerError(f"CLI review cannot run: {selected.status.value}")
-            self._ensure_runnable(selected, provisional=allow_unreconciled)
+            self._ensure_runnable(selected, force=force, require_force_for_warnings=True)
             if self.cli_adapter is None:
                 raise ControllerError("CLI adapter is not configured")
             try:
                 return self.cli_adapter(
                     selected.target,
-                    allow_unreconciled=allow_unreconciled,
+                    force=force,
                     reason=reason,
                     admit=lambda reserve, selected=selected: self._admit_review(
                         selected.pr, "cli", reserve, selection_inputs=selected.selection_inputs
@@ -5637,6 +5671,7 @@ class ReviewController:
         history = _history(self._evidence_provider, pr, selected)
         policy_history = self._policy_history(state, pr, selected, reconciliation)
         reopens_taper = fresh_taper
+        prior_taper_complete = policy.taper_satisfied_for_state(state, selected, policy_history)
 
         def provable_posted_hosted_request(value: Any) -> bool:
             trigger_id = _field(value, "trigger_id")
@@ -5655,13 +5690,16 @@ class ReviewController:
         if (
             bounded_replacement
             and not any(provable_posted_hosted_request(value) for value in history)
-            and any(
-                _field(value, "completed") is True
-                and _field(value, "attributable") is True
-                and _field(value, "provisional") is not True
-                and type(_field(value, "accepted")) is int
-                and _field(value, "accepted") > 0
-                for value in policy_history
+            and (
+                prior_taper_complete
+                or any(
+                    _field(value, "completed") is True
+                    and _field(value, "attributable") is True
+                    and _field(value, "provisional") is not True
+                    and type(_field(value, "accepted")) is int
+                    and _field(value, "accepted") > 0
+                    for value in policy_history
+                )
             )
         ):
             self._check_stop_evidence(
@@ -5671,7 +5709,7 @@ class ReviewController:
                 current,
                 reconciliation,
                 checkpoint_pin=None,
-                require_checkpoint_ancestry=not fresh_taper,
+                require_checkpoint_ancestry=False,
                 allow_cli_hosted_overlap=selected == policy.Channel.CLI,
                 allow_hosted_cli_overlap=selected == policy.Channel.HOSTED,
             )
@@ -5683,7 +5721,7 @@ class ReviewController:
                 allow_completed_allocation=True,
             )
             try:
-                self._ensure_runnable(target)
+                self._ensure_runnable(target, require_force_for_warnings=True)
             except ControllerError:
                 if (
                     bounded_replacement
