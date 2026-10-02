@@ -19,6 +19,31 @@ import org.junit.jupiter.api.Test;
 
 class GameplayAdmissionPointerRepositoryTest {
   @Test
+  void tenantScopedListFiltersRowsInTheDatabaseBeforeMapping() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-tenant-list;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      GameplayAdmissionPointer target = repository.save(pointer(7L, 44L, "SHARED", "production"));
+      GameplayAdmissionPointer unrelated =
+          repository.save(pointer(8L, 55L, "SHARED", "production"));
+      dsl.execute(
+          "UPDATE gameplay_admission_pointer SET realm_id = NULL, "
+              + "playable_state_namespace_id = NULL WHERE id = ?",
+          unrelated.getId());
+
+      var scopedRows = repository.findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(7L);
+
+      assertEquals(1, scopedRows.size());
+      assertEquals(target.getId(), scopedRows.getFirst().getId());
+      assertEquals(7L, scopedRows.getFirst().getTenantId());
+      assertNotNull(scopedRows.getFirst().getRealmId());
+    }
+  }
+
+  @Test
   void stableRealmAndNamespaceIdentitySurviveRuntimeReplacement() throws Exception {
     try (Connection connection =
         DriverManager.getConnection(

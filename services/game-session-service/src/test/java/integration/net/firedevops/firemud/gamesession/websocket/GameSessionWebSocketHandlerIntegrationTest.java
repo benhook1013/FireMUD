@@ -1186,13 +1186,46 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   @Test
   void websocketActiveGameplaySessionFallsBackToPlayRequiredWhenPointerAdvances() throws Exception {
+    var pointerBefore =
+        gameplayAdmissionPointerAuthorityService
+            .findPointer(22L, "demo", "production")
+            .orElseThrow();
+    assertThat(pointerBefore.gameInstanceId()).isEqualTo(1L);
+
+    var targetRuntimeRoster =
+        ListCharactersByAccountResponse.newBuilder()
+            .addCharacters(
+                net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+                    .setId("789")
+                    .setTenantId("22")
+                    .setAccountId("123")
+                    .setName("CutoverArrival")
+                    .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                    .setLevel(1)
+                    .build())
+            .build();
+    org.mockito.Mockito.doReturn(targetRuntimeRoster)
+        .when(entityManagementClient)
+        .listCharactersByAccount(
+            "22",
+            "123",
+            Long.toString(CUTOVER_GAME_INSTANCE_ID),
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+
     List<String> payloads;
     try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
       client.login("demo@example.com", "swordfish");
       client.play("demo", "Emberline");
       client.send("LOOK");
       client.awaitStartsWith("OK LOOK");
-      bumpProductionAdmissionPointer(1L, false);
+      bumpProductionAdmissionPointer(CUTOVER_GAME_INSTANCE_ID, false);
+      var pointerAfter =
+          gameplayAdmissionPointerAuthorityService
+              .findPointer(22L, "demo", "production")
+              .orElseThrow();
+      assertThat(pointerAfter.gameInstanceId()).isEqualTo(CUTOVER_GAME_INSTANCE_ID);
+      assertThat(pointerAfter.pointerVersion()).isEqualTo(pointerBefore.pointerVersion() + 1L);
+      assertThat(pointerAfter.catalogRevision()).isEqualTo(pointerBefore.catalogRevision());
       client.send("LOOK");
       client.awaitStartsWith("ERROR PLAY_REQUIRED");
       client.send("CHARS demo");
@@ -1204,6 +1237,13 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR PLAY_REQUIRED"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK CHARS"));
+    assertThat(payloads).anyMatch(payload -> payload.contains("CutoverArrival"));
+    org.mockito.Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22",
+            "123",
+            Long.toString(CUTOVER_GAME_INSTANCE_ID),
+            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test

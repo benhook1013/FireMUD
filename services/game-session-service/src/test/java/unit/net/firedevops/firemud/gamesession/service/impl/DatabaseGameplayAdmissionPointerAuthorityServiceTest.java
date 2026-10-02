@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
@@ -69,6 +70,26 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
                     2L,
                     4L,
                     null)));
+  }
+
+  @Test
+  void listPointersByTenantUsesTheScopedRepositoryRead() {
+    GameplayAdmissionPointer scopedPointer = existingPointer();
+    when(pointerRepository.findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(1L))
+        .thenReturn(List.of(scopedPointer));
+
+    var snapshots = service.listPointersByTenant(1L);
+
+    assertEquals(1, snapshots.size());
+    assertEquals(1L, snapshots.getFirst().tenantId());
+    verify(pointerRepository).findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(1L);
+    verify(pointerRepository, never()).findAllByOrderByWorldSlugAscRealmSlugAsc();
+  }
+
+  @Test
+  void listPointersByTenantRejectsUnknownTenant() {
+    assertThrows(IllegalArgumentException.class, () -> service.listPointersByTenant(0L));
+    verifyNoInteractions(pointerRepository);
   }
 
   @Test
