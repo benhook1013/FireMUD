@@ -225,17 +225,15 @@ subprojects {
     dependencies {
         implementation(platform(libs.findLibrary("spring-boot-dependencies").get()))
         testImplementation(platform(libs.findLibrary("spring-boot-dependencies").get()))
-        if (name != "common-redis-contracts") {
-            implementation(libs.findLibrary("protobuf-java").get())
-            implementation(libs.findLibrary("grpc-netty-shaded").get())
-            implementation(libs.findLibrary("grpc-protobuf").get())
-            implementation(libs.findLibrary("grpc-stub").get())
-            implementation("javax.annotation:javax.annotation-api:1.3.2")
-            testImplementation(libs.findLibrary("spring-boot-starter-test").get())
-            testImplementation(libs.findLibrary("spring-boot-starter-restclient-test").get())
-            testImplementation(libs.findLibrary("spring-boot-resttestclient").get())
-            testImplementation(libs.findLibrary("spring-boot-starter-webmvc-test").get())
-        }
+        implementation(libs.findLibrary("protobuf-java").get())
+        implementation(libs.findLibrary("grpc-netty-shaded").get())
+        implementation(libs.findLibrary("grpc-protobuf").get())
+        implementation(libs.findLibrary("grpc-stub").get())
+        implementation("javax.annotation:javax.annotation-api:1.3.2")
+        testImplementation(libs.findLibrary("spring-boot-starter-test").get())
+        testImplementation(libs.findLibrary("spring-boot-starter-restclient-test").get())
+        testImplementation(libs.findLibrary("spring-boot-resttestclient").get())
+        testImplementation(libs.findLibrary("spring-boot-starter-webmvc-test").get())
         testRuntimeOnly(libs.findLibrary("junit-platform-launcher").get())
         if (projectDir.parentFile.name == "services" && !name.startsWith("common-")) {
             testImplementation(testFixtures(project(":common-test-support")))

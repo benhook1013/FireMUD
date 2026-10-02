@@ -419,9 +419,9 @@ Script changes must be rolled out in a way that respects both AOF replay semanti
   - `schemaVersion` changes must support every caller and stored-payload version in the evidenced coexistence set; unknown or ambiguous versions, including unproven missing versions, must fail before mutation with `"UNSUPPORTED_SCHEMA_VERSION"` or the equivalent so AOF replay cannot apply effects with mismatched schemas.
   - When a reset-required change is introduced, operators follow the reset runbooks so that any surviving AOF history for old scripts is discarded for the relevant scope rather than replayed under incompatible semantics.
 
-## Target-State Lua Script Registry and CI Expectations (Partial Implementation)
+## Target-State Lua Script Registry and CI Expectations (Not Implemented)
 
-The initial `common-redis-contracts` foundation validates explicitly contributed descriptors and invocation handles, including owner/prefix, role/principal, identity/digest, arity and cluster-slot checks. It does not inventory or register legacy scripts automatically. Complete repository aggregation, ownership enforcement, the generic test harness, all-script CI and deployed role/ACL proof remain target-state gaps. Once delivered, all coordination-related Lua scripts contribute entries to one aggregated **Lua Script Registry**. The shared Redis-contract foundation owns the registry schema and aggregation; each owning service contributes entries and retains executable Lua for exclusive key families. For each script, the registry records:
+The registry, validators, ownership enforcement, generic test harness, and CI checks in this section are target state and are not currently implemented. Once delivered, all coordination-related Lua scripts contribute entries to one aggregated **Lua Script Registry**. The shared Redis-contract foundation owns the registry schema and aggregation; each owning service contributes entries and retains executable Lua for exclusive key families. For each script, the registry records:
 
 - Script identifier and file path.
 - Expected `KEYS` and `ARGV` ordering and allowed prefixes (including hash-tag rules).

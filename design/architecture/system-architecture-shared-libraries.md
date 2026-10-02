@@ -6,7 +6,7 @@ FireMUD's microservices share a set of narrowly scoped modules so each service c
 
 ## Implementation Status
 
-The current `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so shared code must not synthesize an absent epoch; exact tuple propagation and final enforcement remain implementation and focused-proof gaps at that boundary. The initial `common-redis-contracts` descriptor/validation slice follows [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md); it is opt-in and contains no owner-exclusive execution or automatic Redis client wiring. Complete owner contributions, repository aggregation, ownership enforcement, generic CI and deployed role/ACL proof remain incomplete. Shared proof status belongs to the [Shared Runtime tracker](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md#capability-status); scripting consequences remain in the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status).
+The current `EnqueueAutomationCommandIfAbsentRequest` carries `scriptPatchVersion` but not `scriptPinEpoch`, so shared code must not synthesize an absent epoch; exact tuple propagation and final enforcement remain implementation and focused-proof gaps at that boundary. The narrow shared Redis-contract foundation, owner-local descriptor contributions, repository aggregation, ownership enforcement, and descriptor-driven proof required by [ADR 0176](./decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md) are not implemented. See the [Automation and Scheduler Runtime tracker](../project-management/implementation-tracking/automation-and-scheduler-runtime.md#capability-status) for current status and proof evidence.
 
 - `common-saga` adoption is not currently explicit: base service conventions add the dependency broadly, and deployed service configurations expose the Saga Flyway location even for services without a Saga workflow. This can materialize shared Saga tables and repositories outside the adopter boundary; the explicit adopter allowlist and focused conformance proof remain incomplete.
 
@@ -51,7 +51,7 @@ DTO records for common tasks (paging, IDs, basic metadata) live here so services
 
 ### Redis Key Naming & Lua Script Helpers
 
-Target-state Redis helpers follow the owner-local execution and aggregated-contract boundary in [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md). The current foundation validates selected contributed descriptors and immutable invocation handles; the full aggregated boundary is not yet implemented.
+Target-state Redis helpers must follow the owner-local execution and aggregated-contract boundary in [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md); this boundary is not implemented in the current tree.
 
 The target narrow shared Redis-contract module would own the descriptor schema, common outcome types, Redis-role and prefix-owner rules, hash-tag/cluster-slot validation, compatibility metadata rules, and repository registry/test aggregation. It would own executable key builders, invocation machinery, or Lua only for mutations genuinely executed by multiple independently deployed callers.
 
@@ -85,7 +85,7 @@ Shared code is organized as the narrowly scoped Gradle modules currently include
 
 The versioned definitions under `protos/` remain the source for generated service stubs; they are not a replacement for the split Java modules. If a module is published for a supported distribution workflow, it retains its module-specific coordinates under the `net.firedevops.firemud` group rather than being folded into one shared runtime artifact.
 
-Redis contracts follow [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md). The narrow `common-redis-contracts` module carries the initial descriptor schema, bounded outcomes and role/owner/principal/slot invocation validation. Owner-exclusive Redis builders, adapters, executable Lua and semantic tests remain in the owning service. Repository aggregation, full legacy registration and deployed caller/ACL proof remain incomplete; presence of this module does not establish them.
+Redis contracts follow [ADR 0176](decisions/adr-0176-owner-local-redis-execution-with-aggregated-contracts.md): a future narrow foundation such as `common-redis-contracts` may carry descriptor schemas, bounded outcomes, role/owner/slot validation, and repository aggregation. Owner-exclusive Redis builders, adapters, executable Lua, and semantic tests remain in the owning service. The foundation is not evidence that this target module or its registry has been implemented.
 
 This split-module boundary aligns with the [Shared Runtime, Service Contracts, and Persistence implementation tracking](../project-management/implementation-tracking/shared-runtime-contracts-and-persistence.md) record and keeps reuse explicit without globalizing owner-exclusive execution.
 

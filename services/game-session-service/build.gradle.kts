@@ -50,7 +50,6 @@ dependencies {
     implementation(libs.spring.boot.starter.websocket)
     implementation(project(":common-saga"))
     implementation(project(":common-security"))
-    implementation(project(":common-redis-contracts"))
     implementation(libs.jjwt.api)
     runtimeOnly(libs.jjwt.impl)
     runtimeOnly(libs.jjwt.jackson)

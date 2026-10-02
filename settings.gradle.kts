@@ -7,9 +7,6 @@ rootProject.name = "firemud"
 include("common-data-runtime")
 project(":common-data-runtime").projectDir = File("services/common-data-runtime")
 
-include("common-redis-contracts")
-project(":common-redis-contracts").projectDir = File("services/common-redis-contracts")
-
 include("common-platform-core")
 project(":common-platform-core").projectDir = File("services/common-platform-core")
 

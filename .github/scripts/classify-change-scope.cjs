@@ -17,7 +17,6 @@ const ALL_SERVICES = [
 const ALL_MODULES = [
   "common-data-runtime",
   "common-platform-core",
-  "common-redis-contracts",
   "common-saga",
   "common-temporal",
   "common-security",
@@ -51,7 +50,6 @@ const SHARED_PREFIXES = [
   "services/common-library/",
   "services/common-data-runtime/",
   "services/common-platform-core/",
-  "services/common-redis-contracts/",
   "services/common-saga/",
   "services/common-temporal/",
   "services/common-security/",
