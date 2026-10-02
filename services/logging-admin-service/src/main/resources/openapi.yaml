@@ -1242,8 +1242,10 @@ components:
           type: integer
         pointerVersion:
           type: integer
+          format: int64
         catalogRevision:
           type: integer
+          format: int64
           nullable: true
         realmId:
           type: string
@@ -1736,6 +1738,12 @@ paths:
                       $ref: '#/components/schemas/AdmissionPointerDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Admission-pointer audit authority is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers/runtime-state/{tenantId}/{gameInstanceId}:
     get:
       summary: Read canonical current runtime state
@@ -1767,6 +1775,12 @@ paths:
                     $ref: '#/components/schemas/GameInstanceRuntimeStateDto'
                   error:
                     $ref: '#/components/schemas/ErrorDetail'
+        '503':
+          description: Current admission-pointer authority or required pointer identity is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponseError'
   /admission-pointers/version-upgrades/{tenantId}/{preparationId}:
     get:
       summary: Read a prepared version-upgrade proof (live read)

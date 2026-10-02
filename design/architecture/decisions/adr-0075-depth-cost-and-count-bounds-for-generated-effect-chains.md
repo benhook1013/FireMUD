@@ -45,7 +45,7 @@ Platform hard ceilings bound every setting. Operators may configure lower enviro
 
 Every generated child carries an immutable parent identity, immutable enclosing-root lineage, depth equal to `parent.depth + 1`, and an owner-defined child ordinal allocated and persisted by the owning contract for replay-stable reuse. This decision does not define command-plan roots or `planOrdinal`; those allocation choices remain pending in [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md). The sealed chain manifest also persists the resolved platform, operator, and feature depth/count/cost/per-target limits, cost weights, and cost-model version. Retry, replay, and reconciliation reuse those persisted resolved values and never re-resolve them. Replay reuses the recorded child identity, lineage, ordinal, and budget accounting; it does not increment them again or mint a replacement identity.
 
-The owner-scope/root/parent/ordinal mapping to each child `EffectId` is one atomic durable admission record. The owning contract must persist the child `EffectId` and complete mapping before enqueue/apply; retry, replay, and reconciliation read and reuse that mapping and its sealed accounting, while a missing or conflicting mapping fails closed rather than allocating another child identity.
+Independent of pending ADR 0183, the owner-scope/root/parent/ordinal mapping to each child `EffectId` is one atomic durable admission record. The owning contract must persist the child `EffectId` and complete mapping before enqueue/apply; retry, replay, and reconciliation read and reuse that mapping and its sealed accounting, while a missing or conflicting mapping fails closed rather than allocating another child identity.
 
 Count, cost, per-target, and depth admission are evaluated deterministically for the root chain. When admitting a new child would exceed a limit, only that child is suppressed. A suppressed child is not enqueued or applied, and no already committed parent or earlier child is rolled back.
 
@@ -55,7 +55,7 @@ Every suppression produces durable evidence containing:
 
 - root and parent identities;
 - authored feature, script, and version identity;
-- deterministic child ordinal;
+- recorded owner-allocated child ordinal, with its persisted replay-stable mapping;
 - limit reason: depth, count, cost, or per-target;
 - actual and configured limit values;
 - required or optional classification; and
@@ -73,7 +73,7 @@ Alerting follows the impact class:
 ## Consequences
 
 - Runaway depth, broad fan-out, excessive aggregate cost, and repeated concentration on one target are all bounded.
-- Deterministic lineage, ordinals, digests, and accounting make admission and suppression replay-stable.
+- Persisted lineage, owner-defined ordinals, digests, and accounting make admission and suppression replay-stable.
 - Already committed gameplay remains authoritative when a later child is suppressed.
 - Required and optional classifications make player outcomes and alerts reflect actual gameplay impact.
 - Durable per-suppression evidence supports precise investigation while bounded metrics avoid cardinality growth.

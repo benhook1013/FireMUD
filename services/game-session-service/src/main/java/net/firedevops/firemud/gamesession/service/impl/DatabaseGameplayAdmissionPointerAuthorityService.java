@@ -47,6 +47,14 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
 
   @Override
   @Transactional(readOnly = true)
+  public List<GameplayAdmissionPointerSnapshot> listPointersForTenants(List<Long> tenantIds) {
+    return pointerRepository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(tenantIds).stream()
+        .map(this::toSnapshot)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
   public Optional<GameplayAdmissionPointerSnapshot> findPointer(
       long tenantId, String worldSlug, String realmSlug) {
     return pointerRepository
@@ -151,30 +159,41 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     return eventRepository
         .findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(tenantId, worldSlug, realmSlug)
         .stream()
-        .map(
-            event ->
-                new GameplayAdmissionPointerAuditEntry(
-                    event.getWorldSlug(),
-                    event.getRealmSlug(),
-                    event.getWorldDisplayName(),
-                    event.getRealmDisplayName(),
-                    event.getTenantId(),
-                    event.getGameInstanceId(),
-                    event.getPointerVersion(),
-                    event.getCatalogRevision(),
-                    event.getRealmId(),
-                    event.getPlayableStateNamespaceId(),
-                    event.isVisible(),
-                    event.isPublicProductionRealm(),
-                    event.isRequiresCharacterSelection(),
-                    event.getStateScope(),
-                    event.getCharacterCreationPolicy(),
-                    event.getActorPrincipal(),
-                    event.getReason(),
-                    event.getControlPlaneRequestId(),
-                    event.getPreparedVersionUpgradeId(),
-                    event.getOccurredAt()))
+        .map(this::toAuditEntry)
         .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<GameplayAdmissionPointerAuditEntry> findLatestPointerAudit(
+      long tenantId, String worldSlug, String realmSlug) {
+    return eventRepository
+        .findLatestByTenantIdAndWorldSlugAndRealmSlug(tenantId, worldSlug, realmSlug)
+        .map(this::toAuditEntry);
+  }
+
+  private GameplayAdmissionPointerAuditEntry toAuditEntry(GameplayAdmissionPointerEvent event) {
+    return new GameplayAdmissionPointerAuditEntry(
+        event.getWorldSlug(),
+        event.getRealmSlug(),
+        event.getWorldDisplayName(),
+        event.getRealmDisplayName(),
+        event.getTenantId(),
+        event.getGameInstanceId(),
+        event.getPointerVersion(),
+        event.getCatalogRevision(),
+        event.getRealmId(),
+        event.getPlayableStateNamespaceId(),
+        event.isVisible(),
+        event.isPublicProductionRealm(),
+        event.isRequiresCharacterSelection(),
+        event.getStateScope(),
+        event.getCharacterCreationPolicy(),
+        event.getActorPrincipal(),
+        event.getReason(),
+        event.getControlPlaneRequestId(),
+        event.getPreparedVersionUpgradeId(),
+        event.getOccurredAt());
   }
 
   private GameplayAdmissionPointerSnapshot toSnapshot(GameplayAdmissionPointer pointer) {

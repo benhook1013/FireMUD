@@ -177,16 +177,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             this::openTelnetClient,
             GameplayTelnetScenarios.demoAdmission(READY_LOOK_TEXT),
             client ->
-                assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
-                    .contains("ERROR JOIN_REQUIRED")
-                    .contains(
-                        "Membership is required before PLAY; joining this world is not available yet."))) {
+                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
+                    .contains("ERROR WORLD_ACCESS_DENIED")
+                    .doesNotContain("JOIN_REQUIRED")
+                    .doesNotContain("Run REALMS <world>"))) {
       assertThat(scenario.responses())
-          .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"))
-          .anyMatch(
+          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"))
+          .noneMatch(
               response ->
-                  response.contains(
-                      "Membership is required before PLAY; joining this world is not available yet."));
+                  response.contains("JOIN_REQUIRED") || response.contains("Run REALMS <world>"));
     }
   }
 
@@ -497,10 +496,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             this::openTelnetClient,
             READY_LOOK_TEXT,
             client ->
-                assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
-                    .contains("ERROR JOIN_REQUIRED"))) {
+                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
+                    .contains("ERROR WORLD_ACCESS_DENIED")
+                    .doesNotContain("JOIN_REQUIRED")
+                    .doesNotContain("Run REALMS <world>"))) {
       assertThat(scenario.responses())
-          .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"));
+          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"))
+          .noneMatch(
+              response ->
+                  response.contains("JOIN_REQUIRED") || response.contains("Run REALMS <world>"));
     }
   }
 

@@ -18,9 +18,14 @@ from typing import Any
 
 from . import evidence, github, hosted, sqlite_hosted_capture
 from . import status as status_module
-from .cli_runner import PullRequestSnapshot, ReviewRunnerError, ReviewTarget, run_cli_review
-from .controller import ControllerError, DefaultGitProvider, ReviewController, StaleReviewTarget
-from .sqlite_review_records import SqliteReviewRecords
+from .cli_runner import (
+    PullRequestSnapshot,
+    ReviewRunnerError,
+    ReviewTarget,
+    run_cli_review,
+)
+from .controller import ControllerError, DefaultGitProvider, HostedAdmissionBusy, ReviewController, StaleReviewTarget
+from .sqlite_review_records import RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
 from .state import (
     ControllerStateStore,
     StateError,
@@ -39,6 +44,7 @@ _PLAN_CEILING_PATTERN = re.compile(
 )
 _HOSTED_CODERABBIT_FILE_CEILING = 100
 _PREPOST_ABANDONED_PATTERN = re.compile(r"^prepost-abandoned-[0-9a-f]{20}\.json$")
+_CLI_LOCK_OWNER_PATTERN = re.compile(r"run_id=(run\.[0-9a-f]{32})\n\Z")
 
 
 class LiveGitHub:
@@ -118,12 +124,15 @@ class LiveEvidence:
         repo: str,
         live: LiveGitHub,
         state_store: StateStore | ControllerStateStore | None = None,
+        records: SqliteReviewRecords | None = None,
     ) -> None:
         self.repo = repo
         self.live = live
         self.state_store = state_store
+        self.records = records
         self._payloads: dict[int, dict[str, Any]] = {}
         self._histories: dict[tuple[int, str], list[dict[str, Any]]] = {}
+        self._records_histories: dict[int, dict[str, Any] | None] = {}
 
     def _payload(self, pr: int) -> dict[str, Any]:
         if pr not in self._payloads:
@@ -134,6 +143,14 @@ class LiveEvidence:
         """Warm one independent PR snapshot for a read-only queue overview."""
 
         self._payload(pr)
+
+    def admission_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
+        """Refresh one capped channel after execution exclusion, before state mutation."""
+
+        self._payloads.pop(pr, None)
+        self._histories.pop((pr, channel), None)
+        self._records_histories.pop(pr, None)
+        return self.history(pr, channel)
 
     @staticmethod
     def _request_lock_is_held(path: Path) -> bool:
@@ -520,6 +537,7 @@ class LiveEvidence:
         self._payloads.pop(pr, None)
         self._histories.pop((pr, "hosted"), None)
         self._histories.pop((pr, "cli"), None)
+        self._records_histories.pop(pr, None)
         payload = self._payload(pr)
         try:
             pull = payload["data"]["repository"]["pullRequest"]
@@ -553,6 +571,7 @@ class LiveEvidence:
         # review findings. Stop mode retains only unmatched records proven to
         # belong to another head as historical; current-head or unknown results
         # remain blockers. No transition fingerprints are reauthorized here.
+        audit_now = datetime.now(timezone.utc)
         audit = self.legacy_transition_reauthorization_audit(
             pr,
             (),
@@ -562,9 +581,12 @@ class LiveEvidence:
                 "live_base_tip": parent_head,
             },
             allow_historical_unmatched=True,
+            now=audit_now,
         )
         payload = self._payload(pr)
-        channel_history = {channel: list(self.history(pr, channel)) for channel in ("hosted", "cli")}
+        channel_history = {
+            channel: list(self.history(pr, channel, now=audit_now)) for channel in ("hosted", "cli")
+        }
 
         ambiguous_terminal_responses: list[dict[str, Any]] = []
         terminal_rate_limits: list[dict[str, Any]] = []
@@ -595,7 +617,6 @@ class LiveEvidence:
                 and isinstance(captured_head, str)
                 and hosted.EXACT_SHA.fullmatch(captured_head) is not None
                 and cooldown_until is not None
-                and cooldown_until > datetime.now(timezone.utc)
             ):
                 terminal_rate_limits.append(
                     {
@@ -620,9 +641,12 @@ class LiveEvidence:
         active_reservations = list(audit["active_reservations"])
         unmatched_responses = list(audit["unmatched_responses"])
         ambiguous_responses = list(audit["ambiguous_responses"])
-        if len(terminal_rate_limits) > active_reservations.count("rate_limited"):
+        active_terminal_rate_limits = [
+            item for item in terminal_rate_limits if hosted.parse_timestamp(item["cooldown_until"]) > audit_now
+        ]
+        if len(active_terminal_rate_limits) > active_reservations.count("rate_limited"):
             raise ControllerError("terminal Hosted rate-limit evidence cannot be isolated from other reservations")
-        for _item in terminal_rate_limits:
+        for _item in active_terminal_rate_limits:
             active_reservations.remove("rate_limited")
         if pins:
             terminal_count = len(ambiguous_terminal_responses)
@@ -641,9 +665,12 @@ class LiveEvidence:
             for item in channel_history["cli"]
             if item.get("held") is True or item.get("unstable") is True or item.get("unreconciled") is True
         ]
-        if cli_pending:
+        active_cli_reviews = [item for item in cli_pending if item.get("active_review") is True]
+        unresolved_cli_pending = [item for item in cli_pending if item.get("active_review") is not True]
+        if unresolved_cli_pending:
             unresolved_findings.extend(
-                str(item.get("reason") or item.get("checkpoint") or "unresolved CLI evidence") for item in cli_pending
+                str(item.get("reason") or item.get("checkpoint") or "unresolved CLI evidence")
+                for item in unresolved_cli_pending
             )
         checkpoints = [
             {"channel": channel, **item}
@@ -670,6 +697,8 @@ class LiveEvidence:
             "checkpoints": checkpoints,
             "ambiguous_terminal_responses": ambiguous_terminal_responses,
             "terminal_rate_limits": terminal_rate_limits,
+            "active_hosted_reservations": list(audit.get("active_hosted_reservations", ())),
+            "active_cli_reviews": list(active_cli_reviews),
             "retained_ambiguous": list(retained_by_fingerprint.values()),
         }
 
@@ -680,6 +709,7 @@ class LiveEvidence:
         expected_anchor: dict[str, Any],
         *,
         allow_historical_unmatched: bool = False,
+        now: datetime | None = None,
     ) -> dict[str, Any]:
         """Audit complete Hosted history, optionally preserving older unmatched results for a stop."""
 
@@ -689,8 +719,9 @@ class LiveEvidence:
         self._payloads.pop(pr, None)
         self._histories.pop((pr, "hosted"), None)
         self._histories.pop((pr, "cli"), None)
+        self._records_histories.pop(pr, None)
         payload = self._payload(pr)
-        self.history(pr, "hosted")
+        self.history(pr, "hosted", now=now)
         self.history(pr, "cli")
         try:
             pull = payload["data"]["repository"]["pullRequest"]
@@ -804,6 +835,7 @@ class LiveEvidence:
 
         records_by_trigger: dict[int, tuple[dict[str, Any], hosted.TriggerState]] = {}
         active_reservations: list[str] = []
+        active_hosted_reservations: list[dict[str, Any]] = []
         ambiguous_responses: list[str] = []
         for path in self._complete_trigger_paths(self.repo, pr):
             try:
@@ -820,9 +852,29 @@ class LiveEvidence:
             records_by_trigger[trigger_id] = (record, state)
             if state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
                 active_reservations.append(state.state)
+                if state.state in {"active", "awaiting_response"}:
+                    anchor = record.get("anchor")
+                    active_hosted_reservations.append(
+                        {
+                            "pr": pr,
+                            "head": state.head_sha,
+                            "checkpoint": f"trigger:{trigger_id}",
+                            "trigger_id": trigger_id,
+                            "response_id": state.response_id,
+                            "state": state.state,
+                            "active_reservation": True,
+                            "held": True,
+                            "unstable": False,
+                            "reason": state.reason,
+                            "attributable": state.attributed,
+                            "terminal": state.terminal,
+                            "anchor": dict(anchor) if isinstance(anchor, Mapping) else None,
+                        }
+                    )
             elif state.state == "rate_limited":
                 reset = hosted.parse_timestamp(state.cooldown_until)
-                if reset is None or reset > datetime.now(timezone.utc):
+                audit_now = now if now is not None else datetime.now(timezone.utc)
+                if reset is None or reset > audit_now:
                     active_reservations.append("rate_limited")
             elif state.state not in {"completed", "noop", "failed", "retired"}:
                 ambiguous_responses.append("unrecognized trigger state")
@@ -1017,6 +1069,7 @@ class LiveEvidence:
         return {
             "complete": True,
             "active_reservations": active_reservations,
+            "active_hosted_reservations": active_hosted_reservations,
             "unmatched_responses": unmatched_responses,
             "historical_unmatched_responses": historical_unmatched_responses,
             "ambiguous_responses": ambiguous_responses,
@@ -1418,9 +1471,397 @@ class LiveEvidence:
                 )
         return values
 
-    def history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
+    def _active_cli_history(self, pr: int, cli_common: Path, *, operational_only: bool = False) -> list[dict[str, Any]]:
+        values: list[dict[str, Any]] = []
+        cli_root = cli_common / "firemud" / "pr-review"
+        cli_lock_path = cli_root / "cli.lock"
+        if self._request_lock_is_held(cli_lock_path):
+            owner_run_id = self._cli_lock_owner_run_id(cli_lock_path)
+            owner_terminal_error_for_pr = False
+            active_capture_for_other_pr = False
+            exact_owner_active_for_other_pr = False
+            owner_metadata = cli_root / "runs" / owner_run_id / "metadata.json" if owner_run_id is not None else None
+            metadata_paths = (
+                (owner_metadata,) if owner_metadata is not None else (cli_root / "runs").glob("*/metadata.json")
+            )
+            for metadata_path in metadata_paths:
+                try:
+                    active_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(active_metadata, Mapping):
+                    continue
+                exact_owner_metadata = (
+                    owner_run_id is not None
+                    and metadata_path == owner_metadata
+                    and metadata_path.parent.name == owner_run_id
+                    and active_metadata.get("run_id") == owner_run_id
+                )
+                if owner_run_id is not None and not exact_owner_metadata:
+                    continue
+                capture_pr = active_metadata.get("pull_request")
+                terminal_error = (metadata_path.parent / "error").is_file()
+                if any((metadata_path.parent / name).exists() for name in ("capture-complete", "error", "exit-status")):
+                    if (
+                        exact_owner_metadata
+                        and isinstance(capture_pr, int)
+                        and not isinstance(capture_pr, bool)
+                        and capture_pr == pr
+                        and terminal_error
+                    ):
+                        owner_terminal_error_for_pr = True
+                    continue
+                if not isinstance(capture_pr, int) or isinstance(capture_pr, bool) or capture_pr <= 0:
+                    continue
+                if capture_pr != pr:
+                    active_capture_for_other_pr = True
+                    if exact_owner_metadata:
+                        exact_owner_active_for_other_pr = True
+                    continue
+                anchor_metadata: dict[str, str] = {}
+                for key, value in active_metadata.items():
+                    if not isinstance(key, str):
+                        continue
+                    if isinstance(value, str):
+                        anchor_metadata[key] = value
+                    elif key == "parent_pr" and isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                        anchor_metadata[key] = str(value)
+                run_id = active_metadata.get("run_id")
+                if not isinstance(run_id, str) or not run_id:
+                    run_id = metadata_path.parent.name
+                candidate_sha = active_metadata.get("candidate_sha")
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": candidate_sha if isinstance(candidate_sha, str) else "",
+                        "checkpoint": f"active-cli:{run_id}",
+                        "active_review": True,
+                        "held": True,
+                        "current_lock_owner": exact_owner_metadata,
+                        "reason": "CLI review is running; its eventual findings still require adjudication",
+                        **self._anchor(anchor_metadata),
+                    }
+                )
+            if (
+                operational_only
+                and not values
+                and not exact_owner_active_for_other_pr
+                and not (owner_terminal_error_for_pr and not active_capture_for_other_pr)
+            ):
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": "",
+                        "checkpoint": "active-cli:unidentified",
+                        "active_review": True,
+                        "held": True,
+                        "reason": "CLI process lock is held; its current reservation cannot be identified",
+                    }
+                )
+        return values
+
+    @staticmethod
+    def _cli_lock_owner_run_id(path: Path) -> str | None:
+        """Read the runner's exact current owner marker without guessing from history."""
+
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        match = _CLI_LOCK_OWNER_PATTERN.fullmatch(content)
+        return match.group(1) if match is not None else None
+
+    def _current_hosted_history(
+        self,
+        pr: int,
+        head: str,
+        payload: dict[str, Any],
+        emitted_hosted_response_ids: set[int],
+        *,
+        operational_only: bool = False,
+        now: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        values: list[dict[str, Any]] = []
+        paths = hosted.current_trigger_record_paths(self.repo, pr)
+        if len(paths) > 1:
+            values.append(
+                {
+                    "pr": pr,
+                    "head": head,
+                    "checkpoint": "trigger:multiple-current-reservations",
+                    "unstable": True,
+                    "held": True,
+                    "reason": "multiple current Hosted trigger reservations require operator resolution",
+                    **({"active_reservation": True} if operational_only else {}),
+                }
+            )
+        for path in paths:
+            try:
+                record = hosted.load_trigger_reservation(path, self.repo, pr)
+                state = hosted.trigger_state(self.repo, pr, payload, record, path)
+            except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": head,
+                        "checkpoint": f"trigger:unreadable:{path.name}",
+                        "held": True,
+                        "unstable": True,
+                        "reason": "a discovered current Hosted reservation is unreadable or ambiguous",
+                        **({"active_reservation": True} if operational_only else {}),
+                    }
+                )
+                continue
+            if state.state == "rate_limited":
+                reset = hosted.parse_timestamp(state.cooldown_until)
+                history_now = now if now is not None else datetime.now(timezone.utc)
+                if reset is not None and reset <= history_now:
+                    continue
+                values.append(
+                    {
+                        "pr": pr,
+                        "head": state.head_sha,
+                        "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
+                        "rate_limited": True,
+                        "trigger_id": state.trigger_comment_id,
+                        "response_id": state.response_id,
+                        "terminal": state.terminal,
+                        "attributable": state.attributed,
+                        "held": reset is None,
+                        "unstable": reset is None,
+                        "reason": "Hosted cooldown remains active"
+                        if reset
+                        else "Hosted cooldown has no attributable reset time",
+                        "cooldown_until": state.cooldown_until,
+                    }
+                )
+            elif (
+                not operational_only
+                and state.state == "completed"
+                and state.response_id not in emitted_hosted_response_ids
+            ):
+                values.append(self._uncheckpointed_hosted_observation(pr, state))
+            elif state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
+                if (
+                    operational_only
+                    and state.state == "ambiguous"
+                    and state.terminal is True
+                    and type(state.response_id) is int
+                    and state.response_id > 0
+                ):
+                    # The existing admission guard releases this provider slot.
+                    # Missing counted findings remain visible in full history.
+                    continue
+                observation = {
+                    "pr": pr,
+                    "head": state.head_sha,
+                    "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
+                    "held": state.state in {"active", "awaiting_response", "ambiguous", "unattributed"},
+                    "unstable": state.state in {"ambiguous", "unattributed", "timed_out"},
+                    "active_reservation": state.state in {"active", "awaiting_response"} or operational_only,
+                    "reason": state.reason,
+                }
+                if state.state == "active":
+                    anchor = record.get("anchor")
+                    observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
+                    observation["trigger_id"] = state.trigger_comment_id
+                    observation["response_id"] = state.response_id
+                if state.state == "ambiguous" and not operational_only:
+                    terminal_observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
+                    if terminal_observation is not None:
+                        observation.update(
+                            {
+                                "terminal_ambiguous": True,
+                                "terminal": state.terminal,
+                                "attributable": state.attributed,
+                                **terminal_observation,
+                            }
+                        )
+                values.append(observation)
+        return values
+
+    def request_history(self, pr: int, channel: str) -> Sequence[dict[str, Any]]:
+        """Read only current provider safety after a human has stopped discovery.
+
+        Completed checkpoints, capture archives, findings and scope timelines are
+        still read by history/status. They do not control the next PR's request.
+        A current reservation still needs public attribution before it is idle.
+        """
+
+        if channel == "cli":
+            try:
+                common, _ = evidence.resolve_cli_capture_context()
+            except evidence.EvidenceError as exc:
+                raise ControllerError("current CLI admission state cannot be verified") from exc
+            return self._active_cli_history(pr, common, operational_only=True)
+        paths = hosted.current_trigger_record_paths(self.repo, pr)
+        lock = hosted.default_trigger_record_path(self.repo, pr).parent / "request.lock"
+        if self._request_lock_is_held(lock):
+            return [
+                {
+                    "pr": pr,
+                    "head": "",
+                    "checkpoint": "trigger:request-lock",
+                    "active_reservation": True,
+                    "held": True,
+                    "reason": "Hosted reservation is being updated",
+                }
+            ]
+        if not paths:
+            return []
+        # The bounded identity/activity view can prove a current trigger finished
+        # without touching old checkpoints or archived evidence. If it cannot,
+        # complete current-trigger attribution remains an operational dependency.
+        identity = self.live.batch_pull_requests([pr]).get(pr)
+        if not isinstance(identity, Mapping):
+            raise ControllerError("current Hosted admission state cannot be verified")
+        head = identity.get("headRefOid")
+        if not isinstance(head, str) or hosted.EXACT_SHA.fullmatch(head) is None:
+            raise ControllerError("current Hosted admission state cannot be verified")
+        payload = {"data": {"repository": {"pullRequest": dict(identity)}}}
+        values = self._current_hosted_history(pr, head, payload, set(), operational_only=True)
+        if any(value.get("active_reservation") is True for value in values):
+            payload = self._payload(pr)
+            values = self._current_hosted_history(pr, head, payload, set(), operational_only=True)
+        return values
+
+    def _source_resolution_status(
+        self,
+        pr: int,
+        channel: str,
+        checkpoint: evidence.Checkpoint,
+        source_head: str,
+    ) -> str | None:
+        """Bind structured checkpoints to durable proof; leave legacy ones unbound."""
+
+        run_id: str | None = None
+        if channel == "cli":
+            if not isinstance(checkpoint.run_id, str) or not checkpoint.run_id:
+                return None
+            run_id = checkpoint.run_id
+            if self.records is None:
+                return None
+        if channel == "hosted":
+            if type(checkpoint.comment_id) is not int or type(checkpoint.hosted_review_id) is not int:
+                return None
+            if self.records is None:
+                return None
+            if pr not in self._records_histories:
+                try:
+                    self._records_histories[pr] = self.records.history(pr, include_display=False)
+                except RecordsNotBootstrapped:
+                    return None
+                except (ReviewRecordsError, OSError):
+                    return "unavailable"
+            history = self._records_histories[pr]
+            if not isinstance(history, Mapping):
+                return "pending"
+            origins = history.get("provider_origins", [])
+            attempts = history.get("attempts", [])
+            if not isinstance(origins, Sequence) or isinstance(origins, (str, bytes)):
+                return "pending"
+            if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
+                return "pending"
+            provider_ids = {str(checkpoint.hosted_review_id), f"review:{checkpoint.hosted_review_id}"}
+            checkpoint_origins = [
+                item
+                for item in origins
+                if isinstance(item, Mapping)
+                and item.get("source_pr") == pr
+                and item.get("checkpoint_id") == checkpoint.comment_id
+            ]
+            if checkpoint_origins:
+                if len(checkpoint_origins) != 1:
+                    return "pending"
+                origin = checkpoint_origins[0]
+                origin_repository = origin.get("repository")
+                if (
+                    origin.get("channel") != "hosted"
+                    or origin.get("provider_id") not in provider_ids
+                    or not isinstance(origin_repository, str)
+                    or origin_repository.casefold() != self.repo.casefold()
+                ):
+                    return "pending"
+                run_id = origin.get("run_id")
+            else:
+                conflicting_provider_origins = [
+                    item
+                    for item in origins
+                    if isinstance(item, Mapping)
+                    and item.get("source_pr") == pr
+                    and item.get("channel") == "hosted"
+                    and item.get("provider_id") in provider_ids
+                ]
+                if conflicting_provider_origins:
+                    return "pending"
+                # A Hosted import may be synced before its public checkpoint is
+                # posted, leaving provider_origins empty and checkpoint_id
+                # unset. The completed attempt still binds the immutable review
+                # ID and candidate SHA, so use that pair without inventing a
+                # checkpoint identity.
+                provider_attempts = [
+                    item
+                    for item in attempts
+                    if isinstance(item, Mapping)
+                    and item.get("channel") == "hosted"
+                    and item.get("provider_review_id") == str(checkpoint.hosted_review_id)
+                ]
+                checkpoint_attempts = [
+                    item
+                    for item in attempts
+                    if isinstance(item, Mapping)
+                    and item.get("channel") == "hosted"
+                    and item.get("checkpoint_id") == str(checkpoint.comment_id)
+                ]
+                candidates: dict[str, Mapping[str, Any]] = {}
+                for attempt in (*provider_attempts, *checkpoint_attempts):
+                    attempt_id = attempt.get("attempt_id")
+                    if not isinstance(attempt_id, str) or not attempt_id:
+                        return "pending"
+                    prior = candidates.get(attempt_id)
+                    if prior is not None and dict(prior) != dict(attempt):
+                        return "pending"
+                    candidates[attempt_id] = attempt
+                if not candidates:
+                    return None
+                if len(candidates) != 1:
+                    return "pending"
+                attempt = next(iter(candidates.values()))
+                if (
+                    attempt.get("provider_review_id") != str(checkpoint.hosted_review_id)
+                    or attempt.get("candidate_sha") != source_head
+                    or attempt.get("state") != "completed"
+                    or not isinstance(attempt.get("repository"), str)
+                    or attempt["repository"].casefold() != self.repo.casefold()
+                    or attempt.get("checkpoint_id") not in (None, str(checkpoint.comment_id))
+                ):
+                    return "pending"
+                run_id = attempt.get("run_id")
+        if not isinstance(run_id, str) or not run_id:
+            return "pending"
+        try:
+            return self.records.source_resolution_status(
+                run_id,
+                source_pr=pr,
+                source_channel=channel,
+                source_head=source_head,
+                accepted_count=checkpoint.accepted,
+                **(
+                    {"source_checkpoint": checkpoint, "source_repository": self.repo}
+                    if type(checkpoint.comment_id) is int
+                    else {}
+                ),
+            )
+        except RecordsNotBootstrapped:
+            return None
+        except (ReviewRecordsError, OSError):
+            return "unavailable"
+
+    def history(self, pr: int, channel: str, *, now: datetime | None = None) -> Sequence[dict[str, Any]]:
         key = (pr, channel)
-        if key in self._histories:
+        # A time-pinned audit must classify cooldowns at its own cutoff instead
+        # of reusing history built at an earlier wall-clock sample.
+        if now is None and key in self._histories:
             return self._histories[key]
         payload = self._payload(pr)
         pull = payload.get("data", {}).get("repository", {}).get("pullRequest")
@@ -1505,62 +1946,46 @@ class LiveEvidence:
                 completed = attributable = True
                 exact_head = str(proof["commit_id"])
                 anchor = dict(record["anchor"])
-            anchor_complete = self._anchor_complete(anchor)
-            values.append(
-                {
-                    "pr": pr,
-                    "head": exact_head,
-                    "reviewed_head": exact_head,
-                    "comment_id": checkpoint.comment_id,
-                    "observed_at": checkpoint.created_at,
-                    "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
-                    "completed": completed,
-                    "attributable": attributable,
-                    "anchored": anchor_complete if completed else None,
-                    "accepted": checkpoint.accepted,
-                    "raw": checkpoint.raw_found,
-                    "routed": checkpoint.routed,
-                    "correction": checkpoint.correction,
-                    "corrected_state": completed and exact_head == head,
-                    "provisional": provisional,
-                    "reason": (
-                        "CLI capture context is unavailable; checkpoint attribution cannot be verified"
-                        if cli_context_error is not None
-                        else capture.metadata.get("reason", "")
-                        if channel == "cli" and capture is not None
-                        else ""
-                    ),
-                    **({"held": True, "capture_context_available": False} if cli_context_error is not None else {}),
-                    **anchor,
-                }
+            source_resolution_status = (
+                self._source_resolution_status(pr, channel, checkpoint, exact_head)
+                if checkpoint.accepted > 0 and not checkpoint.correction
+                else None
             )
+            anchor_complete = self._anchor_complete(anchor)
+            value = {
+                "pr": pr,
+                "head": exact_head,
+                "reviewed_head": exact_head,
+                "comment_id": checkpoint.comment_id,
+                "observed_at": checkpoint.created_at,
+                "checkpoint": str(checkpoint.comment_id or checkpoint.created_at),
+                "completed": completed,
+                "attributable": attributable,
+                "anchored": anchor_complete if completed else None,
+                "accepted": checkpoint.accepted,
+                "raw": checkpoint.raw_found,
+                "routed": checkpoint.routed,
+                "correction": checkpoint.correction,
+                "corrected_state": completed and exact_head == head,
+                "provisional": provisional,
+                "reason": (
+                    "CLI capture context is unavailable; checkpoint attribution cannot be verified"
+                    if cli_context_error is not None
+                    else capture.metadata.get("reason", "")
+                    if channel == "cli" and capture is not None
+                    else ""
+                ),
+                **({"held": True, "capture_context_available": False} if cli_context_error is not None else {}),
+                **anchor,
+            }
+            if source_resolution_status is not None:
+                value["source_resolution_status"] = source_resolution_status
+            values.append(value)
         if channel == "cli" and cli_context_error is None:
             # CLI already holds its process lock and pins canonical metadata
             # before execution. Read that reservation; no second activity store
             # or fabricated completed checkpoint is needed.
-            cli_root = cli_common / "firemud" / "pr-review"
-            if self._request_lock_is_held(cli_root / "cli.lock"):
-                metadata_paths = list((cli_root / "runs").glob("*/metadata.json"))
-                if metadata_paths:
-                    newest = max(metadata_paths, key=lambda path: path.stat().st_mtime_ns)
-                    try:
-                        active_metadata = json.loads(newest.read_text(encoding="utf-8"))
-                    except (OSError, ValueError):
-                        active_metadata = {}
-                    if active_metadata.get("pull_request") == pr and not any(
-                        (newest.parent / name).exists() for name in ("capture-complete", "error", "exit-status")
-                    ):
-                        values.append(
-                            {
-                                "pr": pr,
-                                "head": active_metadata.get("candidate_sha", ""),
-                                "checkpoint": f"active-cli:{active_metadata.get('run_id', newest.parent.name)}",
-                                "active_review": True,
-                                "held": True,
-                                "reason": "CLI review is running; its eventual findings still require adjudication",
-                                **self._anchor(active_metadata),
-                            }
-                        )
+            values.extend(self._active_cli_history(pr, cli_common))
             for capture in evidence.discover_cli_captures(self.repo, pr, cli_common, records=cli_records):
                 run_id = capture.metadata.get("run_id", "")
                 if run_id in public_cli_run_ids:
@@ -1598,86 +2023,9 @@ class LiveEvidence:
                     }
                 )
         if channel == "hosted":
-            paths = hosted.current_trigger_record_paths(self.repo, pr)
-            if len(paths) > 1:
-                values.append(
-                    {
-                        "pr": pr,
-                        "head": head,
-                        "checkpoint": "trigger:multiple-current-reservations",
-                        "unstable": True,
-                        "held": True,
-                        "reason": "multiple current Hosted trigger reservations require operator resolution",
-                    }
-                )
-            for path in paths:
-                try:
-                    record = hosted.load_trigger_reservation(path, self.repo, pr)
-                    state = hosted.trigger_state(self.repo, pr, payload, record, path)
-                except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-                    values.append(
-                        {
-                            "pr": pr,
-                            "head": head,
-                            "checkpoint": f"trigger:unreadable:{path.name}",
-                            "held": True,
-                            "unstable": True,
-                            "reason": "a discovered current Hosted reservation is unreadable or ambiguous",
-                        }
-                    )
-                    continue
-                if state.state == "rate_limited":
-                    reset = hosted.parse_timestamp(state.cooldown_until)
-                    now = datetime.now(timezone.utc)
-                    if reset is not None and reset <= now:
-                        continue
-                    values.append(
-                        {
-                            "pr": pr,
-                            "head": state.head_sha,
-                            "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
-                            "rate_limited": True,
-                            "trigger_id": state.trigger_comment_id,
-                            "response_id": state.response_id,
-                            "terminal": state.terminal,
-                            "attributable": state.attributed,
-                            "held": reset is None,
-                            "unstable": reset is None,
-                            "reason": "Hosted cooldown remains active"
-                            if reset
-                            else "Hosted cooldown has no attributable reset time",
-                            "cooldown_until": state.cooldown_until,
-                        }
-                    )
-                elif state.state == "completed" and state.response_id not in emitted_hosted_response_ids:
-                    values.append(self._uncheckpointed_hosted_observation(pr, state))
-                elif state.state in {"active", "awaiting_response", "ambiguous", "unattributed", "timed_out"}:
-                    observation = {
-                        "pr": pr,
-                        "head": state.head_sha,
-                        "checkpoint": f"trigger:{state.trigger_comment_id or 'pending'}",
-                        "held": state.state in {"active", "awaiting_response", "ambiguous", "unattributed"},
-                        "unstable": state.state in {"ambiguous", "unattributed", "timed_out"},
-                        "active_reservation": state.state in {"active", "awaiting_response"},
-                        "reason": state.reason,
-                    }
-                    if state.state == "active":
-                        anchor = record.get("anchor")
-                        observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
-                        observation["trigger_id"] = state.trigger_comment_id
-                        observation["response_id"] = state.response_id
-                    if state.state == "ambiguous":
-                        terminal_observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
-                        if terminal_observation is not None:
-                            observation.update(
-                                {
-                                    "terminal_ambiguous": True,
-                                    "terminal": state.terminal,
-                                    "attributable": state.attributed,
-                                    **terminal_observation,
-                                }
-                            )
-                    values.append(observation)
+            values.extend(
+                self._current_hosted_history(pr, head, payload, emitted_hosted_response_ids, now=now)
+            )
         parsed_scope_changes = {
             (item.comment_id, item.created_at, item.description, item.updated_at) for item in scope_changes
         }
@@ -1754,7 +2102,8 @@ class LiveEvidence:
             }
         )
         values.extend(global_blockers)
-        self._histories[key] = values
+        if now is None:
+            self._histories[key] = values
         return values
 
 
@@ -2127,6 +2476,91 @@ class HostedRunner:
                     current.setdefault(int(match.group(1)), []).append(trigger_path)
         return current
 
+    def _closed_repository_cooldown_until(
+        self,
+        pr: int,
+        paths: Sequence[Path],
+    ) -> datetime | None:
+        """Return only a future cooldown proved by an archived terminal capture."""
+
+        if self.records is None:
+            return None
+        now = datetime.now(timezone.utc)
+        cooldowns: list[datetime] = []
+        for path in paths:
+            try:
+                record = hosted.load_trigger_reservation(path, self.repo, pr)
+                trigger = record.get("trigger")
+                attempt_id = record.get("sqlite_attempt_id")
+                if (
+                    record.get("status") == "retired"
+                    or not isinstance(trigger, Mapping)
+                    or not isinstance(attempt_id, str)
+                    or not attempt_id
+                ):
+                    continue
+                trigger_id = trigger.get("id")
+                if isinstance(trigger_id, bool) or not isinstance(trigger_id, int) or trigger_id <= 0:
+                    continue
+                attempts = [item for item in self.records.attempt_history(pr) if item.get("attempt_id") == attempt_id]
+                if len(attempts) != 1:
+                    continue
+                attempt = attempts[0]
+                if (
+                    attempt.get("channel") != "hosted"
+                    or attempt.get("state") != "rate_limited"
+                    or attempt.get("candidate_sha") != record.get("head_sha")
+                    or attempt.get("trigger_id") != str(trigger_id)
+                ):
+                    continue
+                artifacts = self.records.attempt_artifacts(attempt_id)
+                metadata = json.loads(artifacts["metadata"])
+                archived = json.loads(artifacts["hosted_comments"])
+                if (
+                    not isinstance(metadata, dict)
+                    or metadata.get("state") != "rate_limited"
+                    or metadata.get("terminal") is not True
+                    or metadata.get("attributable") is not True
+                    or not isinstance(metadata.get("repository"), str)
+                    or metadata["repository"].casefold() != self.repo.casefold()
+                    or metadata.get("pull_request") != pr
+                    or metadata.get("head_sha") != record.get("head_sha")
+                    or metadata.get("trigger_id") != trigger_id
+                    or not isinstance(metadata.get("response_id"), int)
+                    or isinstance(metadata.get("response_id"), bool)
+                    or attempt.get("provider_review_id") != str(metadata["response_id"])
+                    or not isinstance(archived, dict)
+                    or not isinstance(archived.get("comments"), list)
+                ):
+                    continue
+                terminal_at = hosted.parse_timestamp(metadata.get("observed_at"))
+                finished_at = hosted.parse_timestamp(attempt.get("finished_at"))
+                if terminal_at is None or finished_at is None or terminal_at != finished_at:
+                    continue
+                responses = [
+                    item
+                    for item in archived["comments"]
+                    if isinstance(item, dict)
+                    and github.immutable_database_id(item) == metadata["response_id"]
+                ]
+                if len(responses) != 1:
+                    continue
+                response = responses[0]
+                response_at = hosted.parse_timestamp(response.get("createdAt"))
+                if response_at is None or response_at > terminal_at:
+                    continue
+                author = response.get("author")
+                login = author.get("login") if isinstance(author, Mapping) else None
+                body = response.get("body")
+                if not github.is_coderabbit_login(login) or not isinstance(body, str):
+                    continue
+                reset = hosted._rate_limit(body, response_at)
+            except Exception:  # noqa: BLE001 - missing closed-history proof cannot retain an execution slot
+                reset = None
+            if reset is not None and reset > now and reset not in cooldowns:
+                cooldowns.append(reset)
+        return max(cooldowns, default=None)
+
     def _assert_no_other_active_reservations(
         self,
         pr: int,
@@ -2153,6 +2587,16 @@ class HostedRunner:
                 raise ControllerError("open repository pull-request listing is malformed or ambiguous")
             open_prs.add(number)
         open_prs.discard(pr)
+
+        # Closing a PR releases its execution slot, including unknown requests.
+        # Preserve a repository cooldown only when an exact local terminal
+        # capture proves an attributed rate limit that has not expired.
+        for closed_pr, paths in current.items():
+            if closed_pr == pr or closed_pr in open_prs:
+                continue
+            reset = self._closed_repository_cooldown_until(closed_pr, paths)
+            if reset is not None:
+                raise ControllerError(f"Hosted repository cooldown remains active on closed PR #{closed_pr}")
 
         comments_by_pr: dict[int, dict[str, Any]] = {}
         for other_pr in sorted(open_prs):
@@ -2197,6 +2641,10 @@ class HostedRunner:
                     raise ControllerError(f"current Hosted reservation for PR #{other_pr} cannot be verified") from exc
                 if state.state in {"active", "awaiting_response"}:
                     raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
+                if state.state == "rate_limited":
+                    reset = hosted.parse_timestamp(state.cooldown_until)
+                    if reset is None or reset > datetime.now(timezone.utc):
+                        raise ControllerError(f"Hosted repository cooldown remains unresolved on PR #{other_pr}")
                 if state.state == "ambiguous":
                     response_id = state.response_id
                     if (
@@ -2323,7 +2771,10 @@ class HostedRunner:
                 repo_lock = locks.enter_context(repo_lock_path.open("a+", encoding="utf-8"))
                 fcntl.flock(repo_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise ControllerError(f"another Hosted request is active for repository {self.repo}") from exc
+                raise HostedAdmissionBusy(
+                    f"Hosted admission lock is busy for repository {self.repo}; this does not establish an active "
+                    "Hosted provider request for this attempt"
+                ) from exc
             except OSError as exc:
                 raise ControllerError(
                     f"could not acquire the Hosted repository admission lock for {self.repo}"
@@ -2332,7 +2783,10 @@ class HostedRunner:
                 lock = locks.enter_context(lock_path.open("a+", encoding="utf-8"))
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise ControllerError(f"another Hosted request is active for PR #{pr}") from exc
+                raise HostedAdmissionBusy(
+                    f"Hosted admission lock is busy for PR #{pr}; this does not establish an active "
+                    "Hosted provider request for this attempt"
+                ) from exc
             except OSError as exc:
                 raise ControllerError(f"could not acquire the Hosted request lock for PR #{pr}") from exc
             archive_current_path: Path | None = None
@@ -2466,13 +2920,17 @@ class HostedRunner:
                     # the reservation so explicit sync can adopt or backfill it.
                     sqlite_capture_warnings.append(f"SQLite Hosted attempt start failed ({type(exc).__name__}).")
 
+            reservation_saved = False
+
             def reserve() -> None:
+                nonlocal reservation_saved
                 if archive_current_path is not None:
                     trigger_id = (record.get("trigger") or {}).get("id")
                     archive = archive_current_path.with_name(f"trigger-{trigger_id}.json")
                     try:
                         os.replace(archive_current_path, archive)
                         hosted.atomic_write_json(path, posting)
+                        reservation_saved = True
                     except Exception as exc:
                         if sqlite_attempt_started and sqlite_attempt_id is not None:
                             self._finish_unposted_attempt(sqlite_attempt_id)
@@ -2480,6 +2938,7 @@ class HostedRunner:
                 else:
                     try:
                         hosted.atomic_write_json(path, posting)
+                        reservation_saved = True
                     except Exception as exc:
                         if sqlite_attempt_started and sqlite_attempt_id is not None:
                             self._finish_unposted_attempt(sqlite_attempt_id)
@@ -2494,6 +2953,10 @@ class HostedRunner:
                     if sqlite_attempt_started and sqlite_attempt_id is not None:
                         self._finish_unposted_attempt(sqlite_attempt_id)
                     raise
+            if not reservation_saved:
+                if sqlite_attempt_started and sqlite_attempt_id is not None:
+                    self._finish_unposted_attempt(sqlite_attempt_id)
+                raise ControllerError("Hosted admission callback returned without reserving the candidate")
             try:
                 completed = subprocess.run(
                     [
@@ -2613,7 +3076,7 @@ def default_controller(repo: str | None = None) -> ReviewController:
     live = LiveGitHub(selected)
     store = ControllerStateStore()
     records = SqliteReviewRecords(sqlite_state_path(store.path)) if store.path.is_dir() else None
-    observations = LiveEvidence(selected, live, store)
+    observations = LiveEvidence(selected, live, store, records=records)
     git_provider = DefaultGitProvider()
     hosted_runner = HostedRunner(selected, live, store, records=records)
 

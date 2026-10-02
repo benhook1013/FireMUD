@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.controller;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -29,6 +30,7 @@ import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapRequest;
 import net.firedevops.firemud.accountservice.dto.PlayerBootstrapResult;
 import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.config.CommonSecurityServletAutoConfiguration;
 import org.junit.jupiter.api.Test;
@@ -64,6 +66,22 @@ class AuthControllerTest {
       assertTrue(((Map<String, Object>) paths.get("/auth/connect-token")).containsKey("post"));
       assertFalse(schemas.containsKey("JoinPublicProductionRequest"));
       assertFalse(schemas.containsKey("JoinPublicProductionResult"));
+    }
+  }
+
+  @Test
+  void publicOpenApiDocumentsRetryableCharacterDiscoveryOutage() throws Exception {
+    try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
+      Map<String, Object> document = new Yaml().load(input);
+      Map<String, Object> paths = (Map<String, Object>) document.get("paths");
+      Map<String, Object> characterPath =
+          (Map<String, Object>)
+              paths.get("/auth/bootstrap/worlds/{worldSlug}/realms/{realmSlug}/characters");
+      Map<String, Object> operation = (Map<String, Object>) characterPath.get("get");
+      Map<String, Object> responses = (Map<String, Object>) operation.get("responses");
+      Map<String, Object> outage = (Map<String, Object>) responses.get("503");
+
+      assertEquals("#/components/responses/RetryableAuthenticationUnavailable", outage.get("$ref"));
     }
   }
 
@@ -248,6 +266,21 @@ class AuthControllerTest {
         .andExpect(status().isBadRequest());
 
     verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void listBootstrapCharactersReportsRetryableEntitlementOutage() throws Exception {
+    when(accountService.listBootstrapCharacters("boot123", "demo", "production", "scope-1"))
+        .thenThrow(new AuthenticationException("ENTITLEMENT_UNAVAILABLE", "Authority unavailable"));
+
+    mockMvc
+        .perform(
+            get("/auth/bootstrap/worlds/demo/realms/production/characters")
+                .param("connectScopeId", "scope-1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer boot123"))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.status").value("ERROR"))
+        .andExpect(jsonPath("$.error.code").value("ENTITLEMENT_UNAVAILABLE"));
   }
 
   @Test

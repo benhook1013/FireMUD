@@ -104,7 +104,7 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketPlayDeniesBeforeReadingEntityRosterWhenAccountAdmissionIsDenied() throws Exception {
+  void websocketPlayReportsWorldAccessDeniedForActiveMembershipWithoutAdmission() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
     STACK.accountStub().denyGameplayAdmission();
@@ -117,10 +117,35 @@ class CommunicationWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
             client ->
                 client.awaitMatching(
-                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
-                    "Account admission denial before Entity roster lookup"))) {
+                    response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"),
+                    "Active but non-admitting membership before Entity roster lookup"))) {
       assertThat(scenario.driver().responses())
-          .anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+          .anyMatch(response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"))
+          .noneMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"));
+    }
+
+    assertThat(entityStub().lastListCharactersByAccountRequest()).isEmpty();
+  }
+
+  @Test
+  void websocketPlayRequiresJoinForFreshMissingMembershipBeforeEntityRosterRead() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    STACK.accountStub().setMembershipExists(false);
+
+    try (GameplayWebSocketScenarios.LoginThenPlayScenario scenario =
+        GameplayWebSocketScenarios.loginThenAttemptPlay(
+            GameplayWebSocketScenarios.proxyGatewayDriverFactory(
+                gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
+            "missing-membership-play-" + sessionId,
+            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
+            client ->
+                client.awaitMatching(
+                    response -> response.startsWith("ERROR JOIN_REQUIRED"),
+                    "Fresh missing membership before Entity roster lookup"))) {
+      assertThat(scenario.driver().responses())
+          .anyMatch(response -> response.startsWith("ERROR JOIN_REQUIRED"))
+          .noneMatch(response -> response.startsWith("ERROR WORLD_ACCESS_DENIED"));
     }
 
     assertThat(entityStub().lastListCharactersByAccountRequest()).isEmpty();

@@ -2,6 +2,7 @@ package net.firedevops.firemud.springcloudgateway.filter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.net.URI;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpMethod;
@@ -72,6 +73,55 @@ class PublicInternalRouteBlockFilterTest {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
             MockServerHttpRequest.get("/api/session/internal/control").build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  @Test
+  void blocksInternalSubtreeWithMatrixParametersOnRouteSegments() {
+    assertBlockedPath("/api;version=1/account;version=1/internal;version=1/runtime");
+  }
+
+  @Test
+  void blocksBareInternalAndActuatorRoots() {
+    assertBlockedPath("/api/account/internal");
+    assertBlockedPath("/api/account/actuator");
+  }
+
+  @Test
+  void blocksBareInternalAndActuatorRootsWithTrailingSeparators() {
+    assertBlockedPath("/api/account/internal/");
+    assertBlockedPath("/api/account/actuator/");
+    assertBlockedPath("/api;version=1/account;version=1/internal;version=1/");
+    assertBlockedPath("/api//account///actuator//");
+  }
+
+  @Test
+  void blocksActuatorSubtreeWithMatrixParametersOnRouteSegments() {
+    assertBlockedPath("/api;version=1/account;version=1/actuator;version=1/health");
+  }
+
+  @Test
+  void blocksInternalSubtreeWithRepeatedSeparators() {
+    assertBlockedPath("/api//account///internal//runtime");
+  }
+
+  @Test
+  void blocksInternalSubtreeWithEncodedCanonicalSegments() {
+    assertBlockedPath("/%61pi/%61ccount/%69nternal/runtime");
+  }
+
+  @Test
+  void blocksInternalSubtreeWhenGatewayHasContextPath() {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.get("/gateway/api/account/internal/runtime")
+                .contextPath("/gateway")
+                .build());
     AtomicBoolean chainCalled = new AtomicBoolean(false);
 
     filter.filter(exchange, chain(chainCalled)).block();
@@ -310,6 +360,12 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void allowsSiblingPathsOfBlockedServiceLocalRoots() {
+    assertAllowedPath("/api/account/internalized/runtime");
+    assertAllowedPath("/api/account/actuatorial/health");
+  }
+
+  @Test
   void allowsGameplayWebSocketPath() {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.get("/ws/game/connect").build());
@@ -339,9 +395,33 @@ class PublicInternalRouteBlockFilterTest {
     assertThat(exchange.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.NOT_FOUND);
   }
 
+  private void assertBlockedPath(String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.method(HttpMethod.GET, URI.create(path)).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).as(path).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
   private void assertAllowed(HttpMethod method, String path) {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(MockServerHttpRequest.method(method, path).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).as(path).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isNull();
+  }
+
+  private void assertAllowedPath(String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(
+            MockServerHttpRequest.method(HttpMethod.GET, URI.create(path)).build());
     AtomicBoolean chainCalled = new AtomicBoolean(false);
 
     filter.filter(exchange, chain(chainCalled)).block();

@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CERT_DIR="$(mktemp -d)"
 trap 'rm -rf "$CERT_DIR"' EXIT
+generic_bundle_files=(
+  ca.crt ca.key client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem server.crt server.key
+)
 
 assert_mode() {
   local expected_mode="$1"
@@ -16,17 +19,76 @@ assert_mode() {
   }
 }
 
+copy_generic_bundle() {
+  local source_dir="$1"
+  local target_dir="$2"
+  mkdir -p "$target_dir"
+  for file in "${generic_bundle_files[@]}"; do
+    cp "$source_dir/$file" "$target_dir/$file"
+  done
+}
+
+assert_invalid_existing_bundle_is_preserved() {
+  local bundle_dir="$1"
+  local case_name="$2"
+  local manifest="$CERT_DIR/$case_name.bundle.sha256"
+  local output="$CERT_DIR/$case_name.output"
+  local unmanaged_file="$bundle_dir/unmanaged-local.key"
+  local file
+
+  printf 'unmanaged certificate sentinel\n' >"$unmanaged_file"
+  chmod 640 "$unmanaged_file"
+  for file in "${generic_bundle_files[@]}"; do
+    sha256sum "$bundle_dir/$file"
+  done >"$manifest"
+  sha256sum "$unmanaged_file" >>"$manifest"
+
+  if bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" "$bundle_dir" >"$output" 2>&1; then
+    echo "generate-dev-certs accepted an invalid complete bundle: $case_name" >&2
+    exit 1
+  fi
+  rg -Fq 'no files were changed' "$output" || {
+    echo "generate-dev-certs did not report fail-closed preservation for $case_name" >&2
+    cat "$output" >&2
+    exit 1
+  }
+  sha256sum -c "$manifest" >/dev/null || {
+    echo "generate-dev-certs changed invalid bundle material: $case_name" >&2
+    exit 1
+  }
+
+  if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$bundle_dir" >"$output" 2>&1; then
+    echo "ensure-dev-certs accepted an invalid complete bundle: $case_name" >&2
+    exit 1
+  fi
+  rg -Fq 'no files were changed' "$output" || {
+    echo "ensure-dev-certs did not report fail-closed preservation for $case_name" >&2
+    cat "$output" >&2
+    exit 1
+  }
+  sha256sum -c "$manifest" >/dev/null || {
+    echo "ensure-dev-certs changed invalid bundle material: $case_name" >&2
+    exit 1
+  }
+  [[ "$(<"$unmanaged_file")" == 'unmanaged certificate sentinel' ]] || {
+    echo "an invalid bundle path changed or removed an unmanaged file: $case_name" >&2
+    exit 1
+  }
+  assert_mode 640 "$unmanaged_file"
+}
+
 assert_workload_certificate() {
   local workload="$1"
   local certificate="$CERT_DIR/local-runtime/$workload/workloads/$workload.crt"
   local private_key="$CERT_DIR/local-runtime/$workload/workloads/$workload.key"
-  local subject_alt_names extended_key_usage expected_uri certificate_public_key private_key_public_key
+  local subject_alt_names uri_sans extended_key_usage expected_uri certificate_public_key private_key_public_key
   expected_uri="spiffe://firemud/ns/local/sa/$workload"
 
   openssl verify -purpose sslclient -CAfile "$CERT_DIR/local-runtime/$workload/ca.crt" "$certificate" >/dev/null
   openssl verify -purpose sslserver -CAfile "$CERT_DIR/local-runtime/$workload/ca.crt" "$certificate" >/dev/null
   subject_alt_names="$(openssl x509 -in "$certificate" -noout -ext subjectAltName)"
-  [[ "$subject_alt_names" == *"URI:$expected_uri"* \
+  uri_sans="$(printf '%s\n' "$subject_alt_names" | grep -oE 'URI:[^,[:space:]]+' || true)"
+  [[ "$uri_sans" == "URI:$expected_uri" \
     && "$subject_alt_names" == *"DNS:$workload"* \
     && "$subject_alt_names" == *"DNS:$workload.local"* \
     && "$subject_alt_names" == *"DNS:$workload.local.svc"* \
@@ -50,6 +112,51 @@ assert_workload_certificate() {
   }
 }
 
+assert_invalid_workload_uri_is_reissued() {
+  local case_name="$1"
+  local subject_alt_name="$2"
+  local certificate="$CERT_DIR/workloads/account-service.crt"
+  local private_key="$CERT_DIR/workloads/account-service.key"
+  local fixture_dir="$CERT_DIR/workload-uri-$case_name"
+  local config="$fixture_dir/extensions.cnf"
+  local request="$fixture_dir/workload.csr"
+  local before_fingerprint after_fingerprint certificate_public_key private_key_public_key
+  mkdir -p "$fixture_dir"
+  openssl req -new -key "$private_key" -subj "/CN=firemud-grpc-account-service" \
+    -out "$request" >/dev/null 2>&1
+  printf '%s\n' \
+    '[leaf]' \
+    'basicConstraints=critical,CA:FALSE' \
+    'keyUsage=critical,digitalSignature,keyEncipherment' \
+    'extendedKeyUsage=serverAuth,clientAuth' \
+    "subjectAltName=$subject_alt_name" \
+    >"$config"
+  openssl x509 -req -in "$request" -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" \
+    -set_serial "0x$(openssl rand -hex 16)" -out "$certificate" -days 30 -sha256 \
+    -extfile "$config" -extensions leaf >/dev/null 2>&1
+
+  # Keep CA trust, both mTLS usages, and key pairing valid so only the URI identity is wrong.
+  openssl verify -purpose sslclient -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null
+  openssl verify -purpose sslserver -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null
+  certificate_public_key="$(openssl x509 -in "$certificate" -pubkey -noout \
+    | openssl pkey -pubin -outform DER | openssl dgst -sha256)"
+  private_key_public_key="$(openssl pkey -in "$private_key" -pubout -outform DER \
+    | openssl dgst -sha256)"
+  [[ "$certificate_public_key" == "$private_key_public_key" ]] || {
+    echo "invalid URI fixture does not match the account-service key: $case_name" >&2
+    exit 1
+  }
+
+  before_fingerprint="$(openssl x509 -in "$certificate" -noout -fingerprint -sha256 | cut -d= -f2)"
+  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$CERT_DIR"
+  after_fingerprint="$(openssl x509 -in "$certificate" -noout -fingerprint -sha256 | cut -d= -f2)"
+  [[ "$after_fingerprint" != "$before_fingerprint" ]] || {
+    echo "ensure-dev-certs retained an incorrect workload URI identity: $case_name" >&2
+    exit 1
+  }
+  assert_workload_certificate account-service
+}
+
 bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$CERT_DIR"
 
 runtime_dir="$CERT_DIR/local-runtime"
@@ -67,10 +174,147 @@ for profile in default account-service game-session-service social-groups-servic
   assert_mode 644 "$runtime_dir/$profile/dev-key.pem"
 done
 for workload in account-service game-session-service social-groups-service; do
+  assert_mode 644 "$CERT_DIR/workloads/$workload.crt"
   assert_mode 600 "$CERT_DIR/workloads/$workload.key"
   assert_mode 755 "$runtime_dir/$workload/workloads"
   assert_mode 644 "$runtime_dir/$workload/workloads/$workload.key"
 done
+
+# A hard-linked managed projection destination must be rejected before any
+# other profile's projection is copied or chmodded.
+hardlink_case="$CERT_DIR/hardlink-projection-case"
+copy_generic_bundle "$CERT_DIR" "$hardlink_case"
+bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$hardlink_case"
+hardlink_runtime="$hardlink_case/local-runtime"
+hardlink_target="$hardlink_runtime/social-groups-service/workloads/social-groups-service.key"
+hardlink_sentinel="$hardlink_case/runtime-projection-alias-sentinel.txt"
+hardlink_output="$CERT_DIR/hardlink-projection-output"
+hardlink_before="$CERT_DIR/hardlink-projection-before.sha256"
+hardlink_after="$CERT_DIR/hardlink-projection-after.sha256"
+
+snapshot_runtime_projection() {
+  local root="$1"
+  local file
+  while IFS= read -r -d '' file; do
+    printf '%s ' "$(stat -c '%a' "$file")"
+    sha256sum -- "$file"
+  done < <(find "$root" -type f -print0 | sort -z)
+}
+
+printf 'external hard-link sentinel\n' >"$hardlink_sentinel"
+chmod 640 "$hardlink_sentinel"
+rm -- "$hardlink_target"
+ln -- "$hardlink_sentinel" "$hardlink_target"
+snapshot_runtime_projection "$hardlink_runtime" >"$hardlink_before"
+
+if bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$hardlink_case" >"$hardlink_output" 2>&1; then
+  echo "ensure-dev-certs accepted a hard-linked local runtime projection file" >&2
+  exit 1
+fi
+rg -Fq "refusing hard-linked file in local Compose runtime projection: $hardlink_target" \
+  "$hardlink_output" || {
+  echo "ensure-dev-certs did not identify the hard-linked projection path" >&2
+  cat "$hardlink_output" >&2
+  exit 1
+}
+snapshot_runtime_projection "$hardlink_runtime" >"$hardlink_after"
+cmp -s "$hardlink_before" "$hardlink_after" || {
+  echo "ensure-dev-certs partially changed the local runtime projection before refusal" >&2
+  exit 1
+}
+[[ "$(<"$hardlink_sentinel")" == 'external hard-link sentinel' ]] || {
+  echo "ensure-dev-certs changed an external hard-link sentinel" >&2
+  exit 1
+}
+assert_mode 640 "$hardlink_sentinel"
+
+# Unmanaged regular files under workloads/ retain their own bytes and modes;
+# only the three named local Compose identities are normalized by ensure.
+mode_case="$CERT_DIR/unmanaged-workload-modes"
+copy_generic_bundle "$CERT_DIR" "$mode_case"
+mkdir -p "$mode_case/workloads"
+printf 'unmanaged certificate sentinel\n' >"$mode_case/workloads/keep-me.crt"
+printf 'unmanaged key sentinel\n' >"$mode_case/workloads/keep-me.key"
+chmod 711 "$mode_case/workloads/keep-me.crt"
+chmod 640 "$mode_case/workloads/keep-me.key"
+bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" "$mode_case"
+[[ "$(<"$mode_case/workloads/keep-me.crt")" == 'unmanaged certificate sentinel' \
+  && "$(<"$mode_case/workloads/keep-me.key")" == 'unmanaged key sentinel' ]] || {
+  echo "ensure-dev-certs changed unmanaged workload certificate contents" >&2
+  exit 1
+}
+assert_mode 711 "$mode_case/workloads/keep-me.crt"
+assert_mode 640 "$mode_case/workloads/keep-me.key"
+
+# Complete but unhealthy bundles fail closed through both public entrypoints.
+# Their CA and issued leaves are left byte-for-byte unchanged for deliberate
+# operator diagnosis or full local reissue.
+malformed_case="$CERT_DIR/invalid-malformed-bundle"
+copy_generic_bundle "$CERT_DIR" "$malformed_case"
+printf 'malformed certificate\n' >"$malformed_case/ca.crt"
+assert_invalid_existing_bundle_is_preserved "$malformed_case" malformed
+
+key_mismatch_case="$CERT_DIR/invalid-key-mismatch-bundle"
+copy_generic_bundle "$CERT_DIR" "$key_mismatch_case"
+cp "$CERT_DIR/workloads/account-service.key" "$key_mismatch_case/client.key"
+cp "$key_mismatch_case/client.key" "$key_mismatch_case/dev-key.pem"
+assert_invalid_existing_bundle_is_preserved "$key_mismatch_case" key-mismatch
+
+other_authority="$CERT_DIR/other-authority"
+bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" "$other_authority" >/dev/null
+wrong_issuer_case="$CERT_DIR/invalid-wrong-issuer-bundle"
+copy_generic_bundle "$CERT_DIR" "$wrong_issuer_case"
+for file in server.crt server.key client.crt client.key dev-cert.pem dev-key.pem; do
+  cp "$other_authority/$file" "$wrong_issuer_case/$file"
+done
+assert_invalid_existing_bundle_is_preserved "$wrong_issuer_case" wrong-issuer
+
+expired_case="$CERT_DIR/invalid-expired-bundle"
+copy_generic_bundle "$CERT_DIR" "$expired_case"
+cat >"$expired_case/expired.cnf" <<'EOF'
+[req]
+distinguished_name = req_distinguished_name
+req_extensions = v3_req
+prompt = no
+
+[req_distinguished_name]
+CN = firemud-grpc
+
+[v3_req]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = localhost
+DNS.2 = account-service
+DNS.3 = automation-scripting-service
+DNS.4 = entity-management-service
+DNS.5 = game-design-service
+DNS.6 = game-logic-service
+DNS.7 = game-session-service
+DNS.8 = logging-admin-service
+DNS.9 = social-groups-service
+DNS.10 = spring-cloud-gateway
+DNS.11 = tcp-proxy-service
+DNS.12 = world-management-service
+IP.1 = 127.0.0.1
+EOF
+openssl req -new -key "$expired_case/server.key" -config "$expired_case/expired.cnf" \
+  -out "$expired_case/expired.csr"
+openssl x509 -req -in "$expired_case/expired.csr" -CA "$expired_case/ca.crt" \
+  -CAkey "$expired_case/ca.key" -set_serial 424242 -out "$expired_case/expired.crt" \
+  -days 0 -sha256 -extensions v3_req -extfile "$expired_case/expired.cnf" >/dev/null
+cp "$expired_case/expired.crt" "$expired_case/server.crt"
+cp "$expired_case/expired.crt" "$expired_case/client.crt"
+cp "$expired_case/expired.crt" "$expired_case/dev-cert.pem"
+assert_invalid_existing_bundle_is_preserved "$expired_case" expired
+
+legacy_alias_case="$CERT_DIR/invalid-legacy-alias-bundle"
+copy_generic_bundle "$CERT_DIR" "$legacy_alias_case"
+printf 'wrong legacy alias\n' >"$legacy_alias_case/dev-cert.pem"
+assert_invalid_existing_bundle_is_preserved "$legacy_alias_case" legacy-alias
 
 expected_files=(
   default/ca.crt
@@ -131,6 +375,15 @@ for workload in account-service game-session-service social-groups-service; do
   }
   seen_certificates[$fingerprint]=1
 done
+
+expected_account_uri="spiffe://firemud/ns/local/sa/account-service"
+account_dns_sans='DNS:account-service,DNS:account-service.local,DNS:account-service.local.svc,DNS:account-service.local.svc.cluster.local'
+assert_invalid_workload_uri_is_reissued \
+  duplicate-uri "URI:$expected_account_uri,URI:spiffe://firemud/ns/local/sa/other,$account_dns_sans"
+assert_invalid_workload_uri_is_reissued \
+  prefix-uri "URI:xURI:$expected_account_uri,$account_dns_sans"
+assert_invalid_workload_uri_is_reissued \
+  suffix-uri "URI:${expected_account_uri}-shadow,$account_dns_sans"
 
 # A malformed or stale local leaf is replaced only after it fails closed
 # identity/issuer/key validation; the generic workload generator remains 0600.

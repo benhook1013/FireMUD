@@ -24,7 +24,7 @@ class V8__enforce_tenant_public_realm_cardinalityTest {
   private static final Pattern MIGRATION_FILE = Pattern.compile("^V([^_]+)__.*\\.sql$");
 
   @Test
-  void keepsNormalizedVersionsUniqueAndCardinalityGuardAfterTheV7AuditMigration()
+  void keepsAdmissionPointerMigrationsUniqueAndOrderedAfterTheV7AuditMigration()
       throws IOException, URISyntaxException {
     var auditMigrationUrl =
         getClass()
@@ -46,7 +46,8 @@ class V8__enforce_tenant_public_realm_cardinalityTest {
     assertThat(orderedMigrationNames)
         .containsSubsequence(
             "V7__audit_gameplay_catalog_revision.sql",
-            "V8__enforce_tenant_public_realm_cardinality.sql");
+            "V8__enforce_tenant_public_realm_cardinality.sql",
+            "V9__index_gameplay_admission_pointer_event_tenant_lookup.sql");
 
     String v7 = readMigration("V7__audit_gameplay_catalog_revision.sql");
     String normalizedV7 = normalizeSql(v7);
@@ -66,6 +67,15 @@ class V8__enforce_tenant_public_realm_cardinalityTest {
             "ON gameplay_admission_pointer (tenant_id)",
             "WHERE visible AND public_production_realm");
     assertNoDataRewrite(v8);
+
+    String v9 =
+        normalizeSql(readMigration("V9__index_gameplay_admission_pointer_event_tenant_lookup.sql"));
+    assertThat(v9)
+        .isEqualTo(
+            "CREATE INDEX idx_gameplay_admission_pointer_event_tenant_world_realm_id "
+                + "ON gameplay_admission_pointer_event USING btree "
+                + "(tenant_id, world_slug, realm_slug, id DESC);");
+    assertNoDataRewrite(v9);
   }
 
   private String readMigration(String name) throws IOException {
