@@ -140,6 +140,12 @@ public final class TestGameplayWorldCatalogs {
         pointer.playableStateNamespaceId());
   }
 
+  private static UUID stableId(String kind, long tenantId, String worldSlug, String realmSlug) {
+    return UUID.nameUUIDFromBytes(
+        ("firemud-test-catalog:" + kind + ":" + tenantId + ":" + worldSlug + ":" + realmSlug)
+            .getBytes(StandardCharsets.UTF_8));
+  }
+
   private static List<GameplayWorldCatalog.WorldView> toWorldViews(
       List<GameplayCatalogProperties.World> worlds) {
     if (worlds == null) {
