@@ -6,6 +6,7 @@ import static net.firedevops.firemud.gamesession.jooq.tables.GameplayAdmissionPo
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.Optional;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerEventRecord;
 import org.jooq.DSLContext;
@@ -46,6 +47,20 @@ public class GameplayAdmissionPointerEventRepository {
                 .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
         .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
         .fetch(this::toEntity);
+  }
+
+  public Optional<GameplayAdmissionPointerEvent> findLatestByTenantIdAndWorldSlugAndRealmSlug(
+      Long tenantId, String worldSlug, String realmSlug) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER_EVENT)
+        .where(
+            GAMEPLAY_ADMISSION_POINTER_EVENT
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.WORLD_SLUG.eq(worldSlug))
+                .and(GAMEPLAY_ADMISSION_POINTER_EVENT.REALM_SLUG.eq(realmSlug)))
+        .orderBy(GAMEPLAY_ADMISSION_POINTER_EVENT.ID.desc())
+        .limit(1)
+        .fetchOptional(this::toEntity);
   }
 
   public GameplayAdmissionPointerEvent save(GameplayAdmissionPointerEvent entity) {

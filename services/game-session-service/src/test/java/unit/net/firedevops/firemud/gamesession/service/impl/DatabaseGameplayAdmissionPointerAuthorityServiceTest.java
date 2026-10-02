@@ -359,6 +359,21 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
   }
 
   @Test
+  void listPointersForTenantsUsesScopedRepositoryQuery() {
+    GameplayAdmissionPointer pointer = existingPointer();
+    pointer.setTenantId(2L);
+    when(pointerRepository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of(2L)))
+        .thenReturn(List.of(pointer));
+
+    var snapshots = service.listPointersForTenants(List.of(2L));
+
+    assertEquals(1, snapshots.size());
+    assertEquals(2L, snapshots.getFirst().tenantId());
+    verify(pointerRepository).findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of(2L));
+    verify(pointerRepository, never()).findAllByOrderByWorldSlugAscRealmSlugAsc();
+  }
+
+  @Test
   void listPointerAuditPreservesPreV7UnknownRevisionAndIdentity() {
     GameplayAdmissionPointerEvent historicalEvent = new GameplayAdmissionPointerEvent();
     historicalEvent.setWorldSlug("demo");
@@ -377,11 +392,17 @@ class DatabaseGameplayAdmissionPointerAuthorityServiceTest {
     when(eventRepository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
             1L, "demo", "production"))
         .thenReturn(List.of(historicalEvent));
+    when(eventRepository.findLatestByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
+        .thenReturn(Optional.of(historicalEvent));
 
     var auditEntry = service.listPointerAudit(1L, "demo", "production").getFirst();
+    var latestEntry = service.findLatestPointerAudit(1L, "demo", "production").orElseThrow();
     assertNull(auditEntry.catalogRevision());
     assertNull(auditEntry.realmId());
     assertNull(auditEntry.playableStateNamespaceId());
+    assertNull(latestEntry.catalogRevision());
+    assertNull(latestEntry.realmId());
+    assertNull(latestEntry.playableStateNamespaceId());
   }
 
   @Test

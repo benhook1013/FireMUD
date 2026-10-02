@@ -27,7 +27,7 @@ That current parser support does not establish public non-browser issuance or an
 
 First-party browsers and explicitly classified non-browser WebSocket clients authenticate through the HTTPS bootstrap/connect-token path before opening public gameplay WebSockets, while Telnet and other non-WebSocket text transports need an in-band credential path. FireMUD must distinguish transport admission, account authentication, and gameplay binding without making the Gateway the general account-authentication authority. [ADR 0029](./adr-0029-single-use-gameplay-connect-token-carriage.md) subsequently made a connect token mandatory for every non-proxy public `/ws/game/**` handshake and defined the dedicated header carrier for non-browser clients.
 
-The staged design is partially implemented and tested. It keeps the first-party browser bootstrap/connect-token/WebSocket path separate from the credential-bearing text-protocol path, while both leave Game Session as the final gameplay-login state owner. The current membership existence check is implemented, while explicit membership joining and the complete membership-authority-generation reread remain target-state work.
+The staged design is partially implemented and tested. It keeps the first-party browser bootstrap/connect-token/WebSocket path separate from the credential-bearing text-protocol path, while both leave Game Session as the final gameplay-login state owner. Local direct-text joining and response validation exist; the complete first-party issuance baseline, live authority and end-to-end proof remain gaps as recorded in [Implementation Status](#implementation-status).
 
 ## Decision
 
