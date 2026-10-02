@@ -337,25 +337,17 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     if (terminationRequestId == null || terminationRequestId.isBlank()) {
       throw new IllegalArgumentException("INVALID_ARGUMENT: terminationRequestId is required");
     }
-    WorldInstance worldInstance = requireWorldInstance(tenantId, gameInstanceId);
+    WorldInstance worldInstance =
+        executeLocalTermination(
+            () ->
+                beginOrResumeTermination(
+                    tenantId,
+                    gameInstanceId,
+                    expectedLifecycleEpoch,
+                    terminationRequestId,
+                    reason));
     if (STATUS_TERMINATED.equals(worldInstance.getStatus())) {
       return snapshot(worldInstance);
-    }
-    if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
-      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
-      worldInstance.setStatus(STATUS_TERMINATING);
-      worldInstance.setTerminationRequestId(terminationRequestId);
-      worldInstance.setFailureReason(normalizeBlank(reason));
-      worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
-      worldInstanceRepository.save(worldInstance);
-    } else if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
-      if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
-        throw new IllegalArgumentException(
-            "INVALID_WORLD_INSTANCE_STATE: world instance is terminating under a different request id");
-      }
-    } else {
-      throw new IllegalArgumentException(
-          "INVALID_WORLD_INSTANCE_STATE: world instance is not in ACTIVE or TERMINATING state");
     }
     var cleanupResponse =
         entityManagementClient == null
@@ -369,7 +361,8 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     WorldInstanceLifecycleSnapshotDto terminatedSnapshot =
         executeLocalTermination(
             () -> {
-              WorldInstance finalWorldInstance = requireWorldInstance(tenantId, gameInstanceId);
+              WorldInstance finalWorldInstance =
+                  requireLockedWorldInstance(tenantId, gameInstanceId);
               if (!terminationRequestId.equals(finalWorldInstance.getTerminationRequestId())) {
                 throw new IllegalArgumentException(
                     "INVALID_WORLD_INSTANCE_STATE: world instance termination request changed before finalization");
@@ -395,12 +388,53 @@ public class WorldLifecycleCommandServiceImpl implements WorldLifecycleCommandSe
     return terminatedSnapshot;
   }
 
-  private WorldInstanceLifecycleSnapshotDto executeLocalTermination(
-      java.util.function.Supplier<WorldInstanceLifecycleSnapshotDto> termination) {
+  private WorldInstance beginOrResumeTermination(
+      long tenantId,
+      long gameInstanceId,
+      long expectedLifecycleEpoch,
+      String terminationRequestId,
+      String reason) {
+    WorldInstance worldInstance = requireLockedWorldInstance(tenantId, gameInstanceId);
+    if (STATUS_TERMINATED.equals(worldInstance.getStatus())) {
+      return worldInstance;
+    }
+    if (STATUS_ACTIVE.equals(worldInstance.getStatus())) {
+      requireLifecycleEpoch(worldInstance, expectedLifecycleEpoch);
+      if (worldInstanceRepository.hasNonterminalInitialAdmissionBindHold(
+          tenantId, gameInstanceId)) {
+        throw new IllegalArgumentException(
+            "INITIAL_ADMISSION_BIND_HOLD_ACTIVE: initial admission binding is unresolved");
+      }
+      worldInstance.setStatus(STATUS_TERMINATING);
+      worldInstance.setTerminationRequestId(terminationRequestId);
+      worldInstance.setFailureReason(normalizeBlank(reason));
+      worldInstance.setLifecycleEpoch(worldInstance.getLifecycleEpoch() + 1L);
+      return worldInstanceRepository.save(worldInstance);
+    }
+    if (STATUS_TERMINATING.equals(worldInstance.getStatus())) {
+      if (!terminationRequestId.equals(worldInstance.getTerminationRequestId())) {
+        throw new IllegalArgumentException(
+            "INVALID_WORLD_INSTANCE_STATE: world instance is terminating under a different request id");
+      }
+      return worldInstance;
+    }
+    throw new IllegalArgumentException(
+        "INVALID_WORLD_INSTANCE_STATE: world instance is not in ACTIVE or TERMINATING state");
+  }
+
+  private <T> T executeLocalTermination(java.util.function.Supplier<T> termination) {
     if (transactionOperations == null) {
       return termination.get();
     }
     return transactionOperations.execute(status -> termination.get());
+  }
+
+  private WorldInstance requireLockedWorldInstance(long tenantId, long gameInstanceId) {
+    return worldInstanceRepository
+        .findByTenantIdAndGameInstanceIdForUpdate(tenantId, gameInstanceId)
+        .orElseThrow(
+            () ->
+                new IllegalArgumentException("WORLD_INSTANCE_NOT_FOUND: world instance not found"));
   }
 
   private void cleanupWorldRuntimeState(long tenantId, long gameInstanceId) {

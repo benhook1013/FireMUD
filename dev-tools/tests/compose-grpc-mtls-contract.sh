@@ -79,21 +79,34 @@ for service in "${services[@]}"; do
   [[ "$cert_public_key" == "$leaf_public_key" ]]
 done
 
+identity_services=(
+  account-service game-session-service entity-management-service world-management-service
+)
 declare -A identity_fingerprints=()
-for service in account-service game-session-service entity-management-service; do
+for service in "${identity_services[@]}"; do
   echo "Checking exact workload identity: $service"
   san_output="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -ext subjectAltName)"
   [[ "$san_output" == *"URI:spiffe://firemud/ns/dev/sa/$service"* ]]
   identity_fingerprints["$service"]="$(openssl x509 -in "$workloads_dir/$service/client.crt" -noout -fingerprint -sha256)"
 done
-[[ "${identity_fingerprints[account-service]}" != "${identity_fingerprints[game-session-service]}" ]]
-[[ "${identity_fingerprints[account-service]}" != "${identity_fingerprints[entity-management-service]}" ]]
-[[ "${identity_fingerprints[game-session-service]}" != "${identity_fingerprints[entity-management-service]}" ]]
+for ((left = 0; left < ${#identity_services[@]}; left++)); do
+  for ((right = left + 1; right < ${#identity_services[@]}; right++)); do
+    left_service="${identity_services[$left]}"
+    right_service="${identity_services[$right]}"
+    [[ "${identity_fingerprints[$left_service]}" != "${identity_fingerprints[$right_service]}" ]]
+  done
+done
 echo "Checking canonical Compose entrypoints."
 mtls_compose="$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"
 rg -Fq 'FIREMUD_GRPC_PLAINTEXT: "false"' "$mtls_compose"
 rg -Fq 'GRPC_SERVER_TLS_ENABLED: "true"' "$mtls_compose"
-rg -Fq 'FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev' "$mtls_compose"
+rg -Fq 'client-auth: REQUIRE' "$ROOT_DIR/services/world-management-service/src/main/resources/application.yml"
+world_guard="$ROOT_DIR/services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/InitialAdmissionBindWorkloadGuard.java"
+world_grpc="$ROOT_DIR/services/world-management-service/src/main/java/net/firedevops/firemud/worldmanagement/service/impl/WorldManagementGrpcService.java"
+rg -Fq 'world_management.v1.WorldManagementService/AcquireInitialAdmissionBindHold' "$world_guard"
+rg -Fq 'peerIdentity.isService("game-session-service")' "$world_guard"
+rg -Fq 'peerIdentity.isInNamespace(trustedNamespace)' "$world_guard"
+rg -Fq 'firemud.grpc.workload-namespace' "$world_grpc"
 for service in "${services[@]}"; do
   rg -Fq "\${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/$service:/app/certs:ro" "$mtls_compose"
 done
@@ -168,6 +181,8 @@ for name in app_names:
     assert service.get("build") is None, f"image-only proof must not build {name}"
 entity_namespace = services["entity-management-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
 assert entity_namespace == "dev", entity_namespace
+wms_namespace = services["world-management-service"]["environment"].get("FIREMUD_GRPC_WORKLOAD_NAMESPACE")
+assert wms_namespace == "dev", wms_namespace
 assert services["account-service"]["image"].endswith(":contract")
 print("Verified Compose mTLS wiring and image-only service configuration.")
 PY
