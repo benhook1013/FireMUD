@@ -88,8 +88,25 @@ class AccountRepositoryIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     AccountJoinOperationRepository joinOperations =
         new AccountJoinOperationRepository(transactionAwareDsl);
+    LegacyTenantSourceEvidence legacyTenantSourceEvidence =
+        new LegacyTenantSourceEvidence(transactionAwareDsl);
+    AccountAuthorityGenerationRepository authorityGenerationRepository =
+        new AccountAuthorityGenerationRepository(transactionAwareDsl);
+    ApprovedLegacyTenantAssociationRepository approvedTenantAssociations =
+        new ApprovedLegacyTenantAssociationRepository(
+            transactionAwareDsl,
+            legacyTenantSourceEvidence,
+            "account-service",
+            authorityGenerationRepository);
+    AccountTenantIdentityResolver tenantIdentityResolver =
+        new AccountTenantIdentityResolver(
+            approvedTenantAssociations, legacyTenantSourceEvidence, "account-service");
     AccountTenantMembershipRepository memberships =
-        new AccountTenantMembershipRepository(transactionAwareDsl);
+        new AccountTenantMembershipRepository(
+            transactionAwareDsl,
+            new AccountRepository(transactionAwareDsl),
+            tenantIdentityResolver,
+            new FreshTenantIdentityAssociationRepository(transactionAwareDsl, "account-service"));
     AccountAuditOutboxRepository outbox = new AccountAuditOutboxRepository(transactionAwareDsl);
     long accountId =
         Objects.requireNonNull(

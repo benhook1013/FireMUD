@@ -1,11 +1,13 @@
 package net.firedevops.firemud.gamesession.entity;
 
 import java.time.Instant;
+import java.util.UUID;
 import lombok.Data;
 
 @Data
 public class GameInstance {
   private Long id;
+  private UUID gameInstanceUuid;
   private Long tenantId;
   private String runtimeVersion;
   private String scriptPatchVersion;

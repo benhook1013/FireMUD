@@ -4,6 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.List;
+import java.util.UUID;
+import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.TenantProvenanceKind;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository.VerifiedTenantProvenance;
+import org.jooq.SQLDialect;
+import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -72,6 +78,16 @@ class AccountTenantMembershipRoleSnapshotRepositoryTest {
   @Test
   void persistenceMethodsRequireTheCallingJoinTransaction() throws ReflectiveOperationException {
     assertMandatory(
+        AccountTenantMembershipRepository.class.getMethod(
+            "findCanonicalMembershipForUpdate", UUID.class, UUID.class));
+    assertMandatory(
+        AccountTenantMembershipRepository.class.getMethod(
+            "saveCanonical",
+            AccountTenantMembership.class,
+            UUID.class,
+            UUID.class,
+            VerifiedTenantProvenance.class));
+    assertMandatory(
         AccountTenantMembershipRoleSnapshotRepository.class.getMethod(
             "findForUpdate", long.class, long.class, long.class, long.class));
     assertMandatory(
@@ -80,6 +96,73 @@ class AccountTenantMembershipRoleSnapshotRepositoryTest {
             net.firedevops.firemud.accountservice.entity.AccountTenantMembership.class,
             long.class,
             java.util.Collection.class));
+    assertMandatory(
+        AccountTenantMembershipRoleSnapshotRepository.class.getMethod(
+            "findForCanonicalUpdate",
+            UUID.class,
+            UUID.class,
+            VerifiedTenantProvenance.class,
+            long.class,
+            long.class));
+    assertMandatory(
+        AccountTenantMembershipRoleSnapshotRepository.class.getMethod(
+            "replaceCanonical",
+            AccountTenantMembership.class,
+            UUID.class,
+            UUID.class,
+            VerifiedTenantProvenance.class,
+            long.class,
+            java.util.Collection.class));
+  }
+
+  @Test
+  void canonicalRoleSnapshotRetainsFreshUuidAndFullSourceWithoutNumericAlias() {
+    UUID accountUuid = UUID.fromString("11111111-1111-4111-8111-111111111111");
+    UUID tenantUuid = UUID.fromString("22222222-2222-4222-8222-222222222222");
+    VerifiedTenantProvenance provenance =
+        new VerifiedTenantProvenance(
+            null,
+            TenantProvenanceKind.FRESH_GAME_DESIGN,
+            UUID.fromString("33333333-3333-4333-8333-333333333333"),
+            "sha256:" + "a".repeat(64));
+
+    AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot snapshot =
+        new AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot(
+            11L, null, 701L, 1L, List.of("player"), accountUuid, tenantUuid, provenance);
+
+    assertThat(snapshot.accountUuid()).isEqualTo(accountUuid);
+    assertThat(snapshot.tenantUuid()).isEqualTo(tenantUuid);
+    assertThat(snapshot.tenantId()).isNull();
+    assertThat(snapshot.tenantProvenance()).isEqualTo(provenance);
+    assertThatThrownBy(
+            () ->
+                new AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot(
+                    11L, 7L, 701L, 1L, List.of("player"), accountUuid, tenantUuid, provenance))
+        .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void canonicalMembershipAndRoleMethodsRequireAnActiveOwnerTransactionWithoutSpringProxy() {
+    UUID accountUuid = UUID.randomUUID();
+    UUID tenantUuid = UUID.randomUUID();
+    AccountTenantMembershipRepository memberships =
+        new AccountTenantMembershipRepository(DSL.using(SQLDialect.POSTGRES), null, null, null);
+    AccountTenantMembershipRoleSnapshotRepository roles =
+        new AccountTenantMembershipRoleSnapshotRepository(DSL.using(SQLDialect.POSTGRES));
+
+    assertThatThrownBy(() -> memberships.findCanonicalMembershipForUpdate(accountUuid, tenantUuid))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
+    assertThatThrownBy(() -> memberships.saveCanonical(null, accountUuid, tenantUuid, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
+    assertThatThrownBy(() -> roles.findForCanonicalUpdate(accountUuid, tenantUuid, null, 1L, 1L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
+    assertThatThrownBy(
+            () -> roles.replaceCanonical(null, accountUuid, tenantUuid, null, 1L, List.of()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("active owner transaction");
   }
 
   private void assertMandatory(java.lang.reflect.Method method) {

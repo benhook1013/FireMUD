@@ -1,6 +1,7 @@
 package net.firedevops.firemud.accountservice.entity;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.Setter;
@@ -15,6 +16,10 @@ public class AccountTenantMembership {
   private Account account;
 
   private Long tenantId;
+  private UUID tenantUuid;
+  private String tenantProvenanceKind;
+  private UUID tenantSourceOperationId;
+  private String tenantProvenanceDigest;
   private boolean gameplayAdmissionAllowed = true;
   private String lifecycleState;
   private long membershipVersion;

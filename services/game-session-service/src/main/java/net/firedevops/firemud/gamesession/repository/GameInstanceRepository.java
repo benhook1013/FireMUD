@@ -14,10 +14,10 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
-import net.firedevops.firemud.gamesession.jooq.tables.records.GameInstancesRecord;
 import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.RuntimeVersionIdResolver;
 import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
+import org.jooq.Condition;
 import org.jooq.DSLContext;
 import org.jooq.Field;
 import org.jooq.Record;
@@ -32,8 +32,11 @@ import org.springframework.transaction.annotation.Transactional;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameInstanceRepository {
+  private static final Field<UUID> GAME_INSTANCE_UUID =
+      DSL.field(DSL.name("game_instance_uuid"), UUID.class);
   private static final Field<?>[] SELECT_FIELDS = {
     GAME_INSTANCES.ID,
+    GAME_INSTANCE_UUID,
     GAME_INSTANCES.TENANT_ID,
     GAME_INSTANCES.RUNTIME_VERSION,
     GAME_INSTANCES.SCRIPT_PATCH_VERSION,
@@ -64,6 +67,56 @@ public class GameInstanceRepository {
 
   public Optional<GameInstance> findById(Long id) {
     return selectGameInstances().where(GAME_INSTANCES.ID.eq(id)).fetchOptional(this::toEntity);
+  }
+
+  /**
+   * Reads the existing Game Session owner's canonical UUID for an internal numeric selector.
+   *
+   * <p>This is strict owner readback, not an allocator or a numeric-to-UUID derivation. Missing
+   * rows, retained rows without a UUID, invalid identity state, or conflicting UUID claims deny
+   * resolution.
+   */
+  public String requireCanonicalGameInstanceUuidByTenantIdAndPrivateId(
+      Long tenantId, Long privateGameInstanceId) {
+    if (tenantId == null || tenantId <= 0L) {
+      throw new IllegalArgumentException("tenantId must be a positive internal selector");
+    }
+    if (privateGameInstanceId == null || privateGameInstanceId <= 0L) {
+      throw new IllegalArgumentException(
+          "privateGameInstanceId must be a positive internal selector");
+    }
+
+    Record source =
+        dsl.select(GAME_INSTANCE_UUID)
+            .from(GAME_INSTANCES)
+            .where(
+                GAME_INSTANCES
+                    .ID
+                    .eq(privateGameInstanceId)
+                    .and(GAME_INSTANCES.TENANT_ID.eq(tenantId)))
+            .fetchOne();
+    if (source == null) {
+      throw new IllegalArgumentException("Game instance not found in tenant scope");
+    }
+
+    UUID uuid = source.get(GAME_INSTANCE_UUID);
+    if (uuid == null) {
+      throw new IllegalStateException("Game instance has no canonical UUID mapping");
+    }
+    String canonicalUuid = uuid.toString();
+    if (!AccountIds.isCanonicalNonNilUuid(canonicalUuid)) {
+      throw new IllegalStateException("Game instance has an invalid canonical UUID mapping");
+    }
+
+    Long claimCount =
+        dsl.selectCount()
+            .from(GAME_INSTANCES)
+            .where(GAME_INSTANCE_UUID.eq(uuid))
+            .fetchOne(0, Long.class);
+    if (claimCount == null || claimCount != 1L) {
+      throw new IllegalStateException("Game instance UUID mapping is conflicting");
+    }
+    return canonicalUuid;
   }
 
   /**
@@ -119,6 +172,9 @@ public class GameInstanceRepository {
       throw new IllegalArgumentException(
           "New game instances require a canonical ownerAccountId UUID");
     }
+    if (entity.getId() == null && entity.getGameInstanceUuid() != null) {
+      throw new IllegalArgumentException("New game instance UUIDs are allocated by Game Session");
+    }
     if (entity.getId() == null && entity.getLegacyOwnerAccountId() != null) {
       throw new IllegalArgumentException("New game instances cannot use a legacy numeric owner");
     }
@@ -127,14 +183,56 @@ public class GameInstanceRepository {
         entity.getScriptPinEpoch(),
         entity.getScriptPatchPinnedControlPlaneRequestId());
     if (entity.getId() == null) {
-      GameInstancesRecord record = dsl.newRecord(GAME_INSTANCES);
-      populate(record, entity, ownerAccountUuid);
       long initialRowVersion = entity.getRowVersion() == null ? 0L : entity.getRowVersion();
-      record.setRowVersion(initialRowVersion);
-      record.store();
-      return findById(record.getId()).orElseThrow();
+      UUID gameInstanceUuid = UUID.randomUUID();
+      if (!AccountIds.isCanonicalNonNilUuid(gameInstanceUuid.toString())) {
+        throw new IllegalStateException("Game Session generated an invalid game instance UUID");
+      }
+      Record inserted =
+          dsl.insertInto(GAME_INSTANCES)
+              .set(GAME_INSTANCES.TENANT_ID, entity.getTenantId())
+              .set(GAME_INSTANCES.RUNTIME_VERSION, entity.getRuntimeVersion())
+              .set(GAME_INSTANCES.SCRIPT_PATCH_VERSION, entity.getScriptPatchVersion())
+              .set(
+                  GAME_INSTANCES.SCRIPT_PATCH_BASE_VERSION_ID, entity.getScriptPatchBaseVersionId())
+              .set(GAME_INSTANCES.SCRIPT_PIN_EPOCH, entity.getScriptPinEpoch())
+              .set(GAME_INSTANCES.GAME_TEMPLATE_ID, entity.getGameTemplateId())
+              .set(GAME_INSTANCES.LAUNCH_DESCRIPTOR_ID, entity.getLaunchDescriptorId())
+              .set(GAME_INSTANCES.VERSION_ID, entity.getVersionId())
+              .set(GAME_INSTANCES.RELEASE_BUNDLE_ID, entity.getReleaseBundleId())
+              .set(GAME_INSTANCES.VERSION_STATE_EPOCH, entity.getVersionStateEpoch())
+              .set(GAME_INSTANCES.GENERATION_CONFIG_REVISION, entity.getGenerationConfigRevision())
+              .set(GAME_INSTANCES.REMAP_SET_ID, entity.getRemapSetId())
+              .set(
+                  GAME_INSTANCES.SCRIPT_PATCH_PINNED_AT,
+                  toLocalDateTime(entity.getScriptPatchPinnedAt()))
+              .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_BY, entity.getScriptPatchPinnedBy())
+              .set(GAME_INSTANCES.SCRIPT_PATCH_PINNED_REASON, entity.getScriptPatchPinnedReason())
+              .set(
+                  GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID,
+                  entity.getScriptPatchPinnedControlPlaneRequestId())
+              .set(GAME_INSTANCES.OWNER_ACCOUNT_ID, (Long) null)
+              .set(GAME_INSTANCES.OWNER_ACCOUNT_UUID, ownerAccountUuid)
+              .set(GAME_INSTANCES.STATUS, entity.getStatus())
+              .set(GAME_INSTANCES.ROW_VERSION, initialRowVersion)
+              .set(GAME_INSTANCE_UUID, gameInstanceUuid)
+              .returning(GAME_INSTANCES.ID)
+              .fetchOne();
+      if (inserted == null) {
+        throw new IllegalStateException("Failed to insert game instance");
+      }
+      return findById(inserted.get(GAME_INSTANCES.ID)).orElseThrow();
     }
 
+    UUID expectedGameInstanceUuid = entity.getGameInstanceUuid();
+    if (expectedGameInstanceUuid != null
+        && !AccountIds.isCanonicalNonNilUuid(expectedGameInstanceUuid.toString())) {
+      throw new IllegalArgumentException("gameInstanceUuid must be a canonical non-nil UUID");
+    }
+    Condition expectedGameInstanceIdentity =
+        expectedGameInstanceUuid == null
+            ? GAME_INSTANCE_UUID.isNull()
+            : GAME_INSTANCE_UUID.eq(expectedGameInstanceUuid);
     long currentRowVersion = entity.getRowVersion() == null ? 0L : entity.getRowVersion();
     long nextRowVersion = currentRowVersion + 1L;
     int updated =
@@ -166,7 +264,8 @@ public class GameInstanceRepository {
                 GAME_INSTANCES
                     .ID
                     .eq(entity.getId())
-                    .and(GAME_INSTANCES.ROW_VERSION.eq(currentRowVersion)))
+                    .and(GAME_INSTANCES.ROW_VERSION.eq(currentRowVersion))
+                    .and(expectedGameInstanceIdentity))
             .execute();
     if (updated != 1) {
       throw new IllegalStateException("Failed to update game_instance id=" + entity.getId());
@@ -836,32 +935,15 @@ public class GameInstanceRepository {
     return isAbsent(value) ? null : value;
   }
 
-  private void populate(GameInstancesRecord record, GameInstance entity, UUID ownerAccountUuid) {
-    record.setTenantId(entity.getTenantId());
-    record.setRuntimeVersion(entity.getRuntimeVersion());
-    record.setScriptPatchVersion(entity.getScriptPatchVersion());
-    record.setScriptPatchBaseVersionId(entity.getScriptPatchBaseVersionId());
-    record.setScriptPinEpoch(entity.getScriptPinEpoch());
-    record.setGameTemplateId(entity.getGameTemplateId());
-    record.setLaunchDescriptorId(entity.getLaunchDescriptorId());
-    record.setVersionId(entity.getVersionId());
-    record.setReleaseBundleId(entity.getReleaseBundleId());
-    record.setVersionStateEpoch(entity.getVersionStateEpoch());
-    record.setGenerationConfigRevision(entity.getGenerationConfigRevision());
-    record.setRemapSetId(entity.getRemapSetId());
-    record.setScriptPatchPinnedAt(toLocalDateTime(entity.getScriptPatchPinnedAt()));
-    record.setScriptPatchPinnedBy(entity.getScriptPatchPinnedBy());
-    record.setScriptPatchPinnedReason(entity.getScriptPatchPinnedReason());
-    record.setScriptPatchPinnedControlPlaneRequestId(
-        entity.getScriptPatchPinnedControlPlaneRequestId());
-    record.setOwnerAccountId(null);
-    record.setOwnerAccountUuid(ownerAccountUuid);
-    record.setStatus(entity.getStatus());
-  }
-
   private GameInstance toEntity(Record record) {
     GameInstance entity = new GameInstance();
     entity.setId(record.get(GAME_INSTANCES.ID));
+    UUID gameInstanceUuid = record.get(GAME_INSTANCE_UUID);
+    if (gameInstanceUuid != null
+        && !AccountIds.isCanonicalNonNilUuid(gameInstanceUuid.toString())) {
+      throw new IllegalStateException("Stored game instance UUID is not canonical and non-nil");
+    }
+    entity.setGameInstanceUuid(gameInstanceUuid);
     entity.setTenantId(record.get(GAME_INSTANCES.TENANT_ID));
     entity.setRuntimeVersion(record.get(GAME_INSTANCES.RUNTIME_VERSION));
     entity.setScriptPatchVersion(record.get(GAME_INSTANCES.SCRIPT_PATCH_VERSION));
