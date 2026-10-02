@@ -26,7 +26,7 @@ Keep the root of `dev-tools/` small. Only canonical human-facing entrypoints and
 - `evidence_digest.py` – shared canonical RFC 8785-subset evidence digest helper imported by deployment and validation gates.
 - `wait-for-it.sh` – shared Docker image/runtime helper.
 
-The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.py pr` entrypoints require GitHub CLI `gh` >= 2.63.0 because they request the `baseRefOid` field; the repository workflow pin is `GH_VERSION=2.101.0`.
+The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.py pr` entrypoints require GitHub CLI `gh` >= 2.63.0 because they request the `baseRefOid` field. The repository workflow pin is sourced from `config/workflow-tool-versions.env` as `GH_VERSION`.
 
 ## Folder map
 
@@ -39,6 +39,7 @@ The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.
 - `load-testing/` – Gatling load-testing module.
 - `maintenance/` – maintenance and analysis utilities, including `maintenance/cloc-report.py` for repository summaries and PR impact snippets. Report generation is read-only by default; `pr ... --update-pr` performs the guarded marked PR-body update defined by the [PR lifecycle](../design/developer-workflows/pr-lifecycle.md). Generated PR LOC blocks carry exact base, merge-base, and head metadata for freshness checks. Use `python3 dev-tools/maintenance/cloc-report.py --help` for invocation details; its focused proof is [cloc-report-contract.sh](tests/cloc-report-contract.sh).
 - `maintenance/update-workflow-tool.py` – updates a downloaded workflow tool's canonical version and Linux checksum together. Renovate uses version-only `github-releases` managers for kubectl and Helm because their releases do not expose the required checksum assets; their checksum fields remain fail-closed until this updater refreshes them. The Kubernetes 1.34 hosted cluster constrains Renovate's kubectl proposals to `<1.36.0`, permitting compatible 1.35 patch releases; advance that cap only with the corresponding cluster-version upgrade. The `github-release-attachments` datasource updates GitHub CLI, Buf, Kubeconform, Trivy, and Lychee version, checksum-version, and archive SHA as one authority block; CI still rejects any unpaired bump. Actionlint remains version-only because it has no archive checksum authority. Velero retains Renovate image updates as a release signal, but its image digest and CLI archive checksum are separate authorities; every Velero update must run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --terraform-file <path> --velero-chart-version <chart-version> --image-evidence-file <path>` for its transaction before merge. The explicit chart version is required because VMware Tanzu chart versions do not equal Velero app versions. The updater atomically updates the Velero authority, verifier Dockerfile Velero stage, and Terraform Helm projection; the independently digest-pinned CronJob is not an updater target. These are canonical pre-release assets rather than a live production deployment. An offline `--checksum-file` must begin with `version=<version>` on its own line, followed by the publisher manifest; the version is checked before any checksum is extracted. Velero evidence must contain one exact immutable `velero/velero:v<version>@sha256:<digest>` reference, which the updater verifies against Docker Hub before preparing all three updater projections as one rollback-protected transaction.
+
 - `observability/` – observability contract and evidence validators.
 - `release/` – release/notice generation utilities.
 - `restores/` – restore, state-reset, and external-credential validation helpers; see `restores/README.md` for the script map.
@@ -46,6 +47,8 @@ The `pr-review`, `report-worktree-pr-topology.sh`, and `maintenance/cloc-report.
 - `seed/` – local and test data seeding helpers.
 - `tests/` – contract tests for repo-owned tooling.
 - `validation/` – repo policy and static validation scripts used by Gradle and CI.
+
+The documentation lock is sourced from `config/docs/requirements.in` and generated into `config/docs/requirements.txt` with the repository Python version and `pip-compile --allow-unsafe --generate-hashes --index-url=https://pypi.org/simple --output-file=config/docs/requirements.txt config/docs/requirements.in`. When the installed pip-tools version mis-serializes its default index options into an unsupported header, set `CUSTOM_COMPILE_COMMAND` to that exact command so the generated header remains parseable. Keep the source pins and lock hashes in sync; do not edit lock hashes manually.
 
 ## Placement guidance
 
