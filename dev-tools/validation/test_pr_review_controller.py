@@ -3600,7 +3600,7 @@ class ControllerTests(unittest.TestCase):
 
                 history.append(self.allocation_evidence(checkpoint="exact-second", channel=channel))
                 final = controller.status()["prs"][0]["allocations"][channel]
-                self.assertIn(final["status"], {"CAP_TAPERED", "CAP_AUDITED_STOP"})
+                self.assertEqual(final["status"], "CAP_TAPERED")
                 self.assertEqual((final["used"], final["remaining"]), (2, 0))
 
     def test_exact_allocation_rejects_invalid_or_conflicting_values_without_mutation(self):
