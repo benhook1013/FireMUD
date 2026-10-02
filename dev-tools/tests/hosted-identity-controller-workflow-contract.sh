@@ -2549,6 +2549,18 @@ for flag, source in (
     ("character", "HOSTED_PLAYABLE_CHARACTER"),
 ):
     assert f'--{flag} "${source}"' in wss_diagnostic["run"]
+for required_wss_argument in (
+    '--gateway-base "https://${PREVIEW_HOSTNAME}"',
+    '--auth-base "https://${PREVIEW_HOSTNAME}"',
+    '--auth-prefix "/api/account"',
+    '--websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game"',
+    '--origin "https://${PREVIEW_HOSTNAME}"',
+    '--readiness-url ""',
+    '--revoke-url ""',
+    '--expected-room-id "$room_id"',
+    "--reconnect",
+):
+    assert required_wss_argument in wss_diagnostic["run"], required_wss_argument
 for diagnostic in (wss_diagnostic, proof_writer, proof_upload):
     assert diagnostic["if"] == public_controller_condition
 assert proof_writer["env"]["NAMESPACE_KUBECONFIG"] == (

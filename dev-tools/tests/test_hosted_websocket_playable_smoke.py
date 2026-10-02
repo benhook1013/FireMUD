@@ -81,9 +81,7 @@ class FakeWebSocket:
             "accepted": True,
         }
         if command_type == "LOOK" and self.look_payload is not None:
-            response["outputs"] = [
-                {"payloadType": "look_view", "payload": self.look_payload}
-            ]
+            response["outputs"] = [{"payloadType": "look_view", "payload": self.look_payload}]
         self.responses.append(json.dumps(response))
 
     def recv(self):
@@ -108,12 +106,16 @@ class LogoutUnavailableWebSocket(FakeWebSocket):
     def send(self, command):
         if command == "LOGOUT":
             self.commands.append(command)
-            self.responses.append(json.dumps({
-                "eventType": "command_result",
-                "commandType": "LOGOUT",
-                "accepted": False,
-                "errorCode": "LOGOUT_UNAVAILABLE",
-            }))
+            self.responses.append(
+                json.dumps(
+                    {
+                        "eventType": "command_result",
+                        "commandType": "LOGOUT",
+                        "accepted": False,
+                        "errorCode": "LOGOUT_UNAVAILABLE",
+                    }
+                )
+            )
             return
         super().send(command)
 
@@ -147,9 +149,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             sockets.append(ws)
             return ws
 
-        result = MODULE.run_smoke(
-            self.config(), http_request=http, websocket_factory=socket_factory
-        )
+        result = MODULE.run_smoke(self.config(), http_request=http, websocket_factory=socket_factory)
 
         self.assertEqual(result["steps"], ["LOGIN", "PLAY", "LOOK"])
         self.assertFalse(result["logout"])
@@ -166,15 +166,16 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
                 "Origin: https://frontend.preview.example",
             ],
         )
-        self.assertEqual(http.calls[0][2], {
-            "accountIdentifier": "operator@example.com",
-            "secret": "do-not-print-this",
-        })
+        self.assertEqual(
+            http.calls[0][2],
+            {
+                "accountIdentifier": "operator@example.com",
+                "secret": "do-not-print-this",
+            },
+        )
 
     def test_ambiguous_character_discovery_fails_before_connect_token(self):
-        http = FakeHttp(
-            characters=[{"characterName": "Ada"}, {"characterName": "Bea"}]
-        )
+        http = FakeHttp(characters=[{"characterName": "Ada"}, {"characterName": "Bea"}])
 
         with self.assertRaisesRegex(
             MODULE.HostedWebSocketPlayableSmokeError,
@@ -261,6 +262,96 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
                         0,
                     )
                 self.assertEqual(run_smoke.call_args.args[0].exercise_logout, expected_logout)
+
+    def test_trusted_cli_pins_destinations_over_ambient_configuration(self):
+        http = FakeHttp()
+        socket_attempts = []
+
+        def socket_factory(url, timeout, headers):
+            socket_attempts.append((url, list(headers)))
+            if len(socket_attempts) == 2:
+                raise FakeHandshakeRejected()
+            return FakeWebSocket()
+
+        actual_run_smoke = MODULE.run_smoke
+        observed_configs = []
+
+        def run_with_fakes(config):
+            observed_configs.append(config)
+            return actual_run_smoke(
+                config,
+                http_request=http,
+                websocket_factory=socket_factory,
+            )
+
+        hostile_environment = {
+            "PLAYER_EXPERIENCE_AUTH_API_BASE": "https://attacker.invalid",
+            "PLAYER_EXPERIENCE_AUTH_API_PREFIX": "/attacker-account",
+            "SMOKE_GATEWAY_READINESS_URL": "https://attacker.invalid/ready",
+            "SMOKE_GATEWAY_CONNECT_TOKEN_REVOKE_URL": "https://attacker.invalid/revoke",
+        }
+        output = io.StringIO()
+        with (
+            patch.dict(MODULE.os.environ, hostile_environment),
+            patch.object(MODULE, "run_smoke", side_effect=run_with_fakes),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(
+                MODULE.main(
+                    [
+                        "--gateway-base",
+                        "https://preview.example",
+                        "--auth-base",
+                        "https://preview.example",
+                        "--auth-prefix",
+                        "/api/account",
+                        "--websocket-url",
+                        "wss://preview.example/ws/game",
+                        "--origin",
+                        "https://preview.example",
+                        "--readiness-url",
+                        "",
+                        "--revoke-url",
+                        "",
+                        "--username",
+                        "operator@example.com",
+                        "--password",
+                        "do-not-print-this",
+                        "--world",
+                        "demo",
+                        "--realm",
+                        "production",
+                        "--expected-room-id",
+                        "R-1021",
+                        "--reconnect",
+                    ]
+                ),
+                0,
+            )
+
+        self.assertEqual(len(observed_configs), 1)
+        config = observed_configs[0]
+        self.assertEqual(config.auth_api_base, "https://preview.example")
+        self.assertEqual(config.auth_api_prefix, "/api/account")
+        self.assertEqual(config.readiness_url, "")
+        self.assertEqual(config.revoke_url, "")
+        self.assertEqual(config.websocket_url, "wss://preview.example/ws/game")
+        self.assertEqual(config.origin, "https://preview.example")
+        self.assertTrue(config.exercise_reconnect)
+        self.assertEqual(len(socket_attempts), 3)
+        self.assertTrue(all(url == "wss://preview.example/ws/game" for url, _ in socket_attempts))
+        self.assertTrue(
+            all(
+                any(header.startswith("Cookie: Firemud-Connect-Token=") for header in headers)
+                for _, headers in socket_attempts
+            )
+        )
+        self.assertTrue(all(url.startswith("https://preview.example/") for _, url, _, _, _ in http.calls))
+        credential_calls = [call for call in http.calls if "secret" in (call[2] or {}) or "Authorization" in call[3]]
+        self.assertTrue(credential_calls)
+        self.assertTrue(all(call[1].startswith("https://preview.example/") for call in credential_calls))
+        self.assertFalse(any(url.endswith(("/ready", "/revoke")) for _, url, _, _, _ in http.calls))
+        self.assertNotIn("do-not-print-this", output.getvalue())
 
     def test_explicit_logout_opt_in_fails_when_logout_is_unavailable(self):
         with self.assertRaisesRegex(
@@ -378,8 +469,9 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             "https://frontend.preview.example/path",
         ):
             http = FakeHttp()
-            with self.subTest(origin=origin), self.assertRaisesRegex(
-                MODULE.HostedWebSocketPlayableSmokeError, "first-party Origin"
+            with (
+                self.subTest(origin=origin),
+                self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "first-party Origin"),
             ):
                 MODULE.run_smoke(
                     self.config(origin=origin),
@@ -396,9 +488,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
                 raise RuntimeError("origin rejected by gateway allowlist")
             return FakeWebSocket()
 
-        with self.assertRaisesRegex(
-            MODULE.HostedWebSocketPlayableSmokeError, "WSS connection failed"
-        ):
+        with self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "WSS connection failed"):
             MODULE.run_smoke(
                 self.config(origin="https://wrong.preview.example"),
                 http_request=http,
@@ -407,16 +497,12 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
 
     def test_missing_cookie_fails_closed(self):
         http = FakeHttp(cookie="")
-        with self.assertRaisesRegex(
-            MODULE.HostedWebSocketPlayableSmokeError, "valid Firemud-Connect-Token"
-        ):
+        with self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "valid Firemud-Connect-Token"):
             MODULE.run_smoke(self.config(), http_request=http, websocket_factory=FakeWebSocket)
 
     def test_wrong_cookie_fails_closed(self):
         http = FakeHttp(cookie="Other=wrong")
-        with self.assertRaisesRegex(
-            MODULE.HostedWebSocketPlayableSmokeError, "valid Firemud-Connect-Token"
-        ):
+        with self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "valid Firemud-Connect-Token"):
             MODULE.run_smoke(self.config(), http_request=http, websocket_factory=FakeWebSocket)
 
     def test_readiness_rejects_non_2xx_and_malformed_payload(self):
@@ -425,9 +511,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             MODULE.HttpResponse(200, {}, {"ready": True}),
         ):
             http = FakeHttp(readiness=readiness)
-            with self.subTest(readiness=readiness), self.assertRaises(
-                MODULE.HostedWebSocketPlayableSmokeError
-            ):
+            with self.subTest(readiness=readiness), self.assertRaises(MODULE.HostedWebSocketPlayableSmokeError):
                 MODULE.run_smoke(
                     self.config(readiness_url="https://preview.example/ready"),
                     http_request=http,
@@ -463,9 +547,7 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             sockets.append(socket)
             return socket
 
-        with self.assertRaisesRegex(
-            MODULE.HostedWebSocketPlayableSmokeError, "close observation"
-        ):
+        with self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "close observation"):
             MODULE.run_smoke(
                 self.config(exercise_logout=True),
                 http_request=http,
