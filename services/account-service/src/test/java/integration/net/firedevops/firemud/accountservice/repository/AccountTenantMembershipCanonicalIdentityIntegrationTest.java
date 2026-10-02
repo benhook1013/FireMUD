@@ -437,7 +437,7 @@ class AccountTenantMembershipCanonicalIdentityIntegrationTest {
   private static FreshTenantCreationEvidence freshTenantEvidence(UUID canonicalTenantUuid) {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
-    String sourceTenantKey = "fresh-" + UUID.randomUUID().toString().replace("-", "");
+    String sourceTenantKey = "f-" + UUID.randomUUID().toString().replace("-", "");
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             TEST_NAMESPACE, requestId, sourceTenantKey, "Fixture tenant", null);
