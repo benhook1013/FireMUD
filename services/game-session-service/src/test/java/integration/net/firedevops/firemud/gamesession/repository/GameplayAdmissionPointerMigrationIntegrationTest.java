@@ -137,7 +137,9 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     assertThat(originalBootstrapEvent.get("realm_id", UUID.class)).isNull();
     assertThat(originalBootstrapEvent.get("playable_state_namespace_id", UUID.class)).isNull();
 
-    GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldViews(worldViewsFromDatabase(dsl));
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            worldViewsFromDatabase(dsl, RETAINED_BOOTSTRAP_TENANT_ID));
     assertThat(catalog.publicProductionRealmCardinality(RETAINED_BOOTSTRAP_TENANT_ID))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
     assertThat(catalog.resolvePublicWorldFromAuthoritySnapshot("demo"))
@@ -499,12 +501,26 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
                 Long.class))
         .isEqualTo(1L);
 
-    GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldViews(worldViewsFromDatabase(dsl));
-    assertThat(catalog.publicProductionRealmCardinality(10L))
+    List<GameplayWorldCatalog.WorldView> tenant10Worlds = worldViewsFromDatabase(dsl, 10L);
+    List<GameplayWorldCatalog.WorldView> tenant11Worlds = worldViewsFromDatabase(dsl, 11L);
+    GameplayWorldCatalog tenant10Catalog = GameplayWorldCatalog.forWorldViews(tenant10Worlds);
+    GameplayWorldCatalog tenant11Catalog = GameplayWorldCatalog.forWorldViews(tenant11Worlds);
+    GameplayWorldCatalog tenant12Catalog =
+        GameplayWorldCatalog.forWorldViews(worldViewsFromDatabase(dsl, 12L));
+
+    assertThat(tenant10Catalog.publicProductionRealmCardinality(10L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
-    assertThat(catalog.publicProductionRealmCardinality(11L))
+    assertThat(tenant11Catalog.publicProductionRealmCardinality(11L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
-    assertThat(catalog.publicProductionRealmCardinality(12L))
+    assertThat(tenant12Catalog.publicProductionRealmCardinality(12L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.ZERO);
+
+    List<GameplayWorldCatalog.WorldView> mixedTenantWorlds = new ArrayList<>(tenant10Worlds);
+    mixedTenantWorlds.addAll(tenant11Worlds);
+    GameplayWorldCatalog mixedTenantCatalog = GameplayWorldCatalog.forWorldViews(mixedTenantWorlds);
+    assertThat(mixedTenantCatalog.publicProductionRealmCardinality(10L))
+        .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.ZERO);
+    assertThat(mixedTenantCatalog.publicProductionRealmCardinality(11L))
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.ZERO);
 
     assertThatThrownBy(
@@ -683,7 +699,8 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     return pointer;
   }
 
-  private static List<GameplayWorldCatalog.WorldView> worldViewsFromDatabase(DSLContext dsl) {
+  private static List<GameplayWorldCatalog.WorldView> worldViewsFromDatabase(
+      DSLContext dsl, long tenantId) {
     Map<String, String> displayNamesByWorld = new LinkedHashMap<>();
     Map<String, List<GameplayWorldCatalog.RealmView>> realmsByWorld = new LinkedHashMap<>();
     for (Record row :
@@ -692,7 +709,8 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
                 + "game_instance_id, pointer_version, visible, public_production_realm, "
                 + "requires_character_selection, state_scope, character_creation_policy, "
                 + "catalog_revision, realm_id, playable_state_namespace_id "
-                + "FROM gameplay_admission_pointer ORDER BY id")) {
+                + "FROM gameplay_admission_pointer WHERE tenant_id = ? ORDER BY id",
+            tenantId)) {
       String worldSlug = row.get("world_slug", String.class);
       displayNamesByWorld.putIfAbsent(worldSlug, row.get("world_display_name", String.class));
       realmsByWorld
