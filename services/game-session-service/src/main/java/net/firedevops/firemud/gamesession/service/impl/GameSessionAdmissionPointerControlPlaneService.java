@@ -39,18 +39,25 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   ListAdmissionPointersResponse listAdmissionPointers(List<Long> requestedTenantIds) {
     Set<Long> tenantScope = Set.copyOf(requestedTenantIds);
+    List<Long> tenantIds = List.copyOf(requestedTenantIds);
     List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
-        gameplayAdmissionPointerAuthorityService.listPointers().stream()
-            .filter(pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
-            .toList();
+        (tenantScope.isEmpty()
+                ? gameplayAdmissionPointerAuthorityService.listPointers()
+                : gameplayAdmissionPointerAuthorityService.listPointersForTenants(tenantIds))
+            .stream()
+                .filter(
+                    pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
+                .toList();
     java.util.List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
             .map(
                 pointer -> {
-                  java.util.List<GameplayAdmissionPointerAuditEntry> audit =
-                      gameplayAdmissionPointerAuthorityService.listPointerAudit(
-                          pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
-                  if (audit.isEmpty()) {
+                  GameplayAdmissionPointerAuditEntry latestAudit =
+                      gameplayAdmissionPointerAuthorityService
+                          .findLatestPointerAudit(
+                              pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug())
+                          .orElse(null);
+                  if (latestAudit == null) {
                     throw new AdmissionPointerAuditUnavailableException(
                         "Admission pointer audit unavailable for current pointer "
                             + pointer.tenantId()
@@ -59,7 +66,6 @@ final class GameSessionAdmissionPointerControlPlaneService {
                             + "/"
                             + pointer.realmSlug());
                   }
-                  GameplayAdmissionPointerAuditEntry latestAudit = audit.getFirst();
                   if (!matchesCurrentPointer(pointer, latestAudit)) {
                     throw new AdmissionPointerAuditUnavailableException(
                         "Admission pointer audit does not match current pointer "
@@ -174,9 +180,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
   private AdmissionPointerControlPlaneEntry latestAuditEntry(
       long tenantId, String worldSlug, String realmSlug) {
     return gameplayAdmissionPointerAuthorityService
-        .listPointerAudit(tenantId, worldSlug, realmSlug)
-        .stream()
-        .findFirst()
+        .findLatestPointerAudit(tenantId, worldSlug, realmSlug)
         .map(this::toEntry)
         .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
   }
