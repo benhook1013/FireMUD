@@ -16,7 +16,6 @@ import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.gamesession.client.AccountClient;
 import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
-import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
@@ -34,32 +33,19 @@ import org.springframework.util.StringUtils;
 @Component
 public class WorldsCommandHandler {
   private final GameplayWorldCatalog worldCatalog;
-  private final EntityManagementClient entityManagementClient;
   private final AccountClient accountClient;
   private final DirectTextConnectScopeSessionStore connectScopeSessionStore;
 
   @Autowired
   public WorldsCommandHandler(
       GameplayWorldCatalog worldCatalog,
-      EntityManagementClient entityManagementClient,
       AccountClient accountClient,
       DirectTextConnectScopeSessionStore connectScopeSessionStore) {
     this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
     this.accountClient = Objects.requireNonNull(accountClient, "accountClient must not be null");
     this.connectScopeSessionStore =
         Objects.requireNonNull(
             connectScopeSessionStore, "connectScopeSessionStore must not be null");
-  }
-
-  WorldsCommandHandler(
-      GameplayWorldCatalog worldCatalog, EntityManagementClient entityManagementClient) {
-    this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
-    this.entityManagementClient =
-        Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
-    this.accountClient = null;
-    this.connectScopeSessionStore = null;
   }
 
   public WorldsViewOutput browseView() {
