@@ -140,7 +140,10 @@ class WorldsCommandHandlerTest {
             });
     Mockito.when(
             accountClient.joinPublicProductionMembership(
-                Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class)))
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
         .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
@@ -575,9 +578,8 @@ class WorldsCommandHandlerTest {
 
     // Keep the parent malformed-row and normalized-duplicate cases visible. The current CHARS
     // path closes before Account or Entity, so this fixture matrix does not execute row validation.
-    for (
-        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse rosterCase :
-            rosterCases) {
+    for (net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse rosterCase :
+        rosterCases) {
       response.set(rosterCase);
       assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
           .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
@@ -1020,40 +1022,19 @@ class WorldsCommandHandlerTest {
   @Test
   void omittedCharactersIgnoreHiddenPrivateRealmCardinalityForPublicDefault() {
     AccountClient accountClient = Mockito.mock(AccountClient.class);
-    Mockito.when(
-            accountClient.getTenantMembershipForRuntime(
-                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(activeMembership());
-    Mockito.when(
-            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(publicEntitlement(false));
-    Mockito.when(
-            entityManagementClient.listCharactersByAccount(
-                "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
-        .thenReturn(ListCharactersByAccountResponse.getDefaultInstance());
     WorldsCommandHandler localHandler =
         authenticatedHandler(publicWorldWithPrivateRealm(), accountClient);
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(authenticatedSession(), "demo", null);
 
-    assertThat(result)
-        .isInstanceOfSatisfying(
-            WorldsCommandHandler.CharacterBrowseResult.Success.class,
-            success -> assertThat(success.output().realmSlug()).isEqualTo("production"));
-    Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
-    Mockito.verify(accountClient, Mockito.never())
-        .getRealmAccessGrantForRuntime(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString());
+    // The public default does not reveal hidden cardinality, but actor authority remains closed.
+    assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
   @Test
-  void omittedCharactersRequireChoiceAmongCallerVisibleRealmsAndKeepOrdinalBinding() {
+  void discoveredPrivateRealmOrdinalsStayBoundWithoutOpeningCharacterRoster() {
     GameplayCatalogProperties properties = privateOnlyWorldProperties();
     GameplayCatalogProperties.World privateWorld = properties.getWorlds().get(1);
     GameplayCatalogProperties.Realm staff =
@@ -1082,13 +1063,6 @@ class WorldsCommandHandlerTest {
     Mockito.when(
             accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(publicEntitlement(false));
-    Mockito.when(
-            entityManagementClient.listCharactersByAccount(
-                Mockito.eq("22"),
-                Mockito.eq("123"),
-                Mockito.anyString(),
-                Mockito.eq(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)))
-        .thenReturn(ListCharactersByAccountResponse.getDefaultInstance());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             TestGameplayWorldCatalogs.fromProperties(properties),
@@ -1101,20 +1075,31 @@ class WorldsCommandHandlerTest {
     assertThat(localHandler.browseRealms(authenticatedSession(), "PRIVATE-ONLY"))
         .isInstanceOfSatisfying(
             WorldsCommandHandler.RealmBrowseResult.Success.class,
-            success -> assertThat(success.output().realms()).hasSize(2));
+            success -> {
+              assertThat(success.output().realms())
+                  .extracting(RealmBrowseViewOutput.RealmEntry::ordinal)
+                  .containsExactly(1, 2);
+              assertThat(success.output().realms())
+                  .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
+                  .containsExactly("preview", "staff");
+            });
+    assertThat(
+            scopeStore.realmsSnapshot(authenticatedSession(), 22L, "private-only", Instant.now()))
+        .hasValueSatisfying(
+            snapshot ->
+                assertThat(snapshot.ordinalTargets())
+                    .extracting(DirectTextConnectScopeSessionStore.RealmOrdinalTarget::realmSlug)
+                    .containsExactly("preview", "staff"));
     assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", null))
-        .isEqualTo(
-            WorldsCommandHandler.CharacterBrowseResult.realmSelectionRequired("private-only"));
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
 
     WorldsCommandHandler.CharacterBrowseResult ordinalSelection =
         localHandler.browseCharacters(authenticatedSession(), "PRIVATE-ONLY", "1");
 
+    // REALMS snapshot proof is distinct from the unavailable private actor/policy roster path.
     assertThat(ordinalSelection)
-        .isInstanceOfSatisfying(
-            WorldsCommandHandler.CharacterBrowseResult.Success.class,
-            success -> assertThat(success.output().realmSlug()).isEqualTo("preview"));
-    Mockito.verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
