@@ -21,10 +21,13 @@ import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.RunOwnedInitialLaunchResult;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -359,6 +362,24 @@ public final class CrossServiceAppHarness {
           return actualGameInstanceService.startRunOwnedInitialLaunch(request);
         }
       };
+    }
+  }
+
+  /** Test-only catalog authority for the default demo cross-service transport fixture. */
+  @TestConfiguration
+  public static class DefaultDemoCatalogTestOverrides {
+    @Bean
+    @Primary
+    TestGameplayWorldCatalogs.MutableDefaultDemoCatalog defaultDemoCatalogFixture(
+        GameplayAdmissionPointerAuthorityService pointerAuthority) {
+      return new TestGameplayWorldCatalogs.MutableDefaultDemoCatalog(pointerAuthority);
+    }
+
+    @Bean
+    @Primary
+    GameplayWorldCatalog defaultDemoTestGameplayWorldCatalog(
+        TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture) {
+      return fixture.catalog();
     }
   }
 
