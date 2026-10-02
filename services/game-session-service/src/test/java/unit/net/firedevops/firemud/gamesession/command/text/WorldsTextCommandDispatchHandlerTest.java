@@ -741,6 +741,11 @@ class WorldsTextCommandDispatchHandlerTest {
       assertThat(error.message()).isEqualTo(expectedEnglish);
     }
 
+    assertThat(renderer.renderAll(command, result.commandResult(), result.outputs(), "en"))
+        .isEqualTo(
+            success
+                ? "OK JOIN " + expectedEnglish
+                : "ERROR " + expectedCode + " " + expectedEnglish);
     assertThat(renderer.renderAll(command, result.commandResult(), result.outputs(), "fr"))
         .isEqualTo(expectedFrench);
     assertThat(renderer.renderAll(command, result.commandResult(), result.outputs(), "de"))
@@ -816,8 +821,8 @@ class WorldsTextCommandDispatchHandlerTest {
             "",
             true,
             null,
-            "Membership is ready. Continue with CHARS and PLAY.",
-            "OK JOIN L’adhésion est prête. Continuez avec CHARS et PLAY."));
+            "Membership confirmed. Character browsing and gameplay entry are currently unavailable.",
+            "OK JOIN Adhésion confirmée. La consultation des personnages et l’accès au jeu sont actuellement indisponibles."));
   }
 
   private TextCommandInterpretationResult dispatchJoinOutcome(String outcomeCode, boolean success) {
