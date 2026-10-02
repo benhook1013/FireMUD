@@ -1279,8 +1279,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
       second.awaitStartsWith("ERROR LOGIN_REQUIRED");
       second.login("demo@example.com", "swordfish");
       second.awaitStartsWith("OK LOGIN");
+      second.send("WORLDS");
+      second.awaitStartsWith("OK WORLDS");
       second.send("REALMS sandbox");
-      second.awaitStartsWith("OK REALMS");
+      second.awaitStartsWith("ERROR INVALID_ARGUMENT");
       payloads = second.responses();
     }
 
@@ -1289,7 +1291,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(payloads)
         .anyMatch(
             payload ->
-                payload.startsWith("OK REALMS") && payload.contains("Live Realm (production)"));
+                payload.startsWith("OK WORLDS") && !payload.contains("Builder Sandbox (sandbox)"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                payload.startsWith("ERROR INVALID_ARGUMENT")
+                    && payload.contains("REALMS requires a valid world selector"));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
@@ -1414,6 +1421,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
       second.send("LOOK");
       second.awaitMatching(
           payload -> isStructuredCommand(payload, "LOOK"), "structured LOOK result");
+      second.send("WORLDS");
+      second.awaitMatching(
+          payload -> isStructuredCommand(payload, "WORLDS"), "structured WORLDS result");
       second.send("REALMS sandbox");
       second.awaitMatching(
           payload -> isStructuredCommand(payload, "REALMS"), "structured REALMS result");
@@ -1437,15 +1447,23 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(lookFailure.path("accepted").asBoolean()).isFalse();
     assertThat(lookFailure.path("errorCode").asText()).isEqualTo("PLAY_REQUIRED");
 
-    JsonNode realmsSuccess =
+    JsonNode worldsSuccess =
+        payloads.stream()
+            .filter(payload -> isStructuredCommand(payload, "WORLDS"))
+            .findFirst()
+            .map(GameSessionWebSocketHandlerIntegrationTest::json)
+            .orElseThrow();
+    assertThat(worldsSuccess.path("accepted").asBoolean()).isTrue();
+    assertThat(worldsSuccess.toString()).doesNotContain("Builder Sandbox", "sandbox");
+
+    JsonNode realmsRejected =
         payloads.stream()
             .filter(payload -> isStructuredCommand(payload, "REALMS"))
             .findFirst()
             .map(GameSessionWebSocketHandlerIntegrationTest::json)
             .orElseThrow();
-    assertThat(realmsSuccess.path("accepted").asBoolean()).isTrue();
-    assertThat(realmsSuccess.path("outputs").get(0).path("payload").path("worldSlug").asText())
-        .isEqualTo("sandbox");
+    assertThat(realmsRejected.path("accepted").asBoolean()).isFalse();
+    assertThat(realmsRejected.path("errorCode").asText()).isEqualTo("INVALID_ARGUMENT");
 
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(

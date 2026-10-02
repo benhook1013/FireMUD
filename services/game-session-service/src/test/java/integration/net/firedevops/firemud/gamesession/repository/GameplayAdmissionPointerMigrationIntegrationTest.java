@@ -55,14 +55,16 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     assertThat(namespaceIdBefore)
         .isEqualTo(demoBefore.get("playable_state_namespace_id", UUID.class));
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT catalog_revision FROM gameplay_admission_pointer_event "
                     + "WHERE control_plane_request_id = ?",
                 Long.class,
                 bootstrapRequestId(RETAINED_BOOTSTRAP_TENANT_ID, 102L, "sandbox")))
         .isNull();
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT realm_id FROM gameplay_admission_pointer_event "
                     + "WHERE control_plane_request_id = ?",
                 UUID.class,
@@ -97,7 +99,8 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
 
     String migrationRequestId = migrationRequestId(RETAINED_BOOTSTRAP_TENANT_ID);
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT COUNT(*) FROM gameplay_admission_pointer_event "
                     + "WHERE control_plane_request_id = ?",
                 Long.class,
@@ -117,7 +120,8 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     assertThat(migrationEvent.get("actor_principal", String.class)).isEqualTo(MIGRATION_ACTOR);
     assertThat(migrationEvent.get("reason", String.class)).isEqualTo(MIGRATION_REASON);
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT COUNT(*) FROM gameplay_admission_pointer_event WHERE tenant_id = ? "
                     + "AND world_slug = 'sandbox' AND realm_slug = 'production'",
                 Long.class,
@@ -146,7 +150,8 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
                 "src/main/resources/db/migration/V8__repair_legacy_bootstrap_public_realm.sql")));
     flyway.migrate();
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT COUNT(*) FROM gameplay_admission_pointer_event "
                     + "WHERE control_plane_request_id = ?",
                 Long.class,
@@ -189,13 +194,12 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
 
     assertBootstrapPairNotRepaired(fixture);
     assertThat(
-            fixture
-                .dsl()
-                .fetchValue(
-                    "SELECT COUNT(*) FROM gameplay_admission_pointer WHERE tenant_id = ? "
-                        + "AND public_production_realm = true",
-                    Long.class,
-                    RETAINED_BOOTSTRAP_TENANT_ID))
+            fetchTypedValue(
+                fixture.dsl(),
+                "SELECT COUNT(*) FROM gameplay_admission_pointer WHERE tenant_id = ? "
+                    + "AND public_production_realm = true",
+                Long.class,
+                RETAINED_BOOTSTRAP_TENANT_ID))
         .isEqualTo(3L);
   }
 
@@ -287,23 +291,21 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     assertThat(sandbox.get("pointer_version", Long.class)).isEqualTo(1L);
     assertThat(sandbox.get("catalog_revision", Long.class)).isEqualTo(1L);
     assertThat(
-            fixture
-                .dsl()
-                .fetchValue(
-                    "SELECT COUNT(*) FROM gameplay_admission_pointer_event "
-                        + "WHERE control_plane_request_id = ?",
-                    Long.class,
-                    migrationRequestId(RETAINED_BOOTSTRAP_TENANT_ID)))
+            fetchTypedValue(
+                fixture.dsl(),
+                "SELECT COUNT(*) FROM gameplay_admission_pointer_event "
+                    + "WHERE control_plane_request_id = ?",
+                Long.class,
+                migrationRequestId(RETAINED_BOOTSTRAP_TENANT_ID)))
         .isEqualTo(expectedMigrationRequestEventCount);
     assertThat(
-            fixture
-                .dsl()
-                .fetchValue(
-                    "SELECT COUNT(*) FROM gameplay_admission_pointer_event "
-                        + "WHERE control_plane_request_id = ? AND actor_principal = ?",
-                    Long.class,
-                    migrationRequestId(RETAINED_BOOTSTRAP_TENANT_ID),
-                    MIGRATION_ACTOR))
+            fetchTypedValue(
+                fixture.dsl(),
+                "SELECT COUNT(*) FROM gameplay_admission_pointer_event "
+                    + "WHERE control_plane_request_id = ? AND actor_principal = ?",
+                Long.class,
+                migrationRequestId(RETAINED_BOOTSTRAP_TENANT_ID),
+                MIGRATION_ACTOR))
         .isEqualTo(0L);
   }
 
@@ -407,6 +409,12 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     return "migration:V8:repair-legacy-bootstrap-public-realm:" + tenantId;
   }
 
+  private static <T> T fetchTypedValue(
+      DSLContext dsl, String query, Class<T> type, Object... bindings) {
+    Record row = dsl.fetchOne(query, bindings);
+    return row == null ? null : row.get(0, type);
+  }
+
   private static Record pointerRecordForTenant(DSLContext dsl, long tenantId, String worldSlug) {
     Record pointer =
         dsl.fetchOne(
@@ -466,14 +474,17 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     assertThat(realmId(dsl, 5L)).isNull();
     assertThat(namespaceId(dsl, 5L)).isNull();
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT issue_code FROM gameplay_admission_pointer_identity_backfill_issue "
                     + "WHERE pointer_id = 5",
                 String.class))
         .isEqualTo("UNKNOWN_PLAYABLE_STATE_SCOPE");
     assertThat(
-            dsl.fetchValue(
-                "SELECT catalog_revision FROM gameplay_admission_pointer WHERE id = 1", Long.class))
+            fetchTypedValue(
+                dsl,
+                "SELECT catalog_revision FROM gameplay_admission_pointer WHERE id = 1",
+                Long.class))
         .isEqualTo(1L);
 
     dsl.execute(
@@ -482,8 +493,10 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
     assertThat(realmId(dsl, 1L)).isEqualTo(sharedRealmId);
     assertThat(namespaceId(dsl, 1L)).isEqualTo(sharedNamespaceId);
     assertThat(
-            dsl.fetchValue(
-                "SELECT catalog_revision FROM gameplay_admission_pointer WHERE id = 1", Long.class))
+            fetchTypedValue(
+                dsl,
+                "SELECT catalog_revision FROM gameplay_admission_pointer WHERE id = 1",
+                Long.class))
         .isEqualTo(1L);
 
     GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldViews(worldViewsFromDatabase(dsl));
@@ -537,17 +550,20 @@ class GameplayAdmissionPointerMigrationIntegrationTest {
                 .toList())
         .contains("7");
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT catalog_revision FROM gameplay_admission_pointer_event WHERE id = 9001",
                 Long.class))
         .isNull();
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT realm_id FROM gameplay_admission_pointer_event WHERE id = 9001",
                 UUID.class))
         .isNull();
     assertThat(
-            dsl.fetchValue(
+            fetchTypedValue(
+                dsl,
                 "SELECT playable_state_namespace_id FROM gameplay_admission_pointer_event "
                     + "WHERE id = 9001",
                 UUID.class))
