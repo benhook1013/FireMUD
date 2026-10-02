@@ -487,6 +487,33 @@ class AdmissionPointerServiceImplTest {
   }
 
   @Test
+  void getPreparedVersionUpgradeMapsUnavailableAuthorityToServiceUnavailable() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    when(gameSessionControlPlaneClient.getPreparedVersionUpgrade(any()))
+        .thenReturn(
+            GetPreparedVersionUpgradeResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("AUTHORITY_UNAVAILABLE")
+                        .setMessage("prepared version-upgrade proof authority unavailable")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class, () -> service.getPreparedVersionUpgrade(2L, "pvu-1"));
+
+    assertEquals(503, ex.getStatusCode().value());
+    assertEquals("prepared version-upgrade proof authority unavailable", ex.getReason());
+    verify(gameSessionControlPlaneClient)
+        .getPreparedVersionUpgrade(
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    request.getTenantId().equals("2")
+                        && request.getPreparationId().equals("pvu-1")));
+  }
+
+  @Test
   void validateInstanceCutoverCompatibilityReturnsCanonicalControlPlaneProof() {
     SessionContext.setContext("42", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.validateInstanceCutoverCompatibility(2L, 7L, 9L))
