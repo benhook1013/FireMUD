@@ -69,6 +69,7 @@ _EXPECTED_COLUMNS = {
     "findings": ("finding_id", "source_pr", "source_channel", "source_finding_key", "first_seen_at"),
     "finding_observations": (
         "run_id", "finding_id", "source_pr", "source_channel", "title", "detail", "disposition", "route_id",
+        "display_severity",
     ),
     "routes": (
         "route_id", "finding_id", "source_pr", "source_channel", "target_pr", "status", "created_at", "updated_at",
@@ -124,7 +125,10 @@ _TEXT_COLUMNS = {
     "review_records_metadata": (),
     "review_runs": ("run_id", "source_head", "reviewer", "scope", "coverage_limits_json", "import_payload_json", "outcome", "started_at", "finished_at", "finalized_at"),
     "findings": ("finding_id", "source_channel", "source_finding_key", "first_seen_at"),
-    "finding_observations": ("run_id", "finding_id", "source_channel", "title", "detail", "disposition", "route_id"),
+    "finding_observations": (
+        "run_id", "finding_id", "source_channel", "title", "detail", "disposition", "route_id",
+        "display_severity",
+    ),
     "routes": ("route_id", "finding_id", "source_channel", "status", "created_at", "updated_at"),
     "route_target_history": ("route_id", "changed_at", "actor", "reason"),
     "decisions": ("decision_id", "decision_scope", "run_id", "finding_id", "route_id", "decision", "actor", "reason", "decided_at"),

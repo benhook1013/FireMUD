@@ -1,16 +1,14 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import net.firedevops.firemud.gamesession.dto.PreparedVersionUpgradeDto;
-import net.firedevops.firemud.gamesession.entity.GameInstance;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
-import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
-import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import net.firedevops.firemud.gamesession.v1.AdmissionPointerControlPlaneEntry;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverRequest;
 import net.firedevops.firemud.gamesession.v1.ExecutePreparedVersionCutoverResponse;
@@ -29,23 +27,17 @@ final class GameSessionAdmissionPointerControlPlaneService {
     }
   }
 
-  private final GameInstanceRepository gameInstanceRepository;
   private final GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService;
-  private final VersionUpgradePreparationService versionUpgradePreparationService;
 
   GameSessionAdmissionPointerControlPlaneService(
-      GameInstanceRepository gameInstanceRepository,
-      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService,
-      VersionUpgradePreparationService versionUpgradePreparationService) {
-    this.gameInstanceRepository = gameInstanceRepository;
+      GameplayAdmissionPointerAuthorityService gameplayAdmissionPointerAuthorityService) {
     this.gameplayAdmissionPointerAuthorityService = gameplayAdmissionPointerAuthorityService;
-    this.versionUpgradePreparationService = versionUpgradePreparationService;
   }
 
   ListAdmissionPointersResponse listAdmissionPointers(List<Long> requestedTenantIds) {
-    Set<Long> tenantScope = Set.copyOf(requestedTenantIds);
-    List<Long> tenantIds = List.copyOf(requestedTenantIds);
-    List<net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot> pointers =
+    List<Long> tenantIds = List.copyOf(new LinkedHashSet<>(requestedTenantIds));
+    Set<Long> tenantScope = Set.copyOf(tenantIds);
+    List<GameplayAdmissionPointerSnapshot> pointers =
         (tenantScope.isEmpty()
                 ? gameplayAdmissionPointerAuthorityService.listPointers()
                 : gameplayAdmissionPointerAuthorityService.listPointersForTenants(tenantIds))
@@ -53,15 +45,24 @@ final class GameSessionAdmissionPointerControlPlaneService {
                 .filter(
                     pointer -> tenantScope.isEmpty() || tenantScope.contains(pointer.tenantId()))
                 .toList();
-    java.util.List<AdmissionPointerControlPlaneEntry> entries =
+    List<PointerAuditKey> auditKeys =
+        pointers.stream()
+            .map(
+                pointer ->
+                    new PointerAuditKey(
+                        pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug()))
+            .distinct()
+            .toList();
+    Map<PointerAuditKey, GameplayAdmissionPointerAuditEntry> latestAudits =
+        gameplayAdmissionPointerAuthorityService.findLatestPointerAudits(auditKeys);
+    List<AdmissionPointerControlPlaneEntry> entries =
         pointers.stream()
             .map(
                 pointer -> {
-                  GameplayAdmissionPointerAuditEntry latestAudit =
-                      gameplayAdmissionPointerAuthorityService
-                          .findLatestPointerAudit(
-                              pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug())
-                          .orElse(null);
+                  PointerAuditKey key =
+                      new PointerAuditKey(
+                          pointer.tenantId(), pointer.worldSlug(), pointer.realmSlug());
+                  GameplayAdmissionPointerAuditEntry latestAudit = latestAudits.get(key);
                   if (latestAudit == null) {
                     throw new AdmissionPointerAuditUnavailableException(
                         "Admission pointer audit unavailable for current pointer "
@@ -91,7 +92,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
     long tenantId = ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenant_id");
     requireText(request.getWorldSlug(), "world_slug is required");
     requireText(request.getRealmSlug(), "realm_slug is required");
-    java.util.List<GameplayAdmissionPointerAuditEntry> audit =
+    List<GameplayAdmissionPointerAuditEntry> audit =
         gameplayAdmissionPointerAuthorityService.listPointerAudit(
             tenantId, request.getWorldSlug(), request.getRealmSlug());
     if (audit.isEmpty()) {
@@ -104,18 +105,9 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   SetAdmissionPointerResponse setAdmissionPointer(
       long tenantId, long targetGameInstanceId, SetAdmissionPointerRequest request) {
-    GameplayAdmissionPointerSnapshot currentPointer =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
-            .orElse(null);
-    if (currentPointer != null) {
-      throw new AdmissionPointerMutationPreconditionException(
-          "admission-pointer updates are temporarily disabled until catalog revision "
-              + "preconditions are supported");
-    }
     throw new AdmissionPointerMutationPreconditionException(
-        "admission-pointer creation is temporarily disabled until catalog revision and "
-            + "stable realm/namespace identity preconditions are supported");
+        "SetAdmissionPointer is disabled until catalog revision and stable realm/namespace "
+            + "identity preconditions are supported");
   }
 
   ExecutePreparedVersionCutoverResponse executePreparedVersionCutover(
@@ -125,69 +117,9 @@ final class GameSessionAdmissionPointerControlPlaneService {
     requireText(request.getPreparedVersionUpgradeId(), "prepared_version_upgrade_id is required");
     requireText(request.getActorPrincipal(), "actor_principal is required");
     requireText(request.getControlPlaneRequestId(), "control_plane_request_id is required");
-    rejectPreparedCutoverUntilOwnerContractsAreSupported();
-    GameplayAdmissionPointerSnapshot currentPointer =
-        gameplayAdmissionPointerAuthorityService
-            .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
-            .orElseThrow(() -> new IllegalArgumentException("Admission pointer not found"));
-    if (currentPointer.tenantId() != tenantId) {
-      throw new IllegalArgumentException("tenant_id does not own admission pointer");
-    }
-    if (currentPointer.gameInstanceId() == targetGameInstanceId) {
-      return ExecutePreparedVersionCutoverResponse.newBuilder()
-          .setPointer(
-              currentExecutedCutoverEntryIfSameRequest(
-                  request.getWorldSlug(),
-                  request.getRealmSlug(),
-                  tenantId,
-                  targetGameInstanceId,
-                  request.getPreparedVersionUpgradeId(),
-                  request.getControlPlaneRequestId()))
-          .build();
-    }
-    validatePreparedUpgradeForPointerChange(
-        request.getWorldSlug(),
-        request.getRealmSlug(),
-        tenantId,
-        targetGameInstanceId,
-        request.getPreparedVersionUpgradeId(),
-        currentPointer);
-    gameplayAdmissionPointerAuthorityService.upsertPointer(
-        new GameplayAdmissionPointerMutation(
-            currentPointer.worldSlug(),
-            currentPointer.worldDisplayName(),
-            currentPointer.realmSlug(),
-            currentPointer.realmDisplayName(),
-            tenantId,
-            targetGameInstanceId,
-            currentPointer.visible(),
-            currentPointer.publicProductionRealm(),
-            currentPointer.requiresCharacterSelection(),
-            currentPointer.stateScope(),
-            currentPointer.characterCreationPolicy(),
-            request.getActorPrincipal(),
-            request.getReason(),
-            request.getControlPlaneRequestId(),
-            request.hasExpectedPointerVersion() ? request.getExpectedPointerVersion() : null,
-            request.hasExpectedCatalogRevision() ? request.getExpectedCatalogRevision() : null,
-            request.getPreparedVersionUpgradeId()));
-    AdmissionPointerControlPlaneEntry entry =
-        latestAuditEntry(tenantId, request.getWorldSlug(), request.getRealmSlug());
-    versionUpgradePreparationService.markPreparedVersionUpgradeExecuted(
-        tenantId,
-        request.getPreparedVersionUpgradeId(),
-        targetGameInstanceId,
-        entry.getPointerVersion(),
-        request.getControlPlaneRequestId());
-    return ExecutePreparedVersionCutoverResponse.newBuilder().setPointer(entry).build();
-  }
-
-  private AdmissionPointerControlPlaneEntry latestAuditEntry(
-      long tenantId, String worldSlug, String realmSlug) {
-    return gameplayAdmissionPointerAuthorityService
-        .findLatestPointerAudit(tenantId, worldSlug, realmSlug)
-        .map(this::toEntry)
-        .orElseThrow(() -> new IllegalStateException("Admission pointer audit missing"));
+    throw new AdmissionPointerMutationPreconditionException(
+        "prepared cutover is temporarily disabled until catalog revision preconditions, "
+            + "World hold binding, source drain, and durable execution contracts are supported");
   }
 
   private AdmissionPointerControlPlaneEntry toEntry(GameplayAdmissionPointerAuditEntry entry) {
@@ -226,8 +158,7 @@ final class GameSessionAdmissionPointerControlPlaneService {
 
   private static boolean matchesCurrentPointer(
       GameplayAdmissionPointerSnapshot pointer, GameplayAdmissionPointerAuditEntry audit) {
-    return audit != null
-        && Objects.equals(pointer.worldSlug(), audit.worldSlug())
+    return Objects.equals(pointer.worldSlug(), audit.worldSlug())
         && Objects.equals(pointer.worldDisplayName(), audit.worldDisplayName())
         && Objects.equals(pointer.realmSlug(), audit.realmSlug())
         && Objects.equals(pointer.realmDisplayName(), audit.realmDisplayName())
@@ -247,93 +178,6 @@ final class GameSessionAdmissionPointerControlPlaneService {
         && pointer.requiresCharacterSelection() == audit.requiresCharacterSelection()
         && Objects.equals(pointer.stateScope(), audit.stateScope())
         && Objects.equals(pointer.characterCreationPolicy(), audit.characterCreationPolicy());
-  }
-
-  private void validatePreparedUpgradeForPointerChange(
-      String worldSlug,
-      String realmSlug,
-      long tenantId,
-      long targetGameInstanceId,
-      String preparedVersionUpgradeId,
-      GameplayAdmissionPointerSnapshot currentPointer) {
-    GameInstance targetInstance = getInstanceOrThrow(targetGameInstanceId);
-    if (!Long.valueOf(tenantId).equals(targetInstance.getTenantId())) {
-      throw new IllegalArgumentException("tenant_id does not own game_instance_id");
-    }
-    if (currentPointer == null
-        || currentPointer.gameInstanceId() == targetGameInstanceId
-        || currentPointer.tenantId() != tenantId) {
-      return;
-    }
-    if (preparedVersionUpgradeId == null || preparedVersionUpgradeId.isBlank()) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id is required when changing admission pointer target");
-    }
-    PreparedVersionUpgradeDto preparation =
-        versionUpgradePreparationService.getPreparedVersionUpgrade(
-            tenantId, preparedVersionUpgradeId);
-    if (!"COMPATIBLE".equals(preparation.result())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id must reference a COMPATIBLE preparation");
-    }
-    if (!Long.valueOf(currentPointer.gameInstanceId()).equals(preparation.sourceGameInstanceId())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id does not match the current admission-pointer source instance");
-    }
-    if (!Long.valueOf(targetGameInstanceId).equals(targetInstance.getId())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id target does not match game_instance_id");
-    }
-    if (!Long.valueOf(preparation.targetVersionId()).equals(targetInstance.getVersionId())) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id targetVersionId does not match target instance version");
-    }
-    if (!normalizeBlank(preparation.targetLaunchDescriptorId())
-        .equals(normalizeBlank(targetInstance.getLaunchDescriptorId()))) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id targetLaunchDescriptorId does not match target instance");
-    }
-    if (!normalizeBlank(preparation.remapSetId())
-        .equals(normalizeBlank(targetInstance.getRemapSetId()))) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id remapSetId does not match target instance");
-    }
-  }
-
-  private AdmissionPointerControlPlaneEntry currentExecutedCutoverEntryIfSameRequest(
-      String worldSlug,
-      String realmSlug,
-      long tenantId,
-      long targetGameInstanceId,
-      String preparedVersionUpgradeId,
-      String controlPlaneRequestId) {
-    PreparedVersionUpgradeDto preparation =
-        versionUpgradePreparationService.getPreparedVersionUpgrade(
-            tenantId, preparedVersionUpgradeId);
-    if (!Long.valueOf(targetGameInstanceId).equals(preparation.executedTargetGameInstanceId())
-        || !controlPlaneRequestId.equals(preparation.executionControlPlaneRequestId())) {
-      throw new IllegalArgumentException(
-          "target_game_instance_id must differ from the current admission pointer target");
-    }
-    AdmissionPointerControlPlaneEntry entry = latestAuditEntry(tenantId, worldSlug, realmSlug);
-    if (preparation.executedPointerVersion() != null
-        && entry.getPointerVersion() != preparation.executedPointerVersion()) {
-      throw new CutoverPreparationValidationException(
-          "prepared_version_upgrade_id execution state does not match current admission pointer");
-    }
-    return entry;
-  }
-
-  private void rejectPreparedCutoverUntilOwnerContractsAreSupported() {
-    throw new AdmissionPointerMutationPreconditionException(
-        "prepared cutover is temporarily disabled until catalog revision preconditions, "
-            + "World hold binding, source drain, and durable execution contracts are supported");
-  }
-
-  private GameInstance getInstanceOrThrow(long gameInstanceId) {
-    return gameInstanceRepository
-        .findById(gameInstanceId)
-        .orElseThrow(() -> new IllegalArgumentException("Game instance not found"));
   }
 
   private String normalizeBlank(String value) {
