@@ -697,9 +697,9 @@ class LegacyEvidenceTransition:
 class ReviewAllocation:
     """A durable one-result allocation or explicit channel-stop decision.
 
-    Ordinary allocations retain the complete observed stack identity. Exact
-    equal-bound human allowances may retain unavailable Git facts as null;
-    their request admission and attributable completion checks remain separate. New stop decisions record the exact
+    Human allowances retain available observed identity facts; unavailable
+    Git facts remain null. Request admission and attributable completion
+    checks remain separate from recording the human policy. New stop decisions record the exact
     optional reviewed checkpoint and available live audit context separately; legacy handoff
     fields remain readable for state migration and are never newly issued.
     """
@@ -739,20 +739,15 @@ class ReviewAllocation:
             raise StateError("review allocation PR must be a positive integer")
         if self.channel not in {"hosted", "cli"}:
             raise StateError("review allocation channel must be hosted or cli")
-        exact_allowance = (
-            type(self.min_additional_completed) is int
-            and self.min_additional_completed > 0
-            and self.min_additional_completed == self.max_additional_completed
-        )
         for name in ("head", "parent_head", "merge_base"):
             value = getattr(self, name)
-            if name == "merge_base" and value is None and (self.stop_basis == "direct_human" or exact_allowance):
+            if name == "merge_base" and value is None:
                 continue
             if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
                 raise StateError(f"review allocation {name} must be an exact SHA")
         for name in ("parent_identity", "patch_id", "reason"):
             value = getattr(self, name)
-            if name == "patch_id" and value is None and (self.stop_basis == "direct_human" or exact_allowance):
+            if name == "patch_id" and value is None:
                 continue
             if not isinstance(value, str) or not value.strip():
                 raise StateError(f"review allocation {name} must be a non-empty string")
