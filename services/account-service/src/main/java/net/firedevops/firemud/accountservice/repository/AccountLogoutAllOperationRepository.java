@@ -33,7 +33,7 @@ public class AccountLogoutAllOperationRepository {
   private final DSLContext dsl;
 
   public AccountLogoutAllOperationRepository(DSLContext dsl) {
-    this.dsl = Objects.requireNonNull(dsl, "transaction-aware DSLContext is required");
+    this.dsl = dsl;
   }
 
   /** Exact request lookup; callers compare every immutable request binding before recovery. */
@@ -47,7 +47,9 @@ public class AccountLogoutAllOperationRepository {
     return Optional.ofNullable(row == null ? null : toReceipt(row));
   }
 
-  /** Token identity lookup prevents an old presented token from being rebound to another request. */
+  /**
+   * Token identity lookup prevents an old presented token from being rebound to another request.
+   */
   @Transactional(propagation = Propagation.MANDATORY)
   public Optional<LogoutAllReceipt> findByPresentedTokenHash(String tokenHash) {
     requireOwnerTransaction();
@@ -111,8 +113,7 @@ public class AccountLogoutAllOperationRepository {
         requiredPositive(row.get("account_source_version", Long.class), "Account source version"),
         requiredPositive(row.get("issuance_fence", Long.class), "issuance fence"),
         requiredPositive(
-            row.get("issuance_fence_source_version", Long.class),
-            "issuance-fence source version"),
+            row.get("issuance_fence_source_version", Long.class), "issuance-fence source version"),
         requireText(row.get("lifecycle_result", String.class), "lifecycle result"));
   }
 
@@ -181,11 +182,7 @@ public class AccountLogoutAllOperationRepository {
   private static void requireBoundedText(String value, String field, int maximumLength) {
     if (value == null || value.isBlank() || value.length() > maximumLength) {
       throw new IllegalArgumentException(
-          "Logout-all receipt "
-              + field
-              + " must contain 1 to "
-              + maximumLength
-              + " characters");
+          "Logout-all receipt " + field + " must contain 1 to " + maximumLength + " characters");
     }
   }
 

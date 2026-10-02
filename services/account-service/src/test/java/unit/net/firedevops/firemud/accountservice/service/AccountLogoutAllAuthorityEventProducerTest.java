@@ -12,14 +12,15 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
+import net.firedevops.firemud.accountservice.service.AccountLogoutAllAuthorityEventProducer;
 import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountLogoutAllAuthorityEventProducerTest {
-  private static final UUID ACCOUNT_UUID =
-      UUID.fromString("7439d275-a8bd-4ad2-8993-3c9d30e86472");
+  private static final UUID ACCOUNT_UUID = UUID.fromString("7439d275-a8bd-4ad2-8993-3c9d30e86472");
 
   @Test
   void rejectsMalformedRequestEvidenceBeforeDatabaseOrTransactionInteraction() {
@@ -79,12 +80,7 @@ class AccountLogoutAllAuthorityEventProducerTest {
       assertThatThrownBy(
               () ->
                   producer.commit(
-                      UUID.randomUUID(),
-                      1,
-                      "a".repeat(64),
-                      "b".repeat(64),
-                      account,
-                      expected))
+                      UUID.randomUUID(), 1, "a".repeat(64), "b".repeat(64), account, expected))
           .isInstanceOf(IllegalStateException.class)
           .hasMessageContaining("without an ambient transaction");
       collaborators.verifyUnused();
@@ -108,12 +104,7 @@ class AccountLogoutAllAuthorityEventProducerTest {
     assertThatThrownBy(
             () ->
                 producer.commit(
-                    UUID.randomUUID(),
-                    1,
-                    "a".repeat(64),
-                    "b".repeat(64),
-                    account,
-                    wrongScope))
+                    UUID.randomUUID(), 1, "a".repeat(64), "b".repeat(64), account, wrongScope))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("Expected Account authority scope");
 

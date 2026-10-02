@@ -10,7 +10,6 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
-import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.AuthorityScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.IssuanceFence;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityGenerationRepository.ScopeState;
@@ -55,13 +54,13 @@ public final class AccountAuthoritySourceEventReadback {
         Objects.requireNonNull(
             passwordResetRepository, "Password-reset operation repository is required");
     this.logoutAllRepository =
-        Objects.requireNonNull(
-            logoutAllRepository, "Logout-all operation repository is required");
+        Objects.requireNonNull(logoutAllRepository, "Logout-all operation repository is required");
   }
 
   /**
-   * Proves the exact current Account source generation, source version and shared outbox checkpoint.
-   * Sequence zero is valid only for the original positive 1/1 source baseline and absent history.
+   * Proves the exact current Account source generation, source version and shared outbox
+   * checkpoint. Sequence zero is valid only for the original positive 1/1 source baseline and
+   * absent history.
    */
   public LatestSourceSnapshot requireCurrentLatest(Account account, ScopeState current) {
     requireAccountAssociation(account);
@@ -86,8 +85,7 @@ public final class AccountAuthoritySourceEventReadback {
 
     Checkpoint latestCheckpoint = checkpoint.orElseThrow();
     if (current.generation() == 1L && current.sourceVersion() == 1L) {
-      throw new IllegalStateException(
-          "Pristine Account source has contradictory event history");
+      throw new IllegalStateException("Pristine Account source has contradictory event history");
     }
     if (current.generation() <= 1L || current.sourceVersion() <= 1L) {
       throw new IllegalStateException("Account source history is not proven");
@@ -95,8 +93,7 @@ public final class AccountAuthoritySourceEventReadback {
     Event latestEvent =
         outboxRepository
             .findEvent(streamKey, latestCheckpoint.outboxSequence())
-            .orElseThrow(
-                () -> new IllegalStateException("Latest Account source event is missing"));
+            .orElseThrow(() -> new IllegalStateException("Latest Account source event is missing"));
     requireCheckpointMatches(latestCheckpoint, latestEvent);
     VerifiedSourceEvent verified = verifyEvent(latestEvent, account.getAccountUuid());
     if (!Long.toString(current.generation()).equals(verified.accountAuthorityGeneration())
@@ -132,14 +129,16 @@ public final class AccountAuthoritySourceEventReadback {
   public void requireLogoutAllReceiptRetained(
       Account account, LogoutAllReceipt receipt, Event event, ScopeState current) {
     requireAccountAssociation(account);
-    if (current == null || !AuthorityScope.account(account.getAccountUuid()).equals(current.scope())) {
+    if (current == null
+        || !AuthorityScope.account(account.getAccountUuid()).equals(current.scope())) {
       throw new IllegalStateException("Logout-all current Account source scope is invalid");
     }
     requireCurrentFence(current.issuanceFence(), account.getAccountUuid());
     VerifiedSourceEvent verified = verifyEvent(event, account.getAccountUuid());
     requireLogoutAllReceipt(account, receipt, event, verified, current);
     if (event.outboxSequence() > currentSourceSequence(account)) {
-      throw new IllegalStateException("Logout-all operation event is ahead of its source checkpoint");
+      throw new IllegalStateException(
+          "Logout-all operation event is ahead of its source checkpoint");
     }
   }
 

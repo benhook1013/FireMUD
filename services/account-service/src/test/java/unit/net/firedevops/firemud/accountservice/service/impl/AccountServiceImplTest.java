@@ -68,8 +68,8 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountEmailLoginChallengeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
-import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.OperationConflictException;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository.PasswordResetReceipt;
@@ -5913,9 +5913,7 @@ class AccountServiceImplTest {
     when(accountAuthorityGenerationRepository.read(scope)).thenReturn(committedAuthority);
     when(accountAuthorityOutboxRepository.readCheckpoint(streamKey))
         .thenReturn(
-            Optional.of(
-                new Checkpoint(
-                    streamKey, 1L, event.eventId(), event.eventDigest())));
+            Optional.of(new Checkpoint(streamKey, 1L, event.eventId(), event.eventDigest())));
     when(accountAuthorityOutboxRepository.findEvent(streamKey, 1L)).thenReturn(Optional.of(event));
     return new PasswordResetRetryHarness(account, receipt, receiptReadback);
   }

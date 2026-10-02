@@ -1158,6 +1158,31 @@ jobs:
           fi
           echo "::endgroup::"
 
+      - name: Verify Account logout-all source PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#commitsAccountGenerationFenceClosedEventCheckpointAndImmutableReceiptTogether()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#exactRetryRecoversOriginalResultAfterLaterSourceAdvanceWithoutRewritingCounters()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#changedRequestBindingsConflictWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#concurrentExactRequestCommitsOnlyOneAuthorityAdvanceAndEvent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#eventInsertFailureRollsBackGenerationFenceCheckpointAndReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#sourceCounterOverflowFailsBeforeAnyCutoffMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#passwordResetThenLogoutAllPreservesBothReceiptsAndResetRetry()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountLogoutAllAuthorityProducerPostgresIntegrationTest#logoutAllThenPasswordResetValidatesMixedLatestSourceAndPreservesLogoutReceipt()' \
+            account-service
+
+      - name: Upload Account logout-all source PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-logout-all-source-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountLogoutAllAuthorityProducerPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Verify Account issuer authority PostgreSQL proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |

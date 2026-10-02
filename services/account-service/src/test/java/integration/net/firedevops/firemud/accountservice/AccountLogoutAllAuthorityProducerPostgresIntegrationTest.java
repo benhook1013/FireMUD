@@ -230,10 +230,14 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     try {
       var first =
           executor.submit(
-              () -> concurrentCommit(fixture, seed, requestId, requestDigest, tokenHash, ready, start));
+              () ->
+                  concurrentCommit(
+                      fixture, seed, requestId, requestDigest, tokenHash, ready, start));
       var second =
           executor.submit(
-              () -> concurrentCommit(fixture, seed, requestId, requestDigest, tokenHash, ready, start));
+              () ->
+                  concurrentCommit(
+                      fixture, seed, requestId, requestDigest, tokenHash, ready, start));
       assertThat(ready.await(20, TimeUnit.SECONDS)).isTrue();
       start.countDown();
       assertThat(first.get(45, TimeUnit.SECONDS)).isEqualTo(LogoutAllResult.LOGOUT_ALL_COMMITTED);
@@ -273,8 +277,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
                     seed.initialState()))
         .isInstanceOf(RuntimeException.class);
 
-    assertThat(snapshot(fixture, seed))
-        .isEqualTo(new StoredState(1L, 1L, 1L, 1L, 0L, 0L, 0L));
+    assertThat(snapshot(fixture, seed)).isEqualTo(new StoredState(1L, 1L, 1L, 1L, 0L, 0L, 0L));
     assertThat(count(fixture, "account_authority_outbox_streams")).isZero();
   }
 
@@ -440,13 +443,7 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
       String tokenHash,
       ScopeState expected) {
     return producer(fixture)
-        .commit(
-            requestId,
-            1,
-            requestDigest,
-            tokenHash,
-            account(fixture, seed),
-            expected);
+        .commit(requestId, 1, requestDigest, tokenHash, account(fixture, seed), expected);
   }
 
   private AccountLogoutAllAuthorityEventProducer producer(Fixture fixture) {
@@ -501,7 +498,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
     transaction(
         fixture.transaction(),
         () -> {
-          service.completePasswordReset(new CompletePasswordResetRequest(seed.rawToken(), password));
+          service.completePasswordReset(
+              new CompletePasswordResetRequest(seed.rawToken(), password));
           return null;
         });
   }
@@ -534,7 +532,8 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
           var event =
               AccountLogoutAllAuthorityEventV1Codec.seal(
                   Map.ofEntries(
-                      Map.entry("schemaVersion", AccountLogoutAllAuthorityEventV1Codec.SCHEMA_VERSION),
+                      Map.entry(
+                          "schemaVersion", AccountLogoutAllAuthorityEventV1Codec.SCHEMA_VERSION),
                       Map.entry("eventType", AccountLogoutAllAuthorityEventV1Codec.EVENT_TYPE),
                       Map.entry("eventId", eventId),
                       Map.entry("requestId", priorRequestId.toString()),
@@ -547,9 +546,12 @@ class AccountLogoutAllAuthorityProducerPostgresIntegrationTest {
                       Map.entry(
                           "accountSecurityCutoff",
                           Map.of(
-                              "accountAuthorityGeneration", Long.toString(MAX_COUNTER),
-                              "outboxStreamKey", streamKey,
-                              "outboxSequence", "1"))));
+                              "accountAuthorityGeneration",
+                              Long.toString(MAX_COUNTER),
+                              "outboxStreamKey",
+                              streamKey,
+                              "outboxSequence",
+                              "1"))));
           var appended =
               fixture
                   .outbox()

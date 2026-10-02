@@ -79,8 +79,8 @@ public final class AccountLogoutAllAuthorityEventProducer {
    * Commits one account-wide cutoff or recovers that request's exact original lifecycle result.
    *
    * <p>The request digest and presented token hash are opaque lowercase SHA-256 hex bindings; this
-   * method never derives either from a raw credential or treats them as proof of authorization.
-   * The supplied Account association and scope state are compared against locked persisted state.
+   * method never derives either from a raw credential or treats them as proof of authorization. The
+   * supplied Account association and scope state are compared against locked persisted state.
    */
   public LogoutAllResult commit(
       UUID requestId,
@@ -94,9 +94,9 @@ public final class AccountLogoutAllAuthorityEventProducer {
     requireNoAmbientTransaction();
 
     LogoutAllReceipt transactionResult =
-      ownerTransaction.execute(
-          status ->
-              commitInOwnerTransaction(
+        ownerTransaction.execute(
+            status ->
+                commitInOwnerTransaction(
                     requestId,
                     requestDigestVersion,
                     requestDigest,
@@ -131,7 +131,8 @@ public final class AccountLogoutAllAuthorityEventProducer {
     Account account = lockVerifiedAccount(requestedAccount);
     String requestText = requestId.toString();
 
-    // The immutable request and token bindings take precedence over current server-derived counters.
+    // The immutable request and token bindings take precedence over current server-derived
+    // counters.
     Optional<LogoutAllReceipt> priorRequest = operationRepository.findByRequestId(requestId);
     Optional<LogoutAllReceipt> priorToken =
         operationRepository.findByPresentedTokenHash(presentedTokenHash);
@@ -169,12 +170,7 @@ public final class AccountLogoutAllAuthorityEventProducer {
     String eventId = EVENT_ID_PREFIX + requestText;
 
     ScopeState advanced = generationRepository.advance(current, current.issuanceFence());
-    requireAdvancedState(
-        current,
-        advanced,
-        nextGeneration,
-        nextSourceVersion,
-        nextIssuanceFence);
+    requireAdvancedState(current, advanced, nextGeneration, nextSourceVersion, nextIssuanceFence);
 
     Event appended =
         outboxRepository.append(
@@ -223,7 +219,8 @@ public final class AccountLogoutAllAuthorityEventProducer {
     Event requestReadback =
         outboxRepository
             .findEvent(streamKey, requestText)
-            .orElseThrow(() -> new IllegalStateException("Logout-all request event readback is missing"));
+            .orElseThrow(
+                () -> new IllegalStateException("Logout-all request event readback is missing"));
     Event sequenceReadback =
         outboxRepository
             .findEvent(streamKey, nextSequence)
@@ -245,17 +242,13 @@ public final class AccountLogoutAllAuthorityEventProducer {
       throw new IllegalStateException("Logout-all current source checkpoint readback differs");
     }
     requireReceiptReadback(
-        receipt,
-        requestId,
-        requestDigestVersion,
-        requestDigest,
-        presentedTokenHash,
-        account);
+        receipt, requestId, requestDigestVersion, requestDigest, presentedTokenHash, account);
     return receipt;
   }
 
   private LogoutAllReceipt recoverReceipt(Account account, LogoutAllReceipt receipt) {
-    ScopeState current = generationRepository.read(AuthorityScope.account(account.getAccountUuid()));
+    ScopeState current =
+        generationRepository.read(AuthorityScope.account(account.getAccountUuid()));
     sourceReadback.requireCurrentLatest(account, current);
     Event event =
         outboxRepository
@@ -325,7 +318,9 @@ public final class AccountLogoutAllAuthorityEventProducer {
         operationRepository.findByPresentedTokenHash(presentedTokenHash);
     requireExactRetryBinding(
         byRequest, requestId, requestDigestVersion, requestDigest, presentedTokenHash, account);
-    if (!expected.equals(byRequest) || byToken.isEmpty() || !expected.equals(byToken.orElseThrow())) {
+    if (!expected.equals(byRequest)
+        || byToken.isEmpty()
+        || !expected.equals(byToken.orElseThrow())) {
       throw new IllegalStateException("Logout-all receipt readback differs from its insert");
     }
     return byRequest;
@@ -354,11 +349,13 @@ public final class AccountLogoutAllAuthorityEventProducer {
     Account locked =
         accountRepository
             .findByIdForUpdate(requestedAccount.getId())
-            .orElseThrow(() -> new IllegalStateException("Verified Account association is missing"));
+            .orElseThrow(
+                () -> new IllegalStateException("Verified Account association is missing"));
     if (!Objects.equals(requestedAccount.getId(), locked.getId())
         || !Objects.equals(requestedAccount.getAccountUuid(), locked.getAccountUuid())
         || !Objects.equals(
-            requestedAccount.getAccountUuidSourceNumericId(), locked.getAccountUuidSourceNumericId())
+            requestedAccount.getAccountUuidSourceNumericId(),
+            locked.getAccountUuidSourceNumericId())
         || requestedAccount.getAccountUuidProvenance() != locked.getAccountUuidProvenance()
         || !isVerifiedProvenance(locked.getAccountUuidProvenance())) {
       throw new IllegalStateException("Verified Account association changed before logout-all");
@@ -442,8 +439,10 @@ public final class AccountLogoutAllAuthorityEventProducer {
         || !previous.issuanceFence().accountId().equals(advanced.issuanceFence().accountId())
         || advanced.issuanceFence().value() != expectedFence
         || advanced.issuanceFence().sourceVersion()
-            != incrementExact(previous.issuanceFence().sourceVersion(), "issuance-fence source version")) {
-      throw new IllegalStateException("Logout-all Account source and issuance fence did not advance once");
+            != incrementExact(
+                previous.issuanceFence().sourceVersion(), "issuance-fence source version")) {
+      throw new IllegalStateException(
+          "Logout-all Account source and issuance fence did not advance once");
     }
   }
 

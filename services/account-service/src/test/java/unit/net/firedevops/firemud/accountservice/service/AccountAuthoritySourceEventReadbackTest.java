@@ -17,20 +17,19 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
+import net.firedevops.firemud.accountservice.service.AccountAuthoritySourceEventReadback;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountAuthoritySourceEventReadbackTest {
-  private static final UUID ACCOUNT_UUID =
-      UUID.fromString("c980fa44-619e-4ca4-8ad6-75b0538a66a3");
+  private static final UUID ACCOUNT_UUID = UUID.fromString("c980fa44-619e-4ca4-8ad6-75b0538a66a3");
 
   @Test
   void sequenceZeroRequiresTheOriginalPositiveBaselineAndNoCheckpoint() {
     AccountAuthorityOutboxRepository outbox = mock(AccountAuthorityOutboxRepository.class);
     AccountPasswordResetOperationRepository resets =
         mock(AccountPasswordResetOperationRepository.class);
-    AccountLogoutAllOperationRepository logouts =
-        mock(AccountLogoutAllOperationRepository.class);
+    AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
         new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
     when(outbox.readCheckpoint("account:auth-authority:v1:account/" + ACCOUNT_UUID))
@@ -92,15 +91,13 @@ class AccountAuthoritySourceEventReadbackTest {
     AccountAuthorityOutboxRepository outbox = mock(AccountAuthorityOutboxRepository.class);
     AccountPasswordResetOperationRepository resets =
         mock(AccountPasswordResetOperationRepository.class);
-    AccountLogoutAllOperationRepository logouts =
-        mock(AccountLogoutAllOperationRepository.class);
+    AccountLogoutAllOperationRepository logouts = mock(AccountLogoutAllOperationRepository.class);
     AccountAuthoritySourceEventReadback readback =
         new AccountAuthoritySourceEventReadback(outbox, resets, logouts);
     String streamKey = "account:auth-authority:v1:account/" + ACCOUNT_UUID;
     when(outbox.readCheckpoint(streamKey))
         .thenReturn(
-            Optional.of(
-                new Checkpoint(streamKey, 1L, "event-id", "sha256:" + "a".repeat(64))));
+            Optional.of(new Checkpoint(streamKey, 1L, "event-id", "sha256:" + "a".repeat(64))));
     boolean previouslyActive = TransactionSynchronizationManager.isActualTransactionActive();
     TransactionSynchronizationManager.setActualTransactionActive(true);
 
