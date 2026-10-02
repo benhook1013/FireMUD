@@ -15,7 +15,6 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Validates configured admission-pointer seeds while keeping an empty authority store closed until
@@ -36,9 +35,7 @@ public class GameplayAdmissionPointerBootstrapInitializer implements Application
   private final GameplayAdmissionPointerBootstrapProperties bootstrapProperties;
 
   @Override
-  @Transactional
   public void run(ApplicationArguments args) {
-    pointerRepository.lockForBootstrap();
     if (pointerRepository.count() > 0) {
       return;
     }

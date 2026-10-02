@@ -24,7 +24,14 @@ from .cli_runner import (
     ReviewTarget,
     run_cli_review,
 )
-from .controller import ControllerError, DefaultGitProvider, HostedAdmissionBusy, ReviewController, StaleReviewTarget
+from .controller import (
+    ControllerError,
+    DefaultGitProvider,
+    GitProvider,
+    HostedAdmissionBusy,
+    ReviewController,
+    StaleReviewTarget,
+)
 from .sqlite_review_records import RecordsNotBootstrapped, ReviewRecordsError, SqliteReviewRecords
 from .state import (
     ControllerStateStore,
@@ -2116,11 +2123,13 @@ class HostedRunner:
         live: LiveGitHub,
         state_store: StateStore | ControllerStateStore | None = None,
         records: SqliteReviewRecords | None = None,
+        git: GitProvider | None = None,
     ) -> None:
         self.repo = repo
         self.live = live
         self.state_store = state_store
         self.records = records
+        self.git = git or DefaultGitProvider()
 
     @staticmethod
     def _timestamp(value: str) -> datetime:
@@ -2732,10 +2741,16 @@ class HostedRunner:
         target: ReviewTarget,
         *,
         expect_pr: int | None = None,
+        force: bool = False,
+        reason: str | None = None,
         admit: Callable[[Callable[[], None]], None] | None = None,
         **_: Any,
     ) -> dict[str, Any]:
-        if target.default_base_front and not target.has_current_default_test_merge_proof():
+        if reason is not None and not force:
+            raise ControllerError("--reason is only valid with --force")
+        if reason is not None and (len(reason) > 240 or any(ord(character) < 32 for character in reason)):
+            raise ControllerError("--reason must be at most 240 characters and contain no control characters")
+        if target.default_base_front and not force and not target.has_current_default_test_merge_proof():
             raise ControllerError("direct default-base target has no verified current base/head test merge")
         pr = target.snapshot.number
         hosted.assert_expected_pr(pr, expect_pr)
@@ -2749,8 +2764,10 @@ class HostedRunner:
                 f"Hosted review supports at most {_HOSTED_CODERABBIT_FILE_CEILING} changed files; "
                 "use the CLI review path for a larger diff"
             )
-        parent_tip = self.live.branch_head(target.parent.ref_name)
-        if parent_tip != target.parent.head_sha:
+        review_base_ref = before.base_ref_name if force else target.parent.ref_name
+        parent_tip = self.live.branch_head(review_base_ref)
+        expected_review_base = before.base_sha if force else target.parent.head_sha
+        if parent_tip != expected_review_base:
             if (
                 target.default_base_front
                 and before.head_sha.casefold() == target.snapshot.head_sha.casefold()
@@ -2828,7 +2845,7 @@ class HostedRunner:
                 else:
                     raise ControllerError("existing Hosted trigger has no archivable identity")
             self._assert_latest_manual_trigger_is_tracked(pr, payload)
-            anchor = {
+            configured_queue_anchor = {
                 "pr": pr,
                 "child_head": target.snapshot.head_sha,
                 "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
@@ -2836,6 +2853,29 @@ class HostedRunner:
                 "merge_base": target.merge_base,
                 "patch_id": target.patch_identity,
             }
+            if force:
+                actual_merge_base = self.git.merge_base(before.base_sha, before.head_sha)
+                actual_patch_id = self.git.patch_identity(actual_merge_base, before.head_sha)
+                anchor = {
+                    "pr": pr,
+                    "child_head": before.head_sha,
+                    "parent_identity": (
+                        str(target.parent.pr_number)
+                        if target.parent.pr_number is not None and review_base_ref == target.parent.ref_name
+                        else review_base_ref
+                    ),
+                    "parent_head": before.base_sha,
+                    "merge_base": actual_merge_base,
+                    "patch_id": actual_patch_id,
+                    "actual_base_ref": review_base_ref,
+                    "actual_base_sha": before.base_sha,
+                }
+            else:
+                anchor = {
+                    **configured_queue_anchor,
+                    "actual_base_ref": target.parent.ref_name,
+                    "actual_base_sha": before.base_sha,
+                }
             posting_actor = self._authenticated_login()
             posting_started_at = hosted.utc_now()
             posting = {
@@ -2845,8 +2885,14 @@ class HostedRunner:
                 "pr_number": pr,
                 "head_sha": target.snapshot.head_sha,
                 "anchor": anchor,
+                **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
+                "actual_base_ref": review_base_ref,
+                "actual_base_sha": before.base_sha,
                 "posting_started_at": posting_started_at,
                 "posting_actor_login": posting_actor,
+                "force_acknowledged": force,
+                "force_reason": reason,
+                "candidate_warnings": list(target.candidate_warnings),
             }
             sqlite_attempt_id = uuid.uuid4().hex if self.records is not None else None
             if sqlite_attempt_id is not None:
@@ -2885,8 +2931,8 @@ class HostedRunner:
                     ):
                         raise StaleReviewTarget("default base advanced before the Hosted posting boundary")
                     raise ControllerError("pull request changed before the Hosted posting boundary")
-                current_parent_tip = self.live.branch_head(target.parent.ref_name)
-                if current_parent_tip != target.parent.head_sha:
+                current_parent_tip = self.live.branch_head(review_base_ref)
+                if current_parent_tip != expected_review_base:
                     if (
                         target.default_base_front
                         and reservation_head.casefold() == target.snapshot.head_sha.casefold()
@@ -2911,7 +2957,13 @@ class HostedRunner:
                         metadata={
                             "repository": self.repo,
                             "anchor": anchor,
+                            **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
+                            "actual_base_ref": review_base_ref,
+                            "actual_base_sha": before.base_sha,
                             "posting_actor": posting_actor,
+                            "force_acknowledged": force,
+                            "force_reason": reason,
+                            "candidate_warnings": list(target.candidate_warnings),
                         },
                     )
                     sqlite_attempt_started = True
@@ -3009,7 +3061,7 @@ class HostedRunner:
             ) as exc:
                 boundary_verification_errors.append(f"PR refresh failed: {type(exc).__name__}: {exc}")
             try:
-                observed_parent_tip = self.live.branch_head(target.parent.ref_name)
+                observed_parent_tip = self.live.branch_head(review_base_ref)
                 if not isinstance(observed_parent_tip, str) or not re.fullmatch(
                     r"[0-9a-fA-F]{40}", observed_parent_tip
                 ):
@@ -3026,7 +3078,7 @@ class HostedRunner:
             ) as exc:
                 boundary_verification_errors.append(f"parent-tip refresh failed: {type(exc).__name__}: {exc}")
             boundary_changed = (after_identity is not None and after_identity != before_identity) or (
-                after_parent_tip is not None and after_parent_tip != target.parent.head_sha.casefold()
+                after_parent_tip is not None and after_parent_tip != expected_review_base.casefold()
             )
             if boundary_changed:
                 status = "posted_boundary_changed"
@@ -3064,6 +3116,12 @@ class HostedRunner:
                 "trigger_url": normalized["url"],
                 "status": status,
                 "anchor": anchor,
+                **({"configured_queue_anchor": configured_queue_anchor} if force else {}),
+                "actual_base_ref": review_base_ref,
+                "actual_base_sha": before.base_sha,
+                "force_acknowledged": force,
+                "force_reason": reason,
+                "candidate_warnings": list(target.candidate_warnings),
             }
             if sqlite_capture_warnings:
                 result["sqlite_capture_warnings"] = sqlite_capture_warnings
@@ -3078,7 +3136,7 @@ def default_controller(repo: str | None = None) -> ReviewController:
     records = SqliteReviewRecords(sqlite_state_path(store.path)) if store.path.is_dir() else None
     observations = LiveEvidence(selected, live, store, records=records)
     git_provider = DefaultGitProvider()
-    hosted_runner = HostedRunner(selected, live, store, records=records)
+    hosted_runner = HostedRunner(selected, live, store, records=records, git=git_provider)
 
     def cli_adapter(target: ReviewTarget, **kwargs: Any) -> Any:
         return run_cli_review(target, github=live, records=records, **kwargs)

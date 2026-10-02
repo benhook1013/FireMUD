@@ -8,6 +8,61 @@ This document collects the Account Service operational behavior, readiness model
 - `liveness` is process-local only.
 - `readiness` is truthful local readiness for the currently implemented authentication/account slice and must fail when the service cannot safely satisfy new authentication traffic with its required local persistence/session infrastructure.
 - Logging, metrics, and tracing follow the standard [Logging & Monitoring](../../system-architecture-logging-monitoring.md) pipeline.
+- Expired connect-scope cleanup requires PostgreSQL 16 or later because its deletion predicate uses `pg_input_is_valid`; local Docker Compose and Account integration-test containers use PostgreSQL 16. Keep the guarded delete predicate and do not add a pre-16 compatibility query.
+
+### V26 membership migration preflight
+
+Before applying [V26](../../../../services/account-service/src/main/resources/db/migration/V26__global_registration_join_evidence.sql) to a populated target, take an authoritative read-only inventory of `account_tenant_membership` and its account/tenant identities. The migration retains each original `gameplay_admission_allowed` value in `account_legacy_membership_sources.original_gameplay_admission_allowed` as provenance; it is not current player intent or admission authority. V26 quarantines legacy memberships as `LEGACY_UNVERIFIED` and disables admission. Do not restore access from the retained boolean; membership authority and explicit reconciliation remain owned by [Account Runtime and Data](./runtime-and-data.md#membership-and-entitlement-authority).
+
+Quiesce Account mutations and block new admission throughout inventory, migration, and readback so the preflight cannot race with another writer. If that quiescence cannot be proved, do not apply V26. Run these read-only queries before V26 and retain their output with the deployment record:
+
+```sql
+SELECT COUNT(*) AS membership_rows,
+       COUNT(*) FILTER (WHERE gameplay_admission_allowed) AS legacy_admitting_rows
+FROM account_tenant_membership;
+
+SELECT m.id AS membership_id,
+       m.account_id,
+       m.tenant_id,
+       a.tenant_id AS account_legacy_tenant_id,
+       m.gameplay_admission_allowed AS original_gameplay_admission_allowed
+FROM account_tenant_membership AS m
+LEFT JOIN accounts AS a ON a.id = m.account_id
+ORDER BY m.tenant_id, m.account_id, m.id;
+```
+
+Treat rows as run-owned demo data only when an independent deployment/run record proves that ownership; do not infer it from identifiers, account names, or the legacy boolean. If any real memberships exist, keep deployment and gameplay traffic closed pending explicit owner-validated reconciliation. [TestDataSeeder](../../../../services/account-service/src/main/java/net/firedevops/firemud/accountservice/data/TestDataSeeder.java) is for explicitly run-owned local smoke data and must not be enabled in production. The current stage has no live target inventory or production reconciliation proof; this preflight is not activation approval.
+
+After V26 and before any explicitly enabled non-production demo seed, use read-only readback to verify each retained source has its quarantined membership row:
+
+```sql
+SELECT COUNT(membership.id) AS membership_rows,
+       (SELECT COUNT(*) FROM account_legacy_membership_sources) AS source_rows,
+       COUNT(*) FILTER (WHERE legacy_source.membership_id IS NULL) AS rows_without_source,
+       COUNT(*) FILTER (
+           WHERE membership.lifecycle_state <> 'LEGACY_UNVERIFIED'
+              OR membership.authority_provenance <> 'LEGACY_UNVERIFIED'
+              OR membership.gameplay_admission_allowed
+       ) AS rows_not_quarantined
+FROM account_tenant_membership AS membership
+LEFT JOIN account_legacy_membership_sources AS legacy_source
+    ON legacy_source.membership_id = membership.id;
+
+SELECT legacy_source.membership_id,
+       legacy_source.account_id,
+       legacy_source.tenant_id,
+       legacy_source.original_gameplay_admission_allowed,
+       legacy_source.matches_account_legacy_tenant,
+       legacy_source.disposition,
+       legacy_source.captured_at,
+       membership.lifecycle_state,
+       membership.authority_provenance,
+       membership.gameplay_admission_allowed
+FROM account_legacy_membership_sources AS legacy_source
+JOIN account_tenant_membership AS membership
+    ON membership.id = legacy_source.membership_id
+ORDER BY legacy_source.tenant_id, legacy_source.account_id, legacy_source.membership_id;
+```
 
 ## Saga Participation
 
@@ -18,6 +73,8 @@ The current `PurchaseWorkflowService` implementation for one-time payments and d
 ## Metrics and Tracing
 
 Prometheus scrapes metrics from `/actuator/prometheus`. Service methods expose `account.*`, `payment.*`, `notification.*`, and `session.*` timers via `@Timed` annotations. OpenTelemetry spans are exported to the collector service so traces can be viewed in Jaeger. No additional configuration is required when running via `./gradlew bootRun` as the default properties target `http://otel-collector:4317`.
+
+Expired connect-scope cleanup exposes `account.connect_scopes.cleanup.deleted` for deleted rows, `account.connect_scopes.cleanup.failure` for failed runs, the `account.connect_scopes.cleanup` timer, and `account.connect_scopes.cleanup.cap_saturation` for runs in which all five batches return the configured full batch size. The job can process at most five times the batch size per scheduled invocation. With fixed delay, the effective start-to-start period is the configured interval plus the prior run's execution time, so long runs reduce how often cleanup can run. Tune the batch size and interval against measured expired, unreferenced scope insertion load. Cap saturation signals cleanup pressure, not an exact backlog count.
 
 ## Integration Test Notes
 

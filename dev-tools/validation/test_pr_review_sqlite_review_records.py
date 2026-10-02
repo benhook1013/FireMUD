@@ -1018,6 +1018,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE historical_gap_artifacts")
             connection.execute("DROP TABLE historical_provider_gaps")
             connection.execute("DROP TABLE source_finding_resolutions")
+            connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 4, min_writer_build = 2")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 2")
         old_writer = SqliteStateStore(self.database, writer_build=2)
@@ -1029,7 +1030,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             old_writer.update(lambda state: state)
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
-                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 7
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 8
             )
 
     def test_v5_upgrade_preserves_attempts_and_fences_previous_writer(self) -> None:
@@ -1042,6 +1043,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             connection.execute("DROP TABLE historical_gap_artifacts")
             connection.execute("DROP TABLE historical_provider_gaps")
             connection.execute("DROP TABLE source_finding_resolutions")
+            connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 5, min_writer_build = 3")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 3")
         self.records.migrate()
@@ -1049,7 +1051,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         self.assertEqual(self.records.attempt_history(2893)[0]["state"], "rate_limited")
         with sqlite3.connect(self.database) as connection:
             self.assertEqual(
-                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 7
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 8
             )
         with self.assertRaisesRegex(Exception, rf"requires writer build {WRITER_BUILD}\b"):
             SqliteStateStore(self.database, writer_build=3).update(lambda state: state)
@@ -1984,6 +1986,148 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                     proof_note=proof_note,
                 )
 
+    def test_source_resolution_correction_is_append_only_and_uses_expected_effective_sha(self) -> None:
+        self.bootstrap()
+        self.records.record_run(
+            run_id="source-proof-correction-run",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            findings=(self.observation("corrected-proof"),),
+        )
+        self.records.record_source_decision(
+            "source-proof-correction-run",
+            "corrected-proof",
+            decision_id="corrected-proof-decision",
+            decision="accepted",
+            actor="reviewer",
+            reason="owned by the source PR",
+        )
+        self.records.finalize_run("source-proof-correction-run")
+        self.records.record_source_resolution(
+            "source-proof-correction-run",
+            "corrected-proof",
+            source_pr=2828,
+            resolution_id="corrected-proof-original",
+            fix_sha="b" * 40,
+            actor="owner",
+            proof_note="Original operator transcription",
+        )
+        counts_before = self.records.history(2828)["runs"][0]["counts"]
+        correction = {
+            "resolution_id": "corrected-proof-original",
+            "expected_fix_sha": "b" * 40,
+            "fix_sha": "c" * 40,
+            "correction_id": "corrected-proof-correction-1",
+            "actor": "Overseer",
+            "reason": "Correct a verified SHA transcription error",
+            "proof_note": "The published commit was checked from the immutable branch ref",
+        }
+        for run_id, finding_key, source_pr, resolution_id in (
+            ("different-run", "corrected-proof", 2828, "corrected-proof-original"),
+            ("source-proof-correction-run", "different-finding", 2828, "corrected-proof-original"),
+            ("source-proof-correction-run", "corrected-proof", 2829, "corrected-proof-original"),
+            ("source-proof-correction-run", "corrected-proof", 2828, "different-resolution"),
+        ):
+            with (
+                self.subTest(run_id=run_id, finding_key=finding_key, source_pr=source_pr, resolution_id=resolution_id),
+                self.assertRaisesRegex(ReviewRecordsError, "does not exist|does not match"),
+            ):
+                self.records.correct_source_resolution(
+                    run_id,
+                    finding_key,
+                    source_pr=source_pr,
+                    **{**correction, "resolution_id": resolution_id},
+                )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM source_finding_resolution_corrections").fetchone()[0], 0
+            )
+            self.assertEqual(
+                connection.execute(
+                    "SELECT fix_sha FROM source_finding_resolutions WHERE resolution_id = ?",
+                    ("corrected-proof-original",),
+                ).fetchone()[0],
+                "b" * 40,
+            )
+        result = self.records.correct_source_resolution(
+            "source-proof-correction-run",
+            "corrected-proof",
+            source_pr=2828,
+            **correction,
+        )
+        self.assertFalse(result["idempotent_replay"])
+        replay = self.records.correct_source_resolution(
+            "source-proof-correction-run",
+            "corrected-proof",
+            source_pr=2828,
+            **correction,
+        )
+        self.assertTrue(replay["idempotent_replay"])
+        with self.assertRaisesRegex(ReviewRecordsError, "correction ID is already used"):
+            self.records.correct_source_resolution(
+                "source-proof-correction-run",
+                "corrected-proof",
+                source_pr=2828,
+                **{**correction, "fix_sha": "f" * 40},
+            )
+        self.assertEqual(self.records.history(2828)["runs"][0]["counts"], counts_before)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM source_finding_resolution_corrections").fetchone()[0], 1
+            )
+        with self.assertRaisesRegex(ReviewRecordsError, "expected fix SHA does not match"):
+            self.records.correct_source_resolution(
+                "source-proof-correction-run",
+                "corrected-proof",
+                source_pr=2828,
+                resolution_id="corrected-proof-original",
+                expected_fix_sha="b" * 40,
+                fix_sha="d" * 40,
+                correction_id="competing-correction",
+                actor="Overseer",
+                reason="Stale concurrent correction",
+                proof_note="Must lose to the first append",
+            )
+        self.records.correct_source_resolution(
+            "source-proof-correction-run",
+            "corrected-proof",
+            source_pr=2828,
+            resolution_id="corrected-proof-original",
+            expected_fix_sha="c" * 40,
+            fix_sha="d" * 40,
+            correction_id="corrected-proof-correction-2",
+            actor="Overseer",
+            reason="Follow-up correction with the now-current proof",
+            proof_note="The first corrected SHA was subsequently checked against the publication record",
+        )
+
+        history = self.records.history(2828)
+        proof = history["source_resolutions"][0]
+        self.assertEqual(proof["fix_sha"], "b" * 40)
+        self.assertEqual(proof["effective_fix_sha"], "d" * 40)
+        self.assertEqual([item["fix_sha"] for item in proof["corrections"]], ["c" * 40, "d" * 40])
+        self.assertEqual(len(history["source_resolution_corrections"]), 2)
+        self.assertEqual(history["runs"][0]["counts"], counts_before)
+        self.assertEqual(
+            self.records.source_resolution_status(
+                "source-proof-correction-run",
+                source_pr=2828,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=1,
+            ),
+            "resolved",
+        )
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT fix_sha FROM source_finding_resolutions WHERE resolution_id = ?",
+                    ("corrected-proof-original",),
+                ).fetchone()[0],
+                "b" * 40,
+            )
+
     def test_v6_upgrade_adds_source_resolution_schema_and_rejects_v6_writers(self) -> None:
         self.bootstrap()
         self.records.record_run(
@@ -1995,6 +2139,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
         )
         with sqlite3.connect(self.database) as connection:
             connection.execute("DROP TABLE source_finding_resolutions")
+            connection.execute("DROP TABLE source_finding_resolution_corrections")
             connection.execute("UPDATE review_records_metadata SET records_schema_version = 6 WHERE singleton = 1")
             connection.execute("UPDATE controller_metadata SET min_writer_build = 5 WHERE singleton = 1")
 
@@ -2008,7 +2153,7 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 connection.execute(
                     "SELECT records_schema_version FROM review_records_metadata WHERE singleton = 1"
                 ).fetchone()[0],
-                7,
+                8,
             )
             self.assertIsNotNone(
                 connection.execute(
@@ -2017,8 +2162,8 @@ class SqliteReviewRecordsTest(unittest.TestCase):
             )
 
         with (
-            patch.object(sqlite_review_records, "_RECORDS_SCHEMA_VERSION", 6),
-            self.assertRaisesRegex(RecordsSchemaIncompatible, "schema version 7"),
+            patch.object(sqlite_review_records, "_RECORDS_SCHEMA_VERSION", 7),
+            self.assertRaisesRegex(RecordsSchemaIncompatible, "schema version 8"),
         ):
             self.records.record_source_decision(
                 "v6-retained-run",
@@ -2028,6 +2173,88 @@ class SqliteReviewRecordsTest(unittest.TestCase):
                 actor="old writer",
                 reason="must fail closed",
             )
+
+    def test_v7_upgrade_adds_resolution_correction_log_and_fences_build_six(self) -> None:
+        self.bootstrap()
+        self.records.record_run(
+            run_id="v7-retained-accepted-run",
+            source_pr=2828,
+            channel="cli",
+            source_head="a" * 40,
+            findings=(self.observation("retained-finding"),),
+        )
+        self.records.record_source_decision(
+            "v7-retained-accepted-run",
+            "retained-finding",
+            decision_id="v7-retained-decision",
+            decision="accepted",
+            actor="reviewer",
+            reason="owned by the source PR",
+        )
+        self.records.finalize_run("v7-retained-accepted-run")
+        self.records.record_source_resolution(
+            "v7-retained-accepted-run",
+            "retained-finding",
+            source_pr=2828,
+            resolution_id="v7-retained-resolution",
+            fix_sha="b" * 40,
+            actor="owner",
+            proof_note="Original v7 accepted-fix proof",
+        )
+        counts_before = self.records.history(2828)["runs"][0]["counts"]
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("DROP TABLE source_finding_resolution_corrections")
+            connection.execute("UPDATE review_records_metadata SET records_schema_version = 7, min_writer_build = 6")
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 6")
+
+        old_records = SqliteReviewRecords(self.database, writer_build=6)
+        old_state = SqliteStateStore(self.database, writer_build=6)
+        self.records.migrate()
+        self.records.migrate()
+        with self.assertRaisesRegex(RecordsSchemaIncompatible, "requires writer build 7"):
+            old_records.history(2828)
+        with self.assertRaisesRegex(StateError, "requires writer build 7"):
+            old_state.update(lambda state: state)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT records_schema_version FROM review_records_metadata").fetchone()[0], 8
+            )
+            self.assertEqual(
+                connection.execute("SELECT min_writer_build FROM review_records_metadata").fetchone()[0], 7
+            )
+            self.assertEqual(
+                connection.execute("SELECT min_writer_build FROM controller_metadata").fetchone()[0], 7
+            )
+        history = self.records.history(2828)
+        self.assertEqual(history["runs"][0]["counts"], counts_before)
+        self.assertEqual(history["source_resolutions"][0]["fix_sha"], "b" * 40)
+        self.assertEqual(history["source_resolutions"][0]["effective_fix_sha"], "b" * 40)
+        self.records.correct_source_resolution(
+            "v7-retained-accepted-run",
+            "retained-finding",
+            source_pr=2828,
+            resolution_id="v7-retained-resolution",
+            expected_fix_sha="b" * 40,
+            fix_sha="c" * 40,
+            correction_id="v7-retained-resolution-correction",
+            actor="Overseer",
+            reason="Correct a verified source SHA transcription",
+            proof_note="The original row and counts are preserved across migration",
+        )
+        corrected = self.records.history(2828)
+        self.assertEqual(corrected["source_resolutions"][0]["fix_sha"], "b" * 40)
+        self.assertEqual(corrected["source_resolutions"][0]["effective_fix_sha"], "c" * 40)
+        self.assertEqual(corrected["runs"][0]["counts"], counts_before)
+        self.assertEqual(
+            self.records.source_resolution_status(
+                "v7-retained-accepted-run",
+                source_pr=2828,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=1,
+            ),
+            "resolved",
+        )
 
     def test_completed_import_is_atomic_when_a_later_route_conflicts(self) -> None:
         self.bootstrap()

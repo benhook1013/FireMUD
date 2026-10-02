@@ -34,6 +34,7 @@ class CommunicationWebSocketCrossServiceTest {
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_EMBERLINE);
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
+  private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
   private static final String FIRST_PARTY_CONNECT_SECRET = "cross-service-connect-context-secret";
@@ -101,7 +102,8 @@ class CommunicationWebSocketCrossServiceTest {
             "actor-say-conn",
             GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-say-conn",
-            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+            GameplayWebSocketScenarios.demoAdmission(
+                "sora@example.com", "Sora", READY_LOOK_TEXT))) {
       scenario.actor().send("SAY hello travelers");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalSayText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalSayListenerText());
@@ -677,11 +679,11 @@ class CommunicationWebSocketCrossServiceTest {
             GameplayWebSocketScenarios.proxyGatewayDriverFactory(
                 gameSessionWebSocketUrl(), COMMAND_WAIT, TENANT_ID, sessionId),
             "actor-conn",
-            GameplayWebSocketScenarios.demoAdmission(READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-conn",
-            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT),
+            GameplayWebSocketScenarios.demoAdmission("sora@example.com", "Sora", READY_LOOK_TEXT),
             "observer-conn",
-            GameplayWebSocketScenarios.demoAdmission("Nyx", READY_LOOK_TEXT))) {
+            GameplayWebSocketScenarios.demoAdmission("nyx@example.com", "Nyx", READY_LOOK_TEXT))) {
       scenario.actor().send("WHISPER Sora Keep quiet");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalWhisperText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalWhisperTargetText());
@@ -701,7 +703,8 @@ class CommunicationWebSocketCrossServiceTest {
             "actor-tell-conn",
             GameplayWebSocketScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
             "target-tell-conn",
-            GameplayWebSocketScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+            GameplayWebSocketScenarios.demoAdmission(
+                "sora@example.com", "Sora", READY_LOOK_TEXT))) {
       scenario.actor().send("TELL Sora Meet me at the forge");
       scenario.actor().awaitContains(ChatTestFixtures.canonicalTellText());
       scenario.target().awaitContains(ChatTestFixtures.canonicalTellTargetText());
@@ -848,6 +851,7 @@ class CommunicationWebSocketCrossServiceTest {
       STACK =
           GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
               .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
+              .mapAccountId("nyx@example.com", NYX_ACCOUNT_ID)
               .withInitialRoomEntities(ChatTestFixtures.sampleEntities())
               .withSocialEnabled(true)
               .withGameSessionProps(

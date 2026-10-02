@@ -98,6 +98,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
@@ -387,7 +388,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.bootstrap_realms")
   public List<BootstrapRealmDto> listBootstrapRealms(String bootstrapToken, String worldSlug) {
     BootstrapContext bootstrapContext = requireBootstrapContext(bootstrapToken);
@@ -492,7 +493,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   @Timed(value = "account.direct_text_connect_scope")
   public DirectTextJoinScope issueDirectTextConnectScope(
       DirectTextCallerContext caller, DirectTextJoinTarget target) {
@@ -563,6 +564,10 @@ public class AccountServiceImpl implements AccountService {
         || !StringUtils.hasText(request.requestId())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
+    if (request.requestId().length() > JoinPublicProductionRequest.MAX_REQUEST_ID_LENGTH) {
+      throw new AuthenticationException(
+          "INVALID_ARGUMENT", "JOIN requestId exceeds the maximum length");
+    }
     String requestId = request.requestId();
     String scopeTokenHash = AccountJoinDigest.tokenHash(request.connectScopeId());
     Optional<JoinOperation> existing = accountJoinOperationRepository.find(requestId);
@@ -612,8 +617,14 @@ public class AccountServiceImpl implements AccountService {
     }
 
     try {
-      return joinTransactionTemplate.execute(
-          transactionStatus -> executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      JoinAttemptOutcome outcome =
+          joinTransactionTemplate.execute(
+              transactionStatus ->
+                  executeJoinAttempt(accountId, callerBinding, requestId, retained));
+      if (outcome.terminalOperation() != null) {
+        return replayTerminalJoinSafely(outcome.terminalOperation(), callerBinding, retained);
+      }
+      return outcome.result();
     } catch (AuthenticationException ex) {
       if ("IDEMPOTENCY_CONFLICT".equals(ex.getCode())) {
         throw ex;
@@ -626,12 +637,7 @@ public class AccountServiceImpl implements AccountService {
         JoinOperation operation = outcomeReadback.orElseThrow();
         requireMatchingJoinIntent(operation, requestId, callerBinding, retained);
         if (!"PENDING".equals(operation.status())) {
-          try {
-            return joinTransactionTemplate.execute(
-                transactionStatus -> replayTerminalJoin(operation, callerBinding, retained));
-          } catch (RuntimeException policyCheckFailure) {
-            return joinRetryFailure(retained, "AUTH_UNAVAILABLE");
-          }
+          return replayTerminalJoinSafely(operation, callerBinding, retained);
         }
         recordJoinAttemptFailureAfterRollback(requestId, "AUTH_UNAVAILABLE");
       }
@@ -640,7 +646,7 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
-  private JoinPublicProductionResult executeJoinAttempt(
+  private JoinAttemptOutcome executeJoinAttempt(
       long accountId, String callerBinding, String requestId, VerifiedJoinScope scope) {
     accountJoinOperationRepository.lockAccount(accountId);
     JoinOperation operation =
@@ -650,14 +656,23 @@ public class AccountServiceImpl implements AccountService {
     requireMatchingJoinIntent(operation, requestId, callerBinding, scope);
 
     if (!"PENDING".equals(operation.status())) {
-      return replayTerminalJoin(operation, callerBinding, scope);
+      return JoinAttemptOutcome.terminal(operation);
     }
+    return JoinAttemptOutcome.result(
+        executePendingJoinAttempt(accountId, callerBinding, requestId, scope, operation));
+  }
 
+  private JoinPublicProductionResult executePendingJoinAttempt(
+      long accountId,
+      String callerBinding,
+      String requestId,
+      VerifiedJoinScope scope,
+      JoinOperation operation) {
     if (isConnectScopeExpired(scope)) {
       return failedJoin(requestId, scope, "CONNECT_SCOPE_INVALID");
     }
 
-    JoinEvaluation evaluation = evaluateJoin(scope);
+    JoinEvaluation evaluation = evaluateJoin(scope, false);
     if (evaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(evaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -692,7 +707,7 @@ public class AccountServiceImpl implements AccountService {
       return failedJoin(requestId, scope, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
 
-    JoinEvaluation commitEvaluation = evaluateJoin(scope);
+    JoinEvaluation commitEvaluation = evaluateJoin(scope, true);
     if (commitEvaluation.failureCode() != null) {
       if (isRetryableJoinAuthorityFailure(commitEvaluation)) {
         accountJoinOperationRepository.recordAttemptFailure(
@@ -803,6 +818,9 @@ public class AccountServiceImpl implements AccountService {
       return joinRetryFailure(scope, "CONNECT_SCOPE_INVALID");
     }
 
+    boolean replayUnboundFailure =
+        "FAILED".equals(operation.status()) && operation.requestDigest() == null;
+
     JoinEvaluation evaluation;
     try {
       evaluation = evaluateJoin(scope);
@@ -820,6 +838,9 @@ public class AccountServiceImpl implements AccountService {
         || evaluation.entitlementVersion() == null) {
       return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
     }
+    if (replayUnboundFailure) {
+      return resultFromJoinOperation(operation, true);
+    }
 
     String currentRequestDigest =
         AccountJoinDigest.request(
@@ -836,6 +857,15 @@ public class AccountServiceImpl implements AccountService {
       return joinRetryFailure(scope, "IDEMPOTENCY_CONFLICT");
     }
     return resultFromJoinOperation(operation, true);
+  }
+
+  private JoinPublicProductionResult replayTerminalJoinSafely(
+      JoinOperation operation, String callerBinding, VerifiedJoinScope scope) {
+    try {
+      return replayTerminalJoin(operation, callerBinding, scope);
+    } catch (RuntimeException policyCheckFailure) {
+      return joinRetryFailure(scope, "AUTH_UNAVAILABLE");
+    }
   }
 
   private JoinPublicProductionResult joinRetryFailure(VerifiedJoinScope scope, String outcomeCode) {
@@ -971,6 +1001,10 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private JoinEvaluation evaluateJoin(VerifiedJoinScope scope) {
+    return evaluateJoin(scope, true);
+  }
+
+  private JoinEvaluation evaluateJoin(VerifiedJoinScope scope, boolean lockEntitlement) {
     return evaluateJoin(
         new ConnectScopeContext(
             scope.accountId(),
@@ -984,10 +1018,11 @@ public class AccountServiceImpl implements AccountService {
             scope.catalogRevision(),
             scope.pointerVersion(),
             Instant.parse(scope.evaluatedAt()),
-            Instant.parse(scope.connectScopeExpiresAt())));
+            Instant.parse(scope.connectScopeExpiresAt())),
+        lockEntitlement);
   }
 
-  private JoinEvaluation evaluateJoin(ConnectScopeContext scope) {
+  private JoinEvaluation evaluateJoin(ConnectScopeContext scope, boolean lockEntitlement) {
     RuntimeRealmTarget target;
     try {
       target = requireCurrentConnectScopeTarget(scope);
@@ -1003,7 +1038,7 @@ public class AccountServiceImpl implements AccountService {
           "NOT_EVALUATED", null, null, false, "PUBLIC_PRODUCTION_ADMISSION_DENIED");
     }
     try {
-      RuntimeEntitlementsDto entitlement = lockedJoinEntitlement(scope.tenantId());
+      RuntimeEntitlementsDto entitlement = joinEntitlement(scope.tenantId(), lockEntitlement);
       return new JoinEvaluation(
           "AVAILABLE",
           entitlement.allowPublicJoin(),
@@ -1025,9 +1060,22 @@ public class AccountServiceImpl implements AccountService {
       boolean gameplayAvailable,
       String failureCode) {}
 
-  private RuntimeEntitlementsDto lockedJoinEntitlement(long tenantId) {
+  private record JoinAttemptOutcome(
+      JoinPublicProductionResult result, JoinOperation terminalOperation) {
+    private static JoinAttemptOutcome result(JoinPublicProductionResult result) {
+      return new JoinAttemptOutcome(result, null);
+    }
+
+    private static JoinAttemptOutcome terminal(JoinOperation operation) {
+      return new JoinAttemptOutcome(null, operation);
+    }
+  }
+
+  private RuntimeEntitlementsDto joinEntitlement(long tenantId, boolean lockSubscription) {
     List<net.firedevops.firemud.accountservice.entity.Subscription> rows =
-        subscriptionRepository.findByTenantIdForUpdate(tenantId);
+        lockSubscription
+            ? subscriptionRepository.findByTenantIdForUpdate(tenantId)
+            : subscriptionRepository.findByTenantId(tenantId);
     if (rows.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement authority is missing or ambiguous");

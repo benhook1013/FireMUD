@@ -21,7 +21,10 @@ public final class GameplayTranscriptMatchers {
   }
 
   public static String canonicalLookWithPrompt(String roomId) {
-    return canonicalLook(roomId) + "\n\ndemo>";
+    return canonicalLook(roomId)
+        + "\n\n"
+        + GameplayWebSocketScenarios.DEFAULT_DEMO_CHARACTER_NAME
+        + ">";
   }
 
   public static Predicate<String> matchesCanonicalLookWithOptionalPrompt() {

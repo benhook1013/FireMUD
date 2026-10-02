@@ -48,17 +48,19 @@ class WorldsCommandHandlerTest {
 
   @Test
   void browseViewReturnsStructuredWorldList() {
-    gameplayCatalogProperties
-        .getWorlds()
-        .get(1)
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(false);
+    GameplayCatalogProperties.World demoWorld = world("demo", 22L, 1L, false);
+    demoWorld.setDisplayName("Demo World");
+    GameplayCatalogProperties.World sandboxWorld = world("sandbox", 23L, 2L, true);
+    sandboxWorld.setDisplayName("Builder Sandbox");
+    gameplayCatalogProperties.setWorlds(List.of(demoWorld, sandboxWorld));
+
     WorldsViewOutput response = handler.browseView();
 
-    assertThat(response.worlds()).hasSize(1);
+    assertThat(response.worlds()).hasSize(2);
     assertThat(response.worlds().get(0).slug()).isEqualTo("demo");
     assertThat(response.worlds().get(0).displayName()).isEqualTo("Demo World");
+    assertThat(response.worlds().get(1).slug()).isEqualTo("sandbox");
+    assertThat(response.worlds().get(1).displayName()).isEqualTo("Builder Sandbox");
   }
 
   @Test
@@ -435,9 +437,9 @@ class WorldsCommandHandlerTest {
                         .setId("7001")
                         .setTenantId("22")
                         .setAccountId("123")
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setName("Emberline")
                         .setLevel(12)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
     WorldsCommandHandler localHandler =
@@ -461,6 +463,8 @@ class WorldsCommandHandlerTest {
     assertThat(output.characterCreationPolicy()).isEqualTo("ALLOW_NEW");
     assertThat(output.characters()).hasSize(1);
     assertThat(output.characters().get(0).characterName()).isEqualTo("Emberline");
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
   }
 
   @Test
@@ -492,9 +496,9 @@ class WorldsCommandHandlerTest {
                         .setId("8001")
                         .setTenantId("22")
                         .setAccountId("123")
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                         .setName("Forkline")
                         .setLevel(5)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED)
                         .build())
                 .build());
     WorldsCommandHandler localHandler =
@@ -517,6 +521,9 @@ class WorldsCommandHandlerTest {
     assertThat(output.characters())
         .extracting(CharacterBrowseViewOutput.CharacterEntry::characterName)
         .containsExactly("Forkline");
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount(
+            "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED);
   }
 
   @Test
@@ -2299,6 +2306,7 @@ class WorldsCommandHandlerTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
+    realm.setPublicProductionRealm(true);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);

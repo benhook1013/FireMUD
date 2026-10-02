@@ -543,6 +543,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListGameplayWorldsResponse response =
+          ListGameplayWorldsResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ListGameplayWorlds", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -565,16 +572,8 @@ public final class GameSessionGrpcService
           ListGameplayRealmsResponse.newBuilder().addAllRealms(realms).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (CatalogRevisionUnavailableException ex) {
-      ListGameplayRealmsResponse response =
-          ListGameplayRealmsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException
+        | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(
@@ -587,6 +586,13 @@ public final class GameSessionGrpcService
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ListGameplayRealms", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -605,7 +611,7 @@ public final class GameSessionGrpcService
           gameplayAdmissionPointerAuthorityService
               .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
-      if (realm.publicProductionRealm()) {
+      if (realm.visible() && realm.publicProductionRealm()) {
         gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
       }
       GetAdmissionPointerResponse response =
@@ -633,16 +639,8 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (CatalogRevisionUnavailableException ex) {
-      GetAdmissionPointerResponse response =
-          GetAdmissionPointerResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException
+        | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setError(
@@ -853,7 +851,7 @@ public final class GameSessionGrpcService
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {
     if (identity == null) {
-      throw new CatalogRevisionUnavailableException(
+      throw new AuthorityProjectionUnavailableException(
           "Authoritative gameplay " + fieldName + " is missing");
     }
     return identity.toString();
@@ -861,14 +859,14 @@ public final class GameSessionGrpcService
 
   private static long requireCatalogRevision(long catalogRevision) {
     if (catalogRevision <= 0L) {
-      throw new CatalogRevisionUnavailableException(
+      throw new AuthorityProjectionUnavailableException(
           "Authoritative gameplay catalog revision is missing or invalid");
     }
     return catalogRevision;
   }
 
-  private static final class CatalogRevisionUnavailableException extends RuntimeException {
-    private CatalogRevisionUnavailableException(String message) {
+  private static final class AuthorityProjectionUnavailableException extends RuntimeException {
+    private AuthorityProjectionUnavailableException(String message) {
       super(message);
     }
   }
