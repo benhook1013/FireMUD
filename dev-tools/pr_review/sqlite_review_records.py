@@ -30,7 +30,7 @@ from .state import FindingRoute, ReviewState
 
 ReviewChannel = Literal["hosted", "cli", "manual", "subagent"]
 FindingDisposition = Literal["accepted", "routed", "rejected", "unresolved"]
-_RECORDS_SCHEMA_VERSION = 7
+_RECORDS_SCHEMA_VERSION = 8
 _RECORDS_METADATA_TABLE = "review_records_metadata"
 _RECORDS_TABLES = {
     _RECORDS_METADATA_TABLE,
@@ -49,6 +49,7 @@ _RECORDS_TABLES = {
     "historical_provider_gaps",
     "historical_gap_artifacts",
     "source_finding_resolutions",
+    "source_finding_resolution_corrections",
 }
 
 
@@ -425,11 +426,14 @@ class SqliteReviewRecords:
                     self._raise_controller_writer_fence(connection)
                     connection.commit()
                     return
-                if row[0] not in {4, 5, 6}:
+                if row[0] not in {4, 5, 6, 7}:
                     raise ReviewRecordsError(f"unsupported review-records schema version {row[0]}")
                 existing = self._table_names(connection)
-                if row[0] == 6:
-                    added = {"source_finding_resolutions"}
+                if row[0] == 7:
+                    added = {"source_finding_resolution_corrections"}
+                    required = _RECORDS_TABLES - added
+                elif row[0] == 6:
+                    added = {"source_finding_resolutions", "source_finding_resolution_corrections"}
                     required = _RECORDS_TABLES - added
                 else:
                     added = (
@@ -451,6 +455,7 @@ class SqliteReviewRecords:
                         }
                     )
                     added.add("source_finding_resolutions")
+                    added.add("source_finding_resolution_corrections")
                     required = _RECORDS_TABLES - added
                 if not required <= existing or added & existing:
                     raise ReviewRecordsError("review-records schema is incomplete or partially upgraded")
@@ -459,7 +464,9 @@ class SqliteReviewRecords:
                 if row[0] in {4, 5}:
                     self._create_origin_schema(connection)
                     self._create_historical_gap_schema(connection)
-                self._create_source_finding_resolution_schema(connection)
+                if row[0] < 7:
+                    self._create_source_finding_resolution_schema(connection)
+                self._create_source_finding_resolution_correction_schema(connection)
                 self._raise_controller_writer_fence(connection)
                 connection.execute(
                     "UPDATE review_records_metadata SET records_schema_version = ?, min_writer_build = ? "
@@ -1733,6 +1740,10 @@ class SqliteReviewRecords:
                     same_claim = tuple(existing[:9]) == (resolution_id, *expected)
                     if not same_claim:
                         raise ReviewRecordsError("source finding already has a different immutable resolution")
+                    correction_chain = self._source_resolution_corrections(connection, resolution_id, existing[6])
+                    if correction_chain is None:
+                        raise ReviewRecordsError("source finding resolution correction history is invalid")
+                    corrections, effective_fix_sha = correction_chain
                     return {
                         "resolution_id": existing[0],
                         "run_id": existing[1],
@@ -1741,6 +1752,8 @@ class SqliteReviewRecords:
                         "source_channel": existing[4],
                         "outcome": existing[5],
                         "fix_sha": existing[6],
+                        "effective_fix_sha": effective_fix_sha,
+                        "corrections": corrections,
                         "actor": existing[7],
                         "proof_note": existing[8],
                         "resolved_at": existing[9],
@@ -1770,11 +1783,169 @@ class SqliteReviewRecords:
             "source_channel": channel,
             "outcome": "accepted_fixed",
             "fix_sha": fix_sha,
+            "effective_fix_sha": fix_sha,
+            "corrections": [],
             "actor": actor,
             "proof_note": proof_note,
             "resolved_at": resolved_at,
             "idempotent_replay": False,
         }
+
+    def correct_source_resolution(
+        self,
+        run_id: str,
+        source_finding_key: str,
+        *,
+        source_pr: int,
+        resolution_id: str,
+        expected_fix_sha: str,
+        fix_sha: str,
+        correction_id: str,
+        actor: str,
+        reason: str,
+        proof_note: str,
+        corrected_at: str | None = None,
+    ) -> dict[str, Any]:
+        """Append a proof-SHA correction without changing the original resolution."""
+
+        run_id = _safe_identifier(run_id, "run_id", maximum=100)
+        source_finding_key = _safe_identifier(source_finding_key, "source_finding_key", maximum=200)
+        source_pr = _positive_pr(source_pr, "source PR")
+        resolution_id = _safe_identifier(resolution_id, "resolution_id", maximum=200)
+        correction_id = _safe_identifier(correction_id, "correction_id", maximum=200)
+        expected_fix_sha = _text(expected_fix_sha, "expected fix SHA", maximum=64)
+        fix_sha = _text(fix_sha, "corrected fix SHA", maximum=64)
+        for value, label in ((expected_fix_sha, "expected fix SHA"), (fix_sha, "corrected fix SHA")):
+            if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", value):
+                raise ReviewRecordsError(f"{label} must be a full 40- or 64-character commit identifier")
+        expected_fix_sha = expected_fix_sha.casefold()
+        fix_sha = fix_sha.casefold()
+        actor = _bounded_text(actor, "actor", maximum=100)
+        reason = _bounded_text(reason, "correction reason", maximum=300)
+        proof_note = _bounded_text(proof_note, "proof note", maximum=300)
+        requested_corrected_at = _timestamp(corrected_at, "corrected_at", optional=True)
+        corrected_at = _timestamp(corrected_at, "corrected_at")
+        try:
+            with self._write_connection() as connection:
+                original = connection.execute(
+                    "SELECT r.run_id, r.finding_id, r.source_pr, r.source_channel, r.outcome, r.fix_sha, "
+                    "o.disposition, f.source_finding_key FROM source_finding_resolutions r "
+                    "JOIN finding_observations o ON o.run_id = r.run_id AND o.finding_id = r.finding_id "
+                    "JOIN findings f USING (finding_id) WHERE r.resolution_id = ?",
+                    (resolution_id,),
+                ).fetchone()
+                if original is None:
+                    raise ReviewRecordsError("source resolution does not exist")
+                original_run, _finding_id, original_pr, _source_channel, outcome, original_sha, disposition, original_key = original
+                if (
+                    original_run != run_id
+                    or original_pr != source_pr
+                    or original_key != source_finding_key
+                    or outcome != "accepted_fixed"
+                    or disposition != "accepted"
+                    or not isinstance(original_sha, str)
+                    or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", original_sha)
+                ):
+                    raise ReviewRecordsError("source resolution does not match the exact accepted finding")
+
+                replay = connection.execute(
+                    "SELECT resolution_id, expected_fix_sha, corrected_fix_sha, actor, reason, proof_note, corrected_at "
+                    "FROM source_finding_resolution_corrections WHERE correction_id = ?",
+                    (correction_id,),
+                ).fetchone()
+                claim = (resolution_id, expected_fix_sha, fix_sha, actor, reason, proof_note, corrected_at)
+                if replay is not None:
+                    if tuple(replay[:6]) != claim[:6] or (
+                        requested_corrected_at is not None and replay[6] != requested_corrected_at
+                    ):
+                        raise ReviewRecordsError("correction ID is already used for a different immutable correction")
+                    return {
+                        "correction_id": correction_id,
+                        "resolution_id": resolution_id,
+                        "expected_fix_sha": expected_fix_sha,
+                        "fix_sha": fix_sha,
+                        "actor": actor,
+                        "reason": reason,
+                        "proof_note": proof_note,
+                        "corrected_at": replay[6],
+                        "idempotent_replay": True,
+                    }
+
+                chain = self._source_resolution_corrections(connection, resolution_id, original_sha)
+                if chain is None:
+                    raise ReviewRecordsError("existing source resolution correction history is invalid")
+                current_sha = chain[1]
+                if current_sha.casefold() != expected_fix_sha:
+                    raise ReviewRecordsError("expected fix SHA does not match the current effective source proof")
+                connection.execute(
+                    "INSERT INTO source_finding_resolution_corrections "
+                    "(correction_id, resolution_id, expected_fix_sha, corrected_fix_sha, actor, reason, proof_note, "
+                    "corrected_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (correction_id, *claim),
+                )
+        except ReviewRecordsError:
+            raise
+        except sqlite3.IntegrityError as exc:
+            raise ReviewRecordsError("source resolution correction conflicts with existing immutable records") from exc
+        except sqlite3.DatabaseError as exc:
+            raise ReviewRecordsError("cannot record source resolution correction") from exc
+        return {
+            "correction_id": correction_id,
+            "resolution_id": resolution_id,
+            "expected_fix_sha": expected_fix_sha,
+            "fix_sha": fix_sha,
+            "actor": actor,
+            "reason": reason,
+            "proof_note": proof_note,
+            "corrected_at": corrected_at,
+            "idempotent_replay": False,
+        }
+
+    @staticmethod
+    def _source_resolution_corrections(
+        connection: sqlite3.Connection, resolution_id: str, original_sha: str
+    ) -> tuple[list[dict[str, Any]], str] | None:
+        """Validate the append-only correction chain and return its effective SHA."""
+
+        if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", original_sha):
+            return None
+        effective_sha = original_sha.casefold()
+        corrections: list[dict[str, Any]] = []
+        rows = connection.execute(
+            "SELECT sequence, correction_id, expected_fix_sha, corrected_fix_sha, actor, reason, proof_note, "
+            "corrected_at FROM source_finding_resolution_corrections WHERE resolution_id = ? ORDER BY sequence",
+            (resolution_id,),
+        ).fetchall()
+        for row in rows:
+            sequence, correction_id, expected_sha, corrected_sha, actor, reason, proof_note, corrected_at = row
+            if (
+                isinstance(sequence, bool)
+                or not isinstance(sequence, int)
+                or not isinstance(correction_id, str)
+                or not isinstance(expected_sha, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", expected_sha)
+                or expected_sha.casefold() != effective_sha
+                or not isinstance(corrected_sha, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", corrected_sha)
+            ):
+                return None
+            try:
+                corrections.append(
+                    {
+                        "sequence": sequence,
+                        "correction_id": _safe_identifier(correction_id, "correction_id", maximum=200),
+                        "expected_fix_sha": expected_sha,
+                        "fix_sha": corrected_sha,
+                        "actor": _bounded_text(actor, "actor", maximum=100),
+                        "reason": _bounded_text(reason, "correction reason", maximum=300),
+                        "proof_note": _bounded_text(proof_note, "proof note", maximum=300),
+                        "corrected_at": _timestamp(corrected_at, "corrected_at"),
+                    }
+                )
+            except ReviewRecordsError:
+                return None
+            effective_sha = corrected_sha.casefold()
+        return corrections, effective_sha
 
     @_translate_database_errors
     def source_resolution_status(
@@ -1916,6 +2087,9 @@ class SqliteReviewRecords:
                     _bounded_text(note, "proof note", maximum=300)
                     _timestamp(at, "resolved_at")
                 except ReviewRecordsError:
+                    return "pending"
+                correction_chain = self._source_resolution_corrections(connection, resolution_id, fix_sha)
+                if correction_chain is None:
                     return "pending"
             return "resolved"
 
@@ -2656,6 +2830,7 @@ class SqliteReviewRecords:
                     )
                 ]
                 source_resolutions = []
+                source_resolution_corrections = []
                 for row in connection.execute(
                     "SELECT r.resolution_id, r.run_id, r.finding_id, r.source_pr, r.source_channel, "
                     "f.source_finding_key, r.outcome, r.fix_sha, r.actor, r.proof_note, r.resolved_at, "
@@ -2695,6 +2870,13 @@ class SqliteReviewRecords:
                         or not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", fix_sha)
                     ):
                         raise ReviewRecordsError("stored source finding resolution is malformed")
+                    correction_chain = self._source_resolution_corrections(connection, resolution_id, fix_sha)
+                    if correction_chain is None:
+                        raise ReviewRecordsError("stored source finding resolution correction history is malformed")
+                    corrections, effective_fix_sha = correction_chain
+                    source_resolution_corrections.extend(
+                        {"resolution_id": resolution_id, **correction} for correction in corrections
+                    )
                     source_resolutions.append(
                         {
                             "resolution_id": _safe_identifier(resolution_id, "resolution_id", maximum=200),
@@ -2707,6 +2889,8 @@ class SqliteReviewRecords:
                             ),
                             "outcome": outcome,
                             "fix_sha": fix_sha,
+                            "effective_fix_sha": effective_fix_sha,
+                            "corrections": corrections,
                             "actor": _bounded_text(actor, "actor", maximum=100),
                             "proof_note": _bounded_text(proof_note, "proof note", maximum=300),
                             "resolved_at": _timestamp(resolved_at, "resolved_at"),
@@ -2842,6 +3026,7 @@ class SqliteReviewRecords:
                     "routes": routes,
                     "decisions": decisions,
                     "source_resolutions": source_resolutions,
+                    "source_resolution_corrections": source_resolution_corrections,
                     "attempts": attempts,
                     "corrections": corrections,
                     "provider_origins": provider_origins,
@@ -3717,6 +3902,7 @@ class SqliteReviewRecords:
             "FOREIGN KEY (route_id) REFERENCES routes(route_id))"
         )
         SqliteReviewRecords._create_source_finding_resolution_schema(connection)
+        SqliteReviewRecords._create_source_finding_resolution_correction_schema(connection)
         connection.execute("CREATE INDEX review_runs_source_pr_idx ON review_runs(source_pr, started_at)")
         connection.execute("CREATE INDEX routes_target_status_idx ON routes(target_pr, status, source_pr)")
         SqliteReviewRecords._create_attempt_schema(connection)
@@ -3743,6 +3929,21 @@ class SqliteReviewRecords:
         connection.execute(
             "CREATE INDEX source_finding_resolutions_pr_idx "
             "ON source_finding_resolutions(source_pr, source_channel, run_id)"
+        )
+
+    @staticmethod
+    def _create_source_finding_resolution_correction_schema(connection: sqlite3.Connection) -> None:
+        connection.execute(
+            "CREATE TABLE source_finding_resolution_corrections ("
+            "sequence INTEGER PRIMARY KEY AUTOINCREMENT, correction_id TEXT NOT NULL UNIQUE, "
+            "resolution_id TEXT NOT NULL, expected_fix_sha TEXT NOT NULL CHECK (length(expected_fix_sha) IN (40, 64)), "
+            "corrected_fix_sha TEXT NOT NULL CHECK (length(corrected_fix_sha) IN (40, 64)), "
+            "actor TEXT NOT NULL, reason TEXT NOT NULL, proof_note TEXT NOT NULL, corrected_at TEXT NOT NULL, "
+            "FOREIGN KEY (resolution_id) REFERENCES source_finding_resolutions(resolution_id))"
+        )
+        connection.execute(
+            "CREATE INDEX source_finding_resolution_corrections_resolution_idx "
+            "ON source_finding_resolution_corrections(resolution_id, sequence)"
         )
 
     @staticmethod

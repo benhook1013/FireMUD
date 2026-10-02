@@ -97,11 +97,8 @@ class Reconciliation:
                 return selected
         return status
 
-    def allowed(self, pr: int, *, allow_unreconciled: bool = False) -> bool:
-        status = self.status_for(pr)
-        return status == ReconciliationStatus.COHERENT or (
-            allow_unreconciled and status == ReconciliationStatus.UNRECONCILED
-        )
+    def allowed(self, pr: int) -> bool:
+        return self.status_for(pr) == ReconciliationStatus.COHERENT
 
 
 def effective_parent_links(
