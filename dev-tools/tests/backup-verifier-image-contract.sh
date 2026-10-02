@@ -49,12 +49,14 @@ require_count() {
 }
 
 velero_version="$(awk -F= '$1 == "VELERO_VERSION" { print $2 }' "$authority")"
-velero_digest="$(awk -F= '$1 == "VELERO_IMAGE_DIGEST" { print $2 }' "$authority")"
-if [[ -z "$velero_version" || -z "$velero_digest" ]]; then
-  echo "workflow tool authority must define Velero version and image digest" >&2
+if [[ -z "$velero_version" ]]; then
+  echo "workflow tool authority must define the Velero CLI version" >&2
   exit 1
 fi
-require_contains "$dockerfile" "FROM velero/velero:v${velero_version}@${velero_digest} AS velero-cli"
+if ! grep -Eq "^FROM velero/velero:v${velero_version}@sha256:[0-9a-f]{64} AS velero-cli$" "$dockerfile"; then
+  echo "backup verifier Dockerfile must pin the authority Velero version by digest" >&2
+  exit 1
+fi
 require_aws_cli_stage "$dockerfile"
 
 fixture_dir="$(mktemp -d)"
