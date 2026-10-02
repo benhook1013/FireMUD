@@ -1934,7 +1934,7 @@ class GameSessionControlPlaneGrpcServiceTest {
 
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(2L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("2").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -1962,7 +1962,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(1L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("1").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -2005,7 +2005,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(2L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("2").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -2027,7 +2027,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(0L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("0").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
@@ -2036,6 +2036,40 @@ class GameSessionControlPlaneGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    Mockito.verifyNoInteractions(authorityService);
+  }
+
+  @Test
+  void listAdmissionPointersRejectsMalformedTenantScopeBeforeAuthorityLookup() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameSessionControlPlaneGrpcService service =
+        admissionPointerControlPlaneService(authorityService);
+    AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
+
+    for (String tenantId :
+        List.of(
+            "",
+            " ",
+            "not-a-number",
+            "-1",
+            "9223372036854775808",
+            "550e8400-e29b-41d4-a716-446655440000")) {
+      responseRef.set(null);
+      service.listAdmissionPointers(
+          ListAdmissionPointersRequest.newBuilder().addTenantIds(tenantId).build(),
+          new NoopObserver<>() {
+            @Override
+            public void onNext(ListAdmissionPointersResponse value) {
+              responseRef.set(value);
+            }
+          });
+
+      assertNotNull(responseRef.get());
+      assertEquals("INVALID_ARGUMENT", responseRef.get().getError().getCode());
+    }
+
     Mockito.verifyNoInteractions(authorityService);
   }
 
@@ -2054,7 +2088,7 @@ class GameSessionControlPlaneGrpcServiceTest {
     AtomicReference<ListAdmissionPointersResponse> responseRef = new AtomicReference<>();
 
     service.listAdmissionPointers(
-        ListAdmissionPointersRequest.newBuilder().addTenantIds(2L).build(),
+        ListAdmissionPointersRequest.newBuilder().addTenantIds("2").build(),
         new NoopObserver<>() {
           @Override
           public void onNext(ListAdmissionPointersResponse value) {
