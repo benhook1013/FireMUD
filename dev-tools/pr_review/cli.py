@@ -39,6 +39,22 @@ class CliError(RuntimeError):
     pass
 
 
+class _CliArgumentParser(argparse.ArgumentParser):
+    def parse_args(self, args=None, namespace=None):
+        parsed = super().parse_args(args, namespace)
+        if (
+            getattr(parsed, "command", None) == "decide"
+            and getattr(parsed, "decide_command", None) == "allocation"
+            and getattr(parsed, "exact_additional_completed", None) is not None
+            and (
+                getattr(parsed, "min_additional_completed", None) is not None
+                or getattr(parsed, "max_additional_completed", None) is not None
+            )
+        ):
+            self.error("--exact-additional-completed cannot be combined with min or max additional-completed bounds")
+        return parsed
+
+
 def _positive_int(value: str) -> int:
     try:
         parsed = int(value)
@@ -72,7 +88,7 @@ def _source_fix_sha(value: str) -> str:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dev-tools/pr-review")
+    parser = _CliArgumentParser(prog="dev-tools/pr-review")
     parser.add_argument(
         "--acceptance-fixture",
         metavar="JSON",
