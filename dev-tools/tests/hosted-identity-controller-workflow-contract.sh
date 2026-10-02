@@ -2645,21 +2645,317 @@ assert verify_failure["env"] == {
     "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
 }
 failure_script = verify_failure["with"]["script"]
-for fragment in (
-    'const { execFileSync } = require("node:child_process");',
-    '"--ignore-not-found"',
-    "JSON.parse(namespaceJson)",
-    "observedUid !== process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID",
-    "Skipping stale preview verification failure publication",
-    "core.warning(",
-):
-    assert fragment in failure_script, fragment
-assert 'mode: "failure"' in failure_script
-assert 'markerPolicy: "replace"' in failure_script
-assert 'statePolicy: "expected-open"' in failure_script
-assert 'telnetPort: "unavailable"' in failure_script
-assert 'failureStage: "verify-runtime"' in failure_script
 assert verify_failure["uses"] == proof_success["uses"]
+proof_failure = proof_by_name["Publish trusted preview proof failure"]
+assert proof_failure["if"] == "${{ !cancelled() && failure() }}"
+assert proof_failure["env"] == {
+    "KUBECONFIG": "${{ runner.temp }}/preview-namespace-manager.kubeconfig",
+    "PREVIEW_PR_NUMBER": "${{ needs.validate-target.outputs.pr_number }}",
+    "PREVIEW_HEAD_SHA": "${{ needs.validate-target.outputs.head_sha }}",
+    "PREVIEW_BASE_SHA": "${{ needs.validate-target.outputs.base_sha }}",
+    "PREVIEW_MERGE_SHA": "${{ needs.validate-target.outputs.merge_sha }}",
+    "PREVIEW_IMAGE_TAG": "${{ needs.validate-target.outputs.image_tag }}",
+    "PREVIEW_HOSTNAME": "${{ needs.validate-target.outputs.hostname }}",
+    "PREVIEW_EXPOSURE_MODE": "${{ needs.validate-target.outputs.exposure_mode }}",
+    "RUNTIME_NAMESPACE": "${{ needs.validate-target.outputs.namespace }}",
+    "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": (
+        "${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}"
+    ),
+}
+
+failure_scripts = (
+    ("verification", failure_script),
+    ("proof", proof_failure["with"]["script"]),
+)
+for failure_kind, inline_failure_script in failure_scripts:
+    for fragment in (
+        'const { execFileSync } = require("node:child_process");',
+        '"--ignore-not-found"',
+        "JSON.parse(namespaceJson)",
+        '"firemud.dev/requested-preview-base-sha"',
+        '"firemud.dev/requested-preview-head-sha"',
+        '"firemud.dev/requested-preview-merge-sha"',
+        '"firemud.dev/requested-preview-image-tag"',
+        '"firemud.dev/last-preview-base-sha"',
+        '"firemud.dev/last-preview-head-sha"',
+        '"firemud.dev/last-preview-merge-sha"',
+        '"firemud.dev/last-preview-image-tag"',
+        "metadata.uid !== expectedUid",
+        "process.env.RUNTIME_NAMESPACE !== expectedNamespace",
+        f"Skipping stale preview {failure_kind} failure publication",
+        'markerPolicy: "preserve-reclaimed"',
+        'statePolicy: "expected-open"',
+        'telnetPort: "unavailable"',
+        'failureStage: "verify-runtime"',
+    ):
+        assert fragment in inline_failure_script, (failure_kind, fragment)
+    assert 'mode: "failure"' in inline_failure_script
+
+node_failure_fence_harness = r"""
+const assert = require("node:assert/strict");
+const { publishPreviewComment: publishRealPreviewComment } = require(
+  process.env.PUBLISHER_PATH,
+);
+const sourceTuple = {
+  "firemud.dev/requested-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+  "firemud.dev/requested-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+  "firemud.dev/requested-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+  "firemud.dev/requested-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+  "firemud.dev/last-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+  "firemud.dev/last-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+  "firemud.dev/last-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+  "firemud.dev/last-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+};
+const reclaimedMarker = "<!-- firemud-preview-reclaimed -->";
+
+function namespaceFor(uid, annotationOverrides = {}) {
+  return {
+    metadata: {
+      name: "pr-42",
+      uid,
+      labels: { "firemud.dev/preview": "true", "firemud.dev/pr-number": "42" },
+      annotations: { ...sourceTuple, ...annotationOverrides },
+    },
+  };
+}
+
+async function runScenario(scenario, inlineScript) {
+  let comments = [];
+  const mutations = [];
+  const publishCalls = [];
+  const core = { info() {}, notice() {}, warning() {} };
+  const context = { repo: { owner: "FireMUD", repo: "FireMUD" } };
+  const github = {
+    rest: {
+      pulls: {
+        async get() {
+          return {
+            data: {
+              state: "open",
+              head: { sha: process.env.PREVIEW_HEAD_SHA },
+              merge_commit_sha: process.env.PREVIEW_MERGE_SHA,
+              base: { ref: "main" },
+            },
+          };
+        },
+      },
+      git: {
+        async getRef() {
+          return { data: { object: { sha: process.env.PREVIEW_BASE_SHA } } };
+        },
+      },
+      repos: {
+        async getCommit() {
+          return {
+            data: {
+              sha: process.env.PREVIEW_MERGE_SHA,
+              parents: [
+                { sha: process.env.PREVIEW_BASE_SHA },
+                { sha: process.env.PREVIEW_HEAD_SHA },
+              ],
+            },
+          };
+        },
+      },
+      issues: {
+        async listComments() {
+          return { data: comments };
+        },
+        async createComment({ body }) {
+          mutations.push({ type: "create", body });
+          comments.push({
+            id: 3,
+            created_at: "2026-01-03T00:00:00Z",
+            user: { login: "github-actions[bot]" },
+            body,
+          });
+        },
+        async updateComment({ comment_id, body }) {
+          mutations.push({ type: "update", id: comment_id, body });
+          comments = comments.map((comment) =>
+            comment.id === comment_id ? { ...comment, body } : comment,
+          );
+        },
+        async deleteComment({ comment_id }) {
+          mutations.push({ type: "delete", id: comment_id });
+          comments = comments.filter((comment) => comment.id !== comment_id);
+        },
+      },
+    },
+    async paginate() {
+      return comments;
+    },
+  };
+
+  if (scenario === "exact-reclaimed") {
+    comments = [
+      {
+        id: 1,
+        created_at: "2026-01-01T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: "<!-- firemud-preview-summary -->\n### Preview Summary\nold failure",
+      },
+      {
+        id: 2,
+        created_at: "2026-01-02T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: `<!-- firemud-preview-summary -->\n### Preview Summary\n${reclaimedMarker}\nPreview unavailable`,
+      },
+    ];
+  } else if (scenario !== "exact") {
+    comments = [
+      {
+        id: 2,
+        created_at: "2026-01-02T00:00:00Z",
+        user: { login: "github-actions[bot]" },
+        body: `<!-- firemud-preview-summary -->\n### Preview Summary\n${reclaimedMarker}\nPreview unavailable`,
+      },
+    ];
+  }
+
+  function requireForWorkflow(moduleName) {
+    if (moduleName === "node:child_process") {
+      return {
+        execFileSync(binary, args) {
+          assert.equal(binary, "kubectl");
+          assert.deepEqual(args, [
+            "get",
+            "namespace",
+            process.env.RUNTIME_NAMESPACE,
+            "--ignore-not-found",
+            "-o",
+            "json",
+          ]);
+          if (scenario === "error") throw new Error("redacted kube read failure");
+          if (scenario === "absent") return "";
+          if (scenario === "malformed") return "{";
+          if (scenario === "malformed-object") return JSON.stringify({ metadata: { uid: 17 } });
+          if (scenario === "recreated") return JSON.stringify(namespaceFor("uid-recreated"));
+          let namespace = namespaceFor("uid-expected");
+          if (scenario.startsWith("wrong-annotation:")) {
+            const annotation = scenario.slice("wrong-annotation:".length);
+            namespace.metadata.annotations[annotation] = "wrong-tuple-value";
+          }
+          if (scenario === "missing-uid") delete namespace.metadata.uid;
+          if (scenario === "missing-name") delete namespace.metadata.name;
+          if (scenario === "wrong-name") namespace.metadata.name = "pr-43";
+          if (scenario === "missing-labels") delete namespace.metadata.labels;
+          if (scenario === "wrong-preview-label") {
+            namespace.metadata.labels["firemud.dev/preview"] = "false";
+          }
+          if (scenario === "wrong-pr-number-label") {
+            namespace.metadata.labels["firemud.dev/pr-number"] = "43";
+          }
+          if (scenario === "missing-annotations") delete namespace.metadata.annotations;
+          return JSON.stringify(namespace);
+        },
+      };
+    }
+    if (moduleName.endsWith("/publish-preview-comment.js")) {
+      return {
+        async publishPreviewComment(options) {
+          publishCalls.push(options);
+          return publishRealPreviewComment({
+            ...options,
+            summaryExecutor: () => "failure summary from exact tuple\n",
+          });
+        },
+      };
+    }
+    throw new Error(`Unexpected workflow require: ${moduleName}`);
+  }
+
+  const runInlineScript = new Function(
+    "github",
+    "context",
+    "core",
+    "require",
+    `return (async () => {\n${inlineScript}\n})()`,
+  );
+  await runInlineScript(github, context, core, requireForWorkflow);
+
+  const expectedPublication = scenario.startsWith("exact");
+  assert.equal(publishCalls.length, expectedPublication ? 1 : 0, scenario);
+  if (!expectedPublication) {
+    assert.equal(mutations.length, 0, `${scenario} must not overwrite a reclaimed or current status`);
+    assert.equal(comments.length, 1);
+    assert.match(comments[0].body, /firemud-preview-reclaimed/);
+    return;
+  }
+
+  assert.equal(publishCalls[0].mode, "failure");
+  assert.equal(publishCalls[0].markerPolicy, "preserve-reclaimed");
+  assert.equal(publishCalls[0].failureStage, "verify-runtime");
+  if (scenario === "exact") {
+    assert.equal(mutations.length, 1);
+    assert.equal(mutations[0].type, "create");
+    assert.match(mutations[0].body, /failure summary from exact tuple/);
+  } else {
+    assert.ok(mutations.some((mutation) => mutation.type === "update"));
+    assert.ok(mutations.some((mutation) => mutation.type === "delete"));
+    assert.equal(comments.length, 1);
+    assert.match(comments[0].body, /firemud-preview-reclaimed/);
+    assert.doesNotMatch(comments[0].body, /failure summary from exact tuple/);
+  }
+}
+
+(async () => {
+  const scenarios = [
+    "absent",
+    "recreated",
+    "malformed",
+    "malformed-object",
+    "missing-uid",
+    "missing-name",
+    "wrong-name",
+    "missing-labels",
+    "wrong-preview-label",
+    "wrong-pr-number-label",
+    "missing-annotations",
+    "error",
+    "exact",
+    "exact-reclaimed",
+    ...Object.keys(sourceTuple).map((annotation) => `wrong-annotation:${annotation}`),
+  ];
+  for (const scenario of scenarios) {
+    await runScenario(scenario, process.env.INLINE_FAILURE_SCRIPT);
+  }
+})().catch((error) => {
+  process.stderr.write(`${error.stack || error}\n`);
+  process.exitCode = 1;
+});
+"""
+for failure_kind, inline_failure_script in failure_scripts:
+    node_environment = os.environ.copy()
+    node_environment.update(
+        {
+            "INLINE_FAILURE_SCRIPT": inline_failure_script,
+            "PUBLISHER_PATH": str(
+                Path(sys.argv[1]).parents[2]
+                / "dev-tools/hosted/preview/publish-preview-comment.js"
+            ),
+            "PREVIEW_PR_NUMBER": "42",
+            "PREVIEW_HEAD_SHA": "b" * 40,
+            "PREVIEW_BASE_SHA": "a" * 40,
+            "PREVIEW_MERGE_SHA": "c" * 40,
+            "PREVIEW_IMAGE_TAG": f"pr-merge-{'c' * 40}",
+            "PREVIEW_HOSTNAME": "pr-42.preview.firemud.test",
+            "RUNTIME_NAMESPACE": "pr-42",
+            "EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID": "uid-expected",
+        }
+    )
+    failure_fence_result = subprocess.run(
+        ["node", "-e", node_failure_fence_harness],
+        cwd=Path(sys.argv[1]).parents[2],
+        env=node_environment,
+        capture_output=True,
+        text=True,
+    )
+    assert failure_fence_result.returncode == 0, (
+        failure_kind,
+        failure_fence_result.stdout,
+        failure_fence_result.stderr,
+    )
 
 destroy_steps = jobs["destroy-runtime"]["steps"]
 destroy_by_name = {

@@ -80,11 +80,20 @@ def local_http_server():
 
 
 class FakeHttp:
-    def __init__(self, *, cookie="Firemud-Connect-Token=token-1", readiness=None, characters=None):
+    def __init__(
+        self,
+        *,
+        cookie="Firemud-Connect-Token=token-1",
+        readiness=None,
+        characters=None,
+        character_rosters=None,
+    ):
         self.calls = []
         self.cookie = cookie
         self.readiness = readiness
         self.characters = characters if characters is not None else [{"characterName": "Ada"}]
+        self.character_rosters = character_rosters
+        self.character_discovery_count = 0
         self.connect_count = 0
 
     def __call__(self, method, url, payload, headers, timeout):
@@ -102,7 +111,12 @@ class FakeHttp:
                 {"data": [{"realmSlug": "production", "connectScopeId": "scope-1"}]},
             )
         if "/characters?" in url:
-            return MODULE.HttpResponse(200, {}, {"data": self.characters})
+            self.character_discovery_count += 1
+            characters = self.characters
+            if self.character_rosters is not None:
+                roster_index = min(self.character_discovery_count - 1, len(self.character_rosters) - 1)
+                characters = self.character_rosters[roster_index]
+            return MODULE.HttpResponse(200, {}, {"data": characters})
         if url.endswith("/auth/connect-token"):
             self.connect_count += 1
             cookie = self.cookie
@@ -570,6 +584,87 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
             )
 
         self.assertEqual(http.connect_count, 0)
+
+    def test_empty_or_malformed_character_discovery_fails_before_token_or_socket(self):
+        malformed_name = "Ada\nPLAY private realm"
+        for roster in (
+            [],
+            [{}],
+            [{"characterName": None}],
+            [{"characterName": ""}],
+            [{"characterName": "   "}],
+            [{"characterName": 7}],
+            [{"characterName": malformed_name}],
+            [None],
+        ):
+            with self.subTest(roster=roster):
+                http = FakeHttp(characters=roster)
+                socket_attempts = []
+
+                with self.assertRaises(MODULE.HostedWebSocketPlayableSmokeError) as caught:
+                    MODULE.run_smoke(
+                        self.config(),
+                        http_request=http,
+                        websocket_factory=lambda *args, attempts=socket_attempts: attempts.append(args),
+                    )
+
+                self.assertNotIn(malformed_name, str(caught.exception))
+                self.assertNotIn(self.config().password, str(caught.exception))
+                self.assertEqual(http.connect_count, 0)
+                self.assertEqual(socket_attempts, [])
+
+    def test_explicit_character_must_be_valid_and_visible_before_token_issuance(self):
+        for configured_character, roster in (
+            ("Ada", [{"characterName": "Bea"}]),
+            ("   ", [{"characterName": "Ada"}]),
+            ("Ada\nPLAY private realm", [{"characterName": "Ada\nPLAY private realm"}]),
+        ):
+            with self.subTest(configured_character=configured_character):
+                http = FakeHttp(characters=roster)
+                socket_attempts = []
+
+                with self.assertRaises(MODULE.HostedWebSocketPlayableSmokeError):
+                    MODULE.run_smoke(
+                        self.config(character=configured_character),
+                        http_request=http,
+                        websocket_factory=lambda *args, attempts=socket_attempts: attempts.append(args),
+                    )
+
+                self.assertEqual(http.connect_count, 0)
+                self.assertEqual(socket_attempts, [])
+
+    def test_reconnect_revalidates_character_before_issuing_fresh_token_or_socket(self):
+        http = FakeHttp(
+            character_rosters=[
+                [{"characterName": "Ada"}],
+                [{"characterName": " "}],
+            ]
+        )
+        socket_attempts = []
+        sockets = []
+
+        def socket_factory(url, timeout, headers):
+            socket_attempts.append(list(headers))
+            if len(socket_attempts) == 2:
+                self.assertTrue(sockets[0].closed)
+                raise FakeHandshakeRejected()
+            sockets.append(LogoutUnavailableWebSocket())
+            return sockets[-1]
+
+        with self.assertRaisesRegex(
+            MODULE.HostedWebSocketPlayableSmokeError,
+            "malformed name",
+        ):
+            MODULE.run_smoke(
+                self.config(exercise_reconnect=True),
+                http_request=http,
+                websocket_factory=socket_factory,
+            )
+
+        self.assertEqual(http.character_discovery_count, 2)
+        self.assertEqual(http.connect_count, 1)
+        self.assertEqual(len(sockets), 1)
+        self.assertEqual(len(socket_attempts), 2)
 
     def test_default_reconnect_uses_fresh_cookie_and_rejects_replay_without_logout(self):
         http = FakeHttp()

@@ -261,6 +261,15 @@ def _quote(value: str) -> str:
     return urllib.parse.quote(value, safe="")
 
 
+def _valid_character_name(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value == value.strip()
+        and not any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    )
+
+
 def _header(headers: Mapping[str, str], name: str) -> str:
     wanted = name.lower()
     for key, value in headers.items():
@@ -456,11 +465,15 @@ def _discover_target(
     if not isinstance(characters, list):
         raise _fail("bootstrap characters returned a malformed list", config)
     if config.character:
+        if not _valid_character_name(config.character):
+            raise _fail("configured character name is malformed", config)
         if not any(
-            isinstance(candidate, dict) and candidate.get("characterName") == config.character
+            isinstance(candidate, dict)
+            and _valid_character_name(candidate.get("characterName"))
+            and candidate.get("characterName") == config.character
             for candidate in characters
         ):
-            raise _fail(f"character {config.character!r} was not visible during bootstrap discovery", config)
+            raise _fail("configured character was not visible during bootstrap discovery", config)
         return connect_scope_id, config.character
     if len(characters) > 1:
         raise _fail(
@@ -468,12 +481,15 @@ def _discover_target(
             config,
         )
     if not characters:
-        return connect_scope_id, None
+        raise _fail(
+            "bootstrap character discovery returned no valid current character",
+            config,
+        )
     first = characters[0]
     if not isinstance(first, dict):
         raise _fail("bootstrap characters returned a malformed entry", config)
     character = first.get("characterName")
-    if character is not None and not isinstance(character, str):
+    if not _valid_character_name(character):
         raise _fail("bootstrap characters returned a malformed name", config)
     return connect_scope_id, character
 
