@@ -2970,6 +2970,22 @@ class PreviewArtifactFrontendValidationTest(unittest.TestCase):
                     }
                 ),
             ),
+            (
+                "published assets routed through gateway",
+                lambda ingress: ingress["spec"]["rules"][0]["http"]["paths"].insert(
+                    -1,
+                    {
+                        "path": "/assets",
+                        "pathType": "Prefix",
+                        "backend": {
+                            "service": {
+                                "name": "spring-cloud-gateway",
+                                "port": {"number": 80},
+                            }
+                        },
+                    },
+                ),
+            ),
         )
         for case, mutate in cases:
             with self.subTest(case=case):
