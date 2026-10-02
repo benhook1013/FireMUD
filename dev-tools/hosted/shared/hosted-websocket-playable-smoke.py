@@ -29,6 +29,7 @@ DEFAULT_WORLD = "demo"
 DEFAULT_REALM = "production"
 DEFAULT_AUTH_PREFIX = "/api/account"
 DEFAULT_GATEWAY_BASE = "http://localhost:8080"
+MAX_HTTP_RESPONSE_BYTES = 1_048_576
 
 
 class HostedWebSocketPlayableSmokeError(RuntimeError):
@@ -75,9 +76,7 @@ def redact_credentials(value: Any, username: str, password: str) -> str:
 
 
 def _fail(message: str, config: SmokeConfig) -> HostedWebSocketPlayableSmokeError:
-    return HostedWebSocketPlayableSmokeError(
-        redact_credentials(message, config.username, config.password)
-    )
+    return HostedWebSocketPlayableSmokeError(redact_credentials(message, config.username, config.password))
 
 
 def _join_url(base: str, path: str) -> str:
@@ -120,6 +119,20 @@ def _require_envelope(response: HttpResponse, description: str, config: SmokeCon
     return payload["data"]
 
 
+class _RejectRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Returning None leaves the original 3xx response for the normal status
+        # check; no second request can carry bootstrap authority or cookies.
+        return None
+
+
+def _read_http_body(response: Any) -> tuple[bytes, bool]:
+    # Socket timeouts bound stalls, not bytes; the sentinel independently caps
+    # memory use and JSON input while allowing an exactly-at-limit response.
+    body = response.read(MAX_HTTP_RESPONSE_BYTES + 1)
+    return body[:MAX_HTTP_RESPONSE_BYTES], len(body) > MAX_HTTP_RESPONSE_BYTES
+
+
 def _default_http_request(
     method: str,
     url: str,
@@ -129,19 +142,28 @@ def _default_http_request(
 ) -> HttpResponse:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = urllib.request.Request(url, data=body, method=method, headers=dict(headers))
+    opener = urllib.request.build_opener(_RejectRedirectHandler())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with opener.open(request, timeout=timeout) as response:
+            response_body, oversized = _read_http_body(response)
+            if oversized:
+                raise HostedWebSocketPlayableSmokeError(
+                    f"{method} returned HTTP {response.status} with a response body exceeding "
+                    f"{MAX_HTTP_RESPONSE_BYTES} bytes"
+                )
             return HttpResponse(
                 response.status,
                 dict(response.headers.items()),
-                response.read(),
+                response_body,
             )
     except urllib.error.HTTPError as exc:
-        return HttpResponse(exc.code, dict(exc.headers.items()), exc.read())
+        try:
+            response_body, _ = _read_http_body(exc)
+            return HttpResponse(exc.code, dict(exc.headers.items()), response_body)
+        finally:
+            exc.close()
     except (OSError, urllib.error.URLError) as exc:
-        raise HostedWebSocketPlayableSmokeError(
-            f"{method} {url} failed: {exc.__class__.__name__}"
-        ) from exc
+        raise HostedWebSocketPlayableSmokeError(f"{method} {url} failed: {exc.__class__.__name__}") from exc
 
 
 def _request(
@@ -223,22 +245,24 @@ def _discover_target(
     ):
         raise _fail(f"world {config.world!r} was not visible during bootstrap discovery", config)
 
-    realms_url = _auth_url(
-        config, f"/auth/bootstrap/worlds/{_quote(config.world)}/realms"
-    )
+    realms_url = _auth_url(config, f"/auth/bootstrap/worlds/{_quote(config.world)}/realms")
     realms = _require_envelope(
         _request(http_request, config, "GET", realms_url, headers=headers),
         "bootstrap realms",
         config,
     )
-    realm = next(
-        (
-            candidate
-            for candidate in realms
-            if isinstance(candidate, dict) and candidate.get("realmSlug") == config.realm
-        ),
-        None,
-    ) if isinstance(realms, list) else None
+    realm = (
+        next(
+            (
+                candidate
+                for candidate in realms
+                if isinstance(candidate, dict) and candidate.get("realmSlug") == config.realm
+            ),
+            None,
+        )
+        if isinstance(realms, list)
+        else None
+    )
     if not isinstance(realm, dict) or not isinstance(realm.get("connectScopeId"), str):
         raise _fail(f"realm {config.realm!r} was not visible during bootstrap discovery", config)
     connect_scope_id = realm["connectScopeId"]
@@ -248,8 +272,7 @@ def _discover_target(
     query = urllib.parse.urlencode({"connectScopeId": connect_scope_id})
     characters_url = _auth_url(
         config,
-        f"/auth/bootstrap/worlds/{_quote(config.world)}/realms/"
-        f"{_quote(config.realm)}/characters?{query}",
+        f"/auth/bootstrap/worlds/{_quote(config.world)}/realms/{_quote(config.realm)}/characters?{query}",
     )
     characters = _require_envelope(
         _request(http_request, config, "GET", characters_url, headers=headers),
@@ -335,9 +358,7 @@ def _await_command_result(ws: Any, command_type: str, config: SmokeConfig) -> di
     raise _fail(f"timed out waiting for structured {command_type} result", config)
 
 
-def _require_look_view(
-    response: dict[str, Any], config: SmokeConfig
-) -> tuple[str, str]:
+def _require_look_view(response: dict[str, Any], config: SmokeConfig) -> tuple[str, str]:
     outputs = response.get("outputs")
     if not isinstance(outputs, list):
         raise _fail("LOOK accepted without an authoritative LOOK view", config)
@@ -349,12 +370,7 @@ def _require_look_view(
             continue
         room_id = payload.get("roomId")
         room_name = payload.get("roomName")
-        if not (
-            isinstance(room_id, str)
-            and room_id.strip()
-            and isinstance(room_name, str)
-            and room_name.strip()
-        ):
+        if not (isinstance(room_id, str) and room_id.strip() and isinstance(room_name, str) and room_name.strip()):
             continue
         if config.expected_room_id is not None and room_id != config.expected_room_id:
             raise _fail("LOOK room ID did not match the expected Telnet parity room ID", config)
@@ -381,11 +397,7 @@ def _await_websocket_close(ws: Any, config: SmokeConfig) -> None:
                 "first-party WSS close observation failed after LOGOUT",
                 config,
             ) from exc
-        if (
-            not isinstance(observation, tuple)
-            or len(observation) != 2
-            or not isinstance(observation[0], int)
-        ):
+        if not isinstance(observation, tuple) or len(observation) != 2 or not isinstance(observation[0], int):
             raise _fail(
                 "first-party WSS close observation returned a malformed frame",
                 config,
@@ -511,11 +523,7 @@ def run_smoke(
             return websocket.create_connection(
                 url,
                 timeout=timeout,
-                header=[
-                    header
-                    for header in headers
-                    if not header.lower().startswith("origin:")
-                ],
+                header=[header for header in headers if not header.lower().startswith("origin:")],
                 origin=config.origin,
             )
 
@@ -584,8 +592,7 @@ def _config_from_args(args: argparse.Namespace) -> SmokeConfig:
     gateway = args.gateway_base.rstrip("/")
     auth_base = args.auth_base or gateway
     websocket_url = args.websocket_url or (
-        gateway.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
-        + "/ws/game"
+        gateway.replace("https://", "wss://", 1).replace("http://", "ws://", 1) + "/ws/game"
     )
     return SmokeConfig(
         auth_api_base=auth_base,
@@ -610,7 +617,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gateway-base", default=os.environ.get("SMOKE_GATEWAY_API_BASE", DEFAULT_GATEWAY_BASE))
     parser.add_argument("--auth-base", default=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_BASE"))
-    parser.add_argument("--auth-prefix", default=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_PREFIX", DEFAULT_AUTH_PREFIX))
+    parser.add_argument(
+        "--auth-prefix", default=os.environ.get("PLAYER_EXPERIENCE_AUTH_API_PREFIX", DEFAULT_AUTH_PREFIX)
+    )
     parser.add_argument("--websocket-url", default=os.environ.get("PLAYER_EXPERIENCE_WEBSOCKET_URL"))
     parser.add_argument(
         "--origin",
@@ -644,7 +653,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         result = run_smoke(config)
     except HostedWebSocketPlayableSmokeError as exc:
-        print(f"Hosted first-party WSS smoke failed: {redact_credentials(exc, config.username, config.password)}", file=sys.stderr)
+        print(
+            f"Hosted first-party WSS smoke failed: {redact_credentials(exc, config.username, config.password)}",
+            file=sys.stderr,
+        )
         return 1
     print(json.dumps(result, sort_keys=True))
     return 0
