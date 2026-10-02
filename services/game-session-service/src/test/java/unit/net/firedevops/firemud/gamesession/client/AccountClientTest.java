@@ -5,7 +5,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,8 +17,13 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -45,6 +52,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class AccountClientTest {
+  private static final Instant JOIN_TEST_NOW = Instant.parse("2026-10-02T00:00:00Z");
 
   @Test
   void directTextScopeRequestCarriesTypedCallerAndCompleteServerResolvedTarget() throws Exception {
@@ -94,7 +102,8 @@ class AccountClientTest {
 
   @Test
   void directTextJoinRetryReusesExactContextScopeAndRequestId() throws Exception {
-    RetryFixture fixture = newRetryFixture();
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
     when(fixture
             .initialStub()
             .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
@@ -110,9 +119,11 @@ class AccountClientTest {
         .thenReturn(expected);
     AccountClient client = fixture.client();
     PlayerExecutionContext context = directTextContext("join-request-1");
+    Instant expiresAt = JOIN_TEST_NOW.plusSeconds(60);
 
     JoinPublicProductionMembershipResponse actual =
-        client.joinPublicProductionMembership(context, "account-issued-scope", "join-request-1");
+        client.joinPublicProductionMembership(
+            context, "account-issued-scope", "join-request-1", expiresAt);
 
     assertThat(actual).isEqualTo(expected);
     ArgumentCaptor<JoinPublicProductionMembershipRequest> firstCaptor =
@@ -127,6 +138,102 @@ class AccountClientTest {
     assertThat(retryCaptor.getValue().getPlayerContext().getRequestId())
         .isEqualTo("join-request-1");
     verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void directTextJoinDoesNotDispatchForMissingExpiredOrBoundaryScope() throws Exception {
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
+    Instant[] invalidExpiries = {null, JOIN_TEST_NOW.minusNanos(1), JOIN_TEST_NOW};
+
+    for (Instant expiresAt : invalidExpiries) {
+      JoinPublicProductionMembershipResponse response =
+          fixture
+              .client()
+              .joinPublicProductionMembership(
+                  directTextContext("join-request-1"),
+                  "account-issued-scope",
+                  "join-request-1",
+                  expiresAt);
+
+      assertThat(response.getOutcomeCode()).isEqualTo("CONNECT_SCOPE_INVALID");
+      assertThat(response.getError().getCode()).isEqualTo("CONNECT_SCOPE_INVALID");
+    }
+
+    verify(fixture.initialStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void directTextJoinDoesNotRetryWhenAmbiguousResponseReachesScopeExpiry(String statusName)
+      throws Exception {
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
+    Instant expiresAt = JOIN_TEST_NOW.plusSeconds(1);
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              clock.set(expiresAt);
+              throw new StatusRuntimeException(Status.fromCode(Status.Code.valueOf(statusName)));
+            });
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                expiresAt);
+
+    assertThat(response.getOutcomeCode()).isEqualTo("AUTH_UNAVAILABLE");
+    verify(fixture.initialStub())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void directTextJoinRechecksExpiryAfterChannelReloadBeforeRetry() throws Exception {
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
+    Instant expiresAt = JOIN_TEST_NOW.plusSeconds(1);
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    doAnswer(
+            invocation -> {
+              clock.set(expiresAt);
+              return mock(ManagedChannel.class);
+            })
+        .when(fixture.channelFactory())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                expiresAt);
+
+    assertThat(response.getOutcomeCode()).isEqualTo("AUTH_UNAVAILABLE");
+    verify(fixture.initialStub())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
   }
 
   private static PlayerExecutionContext directTextContext(String requestId) {
@@ -540,7 +647,8 @@ class AccountClientTest {
   private static AccountClient newClientWithRetryStub(
       AccountServiceGrpc.AccountServiceBlockingStub initialStub,
       AccountServiceGrpc.AccountServiceBlockingStub retryStub,
-      GrpcChannelFactory channelFactory)
+      GrpcChannelFactory channelFactory,
+      Clock clock)
       throws Exception {
     BlockingGrpcStubCustomizer customizer = mock(BlockingGrpcStubCustomizer.class);
     when(customizer.customize(any(AccountServiceGrpc.AccountServiceBlockingStub.class)))
@@ -550,12 +658,17 @@ class AccountClientTest {
             new ServiceEndpointsProperties(),
             new CommonGrpcClientProperties(),
             channelFactory,
-            customizer);
+            customizer,
+            clock);
     setStub(client, initialStub);
     return client;
   }
 
   private static RetryFixture newRetryFixture() throws Exception {
+    return newRetryFixture(Clock.systemUTC());
+  }
+
+  private static RetryFixture newRetryFixture(Clock clock) throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub initialStub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     AccountServiceGrpc.AccountServiceBlockingStub retryStub =
@@ -567,7 +680,44 @@ class AccountClientTest {
         initialStub,
         retryStub,
         channelFactory,
-        newClientWithRetryStub(initialStub, retryStub, channelFactory));
+        newClientWithRetryStub(initialStub, retryStub, channelFactory, clock));
+  }
+
+  private static final class TestClock extends Clock {
+    private final AtomicReference<Instant> current;
+    private final ZoneId zone;
+
+    private TestClock(Instant current) {
+      this(current, ZoneOffset.UTC);
+    }
+
+    private TestClock(Instant current, ZoneId zone) {
+      this(new AtomicReference<>(current), zone);
+    }
+
+    private TestClock(AtomicReference<Instant> current, ZoneId zone) {
+      this.current = current;
+      this.zone = zone;
+    }
+
+    private void set(Instant value) {
+      current.set(value);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return new TestClock(current, zone);
+    }
+
+    @Override
+    public Instant instant() {
+      return current.get();
+    }
   }
 
   private record RetryFixture(

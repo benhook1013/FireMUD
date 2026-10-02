@@ -20,6 +20,7 @@ import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -637,7 +638,7 @@ public class WorldsCommandHandler {
         scope.playerContext().toBuilder().setRequestId(requestId).build();
     return JoinMembershipResult.response(
         accountClient.joinPublicProductionMembership(
-            playerContext, scope.connectScopeId(), requestId));
+            playerContext, scope.connectScopeId(), requestId, scope.expiresAt()));
   }
 
   private static long worldTenantId(GameplayWorldCatalog.WorldView world) {

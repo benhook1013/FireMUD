@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
+from pr_review.sqlite_review_records import SqliteReviewRecords
+from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import (
     FindingRoute,
     Judgment,
@@ -168,6 +169,8 @@ class SqliteStateStoreTest(unittest.TestCase):
                 )
                 self.assertEqual(current.load(), updated)
                 self.assertEqual(current.status()["min_writer_build"], 5)
+                SqliteStateStore(database, writer_build=5).update(lambda state: state)
+                self.assertEqual(current.status()["min_writer_build"], 5)
                 with self.assertRaisesRegex(StateError, "requires writer build 5"):
                     older.update(lambda state: state)
                 restored = self.root / f"restored-{missing}.sqlite3"
@@ -176,6 +179,19 @@ class SqliteStateStoreTest(unittest.TestCase):
                 self.assertEqual(SqliteStateStore(restored).load(), updated)
                 with self.assertRaisesRegex(StateError, "requires writer build 5"):
                     SqliteStateStore(restored, writer_build=4).load()
+
+    def test_writer_five_cannot_write_after_records_v7_promotion(self) -> None:
+        database = self.root / "records-v7-promotion.sqlite3"
+        current = SqliteStateStore(database)
+        current.update(lambda state: state)
+        with sqlite3.connect(database) as connection:
+            connection.execute("UPDATE controller_metadata SET min_writer_build = 5 WHERE singleton = 1")
+        SqliteReviewRecords(database).bootstrap()
+
+        self.assertEqual(current.status()["min_writer_build"], WRITER_BUILD)
+        old_writer = SqliteStateStore(database, writer_build=5)
+        with self.assertRaisesRegex(StateError, f"requires writer build {WRITER_BUILD}"):
+            old_writer.update(lambda state: state)
 
     def test_legacy_import_round_trips_all_validated_state_semantics(self) -> None:
         original = self.representative_state()

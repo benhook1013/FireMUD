@@ -139,3 +139,92 @@ Entry format:
   - Context: #2893's records migration raised SQLite's minimum writer build, leaving the original cutover marker at its earlier build; the state selector refused the valid database, and the backup service still used a separate older checkout.
   - Observation: the cutover marker records the original selection, while SQLite metadata owns the current writer floor. Requiring those values to stay equal and checking only the interactive entrypoint missed both failures.
   - Expected pattern: keep the marker's writer floor no greater than SQLite's, let SQLite reject old writers, and prove a schema upgrade through the shared controller, status site, and scheduled backup with exact readback before calling the promotion complete.
+  - Outcome: the cutover-marker compatibility repair is implemented and retained in #2909 with focused SQLite readback proof. This entry does not establish whether the scheduled backup checkout was subsequently updated; its compatibility remains unverified here rather than being claimed resolved.
+  - Reconsideration trigger: verify the scheduled backup's selected writer and exact database readback before the next schema promotion, or immediately if a backup reports a compatibility failure.
+
+- `2026-09-30`: Completed-gate step ambiguity remains separate from substantive CI proof
+  - Context: #2909's metadata-only Security Gate exhausted eight preservation-step snapshot refreshes and failed with ambiguous prior-run metadata, although the same-head substantive Security Gate passed. Later readback showed the substantive preservation step skipped and a separate metadata preservation run successful.
+  - Observation: the failing preservation snapshot and later completed-step API readback disagreed; the precise cause remains unproven. A red preservation gate is not evidence that the underlying product or security checks failed, but it remains a required-check obligation.
+  - Expected pattern: inspect the exact run, job, step, base, and head before choosing a bounded rerun; retain fail-closed preservation and do not substitute historical success for current-head merge readiness.
+  - Reconsideration trigger: retain this note while the cause or current required-check state remains unresolved; revisit under authorized observation stewardship once exact run/job/step readback resolves both.
+
+- `2026-09-30`: Waiter handoffs must separate terminal outcomes from later eligibility
+  - Context: a #2909 Hosted sentinel withheld an already-terminal rate-limit response until its reset time, delaying publication of prepared fixes by about fifteen minutes. A later CLI sentinel could not access the parent's native tool session and correctly reported `Unknown process id` instead of claiming a review was being observed.
+  - Observation: provider completion and permission to retry are separate events; native tool-session handles are caller-scoped in this harness and cannot be assumed transferable to a subagent.
+  - Expected pattern: deliver terminal response identity, exit status, and any authoritative reset immediately, before a separate cooldown wait. Keep a native process with its owning caller, or bind a read-only sentinel to the verified OS process and exact capture; never launch another review merely to recover observation.
+  - Outcome: terminal reporting was corrected to surface completion before later eligibility; caller-scoped native process handles remain unavailable to a separate sentinel.
+  - Reconsideration trigger: revisit if terminal outcomes are delayed again or during authorized observation stewardship of cross-caller process ownership; do not relaunch a review just to recover a handle.
+
+- `2026-09-30`: Completed helpers need an explicit continuation dispatch
+  - Context: after #2909's controller helper returned, integration corrections were sent as messages and the parent waited as though the fix was running.
+  - Observation: a message to a completed agent queues context but does not start a new turn; this was an orchestration error, not a model-capacity or review-provider failure.
+  - Expected pattern: use the bounded follow-up task operation for a continuation and verify that it started before awaiting its result. Preserve completed work and never restart a provider review to compensate.
+  - Outcome: the existing helper was explicitly resumed with the scoped correction; no active review or useful implementation was interrupted.
+  - Reconsideration trigger: revisit if follow-up dispatch behavior changes or this failure recurs; otherwise retain the resolved orchestration guidance.
+
+- `2026-09-30`: Separate request preparation latency from provider review duration
+  - Context: the canonical Hosted request for #2909 at `e39956a56` spent about five minutes in its operator process before returning the posted trigger `5919007416`; its eventual provider response was separately rate-limited.
+  - Observation: recorded provider durations exclude preparation, so they cannot explain the whole cadence. The exact slow command phase is not established; neither a silent process nor elapsed time proves a deadlock or an active provider review.
+  - Expected pattern: measure preparation phases before optimizing and retain independent live head, ancestry, request, and cooldown safety checks. Do not replace live cooldown verification with an unsupported age cutoff or a stored terminal label.
+  - Outcome: the canonical request posted without bypassing safety; the authoritative retry deadline remains owned by one silent timer sentinel. No speculative performance rewrite was added.
+  - Reconsideration trigger: use a bounded timing investigation when preparation repeatedly threatens eligible review windows or an authorized controller performance pass is undertaken.
+
+- `2026-09-30`: Exercise the live evidence adapter in channel-overlap regressions
+  - Context: #2909's eligible Hosted retry was refused as accepted findings pending while a correctly pinned CLI provider was running on the same published head; the live status had zero threads and no Hosted finding obligations.
+  - Observation: the runtime audit flattened the active CLI observation into a generic unresolved-finding string before the controller's existing exact-identity overlap check could run. A controller regression with a mocked empty audit did not exercise that adapter interaction.
+  - Expected pattern: preserve structured run/lock-owner/head/parent/patch evidence through the audit and test the real adapter-to-allocation path. Permit only positively verified same-candidate overlap; genuine pending findings and incomplete identities remain held.
+  - Outcome: the bounded controller/runtime correction passes real-adapter overlap and refusal regressions; live request verification follows publication. The running CLI was not interrupted, and no duplicate Hosted request or private-state bypass was used.
+
+- `2026-10-01`: Preserve native observation when a sentinel slot is unavailable
+  - Context: a read-only Hosted sentinel launch for #2839 was refused with `agent thread limit reached`; the visible agents contained useful active work and completed helpers, but no clearly obsolete pending or interrupted thread to recover.
+  - Observation: this is structural harness exhaustion, not evidence of model quota exhaustion or a failed provider request. The exact slot-accounting cause remains unknown.
+  - Expected pattern: preserve useful workers and the posted trigger, use the canonical exact-trigger native waiter when available, and do not change models, interrupt useful work, duplicate the review, or repeatedly probe for a slot.
+  - Outcome: the native waiter promptly identified the attributable rate limit and its exact reset; no duplicate review was posted.
+  - Reconsideration trigger: investigate slot accounting only if structural exhaustion repeatedly prevents wake-capable observation and no native wait can preserve the transition.
+
+- `2026-10-01`: Isolate implicit repository record discovery in live-adapter tests
+  - Context: PR #2916's SQL-first CLI discovery made two adapter tests without private context resolve the workspace's actual review-record database; their read-only queries reported its older schema instead of exercising their synthetic Hosted fixtures.
+  - Observation: mocking GitHub calls and capture files does not isolate the repository-scoped SQLite discovery path. No live database write or promotion occurred.
+  - Expected pattern: give adapter tests an isolated temporary Git common directory by default, overriding it only with an explicit fixture context; keep production schema checks fail closed.
+  - Outcome: the runtime test fixture now isolates implicit capture/record resolution, and the 115-test runtime suite passes without relying on live state.
+
+- `2026-10-01`: An ownership clarification is not a lane-wide stop
+  - Context: the human transferred the #2916 controller child to Overseer for review/fix cycles while Gameplay still owned #2839. Gameplay ended its turn after acknowledging the transfer, requiring an explicit resume.
+  - Observation: the child-only ownership boundary was incorrectly treated as a stopping point for the continuing parent assignment.
+  - Expected pattern: stop touching the transferred child, but continue the owned parent and independent review lanes. A coordination acknowledgement or status answer must not terminate the standing train without an explicit pause or actual blocker.
+  - Outcome: Gameplay resumed #2839, preserved the child untouched, adjudicated its complete saved CLI result, and dispatched the accepted parent-only corrections.
+
+- `2026-10-01`: Distinguish request admission contention from an active provider review
+  - Context: several closely launched #2839 Hosted/CLI commands produced a delayed Hosted refusal saying another Hosted request was active, without a new posted trigger; a guarded later request posted normally.
+  - Observation: the exact contention phase and cause remain unproven. That refusal alone does not establish that CodeRabbit is reviewing, and preparation delay consumes eligible Hosted windows independently of provider duration.
+  - Expected pattern: retain the canonical request handle and verify its actual posted or refused outcome. Investigate the narrow admission/lock boundary without bypassing duplicate-request or exact-identity safeguards; keep the other safe lane moving.
+  - Reconsideration trigger: investigate when the controller owner can reproduce the contention or another eligible Hosted window is lost; do not silently label an unposted request as an active review.
+
+- `2026-10-01`: Do not infer CLI exclusion from unpublished fixes
+  - Context: #2839's local corrections were committed at 06:20:21 UTC and Hosted finished at 06:25:38 UTC; Gameplay made no CLI attempt during that 5m 17s interval, incorrectly assuming the unpublished corrections prevented overlap.
+  - Observation: the live runner permits CLI on the exact published Hosted candidate, excluding local descendant changes. An unattempted safety assumption is not a demonstrated controller hold.
+  - Outcome: subsequent CLI requests ran independently. A later Hosted retry encountered a closed-#2750 reservation verification error before POST; its current record and attributable terminal review were valid on one read-only reproduction, and a canonical retry posted successfully. The original exception remains unknown because the wrapper hides its phase/cause; no record was edited or safety check bypassed.
+  - Expected pattern: use the canonical eligible channel, retain actual refusal evidence, and keep the other lane moving. Preserve safe phase/cause diagnostics for future reservation-verification failures rather than treating an unposted request as provider activity.
+
+- `2026-10-01`: Closed-PR history must not retain a Hosted execution slot
+  - Context: the repository-wide Hosted admission sweep reread the complete review history of merged #2750; an exception became an admission hold even though the live open-PR inventory had already excluded it.
+  - Outcome: the repair is published in #2916 and installed as a separately tested writer-build-5 backport. Confirmed closed PRs no longer require that historical network read. An exact, attributable, locally archived rate-limit response still holds the repository until its proven reset time, including a response whose terminal edit occurred after creation. No historical record, count, or taper decision was removed.
+  - Proof: 118 focused runtime tests, 883 tests against the compatible live-controller baseline, and 920 tests on the owning child passed. The original transient exception's underlying network cause remains unknown; the reproduced failure mode is now covered without weakening open-PR request safety or promoting an unmerged record schema.
+  - Observation: the Hosted admission inventory must distinguish active candidates from historical closed PRs before any history-dependent slot decision.
+  - Expected pattern: exclude confirmed closed PRs before reserving a Hosted execution slot; retain only exact, attributable rate-limit evidence as a repository-wide hold through its verified reset time.
+
+- `2026-10-01`: Keep validation-script inputs stable during execution
+  - Context: an architecture-contract run passed its test cases but then read a truncated final command after the same shell script was edited while its process was still running. A complete rerun against the finished script passed.
+  - Observation: a shell process may continue reading its script after earlier commands finish; editing that script during execution can invalidate the run independently of the corrected contract.
+  - Expected pattern: finish script edits before starting its validation, or discard the affected run as proof and rerun the complete named check after edits settle. Do not diagnose the resulting partial command as a missing repository tool without checking the input race.
+
+- `2026-10-02`: Isolate embedded HTTP test configuration from MVC slice discovery
+  - Context: the focused removed-route HTTP test passed, but the combined Account suite later produced 40 unexpected 404 failures. Test output showed unrelated MVC slices discovering that test's nested `@SpringBootConfiguration` instead of the real Account application.
+  - Observation: an explicitly selected embedded test application can still contaminate neighboring Spring test discovery when it is globally discoverable. Its isolated passing result does not prove test-suite coexistence.
+  - Expected pattern: use isolated test configuration with explicit application selection, preserve the real HTTP route proof, and run the affected service suite when introducing an embedded application alongside MVC slices.
+  - Outcome: an explicit context using `@Configuration` and `@TestComponent` isolates the embedded application; all 284 source-branch Account tests passed with zero skips, failures, or errors. `@TestConfiguration` alone loaded the real application's unrelated gRPC clients and was not sufficient here. The earlier failed combined run remains non-completion evidence.
+
+- `2026-10-02`: Preserve the producer exit status when capturing validation logs
+  - Context: a Game Session validation run failed a new fixture assertion, but a pipeline ending in `tee` returned exit0 because the shell did not enable `pipefail`.
+  - Expected pattern: enable `set -o pipefail` before captured validation pipelines and verify the terminal build result and test reports; a log sink's success is not the validation process's success.
+  - Outcome: the failed build was identified from its terminal report, not reported as passing. After the fixture correction, the guarded complete rerun passed; no production check or negative assertion was weakened.

@@ -631,6 +631,8 @@ contains "$waiter" 'publication_workloads=('
 # shellcheck disable=SC2016 # Match literal shell source in the waiter.
 contains "$waiter" 'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt'
 contains "$waiter" 'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt'
+contains "$waiter" 'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt'
+contains "$waiter" 'firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt'
 for workload in \
   game-design-service \
   world-management-service \
@@ -5956,19 +5958,20 @@ run_projection_waiter_fixture() {
   fi
 }
 
-run_projection_waiter_fixture projection-absence 0 14 2
+# Successful two-retry fixtures read 13 canonical projections plus two retries.
+run_projection_waiter_fixture projection-absence 0 15 2
 run_projection_waiter_fixture projection-command-failure 42 1 0 'Error from server (Forbidden)'
 run_projection_waiter_fixture projection-command-not-found 46 1 0 'Error from server (NotFound)'
 run_projection_waiter_fixture projection-command-unauthorized 47 1 0 'Error from server (Unauthorized)'
 run_projection_waiter_fixture projection-command-usage-error 2 1 0 'error: unknown flag'
-run_projection_waiter_fixture projection-transport-recovery 0 14 2
+run_projection_waiter_fixture projection-transport-recovery 0 15 2
 run_projection_waiter_fixture projection-transport-exhaustion 45 3 2 'Unable to connect to the server'
-run_projection_waiter_fixture projection-etcd-timeout-recovery 0 14 2
-run_projection_waiter_fixture projection-etcd-leader-recovery 0 14 2
-run_projection_waiter_fixture projection-overload-recovery 0 14 2
-run_projection_waiter_fixture projection-unavailable-recovery 0 14 2
-run_projection_waiter_fixture projection-currently-unavailable-recovery 0 14 2
-run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 14 2
+run_projection_waiter_fixture projection-etcd-timeout-recovery 0 15 2
+run_projection_waiter_fixture projection-etcd-leader-recovery 0 15 2
+run_projection_waiter_fixture projection-overload-recovery 0 15 2
+run_projection_waiter_fixture projection-unavailable-recovery 0 15 2
+run_projection_waiter_fixture projection-currently-unavailable-recovery 0 15 2
+run_projection_waiter_fixture projection-apiserver-shutdown-recovery 0 15 2
 
 run_active_waiter_fixture() {
   local scenario="$1"

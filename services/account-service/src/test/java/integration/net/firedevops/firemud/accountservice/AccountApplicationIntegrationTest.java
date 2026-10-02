@@ -365,6 +365,8 @@ class AccountApplicationIntegrationTest {
     HttpResponse<String> response = HTTP_CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
 
     assertThat(response.statusCode()).isEqualTo(404);
+    assertThat(response.body()).contains("\"status\":\"ERROR\"");
+    assertThat(response.body()).contains("\"code\":\"NOT_FOUND\"");
   }
 
   @Test

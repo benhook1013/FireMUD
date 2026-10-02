@@ -4,7 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -169,6 +171,90 @@ class RedisDirectTextConnectScopeSessionStoreTest {
     } finally {
       workers.shutdownNow();
     }
+  }
+
+  @Test
+  void readsLegacyLobbyJsonWithUnusedSelectorMapAcrossStoreInstances() throws Exception {
+    Instant now = Instant.now();
+    long expiresAt = now.plusSeconds(600).toEpochMilli();
+    String worldKey = "22:ZGVtby13b3JsZA";
+    SessionContext caller = session();
+    String legacyJson =
+        new ObjectMapper()
+            .writeValueAsString(
+                Map.of(
+                    "sessionId",
+                    SESSION_ID,
+                    "accountId",
+                    ACCOUNT_ID,
+                    "worldsExpiresAtEpochMs",
+                    expiresAt,
+                    "catalogFingerprint",
+                    "catalog-fingerprint-v13",
+                    "ordinalTargets",
+                    List.of(),
+                    "scopesByWorld",
+                    Map.of(
+                        worldKey,
+                        List.of(
+                            Map.of(
+                                "realmSlug",
+                                "production",
+                                "publicProductionRealm",
+                                true,
+                                "connectScopeId",
+                                "account-connect-scope-legacy",
+                                "expiresAtEpochMs",
+                                expiresAt,
+                                "playerContextBase64",
+                                Base64.getEncoder()
+                                    .encodeToString(playerContext(caller).toByteArray()),
+                                "joinRequestId",
+                                "join-request-already-bound"))),
+                    "worldBySelector",
+                    Map.of("1", worldKey),
+                    "realmsByWorld",
+                    Map.of(
+                        worldKey,
+                        Map.of(
+                            "tenantId",
+                            22L,
+                            "worldSlug",
+                            "demo-world",
+                            "requestedWorldSelector",
+                            "1",
+                            "catalogFingerprint",
+                            "realm-catalog-fingerprint-v13",
+                            "expiresAtEpochMs",
+                            expiresAt,
+                            "ordinalTargets",
+                            List.of()))));
+    redisTemplate.opsForValue().set(REDIS_KEY, legacyJson);
+
+    DirectTextConnectScopeSessionStore replacement = newStoreInstance();
+
+    assertThat(replacement.realmsSnapshot(caller, 22L, "demo-world", now))
+        .hasValueSatisfying(
+            snapshot -> {
+              assertThat(snapshot.tenantId()).isEqualTo(22L);
+              assertThat(snapshot.requestedWorldSelector()).isEqualTo("1");
+            });
+    assertThat(
+            replacement
+                .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", now)
+                .orElseThrow())
+        .satisfies(
+            selected -> {
+              assertThat(selected.scope().connectScopeId())
+                  .isEqualTo("account-connect-scope-legacy");
+              assertThat(selected.scope().playerContext().getAccountId())
+                  .isEqualTo(Long.toString(ACCOUNT_ID));
+              assertThat(selected.scope().playerContext().getSessionId())
+                  .isEqualTo(Long.toString(SESSION_ID));
+              assertThat(selected.scope().playerContext().getTenantId()).isEqualTo("22");
+              assertThat(selected.requestId()).isEqualTo("join-request-already-bound");
+            });
+    assertThat(redisTemplate.opsForValue().get(REDIS_KEY)).doesNotContain("worldBySelector");
   }
 
   private DirectTextConnectScopeSessionStore newStoreInstance() {

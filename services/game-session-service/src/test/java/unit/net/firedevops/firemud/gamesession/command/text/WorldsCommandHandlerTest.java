@@ -16,6 +16,7 @@ import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -124,10 +125,23 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void ambiguousWorldSlugAcrossTenantsCannotSelectOrJoinEitherTenant() {
+  void ambiguousWorldSlugRejectsBareSelectionWhileBoundOrdinalsKeepTenantTargets() {
     GameplayWorldCatalog.WorldView worldA = worldView("demo", "Tenant A", 22L, 1L);
     GameplayWorldCatalog.WorldView worldB = worldView("DEMO", "Tenant B", 33L, 2L);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              DirectTextConnectScopeTarget target = invocation.getArgument(1);
+              return IssueDirectTextConnectScopeResponse.newBuilder()
+                  .setConnectScopeId("scope-" + target.tenantId())
+                  .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                  .build();
+            });
+    Mockito.when(
+            accountClient.joinPublicProductionMembership(
+                Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class)))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldA, worldB)),
@@ -135,11 +149,59 @@ class WorldsCommandHandlerTest {
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
+    WorldsViewOutput worldSnapshot =
+        localHandler.browseView("7", Optional.of(authenticatedSession()));
+    assertThat(worldSnapshot.worlds())
+        .extracting(WorldsViewOutput.WorldEntry::displayName)
+        .containsExactly("Tenant A", "Tenant B");
+
     assertThat(localHandler.browseRealms("7", authenticatedSession(), "demo"))
         .isEqualTo(WorldsCommandHandler.RealmBrowseResult.invalidSelector());
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
         .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
-    Mockito.verifyNoInteractions(accountClient);
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+
+    WorldsCommandHandler.RealmBrowseResult tenantARealms =
+        localHandler.browseRealms("7", authenticatedSession(), "1");
+    WorldsCommandHandler.RealmBrowseResult tenantBRealms =
+        localHandler.browseRealms("7", authenticatedSession(), "2");
+    assertThat(tenantARealms).isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(tenantBRealms).isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "1"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "2"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+    Mockito.verify(accountClient)
+        .issueDirectTextConnectScope(
+            Mockito.argThat(context -> context.getTenantId().equals("22")),
+            Mockito.argThat(
+                target ->
+                    target.tenantId().equals("22")
+                        && target.worldSlug().equals("demo")
+                        && target.realmSlug().equals("production")
+                        && target.gameInstanceId().equals("1")));
+    Mockito.verify(accountClient)
+        .issueDirectTextConnectScope(
+            Mockito.argThat(context -> context.getTenantId().equals("33")),
+            Mockito.argThat(
+                target ->
+                    target.tenantId().equals("33")
+                        && target.worldSlug().equals("demo")
+                        && target.realmSlug().equals("production")
+                        && target.gameInstanceId().equals("2")));
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.argThat(context -> context.getTenantId().equals("22")),
+            Mockito.eq("scope-22"),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.argThat(context -> context.getTenantId().equals("33")),
+            Mockito.eq("scope-33"),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
   }
 
   @Test
@@ -165,6 +227,43 @@ class WorldsCommandHandlerTest {
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "1"))
         .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
     Mockito.verifyNoInteractions(accountClient);
+  }
+
+  @Test
+  void joinForwardsTheRetainedAccountScopeExpiry() {
+    Instant scopeExpiresAt = Instant.ofEpochMilli(Instant.now().plusSeconds(60).toEpochMilli());
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope-with-expiry")
+                .setConnectScopeExpiresAt(scopeExpiresAt.toString())
+                .build());
+    Mockito.when(
+            accountClient.joinPublicProductionMembership(
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.any(),
+            Mockito.eq("scope-with-expiry"),
+            Mockito.anyString(),
+            Mockito.eq(scopeExpiresAt));
   }
 
   @Test
@@ -400,6 +499,74 @@ class WorldsCommandHandlerTest {
             null);
 
     assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
+  @Test
+  void browseCharactersStopsBeforeMalformedOrNormalizedDuplicateRosterValidation() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        authenticatedHandler(publicProductionProperties(), accountClient);
+    net.firedevops.firemud.entitymanagement.v1.Character valid =
+        net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+            .setId("7001")
+            .setTenantId("22")
+            .setAccountId("123")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setName("Emberline")
+            .build();
+    List<net.firedevops.firemud.entitymanagement.v1.Character> malformedRows =
+        List.of(
+            valid.toBuilder().setTenantId("23").build(),
+            valid.toBuilder().setAccountId("456").build(),
+            valid.toBuilder()
+                .setPlayableStateScope(
+                    net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                        .PLAYABLE_STATE_SCOPE_ISOLATED)
+                .build(),
+            valid.toBuilder().clearId().build(),
+            valid.toBuilder().setId("not-a-number").build(),
+            valid.toBuilder().setId("0").build(),
+            valid.toBuilder().setId("-1").build(),
+            valid.toBuilder().setId("9223372036854775808").build(),
+            valid.toBuilder().setId("-9223372036854775809").build(),
+            valid.toBuilder().clearName().build());
+    List<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse> rosterCases =
+        new ArrayList<>();
+    for (net.firedevops.firemud.entitymanagement.v1.Character malformed : malformedRows) {
+      rosterCases.add(
+          net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
+              .addCharacters(malformed)
+              .build());
+    }
+    rosterCases.add(
+        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
+            .addCharacters(valid)
+            .addCharacters(valid.toBuilder().setId("07001").build())
+            .addCharacters(valid.toBuilder().setId("+7001").build())
+            .build());
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
+        response = new AtomicReference<>(rosterCases.getFirst());
+    Mockito.when(
+            entityManagementClient.listCharactersByAccount(
+                "22",
+                "123",
+                "1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED))
+        .thenAnswer(ignored -> response.get());
+
+    // Keep the parent malformed-row and normalized-duplicate cases visible. The current CHARS
+    // path closes before Account or Entity, so this fixture matrix does not execute row validation.
+    for (
+        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse rosterCase :
+            rosterCases) {
+      response.set(rosterCase);
+      assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
+          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    }
     Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
@@ -1183,7 +1350,10 @@ class WorldsCommandHandlerTest {
                 .build());
     Mockito.when(
             accountClient.joinPublicProductionMembership(
-                Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
         .thenReturn(
             JoinPublicProductionMembershipResponse.newBuilder()
                 .setSuccess(false)
@@ -1272,7 +1442,8 @@ class WorldsCommandHandlerTest {
         .isEqualTo(
             WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
     Mockito.verify(accountClient, Mockito.never())
-        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
   }
 
   @Test

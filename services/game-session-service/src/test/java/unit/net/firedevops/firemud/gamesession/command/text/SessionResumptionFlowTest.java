@@ -215,11 +215,11 @@ class SessionResumptionFlowTest {
                         .setId("7001")
                         .setTenantId("22")
                         .setAccountId("77")
+                        .setName("Emberline")
+                        .setLevel(12)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_SHARED)
-                        .setName("Emberline")
-                        .setLevel(12)
                         .build())
                 .build());
     sessionAuthenticationService =
@@ -526,7 +526,8 @@ class SessionResumptionFlowTest {
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .anyMatch(presence -> presence.sessionId() == 1L));
     Mockito.verify(accountClient, Mockito.never())
-        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
@@ -614,7 +615,7 @@ class SessionResumptionFlowTest {
     interpreter.interpret("1", command, false);
     interpreter.interpret(
         "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"), false);
-    sessionContextService.evictIdentity(22L, 1L, 77L);
+    sessionContextService.evictIdentity(22L, 1L, 7001L);
 
     TextCommandInterpretationResult staleRetry = interpreter.interpret("2", command, false);
 
