@@ -404,7 +404,8 @@ public class TextPlayerOutputRenderer {
         + "Realm state: "
         + output.stateScope().toLowerCase(java.util.Locale.ROOT)
         + ", creation: "
-        + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT);
+        + output.characterCreationPolicy().toLowerCase(java.util.Locale.ROOT)
+        + "\nUse the character name with PLAY; list numbers are not character selectors.";
   }
 
   private String renderWhoView(WhoViewOutput output) {

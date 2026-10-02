@@ -51,6 +51,18 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void characterHelpUsesNamesRatherThanUnsupportedListNumbers() {
+    for (String topic : List.of("CHARS", "PLAY")) {
+      TextCommandInterpretationResult result =
+          handler.handle(new TextCommand(TextCommandType.HELP, List.of(topic), "HELP " + topic));
+
+      assertTrue(result.commandResult().accepted());
+      assertTrue(result.outputs().get(0).text().contains("character name"));
+      assertTrue(result.outputs().get(0).text().contains("list number"));
+    }
+  }
+
+  @Test
   void helpJoinExplainsTheExplicitPublicMembershipStep() {
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HELP, List.of("join"), "HELP join"));
