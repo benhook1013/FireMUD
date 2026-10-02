@@ -3,32 +3,45 @@ package net.firedevops.firemud.accountservice.service;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.SQLTransientException;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
+import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionAcknowledgmentRepository.Acknowledgment;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository.Receipt;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
+import net.firedevops.firemud.common.account.authority.IssuerAuthorityProjectionV1Codec;
+import net.firedevops.firemud.common.account.authority.IssuerAuthorityProjectionV1Codec.Projection;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionInstallationAcknowledgmentDigestV1;
 import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.springframework.dao.TransientDataAccessException;
 
 /**
- * Unwired transport candidate for Account-owned issuer source readback.
+ * Unwired transport candidate for Account-owned issuer source evidence and installation ACKs.
  *
- * <p>This implementation exposes no runtime bean. Its only successful response is derived from a
- * complete local producer readback and an exact certificate-derived Game Session peer identity.
+ * <p>This implementation exposes no runtime bean. Successful responses require complete local
+ * owner-service evidence and the exact certificate-derived Game Session peer identity.
  */
 public final class AccountIssuerAuthorityGrpcService
     extends IssuerAuthorityServiceGrpc.IssuerAuthorityServiceImplBase {
@@ -38,11 +51,14 @@ public final class AccountIssuerAuthorityGrpcService
   private static final String EVENT_ID_PREFIX = "account-issuer-authority-event-v1:";
   private static final String READBACK_SCHEMA_VERSION = "account-auth-issuer-source-readback/v1";
   private static final String CAPTURE_SCHEMA_VERSION = "account-auth-issuer-projection-capture/v1";
+  private static final String ACKNOWLEDGMENT_SCHEMA_VERSION =
+      "account-auth-issuer-projection-installation-ack/v1";
   private static final String PROJECTION_KEY_PREFIX = "session:game:auth:issuer-generation:v1:";
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final AccountIssuerAuthorityEventProducer producer;
   private final AccountIssuerProjectionReconciliationService captureService;
+  private final AccountIssuerProjectionAcknowledgmentService acknowledgmentService;
 
   private final String workloadNamespace;
   private final String expectedGameSessionPeerUri;
@@ -50,11 +66,15 @@ public final class AccountIssuerAuthorityGrpcService
   public AccountIssuerAuthorityGrpcService(
       AccountIssuerAuthorityEventProducer producer,
       AccountIssuerProjectionReconciliationService captureService,
+      AccountIssuerProjectionAcknowledgmentService acknowledgmentService,
       String workloadNamespace) {
     this.producer = Objects.requireNonNull(producer, "issuer authority producer is required");
     this.captureService =
         Objects.requireNonNull(
             captureService, "issuer projection reconciliation service is required");
+    this.acknowledgmentService =
+        Objects.requireNonNull(
+            acknowledgmentService, "issuer projection acknowledgment service is required");
     if (workloadNamespace == null || workloadNamespace.isBlank()) {
       throw new IllegalArgumentException("Account workload namespace is required");
     }
@@ -67,6 +87,74 @@ public final class AccountIssuerAuthorityGrpcService
                 () -> new IllegalArgumentException("Account workload namespace is invalid"));
     this.workloadNamespace = expectedPeer.namespace();
     this.expectedGameSessionPeerUri = expectedPeer.uri();
+  }
+
+  @Override
+  public void acknowledgeIssuerProjectionForRuntime(
+      AcknowledgeIssuerProjectionForRuntimeRequest request,
+      StreamObserver<AcknowledgeIssuerProjectionForRuntimeResponse> responseObserver) {
+    GrpcPeerIdentity peer = GrpcPeerIdentity.current();
+    if (peer == null || !expectedGameSessionPeerUri.equals(peer.uri())) {
+      responseObserver.onError(
+          Status.PERMISSION_DENIED
+              .withDescription("Verified Game Session workload identity is required")
+              .asRuntimeException());
+      return;
+    }
+
+    final AcknowledgmentSelection selection;
+    try {
+      selection = validateAcknowledgmentRequest(request);
+    } catch (InvalidRequestException invalidRequest) {
+      responseObserver.onError(
+          Status.INVALID_ARGUMENT
+              .withDescription("Issuer projection acknowledgment request is invalid")
+              .asRuntimeException());
+      return;
+    }
+
+    final Acknowledgment acknowledgment;
+    try {
+      acknowledgment =
+          acknowledgmentService.acknowledge(
+              selection.issuerId(),
+              peer.uri(),
+              selection.captureOperationId(),
+              selection.captureRequestId(),
+              selection.captureRequestDigestVersion(),
+              selection.captureRequestDigest(),
+              selection.installedProjectionJson());
+    } catch (RuntimeException acknowledgmentFailure) {
+      Status.Code code = acknowledgmentFailureCode(acknowledgmentFailure);
+      String description =
+          switch (code) {
+            case INVALID_ARGUMENT -> "Issuer projection acknowledgment request is invalid";
+            case ALREADY_EXISTS ->
+                "Issuer projection acknowledgment conflicts with its original capture or result";
+            case PERMISSION_DENIED -> "Verified Game Session workload identity is required";
+            case UNAVAILABLE -> "Issuer projection acknowledgment owner is temporarily unavailable";
+            case FAILED_PRECONDITION ->
+                "Issuer projection acknowledgment evidence is stale or unavailable";
+            default -> "Issuer projection acknowledgment evidence is unavailable";
+          };
+      responseObserver.onError(
+          Status.fromCode(code).withDescription(description).asRuntimeException());
+      return;
+    }
+
+    final AcknowledgeIssuerProjectionForRuntimeResponse response;
+    try {
+      response = encodeAcknowledgment(selection, peer.uri(), acknowledgment);
+    } catch (RuntimeException invalidEvidence) {
+      responseObserver.onError(
+          Status.DATA_LOSS
+              .withDescription("Issuer projection acknowledgment evidence is contradictory")
+              .asRuntimeException());
+      return;
+    }
+
+    responseObserver.onNext(response);
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -270,6 +358,190 @@ public final class AccountIssuerAuthorityGrpcService
     return new CaptureSelection(request.getIssuerId(), requestId);
   }
 
+  private AcknowledgmentSelection validateAcknowledgmentRequest(
+      AcknowledgeIssuerProjectionForRuntimeRequest request) {
+    if (request == null || !request.getUnknownFields().asMap().isEmpty()) {
+      throw new InvalidRequestException();
+    }
+    if (request.getIssuerId().isBlank()
+        || request.getIssuerId().length() > 512
+        || request.getCaptureRequestDigestVersion()
+            != IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION
+        || !request.getProjectionKey().equals(PROJECTION_KEY_PREFIX + request.getIssuerId())
+        || !request.getCaptureRequestDigest().matches("[0-9a-f]{64}")) {
+      throw new InvalidRequestException();
+    }
+
+    UUID captureOperationId = parseCanonicalNonNilUuid(request.getCaptureOperationId());
+    UUID captureRequestId = parseCanonicalNonNilUuid(request.getCaptureRequestId());
+    final byte[] projectionBytes;
+    final Projection projection;
+    if (request.getInstalledProjectionJson().length()
+        > IssuerProjectionInstallationAcknowledgmentDigestV1.MAX_INSTALLED_PROJECTION_UTF8_BYTES) {
+      throw new InvalidRequestException();
+    }
+    try {
+      projectionBytes = strictUtf8(request.getInstalledProjectionJson());
+      if (projectionBytes.length == 0
+          || projectionBytes.length
+              > IssuerProjectionInstallationAcknowledgmentDigestV1
+                  .MAX_INSTALLED_PROJECTION_UTF8_BYTES) {
+        throw new InvalidRequestException();
+      }
+      projection = IssuerAuthorityProjectionV1Codec.verify(request.getInstalledProjectionJson());
+    } catch (IllegalArgumentException malformedProjection) {
+      throw new InvalidRequestException();
+    }
+    if (!request.getIssuerId().equals(projection.issuerId())) {
+      throw new InvalidRequestException();
+    }
+
+    return new AcknowledgmentSelection(
+        request.getIssuerId(),
+        captureOperationId,
+        captureRequestId,
+        request.getCaptureRequestDigestVersion(),
+        request.getCaptureRequestDigest(),
+        request.getProjectionKey(),
+        request.getInstalledProjectionJson(),
+        projectionBytes,
+        projection);
+  }
+
+  private AcknowledgeIssuerProjectionForRuntimeResponse encodeAcknowledgment(
+      AcknowledgmentSelection selection, String callerIdentity, Acknowledgment acknowledgment) {
+    if (acknowledgment == null
+        || acknowledgment.acknowledgmentId() == null
+        || NIL_UUID.equals(acknowledgment.acknowledgmentId())
+        || !selection.captureOperationId().equals(acknowledgment.captureOperationId())
+        || !selection.captureRequestId().equals(acknowledgment.captureRequestId())
+        || !selection.issuerId().equals(acknowledgment.issuerId())
+        || !callerIdentity.equals(acknowledgment.callerWorkloadIdentity())
+        || !selection.projectionKey().equals(acknowledgment.projectionKey())
+        || selection.captureRequestDigestVersion() != acknowledgment.captureRequestDigestVersion()
+        || !selection.captureRequestDigest().equals(acknowledgment.captureRequestDigest())
+        || acknowledgment.requestDigestVersion()
+            != IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION) {
+      throw new IllegalStateException("Issuer installation acknowledgment bindings are incomplete");
+    }
+
+    byte[] installedProjection = acknowledgment.installedProjectionUtf8();
+    byte[] installedProjectionSha256 = acknowledgment.installedProjectionSha256();
+    if (installedProjection.length == 0
+        || installedProjection.length
+            > IssuerProjectionInstallationAcknowledgmentDigestV1.MAX_INSTALLED_PROJECTION_UTF8_BYTES
+        || installedProjectionSha256.length != 32) {
+      throw new IllegalStateException("Issuer installation acknowledgment bytes are malformed");
+    }
+    String projectionJson = strictUtf8(installedProjection);
+    Projection returnedProjection = IssuerAuthorityProjectionV1Codec.verify(projectionJson);
+    String expectedRequestDigest =
+        IssuerProjectionInstallationAcknowledgmentDigestV1.digest(
+            selection.issuerId(),
+            callerIdentity,
+            selection.projectionKey(),
+            selection.captureOperationId(),
+            selection.captureRequestId(),
+            selection.captureRequestDigestVersion(),
+            selection.captureRequestDigest(),
+            selection.installedProjectionJson());
+    if (!MessageDigest.isEqual(installedProjection, selection.installedProjectionBytes())
+        || !MessageDigest.isEqual(sha256(installedProjection), installedProjectionSha256)
+        || !expectedRequestDigest.equals(acknowledgment.requestDigest())
+        || !sameProjection(selection.projection(), returnedProjection)) {
+      throw new IllegalStateException(
+          "Issuer installation acknowledgment returned bytes or digest evidence that differs from the request");
+    }
+
+    return AcknowledgeIssuerProjectionForRuntimeResponse.newBuilder()
+        .setSchemaVersion(ACKNOWLEDGMENT_SCHEMA_VERSION)
+        .setTargetNamespace(workloadNamespace)
+        .setAcknowledgmentId(acknowledgment.acknowledgmentId().toString())
+        .setIssuerId(acknowledgment.issuerId())
+        .setCallerWorkloadIdentity(acknowledgment.callerWorkloadIdentity())
+        .setProjectionKey(acknowledgment.projectionKey())
+        .setCaptureOperationId(acknowledgment.captureOperationId().toString())
+        .setCaptureRequestId(acknowledgment.captureRequestId().toString())
+        .setCaptureRequestDigestVersion(acknowledgment.captureRequestDigestVersion())
+        .setCaptureRequestDigest(acknowledgment.captureRequestDigest())
+        .setRequestDigestVersion(acknowledgment.requestDigestVersion())
+        .setRequestDigest(acknowledgment.requestDigest())
+        .setInstalledProjectionJson(projectionJson)
+        .setInstalledProjectionSha256(HexFormat.of().formatHex(installedProjectionSha256))
+        .build();
+  }
+
+  private static boolean sameProjection(Projection expected, Projection actual) {
+    if (expected == null
+        || actual == null
+        || !expected.issuerId().equals(actual.issuerId())
+        || !expected.generation().equals(actual.generation())
+        || !expected.sourceVersion().equals(actual.sourceVersion())
+        || !expected.sequence().equals(actual.sequence())
+        || !expected.streamKey().equals(actual.streamKey())
+        || !expected.appliedAt().equals(actual.appliedAt())
+        || expected.latestEvent().isPresent() != actual.latestEvent().isPresent()) {
+      return false;
+    }
+    return expected.latestEvent().isEmpty()
+        || sameCanonicalEvent(
+            expected.latestEvent().orElseThrow(), actual.latestEvent().orElseThrow());
+  }
+
+  private static UUID parseCanonicalNonNilUuid(String value) {
+    UUID parsed;
+    try {
+      parsed = UUID.fromString(value);
+    } catch (IllegalArgumentException malformed) {
+      throw new InvalidRequestException();
+    }
+    if (NIL_UUID.equals(parsed) || !parsed.toString().equals(value)) {
+      throw new InvalidRequestException();
+    }
+    return parsed;
+  }
+
+  private static byte[] strictUtf8(String value) {
+    if (value == null) {
+      throw new InvalidRequestException();
+    }
+    try {
+      ByteBuffer encoded =
+          StandardCharsets.UTF_8
+              .newEncoder()
+              .onMalformedInput(CodingErrorAction.REPORT)
+              .onUnmappableCharacter(CodingErrorAction.REPORT)
+              .encode(CharBuffer.wrap(value));
+      byte[] bytes = new byte[encoded.remaining()];
+      encoded.get(bytes);
+      return bytes;
+    } catch (CharacterCodingException malformed) {
+      throw new InvalidRequestException();
+    }
+  }
+
+  private static String strictUtf8(byte[] value) {
+    try {
+      return StandardCharsets.UTF_8
+          .newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT)
+          .decode(ByteBuffer.wrap(value))
+          .toString();
+    } catch (CharacterCodingException malformed) {
+      throw new IllegalStateException(
+          "Issuer acknowledgment projection bytes are not UTF-8", malformed);
+    }
+  }
+
+  private static byte[] sha256(byte[] value) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(value);
+    } catch (NoSuchAlgorithmException unavailable) {
+      throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+    }
+  }
+
   private CaptureIssuerProjectionForRuntimeResponse encodeCapture(
       CaptureSelection selection, String callerIdentity, Receipt receipt) {
     if (receipt == null
@@ -455,6 +727,28 @@ public final class AccountIssuerAuthorityGrpcService
     return sourceFailureCode(failure);
   }
 
+  private static Status.Code acknowledgmentFailureCode(Throwable failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof TransientDataAccessException || cause instanceof SQLTransientException) {
+        return Status.Code.UNAVAILABLE;
+      }
+    }
+    if (isExactIssuerMismatch(failure)) {
+      return Status.Code.INVALID_ARGUMENT;
+    }
+    if (failure
+        instanceof AccountIssuerProjectionReconciliationRepository.IdempotencyConflictException) {
+      return Status.Code.ALREADY_EXISTS;
+    }
+    if (failure instanceof SecurityException) {
+      return Status.Code.PERMISSION_DENIED;
+    }
+    if (failure instanceof IllegalArgumentException) {
+      return Status.Code.INVALID_ARGUMENT;
+    }
+    return Status.Code.FAILED_PRECONDITION;
+  }
+
   private static boolean isExactIssuerMismatch(Throwable failure) {
     return failure instanceof AccountIssuerAuthorityEventProducer.IssuerMismatchException;
   }
@@ -472,6 +766,33 @@ public final class AccountIssuerAuthorityGrpcService
     private CaptureSelection {
       Objects.requireNonNull(issuerId, "issuerId");
       Objects.requireNonNull(requestId, "requestId");
+    }
+  }
+
+  private record AcknowledgmentSelection(
+      String issuerId,
+      UUID captureOperationId,
+      UUID captureRequestId,
+      int captureRequestDigestVersion,
+      String captureRequestDigest,
+      String projectionKey,
+      String installedProjectionJson,
+      byte[] installedProjectionBytes,
+      Projection projection) {
+    private AcknowledgmentSelection {
+      Objects.requireNonNull(issuerId, "issuerId");
+      Objects.requireNonNull(captureOperationId, "captureOperationId");
+      Objects.requireNonNull(captureRequestId, "captureRequestId");
+      Objects.requireNonNull(captureRequestDigest, "captureRequestDigest");
+      Objects.requireNonNull(projectionKey, "projectionKey");
+      Objects.requireNonNull(installedProjectionJson, "installedProjectionJson");
+      installedProjectionBytes = installedProjectionBytes.clone();
+      Objects.requireNonNull(projection, "projection");
+    }
+
+    @Override
+    public byte[] installedProjectionBytes() {
+      return installedProjectionBytes.clone();
     }
   }
 

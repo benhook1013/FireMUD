@@ -1,7 +1,6 @@
 package net.firedevops.firemud.accountservice.repository;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
-import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -13,6 +12,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionInstallationAcknowledgmentDigestV1;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
@@ -203,10 +203,10 @@ public class AccountIssuerProjectionAcknowledgmentRepository {
       String requestDigest,
       byte[] installedProjectionUtf8,
       byte[] installedProjectionSha256) {
-    public static final int REQUEST_DIGEST_VERSION = 1;
-    public static final int MAX_INSTALLED_PROJECTION_UTF8_BYTES = 65_536;
-    private static final String DIGEST_SCHEMA = "issuer-projection-installation-ack/v1";
-    private static final String OPERATION = "ISSUER_PROJECTION_INSTALLATION_ACK";
+    public static final int REQUEST_DIGEST_VERSION =
+        IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION;
+    public static final int MAX_INSTALLED_PROJECTION_UTF8_BYTES =
+        IssuerProjectionInstallationAcknowledgmentDigestV1.MAX_INSTALLED_PROJECTION_UTF8_BYTES;
 
     public Acknowledgment {
       Objects.requireNonNull(
@@ -249,31 +249,13 @@ public class AccountIssuerProjectionAcknowledgmentRepository {
         int captureRequestDigestVersion,
         String captureRequestDigest,
         String installedProjectionJson) {
-      requireRequestBindings(
+      return IssuerProjectionInstallationAcknowledgmentDigestV1.digest(
           issuerId,
           callerWorkloadIdentity,
           projectionKey,
           captureOperationId,
           captureRequestId,
           captureRequestDigestVersion,
-          captureRequestDigest);
-      byte[] projectionBytes = encodeUtf8(installedProjectionJson);
-      if (projectionBytes.length == 0
-          || projectionBytes.length > MAX_INSTALLED_PROJECTION_UTF8_BYTES) {
-        throw new IllegalArgumentException(
-            "Installed projection JSON must contain 1 to "
-                + MAX_INSTALLED_PROJECTION_UTF8_BYTES
-                + " UTF-8 bytes");
-      }
-      return digest(
-          DIGEST_SCHEMA,
-          OPERATION,
-          issuerId,
-          callerWorkloadIdentity,
-          projectionKey,
-          captureOperationId.toString(),
-          captureRequestId.toString(),
-          Integer.toString(captureRequestDigestVersion),
           captureRequestDigest,
           installedProjectionJson);
     }
@@ -345,17 +327,6 @@ public class AccountIssuerProjectionAcknowledgmentRepository {
         throw new IllegalArgumentException(
             "Issuer projection acknowledgment capture binding is malformed");
       }
-    }
-
-    private static String digest(String... fields) {
-      ByteArrayOutputStream framed = new ByteArrayOutputStream();
-      for (String field : fields) {
-        byte[] bytes = encodeUtf8(field);
-        framed.writeBytes(Integer.toString(bytes.length).getBytes(StandardCharsets.US_ASCII));
-        framed.write(':');
-        framed.writeBytes(bytes);
-      }
-      return HexFormat.of().formatHex(sha256(framed.toByteArray()));
     }
 
     private static byte[] encodeUtf8(String value) {

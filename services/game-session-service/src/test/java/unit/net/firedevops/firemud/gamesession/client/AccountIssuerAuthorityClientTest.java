@@ -4,12 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.Attributes;
 import io.grpc.ClientCall;
@@ -19,32 +22,54 @@ import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.lang.reflect.Field;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLSession;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
+import net.firedevops.firemud.common.account.authority.IssuerAuthorityProjectionV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionInstallationAcknowledgmentDigestV1;
 import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionRedisContract;
+import net.firedevops.firemud.gamesession.service.IssuerProjectionReconciliationInstaller;
+import net.firedevops.firemud.gamesession.service.IssuerProjectionReconciliationInstaller.InstallationReceipt;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore.CacheRateLimitEndpoint;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore.CoordinationEndpoint;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.connection.RedisConnection;
+import org.springframework.data.redis.connection.RedisKeyCommands;
+import org.springframework.data.redis.connection.RedisScriptingCommands;
+import org.springframework.data.redis.connection.RedisStringCommands;
+import org.springframework.data.redis.connection.ReturnType;
+import org.springframework.data.redis.core.RedisCallback;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 class AccountIssuerAuthorityClientTest {
   private static final String NAMESPACE = "test";
@@ -61,6 +86,9 @@ class AccountIssuerAuthorityClientTest {
       "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service";
   private static final String CAPTURE_PROJECTION_KEY =
       "session:game:auth:issuer-generation:v1:" + ISSUER_ID;
+  private static final UUID ACKNOWLEDGMENT_ID =
+      UUID.fromString("44444444-4444-4444-8444-444444444444");
+  private static final ObjectMapper JSON = new ObjectMapper();
 
   @Test
   void currentReadVerifiesAndReturnsTheSequenceZeroPositiveBaseline() throws Exception {
@@ -249,6 +277,174 @@ class AccountIssuerAuthorityClientTest {
     assertThat(receipt.capturedSource().outboxSequence()).isEqualTo("3");
     assertLatestEvent(receipt.capturedSource().latestEvent().orElseThrow(), historical);
     verify(stub).captureIssuerProjectionForRuntime(any());
+  }
+
+  @Test
+  void installationAcknowledgmentUsesPrivateReceiptAndReplaysOriginalAcknowledgment()
+      throws Exception {
+    InstallationFixture fixture = installationFixture(sourceSnapshot("1", "1", "0", null));
+    try {
+      InstallationReceipt installation =
+          fixture
+              .installer()
+              .install(REQUEST_ID.toString(), "original-applied-at")
+              .receipt()
+              .orElseThrow();
+      AcknowledgeIssuerProjectionForRuntimeResponse originalResponse =
+          installationAcknowledgmentResponse(installation, NAMESPACE, ISSUER_ID, ACKNOWLEDGMENT_ID);
+      when(fixture.stub().acknowledgeIssuerProjectionForRuntime(any()))
+          .thenReturn(originalResponse);
+
+      AccountIssuerAuthorityClient.InstallationAcknowledgmentReceipt original =
+          fixture.client().acknowledgeInstallation(installation);
+      AccountIssuerAuthorityClient.InstallationAcknowledgmentReceipt retry =
+          fixture.client().acknowledgeInstallation(installation);
+
+      assertThat(original.acknowledgmentId()).isEqualTo(ACKNOWLEDGMENT_ID);
+      assertThat(retry.acknowledgmentId()).isEqualTo(original.acknowledgmentId());
+      assertThat(original.captureOperationId()).isEqualTo(installation.operationId());
+      assertThat(original.captureRequestId()).isEqualTo(installation.requestId());
+      assertThat(original.targetNamespace()).isEqualTo(NAMESPACE);
+      assertThat(original.captureRequestDigest()).isEqualTo(installation.requestDigest());
+      assertThat(original.captureRequestDigestVersion()).isEqualTo(1);
+      assertThat(original.requestDigestVersion())
+          .isEqualTo(IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION);
+      assertThat(original.installedProjectionJson())
+          .isEqualTo(installation.projectionSnapshot().json())
+          .contains("\"appliedAt\":\"original-applied-at\"");
+      assertThat(original.installedProjectionSha256())
+          .isEqualTo(originalResponse.getInstalledProjectionSha256());
+      assertThat(
+              AccountIssuerAuthorityClient.InstallationAcknowledgmentReceipt.class
+                  .getConstructors())
+          .isEmpty();
+
+      ArgumentCaptor<AcknowledgeIssuerProjectionForRuntimeRequest> requestCaptor =
+          ArgumentCaptor.forClass(AcknowledgeIssuerProjectionForRuntimeRequest.class);
+      verify(fixture.stub(), times(5)).withDeadlineAfter(5L, TimeUnit.SECONDS);
+      verify(fixture.stub(), times(2))
+          .acknowledgeIssuerProjectionForRuntime(requestCaptor.capture());
+      assertThat(requestCaptor.getAllValues()).hasSize(2);
+      for (AcknowledgeIssuerProjectionForRuntimeRequest request : requestCaptor.getAllValues()) {
+        assertThat(request.getIssuerId()).isEqualTo(ISSUER_ID);
+        assertThat(request.getCaptureOperationId())
+            .isEqualTo(installation.operationId().toString());
+        assertThat(request.getCaptureRequestId()).isEqualTo(installation.requestId().toString());
+        assertThat(request.getCaptureRequestDigestVersion()).isEqualTo(1);
+        assertThat(request.getCaptureRequestDigest()).isEqualTo(installation.requestDigest());
+        assertThat(request.getProjectionKey()).isEqualTo(CAPTURE_PROJECTION_KEY);
+        assertThat(request.getInstalledProjectionJson())
+            .isEqualTo(installation.projectionSnapshot().json());
+        assertThat(request.getAllFields()).hasSize(7);
+      }
+      verify(fixture.stub(), times(1)).captureIssuerProjectionForRuntime(any());
+      verify(fixture.stub(), times(2)).readIssuerAuthorityForRuntime(any());
+    } finally {
+      fixture.store().close();
+    }
+  }
+
+  @Test
+  void rejectsChangedInstallationAcknowledgmentBindingsDigestsBytesAndEvent() throws Exception {
+    IssuerGenerationAuthorityEvent capturedEvent = event("2", "3", "3", EVENT_REQUEST_ID);
+    InstallationFixture fixture =
+        installationFixture(sourceSnapshot("3", "3", "2", capturedEvent.canonicalJson()));
+    try {
+      InstallationReceipt installation =
+          fixture
+              .installer()
+              .install(REQUEST_ID.toString(), "original-applied-at")
+              .receipt()
+              .orElseThrow();
+      AcknowledgeIssuerProjectionForRuntimeResponse valid =
+          installationAcknowledgmentResponse(installation, NAMESPACE, ISSUER_ID, ACKNOWLEDGMENT_ID);
+      AtomicReference<AcknowledgeIssuerProjectionForRuntimeResponse> response =
+          new AtomicReference<>(valid);
+      when(fixture.stub().acknowledgeIssuerProjectionForRuntime(any()))
+          .thenAnswer(ignored -> response.get());
+
+      IssuerGenerationAuthorityEvent changedEvent =
+          event("2", "3", "3", UUID.fromString("55555555-5555-4555-8555-555555555555"));
+      String changedEventProjection =
+          replaceProjectionEvent(
+              installation.projectionSnapshot().json(), capturedEvent, changedEvent);
+      assertThat(
+              IssuerAuthorityProjectionV1Codec.verify(changedEventProjection)
+                  .latestEvent()
+                  .orElseThrow()
+                  .canonicalJson())
+          .isEqualTo(changedEvent.canonicalJson());
+      AcknowledgeIssuerProjectionForRuntimeResponse changedEventResponse =
+          valid.toBuilder()
+              .setInstalledProjectionJson(changedEventProjection)
+              .setInstalledProjectionSha256(sha256Hex(changedEventProjection))
+              .setRequestDigest(
+                  installationAcknowledgmentDigest(installation, changedEventProjection))
+              .build();
+
+      List<AcknowledgeIssuerProjectionForRuntimeResponse> invalidResponses =
+          List.of(
+              AcknowledgeIssuerProjectionForRuntimeResponse.getDefaultInstance(),
+              valid.toBuilder().setUnknownFields(unknownFields()).build(),
+              valid.toBuilder().setSchemaVersion("other").build(),
+              valid.toBuilder().setTargetNamespace("other").build(),
+              valid.toBuilder().setAcknowledgmentId("not-a-uuid").build(),
+              valid.toBuilder().setIssuerId("other").build(),
+              valid.toBuilder().setCallerWorkloadIdentity("other").build(),
+              valid.toBuilder().setProjectionKey("other").build(),
+              valid.toBuilder().setCaptureOperationId(EVENT_REQUEST_ID.toString()).build(),
+              valid.toBuilder().setCaptureRequestId(EVENT_REQUEST_ID.toString()).build(),
+              valid.toBuilder().setCaptureRequestDigestVersion(2).build(),
+              valid.toBuilder().setCaptureRequestDigest("0".repeat(64)).build(),
+              valid.toBuilder().setRequestDigestVersion(2).build(),
+              valid.toBuilder().setRequestDigest("0".repeat(64)).build(),
+              valid.toBuilder()
+                  .setInstalledProjectionJson(
+                      installation
+                          .projectionSnapshot()
+                          .json()
+                          .replace("original-applied-at", "changed-applied-at"))
+                  .build(),
+              valid.toBuilder().setInstalledProjectionSha256("0".repeat(64)).build(),
+              changedEventResponse);
+
+      for (AcknowledgeIssuerProjectionForRuntimeResponse invalid : invalidResponses) {
+        response.set(invalid);
+        assertThatThrownBy(() -> fixture.client().acknowledgeInstallation(installation))
+            .isInstanceOf(IllegalStateException.class);
+      }
+      verify(fixture.stub(), times(invalidResponses.size()))
+          .acknowledgeIssuerProjectionForRuntime(any());
+    } finally {
+      fixture.store().close();
+    }
+  }
+
+  @Test
+  void rejectsInstallationReceiptForDifferentConfiguredIssuerOrNamespaceBeforeRpc()
+      throws Exception {
+    InstallationFixture fixture = installationFixture(sourceSnapshot("1", "1", "0", null));
+    try {
+      InstallationReceipt installation =
+          fixture
+              .installer()
+              .install(REQUEST_ID.toString(), "original-applied-at")
+              .receipt()
+              .orElseThrow();
+      AccountIssuerAuthorityClient wrongIssuer =
+          newClient(fixture.stub(), NAMESPACE, "https://other.example.test/issuer");
+      AccountIssuerAuthorityClient wrongNamespace = newClient(fixture.stub(), "other", ISSUER_ID);
+
+      assertThatThrownBy(() -> fixture.client().acknowledgeInstallation(null))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> wrongIssuer.acknowledgeInstallation(installation))
+          .isInstanceOf(IllegalArgumentException.class);
+      assertThatThrownBy(() -> wrongNamespace.acknowledgeInstallation(installation))
+          .isInstanceOf(IllegalArgumentException.class);
+      verify(fixture.stub(), never()).acknowledgeIssuerProjectionForRuntime(any());
+    } finally {
+      fixture.store().close();
+    }
   }
 
   @Test
@@ -643,6 +839,13 @@ class AccountIssuerAuthorityClientTest {
           .isInstanceOf(StatusRuntimeException.class)
           .extracting(exception -> ((StatusRuntimeException) exception).getStatus().getCode())
           .isEqualTo(Status.Code.UNAUTHENTICATED);
+      assertThatThrownBy(
+              () ->
+                  stub.acknowledgeIssuerProjectionForRuntime(
+                      AcknowledgeIssuerProjectionForRuntimeRequest.getDefaultInstance()))
+          .isInstanceOf(StatusRuntimeException.class)
+          .extracting(exception -> ((StatusRuntimeException) exception).getStatus().getCode())
+          .isEqualTo(Status.Code.UNAUTHENTICATED);
     }
   }
 
@@ -654,6 +857,177 @@ class AccountIssuerAuthorityClientTest {
     assertThatThrownBy(() -> client.captureProjection(REQUEST_ID.toString()))
         .isInstanceOf(IllegalStateException.class);
   }
+
+  private static InstallationFixture installationFixture(IssuerAuthoritySourceSnapshot snapshot)
+      throws Exception {
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub = mockStub();
+    when(stub.captureIssuerProjectionForRuntime(any()))
+        .thenReturn(captureResponse(REQUEST_ID, OPERATION_ID, snapshot));
+    when(stub.readIssuerAuthorityForRuntime(any())).thenReturn(snapshotOnly(snapshot));
+    AccountIssuerAuthorityClient client = newClient(stub);
+    RedisFixture redis = redisFixture();
+    RedisIssuerAuthorityProjectionStore store = storeWithConnection();
+    Field templateField =
+        RedisIssuerAuthorityProjectionStore.class.getDeclaredField("redisTemplate");
+    templateField.setAccessible(true);
+    templateField.set(store, redis.template());
+    return new InstallationFixture(
+        stub, client, store, new IssuerProjectionReconciliationInstaller(client, store));
+  }
+
+  private static RedisFixture redisFixture() throws Exception {
+    byte[] script;
+    try (var input =
+        new ClassPathResource(IssuerAuthorityProjectionRedisContract.RESOURCE_PATH)
+            .getInputStream()) {
+      script = input.readAllBytes();
+    }
+    String sha1 =
+        java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-1").digest(script));
+    RedisConnection connection = mock(RedisConnection.class);
+    RedisStringCommands stringCommands = mock(RedisStringCommands.class);
+    RedisKeyCommands keyCommands = mock(RedisKeyCommands.class);
+    RedisScriptingCommands scriptingCommands = mock(RedisScriptingCommands.class);
+    when(connection.stringCommands()).thenReturn(stringCommands);
+    when(connection.keyCommands()).thenReturn(keyCommands);
+    when(connection.scriptingCommands()).thenReturn(scriptingCommands);
+    AtomicReference<byte[]> storedValue = new AtomicReference<>();
+    when(stringCommands.get(any(byte[].class)))
+        .thenAnswer(
+            ignored -> {
+              byte[] value = storedValue.get();
+              return value == null ? null : value.clone();
+            });
+    when(keyCommands.pTtl(any(byte[].class))).thenReturn(-1L);
+    when(scriptingCommands.scriptLoad(any(byte[].class))).thenReturn(sha1);
+    when(scriptingCommands.evalSha(eq(sha1), eq(ReturnType.VALUE), eq(1), any(byte[][].class)))
+        .thenAnswer(
+            invocation -> {
+              byte[][] arguments = (byte[][]) invocation.getRawArguments()[3];
+              String mode = new String(arguments[1], StandardCharsets.US_ASCII);
+              byte[] expected = arguments[2];
+              byte[] candidate = arguments[3];
+              byte[] current = storedValue.get();
+              String result;
+              if (mode.equals("VERIFY")) {
+                result = Arrays.equals(current, expected) ? "REPLAY" : "STALE";
+              } else if (mode.equals("ABSENT") && current == null) {
+                storedValue.set(candidate.clone());
+                result = "APPLIED";
+              } else if (mode.equals("PRESENT") && Arrays.equals(current, expected)) {
+                storedValue.set(candidate.clone());
+                result = "APPLIED";
+              } else if (Arrays.equals(current, candidate)) {
+                result = "REPLAY";
+              } else {
+                result = "STALE";
+              }
+              return result.getBytes(StandardCharsets.US_ASCII);
+            });
+    StringRedisTemplate template = mock(StringRedisTemplate.class);
+    doAnswer(
+            invocation -> {
+              RedisCallback<?> callback = invocation.getArgument(0);
+              return callback.doInRedis(connection);
+            })
+        .when(template)
+        .execute(any(RedisCallback.class));
+    return new RedisFixture(template);
+  }
+
+  private static RedisIssuerAuthorityProjectionStore storeWithConnection() {
+    RedisIssuerAuthorityProjectionStore store =
+        new RedisIssuerAuthorityProjectionStore(
+            NAMESPACE,
+            new CoordinationEndpoint("127.0.0.1", 1, "gamesession_coord_app", "test-secret"),
+            new CacheRateLimitEndpoint("127.0.0.1", 2));
+    store.init();
+    return store;
+  }
+
+  private static AcknowledgeIssuerProjectionForRuntimeResponse installationAcknowledgmentResponse(
+      InstallationReceipt installation, String namespace, String issuerId, UUID acknowledgmentId)
+      throws Exception {
+    String caller = "spiffe://firemud/ns/" + namespace + "/sa/game-session-service";
+    String projectionKey = IssuerAuthorityProjectionRedisContract.keyForIssuer(issuerId);
+    String projectionJson = installation.projectionSnapshot().json();
+    String requestDigest =
+        IssuerProjectionInstallationAcknowledgmentDigestV1.digest(
+            issuerId,
+            caller,
+            projectionKey,
+            installation.operationId(),
+            installation.requestId(),
+            1,
+            installation.requestDigest(),
+            projectionJson);
+    return AcknowledgeIssuerProjectionForRuntimeResponse.newBuilder()
+        .setSchemaVersion("account-auth-issuer-projection-installation-ack/v1")
+        .setTargetNamespace(namespace)
+        .setAcknowledgmentId(acknowledgmentId.toString())
+        .setIssuerId(issuerId)
+        .setCallerWorkloadIdentity(caller)
+        .setProjectionKey(projectionKey)
+        .setCaptureOperationId(installation.operationId().toString())
+        .setCaptureRequestId(installation.requestId().toString())
+        .setCaptureRequestDigestVersion(1)
+        .setCaptureRequestDigest(installation.requestDigest())
+        .setRequestDigestVersion(IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION)
+        .setRequestDigest(requestDigest)
+        .setInstalledProjectionJson(projectionJson)
+        .setInstalledProjectionSha256(sha256Hex(projectionJson))
+        .build();
+  }
+
+  private static String installationAcknowledgmentDigest(
+      InstallationReceipt installation, String projectionJson) {
+    return IssuerProjectionInstallationAcknowledgmentDigestV1.digest(
+        ISSUER_ID,
+        CAPTURE_CALLER,
+        CAPTURE_PROJECTION_KEY,
+        installation.operationId(),
+        installation.requestId(),
+        1,
+        installation.requestDigest(),
+        projectionJson);
+  }
+
+  private static String sha256Hex(String text) throws Exception {
+    return java.util.HexFormat.of()
+        .formatHex(
+            MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private static String replaceProjectionEvent(
+      String projectionJson,
+      IssuerGenerationAuthorityEvent original,
+      IssuerGenerationAuthorityEvent replacement)
+      throws Exception {
+    return projectionJson
+        .replace(
+            JSON.writeValueAsString(original.canonicalJson()),
+            JSON.writeValueAsString(replacement.canonicalJson()))
+        .replace(
+            "\"lastAppliedSourceEventId\":\"" + original.eventId() + "\"",
+            "\"lastAppliedSourceEventId\":\"" + replacement.eventId() + "\"")
+        .replace(
+            "\"lastAppliedSourceEventDigest\":\"" + original.eventDigest() + "\"",
+            "\"lastAppliedSourceEventDigest\":\"" + replacement.eventDigest() + "\"");
+  }
+
+  private static UnknownFieldSet unknownFields() {
+    return UnknownFieldSet.newBuilder()
+        .addField(99, UnknownFieldSet.Field.newBuilder().addVarint(1).build())
+        .build();
+  }
+
+  private record InstallationFixture(
+      IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub stub,
+      AccountIssuerAuthorityClient client,
+      RedisIssuerAuthorityProjectionStore store,
+      IssuerProjectionReconciliationInstaller installer) {}
+
+  private record RedisFixture(StringRedisTemplate template) {}
 
   private static void assertCurrentRejected(ReadIssuerAuthorityForRuntimeResponse response)
       throws Exception {

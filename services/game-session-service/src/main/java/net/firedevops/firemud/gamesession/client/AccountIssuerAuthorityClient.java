@@ -3,18 +3,29 @@ package net.firedevops.firemud.gamesession.client;
 import io.grpc.ManagedChannel;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
 import net.firedevops.firemud.account.v1.IssuerAuthoritySourceSnapshot;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
+import net.firedevops.firemud.common.account.authority.IssuerAuthorityProjectionV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionInstallationAcknowledgmentDigestV1;
 import net.firedevops.firemud.common.account.authority.IssuerProjectionReconciliationRequestDigestV1;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
@@ -23,14 +34,19 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
+import net.firedevops.firemud.gamesession.service.IssuerAuthorityProjectionRedisContract;
+import net.firedevops.firemud.gamesession.service.IssuerProjectionReconciliationInstaller.InstallationReceipt;
+import net.firedevops.firemud.gamesession.service.RedisIssuerAuthorityProjectionStore.ProjectionSnapshot;
 
-/** Unwired Game Session client for authenticated Account issuer-source readback only. */
+/** Unwired Game Session client for authenticated Account issuer-source evidence. */
 public final class AccountIssuerAuthorityClient
     extends AbstractReloadingBlockingGrpcClient<
         IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub> {
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final String READBACK_SCHEMA_VERSION = "account-auth-issuer-source-readback/v1";
   private static final String CAPTURE_SCHEMA_VERSION = "account-auth-issuer-projection-capture/v1";
+  private static final String INSTALLATION_ACK_SCHEMA_VERSION =
+      "account-auth-issuer-projection-installation-ack/v1";
   private static final String EVENT_ID_PREFIX = "account-issuer-authority-event-v1:";
   private static final String PROJECTION_KEY_PREFIX = "session:game:auth:issuer-generation:v1:";
 
@@ -38,8 +54,9 @@ public final class AccountIssuerAuthorityClient
   private final String expectedIssuerId;
 
   /**
-   * Creates a source-only client. Construction does not initialize a channel or enable the RPC. The
-   * supplied customizer is the existing Game Session internal-RPC middleware seam.
+   * Creates an unwired issuer-authority client. Construction does not initialize a channel or
+   * enable its RPCs. The supplied customizer is the existing Game Session internal-RPC middleware
+   * seam.
    */
   public AccountIssuerAuthorityClient(
       ServiceEndpointsProperties endpoints,
@@ -129,6 +146,269 @@ public final class AccountIssuerAuthorityClient
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
             .captureIssuerProjectionForRuntime(request);
     return verifyCaptureResponse(response, requestId);
+  }
+
+  /**
+   * Durably acknowledges only the installer's privately verified local receipt. The returned
+   * evidence is historical Account readback, not current readiness or recipient authorization.
+   */
+  public InstallationAcknowledgmentReceipt acknowledgeInstallation(
+      InstallationReceipt installationReceipt) {
+    VerifiedInstallation installation = verifyInstallationReceipt(installationReceipt);
+    IssuerAuthorityServiceGrpc.IssuerAuthorityServiceBlockingStub currentStub = stub();
+    if (currentStub == null) {
+      throw new IllegalStateException("Account issuer authority client is not initialized");
+    }
+
+    AcknowledgeIssuerProjectionForRuntimeRequest request =
+        AcknowledgeIssuerProjectionForRuntimeRequest.newBuilder()
+            .setIssuerId(expectedIssuerId)
+            .setCaptureOperationId(installation.operationId().toString())
+            .setCaptureRequestId(installation.requestId().toString())
+            .setCaptureRequestDigestVersion(IssuerProjectionReconciliationRequestDigestV1.VERSION)
+            .setCaptureRequestDigest(installation.captureRequestDigest())
+            .setProjectionKey(installation.projectionKey())
+            .setInstalledProjectionJson(installation.projectionJson())
+            .build();
+    AcknowledgeIssuerProjectionForRuntimeResponse response =
+        currentStub
+            .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
+            .acknowledgeIssuerProjectionForRuntime(request);
+    return verifyInstallationAcknowledgmentResponse(response, installation);
+  }
+
+  private VerifiedInstallation verifyInstallationReceipt(InstallationReceipt receipt) {
+    if (receipt == null) {
+      throw invalidInstallationReceipt("receipt is absent");
+    }
+
+    UUID operationId = receipt.operationId();
+    UUID requestId = receipt.requestId();
+    if (operationId == null || requestId == null || isNil(operationId) || isNil(requestId)) {
+      throw invalidInstallationReceipt("capture identity is not canonical non-nil UUID evidence");
+    }
+
+    SourceSnapshot captured = receipt.capturedSource();
+    ProjectionSnapshot projectionSnapshot = receipt.projectionSnapshot();
+    if (captured == null || projectionSnapshot == null) {
+      throw invalidInstallationReceipt("captured source or exact installed projection is absent");
+    }
+
+    String caller = expectedGameSessionWorkloadIdentity();
+    String expectedProjectionKey;
+    try {
+      expectedProjectionKey = IssuerAuthorityProjectionRedisContract.keyForIssuer(expectedIssuerId);
+    } catch (IllegalArgumentException malformedIssuer) {
+      throw invalidInstallationReceipt("configured issuer cannot derive its projection key");
+    }
+    if (!expectedIssuerId.equals(captured.issuerId())
+        || !expectedProjectionKey.equals(projectionSnapshot.key())) {
+      throw invalidInstallationReceipt("issuer or installed projection key changed");
+    }
+
+    String expectedCaptureDigest =
+        IssuerProjectionReconciliationRequestDigestV1.digest(
+            expectedIssuerId, caller, expectedProjectionKey, requestId);
+    if (!expectedCaptureDigest.equals(receipt.requestDigest())) {
+      throw invalidInstallationReceipt("original capture request digest changed");
+    }
+
+    verifyCapturedSource(captured);
+    if (projectionSnapshot.json() == null) {
+      throw invalidInstallationReceipt("exact stored projection readback is absent");
+    }
+    String projectionJson = projectionSnapshot.json();
+    byte[] projectionBytes = encodeUtf8Strict(projectionJson, "installed projection");
+    final IssuerAuthorityProjectionV1Codec.Projection projection;
+    try {
+      projection = IssuerAuthorityProjectionV1Codec.verify(projectionJson);
+    } catch (IllegalArgumentException malformed) {
+      throw invalidInstallationReceipt("installed projection is not a closed valid projection");
+    }
+
+    if (!expectedIssuerId.equals(projection.issuerId())
+        || !captured.sourceScope().equals("issuer/" + projection.issuerId())
+        || !captured.outboxStreamKey().equals(projection.streamKey())
+        || !new BigInteger(captured.issuerAuthGeneration()).equals(projection.generation())
+        || !new BigInteger(captured.sourceVersion()).equals(projection.sourceVersion())
+        || !new BigInteger(captured.outboxSequence()).equals(projection.sequence())
+        || projection.latestEvent().isPresent() != captured.latestEvent().isPresent()
+        || (captured.latestEvent().isPresent()
+            && !captured
+                .latestEvent()
+                .orElseThrow()
+                .canonicalJson()
+                .equals(projection.latestEvent().orElseThrow().canonicalJson()))) {
+      throw invalidInstallationReceipt(
+          "installed projection does not preserve the complete captured checkpoint and event");
+    }
+
+    String requestDigest =
+        IssuerProjectionInstallationAcknowledgmentDigestV1.digest(
+            expectedIssuerId,
+            caller,
+            expectedProjectionKey,
+            operationId,
+            requestId,
+            IssuerProjectionReconciliationRequestDigestV1.VERSION,
+            expectedCaptureDigest,
+            projectionJson);
+    return new VerifiedInstallation(
+        operationId,
+        requestId,
+        caller,
+        expectedProjectionKey,
+        expectedCaptureDigest,
+        projectionJson,
+        projectionBytes,
+        requestDigest);
+  }
+
+  private void verifyCapturedSource(SourceSnapshot captured) {
+    String expectedSourceScope = "issuer/" + expectedIssuerId;
+    String expectedStreamKey =
+        IssuerGenerationAuthorityEventV1Codec.EVENT_STREAM_PREFIX + expectedSourceScope;
+    if (captured == null
+        || !expectedIssuerId.equals(captured.issuerId())
+        || !expectedSourceScope.equals(captured.sourceScope())
+        || !expectedStreamKey.equals(captured.outboxStreamKey())) {
+      throw invalidInstallationReceipt("captured source scope or issuer changed");
+    }
+    BigInteger generation =
+        parseInstallationPositiveDecimal(captured.issuerAuthGeneration(), "issuer generation");
+    BigInteger sourceVersion =
+        parseInstallationPositiveDecimal(captured.sourceVersion(), "source version");
+    BigInteger sequence =
+        parseInstallationNonnegativeDecimal(captured.outboxSequence(), "outbox sequence");
+    IssuerGenerationAuthorityEvent latest = captured.latestEvent().orElse(null);
+    if (sequence.signum() == 0) {
+      if (!BigInteger.ONE.equals(generation)
+          || !BigInteger.ONE.equals(sourceVersion)
+          || latest != null) {
+        throw invalidInstallationReceipt("captured zero checkpoint is not the original baseline");
+      }
+      return;
+    }
+    if (latest == null) {
+      throw invalidInstallationReceipt("positive captured checkpoint has no canonical event");
+    }
+    final IssuerGenerationAuthorityEvent verified;
+    try {
+      verified =
+          verifyEvent(
+              latest.canonicalJson(),
+              "captured source event",
+              expectedIssuerId,
+              captured.sourceScope(),
+              captured.outboxStreamKey());
+    } catch (IllegalStateException malformed) {
+      throw invalidInstallationReceipt("captured source event is invalid", malformed);
+    }
+    if (!sequence.equals(
+            parseInstallationPositiveDecimal(verified.outboxSequence(), "event sequence"))
+        || !generation.equals(
+            parseInstallationPositiveDecimal(verified.issuerAuthGeneration(), "event generation"))
+        || !sourceVersion.equals(
+            parseInstallationPositiveDecimal(verified.sourceVersion(), "event source version"))) {
+      throw invalidInstallationReceipt("captured event does not match its complete checkpoint");
+    }
+  }
+
+  private InstallationAcknowledgmentReceipt verifyInstallationAcknowledgmentResponse(
+      AcknowledgeIssuerProjectionForRuntimeResponse response, VerifiedInstallation installation) {
+    if (response == null) {
+      throw invalidInstallationAcknowledgmentResponse("response is absent");
+    }
+    if (!response.getUnknownFields().asMap().isEmpty() || response.getAllFields().size() != 14) {
+      throw invalidInstallationAcknowledgmentResponse(
+          "response contains unsupported, missing, or defaulted fields");
+    }
+
+    UUID acknowledgmentId;
+    try {
+      acknowledgmentId =
+          parseCanonicalNonNilUuid(response.getAcknowledgmentId(), "acknowledgment ID");
+    } catch (IllegalArgumentException malformed) {
+      throw invalidInstallationAcknowledgmentResponse(
+          "acknowledgment ID is not a canonical non-nil UUID", malformed);
+    }
+
+    String expectedProjectionSha256 = sha256Hex(installation.projectionBytes());
+    if (!INSTALLATION_ACK_SCHEMA_VERSION.equals(response.getSchemaVersion())
+        || !workloadNamespace.equals(response.getTargetNamespace())
+        || !expectedIssuerId.equals(response.getIssuerId())
+        || !installation.callerWorkloadIdentity().equals(response.getCallerWorkloadIdentity())
+        || !installation.projectionKey().equals(response.getProjectionKey())
+        || !installation.operationId().toString().equals(response.getCaptureOperationId())
+        || !installation.requestId().toString().equals(response.getCaptureRequestId())
+        || response.getCaptureRequestDigestVersion()
+            != IssuerProjectionReconciliationRequestDigestV1.VERSION
+        || !installation.captureRequestDigest().equals(response.getCaptureRequestDigest())
+        || response.getRequestDigestVersion()
+            != IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION
+        || !installation.requestDigest().equals(response.getRequestDigest())
+        || !installation.projectionJson().equals(response.getInstalledProjectionJson())
+        || !expectedProjectionSha256.equals(response.getInstalledProjectionSha256())) {
+      throw invalidInstallationAcknowledgmentResponse(
+          "schema, namespace, acknowledgment bindings, digest, or exact projection changed");
+    }
+
+    return new InstallationAcknowledgmentReceipt(
+        acknowledgmentId,
+        installation.operationId(),
+        installation.requestId(),
+        expectedIssuerId,
+        workloadNamespace,
+        installation.callerWorkloadIdentity(),
+        installation.projectionKey(),
+        installation.captureRequestDigest(),
+        IssuerProjectionReconciliationRequestDigestV1.VERSION,
+        installation.requestDigest(),
+        IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION,
+        installation.projectionJson(),
+        expectedProjectionSha256);
+  }
+
+  private static BigInteger parseInstallationPositiveDecimal(String value, String label) {
+    if (value == null || !value.matches("[1-9][0-9]*")) {
+      throw invalidInstallationReceipt(label + " is not a canonical positive decimal");
+    }
+    return new BigInteger(value);
+  }
+
+  private static BigInteger parseInstallationNonnegativeDecimal(String value, String label) {
+    if (value == null || !value.matches("(?:0|[1-9][0-9]*)")) {
+      throw invalidInstallationReceipt(label + " is not a canonical nonnegative decimal");
+    }
+    return new BigInteger(value);
+  }
+
+  private static boolean isNil(UUID value) {
+    return new UUID(0L, 0L).equals(value);
+  }
+
+  private static byte[] encodeUtf8Strict(String value, String label) {
+    try {
+      ByteBuffer encoded =
+          StandardCharsets.UTF_8
+              .newEncoder()
+              .onMalformedInput(CodingErrorAction.REPORT)
+              .onUnmappableCharacter(CodingErrorAction.REPORT)
+              .encode(CharBuffer.wrap(value));
+      byte[] bytes = new byte[encoded.remaining()];
+      encoded.get(bytes);
+      return bytes;
+    } catch (CharacterCodingException malformed) {
+      throw invalidInstallationReceipt(label + " is not exact valid UTF-8 text", malformed);
+    }
+  }
+
+  private static String sha256Hex(byte[] value) {
+    try {
+      return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value));
+    } catch (NoSuchAlgorithmException unavailable) {
+      throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+    }
   }
 
   private SourceReadback read(UUID requestId, BigInteger requestedSequence) {
@@ -410,6 +690,27 @@ public final class AccountIssuerAuthorityClient
         "Account issuer projection capture response " + message, cause);
   }
 
+  private static IllegalArgumentException invalidInstallationReceipt(String message) {
+    return new IllegalArgumentException("Game Session issuer installation receipt " + message);
+  }
+
+  private static IllegalArgumentException invalidInstallationReceipt(
+      String message, Throwable cause) {
+    return new IllegalArgumentException(
+        "Game Session issuer installation receipt " + message, cause);
+  }
+
+  private static IllegalStateException invalidInstallationAcknowledgmentResponse(String message) {
+    return new IllegalStateException(
+        "Account issuer projection installation acknowledgment response " + message);
+  }
+
+  private static IllegalStateException invalidInstallationAcknowledgmentResponse(
+      String message, IllegalArgumentException cause) {
+    return new IllegalStateException(
+        "Account issuer projection installation acknowledgment response " + message, cause);
+  }
+
   private static CommonGrpcClientProperties requireGameSessionMtls(
       CommonGrpcClientProperties tlsProps) {
     if (tlsProps == null) {
@@ -591,6 +892,114 @@ public final class AccountIssuerAuthorityClient
 
     public SourceSnapshot capturedSource() {
       return capturedSource;
+    }
+  }
+
+  private record VerifiedInstallation(
+      UUID operationId,
+      UUID requestId,
+      String callerWorkloadIdentity,
+      String projectionKey,
+      String captureRequestDigest,
+      String projectionJson,
+      byte[] projectionBytes,
+      String requestDigest) {}
+
+  /** Immutable historical Account acknowledgment, not current readiness or recipient authority. */
+  public static final class InstallationAcknowledgmentReceipt {
+    private final UUID acknowledgmentId;
+    private final UUID captureOperationId;
+    private final UUID captureRequestId;
+    private final String issuerId;
+    private final String targetNamespace;
+    private final String callerWorkloadIdentity;
+    private final String projectionKey;
+    private final String captureRequestDigest;
+    private final int captureRequestDigestVersion;
+    private final String requestDigest;
+    private final int requestDigestVersion;
+    private final String installedProjectionJson;
+    private final String installedProjectionSha256;
+
+    private InstallationAcknowledgmentReceipt(
+        UUID acknowledgmentId,
+        UUID captureOperationId,
+        UUID captureRequestId,
+        String issuerId,
+        String targetNamespace,
+        String callerWorkloadIdentity,
+        String projectionKey,
+        String captureRequestDigest,
+        int captureRequestDigestVersion,
+        String requestDigest,
+        int requestDigestVersion,
+        String installedProjectionJson,
+        String installedProjectionSha256) {
+      this.acknowledgmentId = acknowledgmentId;
+      this.captureOperationId = captureOperationId;
+      this.captureRequestId = captureRequestId;
+      this.issuerId = issuerId;
+      this.targetNamespace = targetNamespace;
+      this.callerWorkloadIdentity = callerWorkloadIdentity;
+      this.projectionKey = projectionKey;
+      this.captureRequestDigest = captureRequestDigest;
+      this.captureRequestDigestVersion = captureRequestDigestVersion;
+      this.requestDigest = requestDigest;
+      this.requestDigestVersion = requestDigestVersion;
+      this.installedProjectionJson = installedProjectionJson;
+      this.installedProjectionSha256 = installedProjectionSha256;
+    }
+
+    public UUID acknowledgmentId() {
+      return acknowledgmentId;
+    }
+
+    public UUID captureOperationId() {
+      return captureOperationId;
+    }
+
+    public UUID captureRequestId() {
+      return captureRequestId;
+    }
+
+    public String issuerId() {
+      return issuerId;
+    }
+
+    public String targetNamespace() {
+      return targetNamespace;
+    }
+
+    public String callerWorkloadIdentity() {
+      return callerWorkloadIdentity;
+    }
+
+    public String projectionKey() {
+      return projectionKey;
+    }
+
+    public String captureRequestDigest() {
+      return captureRequestDigest;
+    }
+
+    public int captureRequestDigestVersion() {
+      return captureRequestDigestVersion;
+    }
+
+    public String requestDigest() {
+      return requestDigest;
+    }
+
+    public int requestDigestVersion() {
+      return requestDigestVersion;
+    }
+
+    public String installedProjectionJson() {
+      return installedProjectionJson;
+    }
+
+    public String installedProjectionSha256() {
+      return installedProjectionSha256;
     }
   }
 }

@@ -12,24 +12,31 @@ import static org.mockito.Mockito.when;
 import io.grpc.Context;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeRequest;
 import net.firedevops.firemud.account.v1.CaptureIssuerProjectionForRuntimeResponse;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeRequest;
 import net.firedevops.firemud.account.v1.ReadIssuerAuthorityForRuntimeResponse;
+import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionAcknowledgmentRepository.Acknowledgment;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository.Receipt;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityGrpcService;
+import net.firedevops.firemud.accountservice.service.AccountIssuerProjectionAcknowledgmentService;
 import net.firedevops.firemud.accountservice.service.AccountIssuerProjectionReconciliationService;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionInstallationAcknowledgmentDigestV1;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.TransientDataAccessResourceException;
@@ -45,22 +52,38 @@ class AccountIssuerAuthorityGrpcServiceTest {
       "spiffe://firemud/ns/" + NAMESPACE + "/sa/game-session-service";
   private static final String REQUEST_ID = "f50e8400-e29b-41d4-a716-446655440000";
   private static final UUID OPERATION_ID = UUID.fromString("91b0eb2d-f7b1-4d88-8db4-2b81cacfc96a");
+  private static final UUID ACKNOWLEDGMENT_ID =
+      UUID.fromString("f50e8400-e29b-41d4-a716-446655440001");
   private static final GrpcPeerIdentity GAME_SESSION_PEER =
       new GrpcPeerIdentity(GAME_SESSION_URI, NAMESPACE, "game-session-service");
 
   @Test
   void constructorRequiresProducerAndValidWorkloadNamespace() {
     assertThatThrownBy(
-            () -> new AccountIssuerAuthorityGrpcService(null, mockCaptureService(), NAMESPACE))
+            () ->
+                new AccountIssuerAuthorityGrpcService(
+                    null, mockCaptureService(), mockAcknowledgmentService(), NAMESPACE))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("producer");
-    assertThatThrownBy(() -> new AccountIssuerAuthorityGrpcService(mockProducer(), null, NAMESPACE))
+    assertThatThrownBy(
+            () ->
+                new AccountIssuerAuthorityGrpcService(
+                    mockProducer(), null, mockAcknowledgmentService(), NAMESPACE))
         .isInstanceOf(NullPointerException.class)
         .hasMessageContaining("reconciliation service");
     assertThatThrownBy(
             () ->
                 new AccountIssuerAuthorityGrpcService(
-                    mockProducer(), mockCaptureService(), "Invalid_Namespace"))
+                    mockProducer(), mockCaptureService(), null, NAMESPACE))
+        .isInstanceOf(NullPointerException.class)
+        .hasMessageContaining("acknowledgment service");
+    assertThatThrownBy(
+            () ->
+                new AccountIssuerAuthorityGrpcService(
+                    mockProducer(),
+                    mockCaptureService(),
+                    mockAcknowledgmentService(),
+                    "Invalid_Namespace"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("namespace");
   }
@@ -496,15 +519,198 @@ class AccountIssuerAuthorityGrpcServiceTest {
     verifyNoInteractions(producer);
   }
 
+  @Test
+  void acknowledgmentRequiresExactCertificatePeerBeforeParsingOrOwnerAccess() {
+    AccountIssuerAuthorityEventProducer producer = mockProducer();
+    AccountIssuerProjectionReconciliationService captureService = mockCaptureService();
+    AccountIssuerProjectionAcknowledgmentService acknowledgmentService =
+        mockAcknowledgmentService();
+    AccountIssuerAuthorityGrpcService service =
+        newService(producer, captureService, acknowledgmentService);
+    AcknowledgeIssuerProjectionForRuntimeRequest malformed =
+        AcknowledgeIssuerProjectionForRuntimeRequest.newBuilder().setIssuerId(" ").build();
+
+    Outcome<AcknowledgeIssuerProjectionForRuntimeResponse> wrongPeer =
+        invokeAcknowledgment(
+            service,
+            malformed,
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/" + NAMESPACE + "/sa/account-service",
+                NAMESPACE,
+                "account-service"));
+    Outcome<AcknowledgeIssuerProjectionForRuntimeResponse> missingPeer =
+        invokeAcknowledgmentWithoutPeer(service, malformed);
+
+    assertFailure(wrongPeer, Status.Code.PERMISSION_DENIED);
+    assertFailure(missingPeer, Status.Code.PERMISSION_DENIED);
+    verifyNoInteractions(producer, captureService, acknowledgmentService);
+  }
+
+  @Test
+  void acknowledgmentRejectsUnknownFieldsAndMalformedBindingsBeforeOwnerAccess() {
+    AccountIssuerAuthorityEventProducer producer = mockProducer();
+    AccountIssuerProjectionReconciliationService captureService = mockCaptureService();
+    AccountIssuerProjectionAcknowledgmentService acknowledgmentService =
+        mockAcknowledgmentService();
+    AccountIssuerAuthorityGrpcService service =
+        newService(producer, captureService, acknowledgmentService);
+    AcknowledgeIssuerProjectionForRuntimeRequest valid = validAcknowledgmentRequest();
+    List<AcknowledgeIssuerProjectionForRuntimeRequest> invalidRequests =
+        List.of(
+            valid.toBuilder()
+                .setUnknownFields(
+                    com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(
+                            99,
+                            com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                .addVarint(1L)
+                                .build())
+                        .build())
+                .build(),
+            valid.toBuilder().setCaptureOperationId("91B0EB2D-F7B1-4D88-8DB4-2B81CACFC96A").build(),
+            valid.toBuilder().setCaptureOperationId("00000000-0000-0000-0000-000000000000").build(),
+            valid.toBuilder().setCaptureRequestId("f50e8400-e29b-41d4-a716-446655440000 ").build(),
+            valid.toBuilder().setCaptureRequestDigestVersion(2).build(),
+            valid.toBuilder().setCaptureRequestDigest("A".repeat(64)).build(),
+            valid.toBuilder().setProjectionKey(PROJECTION_KEY + ":other").build(),
+            valid.toBuilder().setInstalledProjectionJson("{").build(),
+            valid.toBuilder().setInstalledProjectionJson("[]").build(),
+            valid.toBuilder()
+                .setInstalledProjectionJson(
+                    projectionJson().replace("lastAppliedIssuerGeneration", "unexpected"))
+                .build());
+
+    for (AcknowledgeIssuerProjectionForRuntimeRequest invalidRequest : invalidRequests) {
+      assertFailure(
+          invokeAcknowledgment(service, invalidRequest, GAME_SESSION_PEER),
+          Status.Code.INVALID_ARGUMENT);
+    }
+
+    verifyNoInteractions(producer, captureService, acknowledgmentService);
+  }
+
+  @Test
+  void acknowledgmentReturnsTheCompleteOwnerResultAfterExactBindingValidation() {
+    AccountIssuerAuthorityEventProducer producer = mockProducer();
+    AccountIssuerProjectionReconciliationService captureService = mockCaptureService();
+    AccountIssuerProjectionAcknowledgmentService acknowledgmentService =
+        mockAcknowledgmentService();
+    AcknowledgeIssuerProjectionForRuntimeRequest request = validAcknowledgmentRequest();
+    Acknowledgment original = validAcknowledgment();
+    when(acknowledgmentService.acknowledge(
+            ISSUER_ID,
+            GAME_SESSION_URI,
+            OPERATION_ID,
+            UUID.fromString(REQUEST_ID),
+            1,
+            captureDigest(),
+            projectionJson()))
+        .thenReturn(original);
+    AccountIssuerAuthorityGrpcService service =
+        newService(producer, captureService, acknowledgmentService);
+
+    Outcome<AcknowledgeIssuerProjectionForRuntimeResponse> outcome =
+        invokeAcknowledgment(service, request, GAME_SESSION_PEER);
+
+    AcknowledgeIssuerProjectionForRuntimeResponse response = assertSuccess(outcome);
+    assertThat(response.getSchemaVersion())
+        .isEqualTo("account-auth-issuer-projection-installation-ack/v1");
+    assertThat(response.getTargetNamespace()).isEqualTo(NAMESPACE);
+    assertThat(response.getAcknowledgmentId()).isEqualTo(ACKNOWLEDGMENT_ID.toString());
+    assertThat(response.getIssuerId()).isEqualTo(ISSUER_ID);
+    assertThat(response.getCallerWorkloadIdentity()).isEqualTo(GAME_SESSION_URI);
+    assertThat(response.getProjectionKey()).isEqualTo(PROJECTION_KEY);
+    assertThat(response.getCaptureOperationId()).isEqualTo(OPERATION_ID.toString());
+    assertThat(response.getCaptureRequestId()).isEqualTo(REQUEST_ID);
+    assertThat(response.getCaptureRequestDigestVersion()).isEqualTo(1);
+    assertThat(response.getCaptureRequestDigest()).isEqualTo(captureDigest());
+    assertThat(response.getRequestDigestVersion()).isEqualTo(1);
+    assertThat(response.getRequestDigest()).isEqualTo(original.requestDigest());
+    assertThat(response.getInstalledProjectionJson()).isEqualTo(projectionJson());
+    assertThat(response.getInstalledProjectionSha256())
+        .isEqualTo(java.util.HexFormat.of().formatHex(original.installedProjectionSha256()));
+    verify(acknowledgmentService)
+        .acknowledge(
+            ISSUER_ID,
+            GAME_SESSION_URI,
+            OPERATION_ID,
+            UUID.fromString(REQUEST_ID),
+            1,
+            captureDigest(),
+            projectionJson());
+    verifyNoInteractions(producer, captureService);
+  }
+
+  @Test
+  void acknowledgmentMapsConflictInvalidAuthenticationStaleAndTransientFailures() {
+    assertAcknowledgmentFailure(
+        new AccountIssuerProjectionReconciliationRepository.IdempotencyConflictException(
+            "private conflict detail"),
+        Status.Code.ALREADY_EXISTS);
+    assertAcknowledgmentFailure(
+        new IllegalArgumentException("private malformed detail"), Status.Code.INVALID_ARGUMENT);
+    assertAcknowledgmentFailure(
+        new SecurityException("private identity detail"), Status.Code.PERMISSION_DENIED);
+    assertAcknowledgmentFailure(
+        new IllegalStateException(
+            "First issuer installation acknowledgment requires the captured source to remain current"),
+        Status.Code.FAILED_PRECONDITION);
+    assertAcknowledgmentFailure(
+        new TransientDataAccessResourceException("database detail"), Status.Code.UNAVAILABLE);
+
+    AccountIssuerProjectionAcknowledgmentService unavailableEvidence = mockAcknowledgmentService();
+    when(unavailableEvidence.acknowledge(
+            ISSUER_ID,
+            GAME_SESSION_URI,
+            OPERATION_ID,
+            UUID.fromString(REQUEST_ID),
+            1,
+            captureDigest(),
+            projectionJson()))
+        .thenThrow(new IllegalStateException("Post-commit acknowledgment readback is missing"));
+    Outcome<AcknowledgeIssuerProjectionForRuntimeResponse> unavailable =
+        invokeAcknowledgment(
+            newService(mockProducer(), mockCaptureService(), unavailableEvidence),
+            validAcknowledgmentRequest(),
+            GAME_SESSION_PEER);
+    assertFailure(unavailable, Status.Code.FAILED_PRECONDITION);
+    assertThat(unavailable.error().getDescription()).doesNotContain("readback is missing");
+
+    AccountIssuerProjectionAcknowledgmentService invalidResult = mockAcknowledgmentService();
+    when(invalidResult.acknowledge(
+            ISSUER_ID,
+            GAME_SESSION_URI,
+            OPERATION_ID,
+            UUID.fromString(REQUEST_ID),
+            1,
+            captureDigest(),
+            projectionJson()))
+        .thenReturn(null);
+    Outcome<AcknowledgeIssuerProjectionForRuntimeResponse> contradictory =
+        invokeAcknowledgment(
+            newService(mockProducer(), mockCaptureService(), invalidResult),
+            validAcknowledgmentRequest(),
+            GAME_SESSION_PEER);
+    assertFailure(contradictory, Status.Code.DATA_LOSS);
+  }
+
   private static AccountIssuerAuthorityGrpcService newService(
       AccountIssuerAuthorityEventProducer producer) {
-    return newService(producer, mockCaptureService());
+    return newService(producer, mockCaptureService(), mockAcknowledgmentService());
   }
 
   private static AccountIssuerAuthorityGrpcService newService(
       AccountIssuerAuthorityEventProducer producer,
       AccountIssuerProjectionReconciliationService captureService) {
-    return new AccountIssuerAuthorityGrpcService(producer, captureService, NAMESPACE);
+    return newService(producer, captureService, mockAcknowledgmentService());
+  }
+
+  private static AccountIssuerAuthorityGrpcService newService(
+      AccountIssuerAuthorityEventProducer producer,
+      AccountIssuerProjectionReconciliationService captureService,
+      AccountIssuerProjectionAcknowledgmentService acknowledgmentService) {
+    return new AccountIssuerAuthorityGrpcService(
+        producer, captureService, acknowledgmentService, NAMESPACE);
   }
 
   private static AccountIssuerAuthorityEventProducer mockProducer() {
@@ -513,6 +719,10 @@ class AccountIssuerAuthorityGrpcServiceTest {
 
   private static AccountIssuerProjectionReconciliationService mockCaptureService() {
     return mock(AccountIssuerProjectionReconciliationService.class);
+  }
+
+  private static AccountIssuerProjectionAcknowledgmentService mockAcknowledgmentService() {
+    return mock(AccountIssuerProjectionAcknowledgmentService.class);
   }
 
   private static ReadIssuerAuthorityForRuntimeRequest validRequest() {
@@ -527,6 +737,94 @@ class AccountIssuerAuthorityGrpcServiceTest {
         .setIssuerId(ISSUER_ID)
         .setRequestId(REQUEST_ID)
         .build();
+  }
+
+  private static AcknowledgeIssuerProjectionForRuntimeRequest validAcknowledgmentRequest() {
+    return AcknowledgeIssuerProjectionForRuntimeRequest.newBuilder()
+        .setIssuerId(ISSUER_ID)
+        .setCaptureOperationId(OPERATION_ID.toString())
+        .setCaptureRequestId(REQUEST_ID)
+        .setCaptureRequestDigestVersion(1)
+        .setCaptureRequestDigest(captureDigest())
+        .setProjectionKey(PROJECTION_KEY)
+        .setInstalledProjectionJson(projectionJson())
+        .build();
+  }
+
+  private static Acknowledgment validAcknowledgment() {
+    byte[] projectionBytes = projectionJson().getBytes(StandardCharsets.UTF_8);
+    String acknowledgmentDigest =
+        IssuerProjectionInstallationAcknowledgmentDigestV1.digest(
+            ISSUER_ID,
+            GAME_SESSION_URI,
+            PROJECTION_KEY,
+            OPERATION_ID,
+            UUID.fromString(REQUEST_ID),
+            1,
+            captureDigest(),
+            projectionJson());
+    return new Acknowledgment(
+        ACKNOWLEDGMENT_ID,
+        OPERATION_ID,
+        UUID.fromString(REQUEST_ID),
+        ISSUER_ID,
+        GAME_SESSION_URI,
+        PROJECTION_KEY,
+        1,
+        captureDigest(),
+        1,
+        acknowledgmentDigest,
+        projectionBytes,
+        sha256(projectionBytes));
+  }
+
+  private static String projectionJson() {
+    return "{\"schemaVersion\":\"game-session-auth-issuer-projection/v1\","
+        + "\"issuerId\":\""
+        + ISSUER_ID
+        + "\","
+        + "\"lastAppliedIssuerGeneration\":\"1\","
+        + "\"lastAppliedSourceOutboxSequence\":\"0\","
+        + "\"outboxStreamKey\":\""
+        + STREAM_KEY
+        + "\","
+        + "\"appliedAt\":\"2026-10-03T00:00:00Z\","
+        + "\"appliedSourceEvidence\":{}}";
+  }
+
+  private static String captureDigest() {
+    return Receipt.requestDigestFor(
+        ISSUER_ID, GAME_SESSION_URI, PROJECTION_KEY, UUID.fromString(REQUEST_ID));
+  }
+
+  private static byte[] sha256(byte[] value) {
+    try {
+      return MessageDigest.getInstance("SHA-256").digest(value);
+    } catch (java.security.NoSuchAlgorithmException unavailable) {
+      throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+    }
+  }
+
+  private static void assertAcknowledgmentFailure(
+      RuntimeException failure, Status.Code expectedCode) {
+    AccountIssuerProjectionAcknowledgmentService acknowledgmentService =
+        mockAcknowledgmentService();
+    when(acknowledgmentService.acknowledge(
+            ISSUER_ID,
+            GAME_SESSION_URI,
+            OPERATION_ID,
+            UUID.fromString(REQUEST_ID),
+            1,
+            captureDigest(),
+            projectionJson()))
+        .thenThrow(failure);
+    Outcome<AcknowledgeIssuerProjectionForRuntimeResponse> outcome =
+        invokeAcknowledgment(
+            newService(mockProducer(), mockCaptureService(), acknowledgmentService),
+            validAcknowledgmentRequest(),
+            GAME_SESSION_PEER);
+    assertFailure(outcome, expectedCode);
+    assertThat(outcome.error().getDescription()).doesNotContain(failure.getMessage());
   }
 
   private static IssuerAuthoritySnapshot baseline() {
@@ -580,6 +878,32 @@ class AccountIssuerAuthorityGrpcServiceTest {
     RecordingObserver<CaptureIssuerProjectionForRuntimeResponse> observer =
         new RecordingObserver<>();
     service.captureIssuerProjectionForRuntime(request, observer);
+    return observer.outcome();
+  }
+
+  private static Outcome<AcknowledgeIssuerProjectionForRuntimeResponse> invokeAcknowledgment(
+      AccountIssuerAuthorityGrpcService service,
+      AcknowledgeIssuerProjectionForRuntimeRequest request,
+      GrpcPeerIdentity peerIdentity) {
+    Context peerContext = Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peerIdentity);
+    Context previous = peerContext.attach();
+    try {
+      RecordingObserver<AcknowledgeIssuerProjectionForRuntimeResponse> observer =
+          new RecordingObserver<>();
+      service.acknowledgeIssuerProjectionForRuntime(request, observer);
+      return observer.outcome();
+    } finally {
+      peerContext.detach(previous);
+    }
+  }
+
+  private static Outcome<AcknowledgeIssuerProjectionForRuntimeResponse>
+      invokeAcknowledgmentWithoutPeer(
+          AccountIssuerAuthorityGrpcService service,
+          AcknowledgeIssuerProjectionForRuntimeRequest request) {
+    RecordingObserver<AcknowledgeIssuerProjectionForRuntimeResponse> observer =
+        new RecordingObserver<>();
+    service.acknowledgeIssuerProjectionForRuntime(request, observer);
     return observer.outcome();
   }
 

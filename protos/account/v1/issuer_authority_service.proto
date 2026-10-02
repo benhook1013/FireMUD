@@ -5,13 +5,15 @@ package account.v1;
 option java_package = "net.firedevops.firemud.account.v1";
 option java_multiple_files = true;
 
-// Owner-local source evidence only; this service is not wired for runtime use.
+// Owner-local issuer evidence handoffs only; this service is not wired for runtime use.
 // Caller and response workload identities must both be verified from mTLS.
 service IssuerAuthorityService {
   rpc ReadIssuerAuthorityForRuntime(ReadIssuerAuthorityForRuntimeRequest)
       returns (ReadIssuerAuthorityForRuntimeResponse);
   rpc CaptureIssuerProjectionForRuntime(CaptureIssuerProjectionForRuntimeRequest)
       returns (CaptureIssuerProjectionForRuntimeResponse);
+  rpc AcknowledgeIssuerProjectionForRuntime(AcknowledgeIssuerProjectionForRuntimeRequest)
+      returns (AcknowledgeIssuerProjectionForRuntimeResponse);
 }
 
 message ReadIssuerAuthorityForRuntimeRequest {
@@ -57,4 +59,31 @@ message CaptureIssuerProjectionForRuntimeResponse {
   uint32 request_digest_version = 8;
   string request_digest = 9;
   IssuerAuthoritySourceSnapshot captured_source_snapshot = 10;
+}
+
+message AcknowledgeIssuerProjectionForRuntimeRequest {
+  string issuer_id = 1;
+  string capture_operation_id = 2;
+  string capture_request_id = 3;
+  uint32 capture_request_digest_version = 4;
+  string capture_request_digest = 5;
+  string projection_key = 6;
+  string installed_projection_json = 7;
+}
+
+message AcknowledgeIssuerProjectionForRuntimeResponse {
+  string schema_version = 1;
+  string target_namespace = 2;
+  string acknowledgment_id = 3;
+  string issuer_id = 4;
+  string caller_workload_identity = 5;
+  string projection_key = 6;
+  string capture_operation_id = 7;
+  string capture_request_id = 8;
+  uint32 capture_request_digest_version = 9;
+  string capture_request_digest = 10;
+  uint32 request_digest_version = 11;
+  string request_digest = 12;
+  string installed_projection_json = 13;
+  string installed_projection_sha256 = 14;
 }

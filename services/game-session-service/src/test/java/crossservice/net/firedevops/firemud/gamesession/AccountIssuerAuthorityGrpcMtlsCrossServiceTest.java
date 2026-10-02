@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.grpc.ManagedChannel;
 import io.grpc.Server;
 import io.grpc.ServerInterceptors;
 import io.grpc.Status;
@@ -26,6 +27,7 @@ import java.security.KeyStore;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,14 +37,20 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeRequest;
+import net.firedevops.firemud.account.v1.AcknowledgeIssuerProjectionForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssuerAuthorityServiceGrpc;
+import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionAcknowledgmentRepository.Acknowledgment;
 import net.firedevops.firemud.accountservice.repository.AccountIssuerProjectionReconciliationRepository.Receipt;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthorityEventReadback;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityEventProducer.IssuerAuthoritySnapshot;
 import net.firedevops.firemud.accountservice.service.AccountIssuerAuthorityGrpcService;
+import net.firedevops.firemud.accountservice.service.AccountIssuerProjectionAcknowledgmentService;
 import net.firedevops.firemud.accountservice.service.AccountIssuerProjectionReconciliationService;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec;
 import net.firedevops.firemud.common.account.authority.IssuerGenerationAuthorityEventV1Codec.IssuerGenerationAuthorityEvent;
+import net.firedevops.firemud.common.account.authority.IssuerProjectionInstallationAcknowledgmentDigestV1;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
@@ -55,7 +63,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-/** Physical mutual-TLS proof for the deliberately unwired issuer-source readback and capture. */
+/** Physical mutual-TLS proof for the deliberately unwired issuer-source handoffs. */
 class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
   @TempDir private Path tempDir;
 
@@ -75,6 +83,10 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
   private static final String ZERO_CAPTURE_REQUEST_ID = "55555555-5555-4555-8555-555555555555";
   private static final String POSITIVE_CAPTURE_REQUEST_ID = "66666666-6666-4666-8666-666666666666";
   private static final String CAPTURE_EVENT_REQUEST_ID = "77777777-7777-4777-8777-777777777777";
+  private static final String ACK_OPERATION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  private static final String ACK_REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  private static final String ACK_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  private static final String ACK_CAPTURE_DIGEST = "a".repeat(64);
 
   @Test
   void exactWorkloadIdentitiesCarryCurrentAndHistoricalReadbacksOverSocketMtls() throws Exception {
@@ -175,6 +187,105 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
     }
   }
 
+  @Test
+  void exactGameSessionPeerCarriesTheClosedInstallationAcknowledgmentOverSocketMtls()
+      throws Exception {
+    String projectionJson = zeroProjectionJson();
+    UUID operationId = UUID.fromString(ACK_OPERATION_ID);
+    UUID requestId = UUID.fromString(ACK_REQUEST_ID);
+    String projectionKey = "session:game:auth:issuer-generation:v1:" + ISSUER_ID;
+    String requestDigest =
+        Acknowledgment.requestDigestFor(
+            ISSUER_ID,
+            GAME_SESSION_PEER_URI,
+            projectionKey,
+            operationId,
+            requestId,
+            1,
+            ACK_CAPTURE_DIGEST,
+            projectionJson);
+    byte[] projectionBytes = projectionJson.getBytes(StandardCharsets.UTF_8);
+    Acknowledgment acknowledgment =
+        new Acknowledgment(
+            UUID.fromString(ACK_ID),
+            operationId,
+            requestId,
+            ISSUER_ID,
+            GAME_SESSION_PEER_URI,
+            projectionKey,
+            1,
+            ACK_CAPTURE_DIGEST,
+            IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION,
+            requestDigest,
+            projectionBytes,
+            sha256(projectionBytes));
+    AcknowledgeIssuerProjectionForRuntimeRequest request =
+        AcknowledgeIssuerProjectionForRuntimeRequest.newBuilder()
+            .setIssuerId(ISSUER_ID)
+            .setCaptureOperationId(ACK_OPERATION_ID)
+            .setCaptureRequestId(ACK_REQUEST_ID)
+            .setCaptureRequestDigestVersion(1)
+            .setCaptureRequestDigest(ACK_CAPTURE_DIGEST)
+            .setProjectionKey(projectionKey)
+            .setInstalledProjectionJson(projectionJson)
+            .build();
+    AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
+    AccountIssuerProjectionReconciliationService captureService =
+        mock(AccountIssuerProjectionReconciliationService.class);
+    AccountIssuerProjectionAcknowledgmentService acknowledgmentService =
+        mock(AccountIssuerProjectionAcknowledgmentService.class);
+    when(acknowledgmentService.acknowledge(
+            ISSUER_ID,
+            GAME_SESSION_PEER_URI,
+            operationId,
+            requestId,
+            1,
+            ACK_CAPTURE_DIGEST,
+            projectionJson))
+        .thenReturn(acknowledgment);
+    Server server = startServer("account", producer, captureService, acknowledgmentService);
+
+    ManagedChannel channel = newRawClientChannel(server.getPort(), "game-session");
+    try {
+      AcknowledgeIssuerProjectionForRuntimeResponse response =
+          IssuerAuthorityServiceGrpc.newBlockingStub(channel)
+              .withDeadlineAfter(5, TimeUnit.SECONDS)
+              .acknowledgeIssuerProjectionForRuntime(request);
+
+      assertThat(response.getAllFields()).hasSize(14);
+      assertThat(response.getSchemaVersion())
+          .isEqualTo("account-auth-issuer-projection-installation-ack/v1");
+      assertThat(response.getTargetNamespace()).isEqualTo(NAMESPACE);
+      assertThat(response.getAcknowledgmentId()).isEqualTo(ACK_ID);
+      assertThat(response.getIssuerId()).isEqualTo(ISSUER_ID);
+      assertThat(response.getCallerWorkloadIdentity()).isEqualTo(GAME_SESSION_PEER_URI);
+      assertThat(response.getProjectionKey()).isEqualTo(projectionKey);
+      assertThat(response.getCaptureOperationId()).isEqualTo(ACK_OPERATION_ID);
+      assertThat(response.getCaptureRequestId()).isEqualTo(ACK_REQUEST_ID);
+      assertThat(response.getCaptureRequestDigestVersion()).isEqualTo(1);
+      assertThat(response.getCaptureRequestDigest()).isEqualTo(ACK_CAPTURE_DIGEST);
+      assertThat(response.getRequestDigestVersion())
+          .isEqualTo(IssuerProjectionInstallationAcknowledgmentDigestV1.VERSION);
+      assertThat(response.getRequestDigest()).isEqualTo(requestDigest);
+      assertThat(response.getInstalledProjectionJson()).isEqualTo(projectionJson);
+      assertThat(response.getInstalledProjectionSha256())
+          .isEqualTo(HexFormat.of().formatHex(sha256(projectionBytes)));
+      verify(acknowledgmentService)
+          .acknowledge(
+              ISSUER_ID,
+              GAME_SESSION_PEER_URI,
+              operationId,
+              requestId,
+              1,
+              ACK_CAPTURE_DIGEST,
+              projectionJson);
+      verifyNoInteractions(producer, captureService);
+    } finally {
+      shutdown(channel);
+      stop(server);
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"wrong-service", "wrong-namespace"})
   void trustedButWrongGameSessionPeerIsDeniedBeforeProducerAccess(String clientIdentity)
@@ -219,12 +330,43 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
     }
   }
 
+  @ParameterizedTest(name = "acknowledgment caller {0}")
+  @ValueSource(strings = {"wrong-service", "wrong-namespace"})
+  void trustedButWrongGameSessionPeerIsDeniedBeforeAcknowledgmentOwnerAccess(String clientIdentity)
+      throws Exception {
+    AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
+    AccountIssuerProjectionReconciliationService captureService =
+        mock(AccountIssuerProjectionReconciliationService.class);
+    AccountIssuerProjectionAcknowledgmentService acknowledgmentService =
+        mock(AccountIssuerProjectionAcknowledgmentService.class);
+    Server server = startServer("account", producer, captureService, acknowledgmentService);
+    ManagedChannel channel = newRawClientChannel(server.getPort(), clientIdentity);
+    try {
+      assertThatThrownBy(
+              () ->
+                  IssuerAuthorityServiceGrpc.newBlockingStub(channel)
+                      .withDeadlineAfter(5, TimeUnit.SECONDS)
+                      .acknowledgeIssuerProjectionForRuntime(validAcknowledgmentRequest()))
+          .isInstanceOf(StatusRuntimeException.class)
+          .satisfies(
+              failure ->
+                  assertThat(Status.fromThrowable(failure).getCode())
+                      .isEqualTo(Status.Code.PERMISSION_DENIED));
+      verifyNoInteractions(acknowledgmentService, captureService, producer);
+    } finally {
+      shutdown(channel);
+      stop(server);
+    }
+  }
+
   @Test
   void missingClientCertificateFailsTheRequiredTlsHandshakeBeforeProducerAccess() throws Exception {
     AccountIssuerAuthorityEventProducer producer = mock(AccountIssuerAuthorityEventProducer.class);
     AccountIssuerProjectionReconciliationService captureService =
         mock(AccountIssuerProjectionReconciliationService.class);
-    Server server = startServer("account", producer, captureService);
+    AccountIssuerProjectionAcknowledgmentService acknowledgmentService =
+        mock(AccountIssuerProjectionAcknowledgmentService.class);
+    Server server = startServer("account", producer, captureService, acknowledgmentService);
     SSLContext trustOnlyClientContext = trustOnlyClientContext();
     try {
       Throwable handshakeFailure =
@@ -263,6 +405,7 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
           .isTrue();
       verifyNoInteractions(producer);
       verifyNoInteractions(captureService);
+      verifyNoInteractions(acknowledgmentService);
     } finally {
       stop(server);
     }
@@ -348,6 +491,50 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
         capturedSource);
   }
 
+  private static AcknowledgeIssuerProjectionForRuntimeRequest validAcknowledgmentRequest() {
+    return AcknowledgeIssuerProjectionForRuntimeRequest.newBuilder()
+        .setIssuerId(ISSUER_ID)
+        .setCaptureOperationId(ACK_OPERATION_ID)
+        .setCaptureRequestId(ACK_REQUEST_ID)
+        .setCaptureRequestDigestVersion(1)
+        .setCaptureRequestDigest(ACK_CAPTURE_DIGEST)
+        .setProjectionKey("session:game:auth:issuer-generation:v1:" + ISSUER_ID)
+        .setInstalledProjectionJson(zeroProjectionJson())
+        .build();
+  }
+
+  private static String zeroProjectionJson() {
+    return "{\"schemaVersion\":\"game-session-auth-issuer-projection/v1\","
+        + "\"issuerId\":\""
+        + ISSUER_ID
+        + "\",\"lastAppliedIssuerGeneration\":\"1\","
+        + "\"lastAppliedSourceOutboxSequence\":\"0\",\"outboxStreamKey\":\""
+        + STREAM_KEY
+        + "\",\"appliedAt\":\"2026-10-03T09:30:00Z\","
+        + "\"appliedSourceEvidence\":{}}";
+  }
+
+  private static byte[] sha256(byte[] value) {
+    try {
+      return java.security.MessageDigest.getInstance("SHA-256").digest(value);
+    } catch (java.security.NoSuchAlgorithmException unavailable) {
+      throw new IllegalStateException("SHA-256 is unavailable", unavailable);
+    }
+  }
+
+  private ManagedChannel newRawClientChannel(int port, String clientIdentity) throws Exception {
+    CommonGrpcClientProperties tls = new CommonGrpcClientProperties();
+    tls.setCertChain(certificate(clientIdentity + ".crt").toString());
+    tls.setPrivateKey(certificate(clientIdentity + ".key").toString());
+    tls.setCaCert(certificate("ca.crt").toString());
+    return new GrpcChannelFactory().buildChannel("localhost:" + port, 6565, tls, false);
+  }
+
+  private static void shutdown(ManagedChannel channel) throws InterruptedException {
+    channel.shutdownNow();
+    channel.awaitTermination(2, TimeUnit.SECONDS);
+  }
+
   private AccountIssuerAuthorityClient newClient(int port, String clientIdentity) throws Exception {
     ServiceEndpointsProperties endpoints = new ServiceEndpointsProperties();
     endpoints.setAccountService("localhost:" + port);
@@ -367,13 +554,29 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
   private Server startServer(String serverIdentity, AccountIssuerAuthorityEventProducer producer)
       throws Exception {
     return startServer(
-        serverIdentity, producer, mock(AccountIssuerProjectionReconciliationService.class));
+        serverIdentity,
+        producer,
+        mock(AccountIssuerProjectionReconciliationService.class),
+        mock(AccountIssuerProjectionAcknowledgmentService.class));
   }
 
   private Server startServer(
       String serverIdentity,
       AccountIssuerAuthorityEventProducer producer,
       AccountIssuerProjectionReconciliationService captureService)
+      throws Exception {
+    return startServer(
+        serverIdentity,
+        producer,
+        captureService,
+        mock(AccountIssuerProjectionAcknowledgmentService.class));
+  }
+
+  private Server startServer(
+      String serverIdentity,
+      AccountIssuerAuthorityEventProducer producer,
+      AccountIssuerProjectionReconciliationService captureService,
+      AccountIssuerProjectionAcknowledgmentService acknowledgmentService)
       throws Exception {
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .sslContext(
@@ -385,7 +588,8 @@ class AccountIssuerAuthorityGrpcMtlsCrossServiceTest {
                 .build())
         .addService(
             ServerInterceptors.intercept(
-                new AccountIssuerAuthorityGrpcService(producer, captureService, NAMESPACE),
+                new AccountIssuerAuthorityGrpcService(
+                    producer, captureService, acknowledgmentService, NAMESPACE),
                 new GrpcPeerIdentityInterceptor()))
         .build()
         .start();
