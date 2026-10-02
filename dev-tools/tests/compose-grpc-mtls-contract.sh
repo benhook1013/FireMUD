@@ -13,16 +13,16 @@ project_name="firemud-smoke-$run_id"
 project_key="$(printf '%s' "$project_name" | sha256sum | awk '{print $1}')"
 fixture_root="$ownership_dir/$project_key.grpc-mtls"
 
-FIREMUD_SMOKE_TEST_MODE=1 \
-FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
-FIREMUD_SMOKE_RUN_ID="$run_id" \
-COMPOSE_PROJECT_NAME="$project_name" \
-  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$fixture_root"
-FIREMUD_SMOKE_TEST_MODE=1 \
-FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
-FIREMUD_SMOKE_RUN_ID="$run_id" \
-COMPOSE_PROJECT_NAME="$project_name" \
-  bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$fixture_root"
+ensure_compose_mtls_fixture() {
+  FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$ownership_dir" \
+  FIREMUD_SMOKE_RUN_ID="$run_id" \
+  COMPOSE_PROJECT_NAME="$project_name" \
+    bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$fixture_root"
+}
+
+ensure_compose_mtls_fixture
+ensure_compose_mtls_fixture
 
 services=(
   account-service gateway automation-scripting-service entity-management-service
@@ -63,6 +63,109 @@ public_key_digest() {
     openssl pkey -in "$cert_or_key" -pubout
   fi | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 | awk '{print $NF}'
 }
+
+file_digest() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+# Recreate the retained fixture's exact legacy shape: only the WMS leaf is the
+# generic authority/client pair. The owner claim and all other fixture material
+# remain in place while ensure-dev-certs performs the narrow migration.
+declare -A authority_digests=()
+for file in ca.crt ca.key client.crt client.key; do
+  authority_digests["$file"]="$(file_digest "$fixture_root/authority/$file")"
+done
+declare -A workload_ca_digests=() other_leaf_digests=()
+for service in "${services[@]}"; do
+  service_dir="$workloads_dir/$service"
+  workload_ca_digests["$service"]="$(file_digest "$service_dir/ca.crt")"
+  if [[ "$service" != world-management-service ]]; then
+    other_leaf_digests["$service.crt"]="$(file_digest "$service_dir/client.crt")"
+    other_leaf_digests["$service.key"]="$(file_digest "$service_dir/client.key")"
+  fi
+done
+wms_dir="$workloads_dir/world-management-service"
+chmod 644 "$wms_dir/client.crt" "$wms_dir/client.key"
+cp -- "$fixture_root/authority/client.crt" "$wms_dir/client.crt"
+cp -- "$fixture_root/authority/client.key" "$wms_dir/client.key"
+chmod 444 "$wms_dir/client.crt" "$wms_dir/client.key"
+legacy_wms_fingerprint="$(openssl x509 -in "$wms_dir/client.crt" -noout -fingerprint -sha256)"
+
+ensure_compose_mtls_fixture
+canonical_wms_san="$(openssl x509 -in "$wms_dir/client.crt" -noout -ext subjectAltName)"
+[[ "$canonical_wms_san" == *"URI:spiffe://firemud/ns/dev/sa/world-management-service"* ]]
+[[ "$(openssl x509 -in "$wms_dir/client.crt" -noout -fingerprint -sha256)" != "$legacy_wms_fingerprint" ]]
+[[ "$(public_key_digest "$wms_dir/client.crt" certificate)" == "$(public_key_digest "$wms_dir/client.key" key)" ]]
+for file in ca.crt ca.key client.crt client.key; do
+  [[ "$(file_digest "$fixture_root/authority/$file")" == "${authority_digests[$file]}" ]]
+done
+for service in "${services[@]}"; do
+  service_dir="$workloads_dir/$service"
+  [[ "$(file_digest "$service_dir/ca.crt")" == "${workload_ca_digests[$service]}" ]]
+  if [[ "$service" != world-management-service ]]; then
+    [[ "$(file_digest "$service_dir/client.crt")" == "${other_leaf_digests[$service.crt]}" ]]
+    [[ "$(file_digest "$service_dir/client.key")" == "${other_leaf_digests[$service.key]}" ]]
+  fi
+done
+migrated_wms_certificate_digest="$(file_digest "$wms_dir/client.crt")"
+migrated_wms_key_digest="$(file_digest "$wms_dir/client.key")"
+ensure_compose_mtls_fixture
+[[ "$(file_digest "$wms_dir/client.crt")" == "$migrated_wms_certificate_digest" ]]
+[[ "$(file_digest "$wms_dir/client.key")" == "$migrated_wms_key_digest" ]]
+
+canonical_wms_dir="$TEST_ROOT/canonical-wms"
+mkdir -m 700 -- "$canonical_wms_dir"
+cp -- "$wms_dir/client.crt" "$canonical_wms_dir/client.crt"
+cp -- "$wms_dir/client.key" "$canonical_wms_dir/client.key"
+
+# A canonical-SAN certificate paired with the legacy generic key is neither a
+# valid retry nor the recognized legacy copy, so validation must fail without
+# repairing either file.
+chmod 644 "$wms_dir/client.key"
+cp -- "$fixture_root/authority/client.key" "$wms_dir/client.key"
+chmod 444 "$wms_dir/client.key"
+stale_key_wms_certificate_digest="$(file_digest "$wms_dir/client.crt")"
+stale_key_wms_key_digest="$(file_digest "$wms_dir/client.key")"
+if ensure_compose_mtls_fixture >"$TEST_ROOT/stale-key-output" 2>&1; then
+  echo "Compose mTLS certificate validation accepted a mismatched canonical WMS key." >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS workload certificate and private key do not match: world-management-service' "$TEST_ROOT/stale-key-output"
+[[ "$(file_digest "$wms_dir/client.crt")" == "$stale_key_wms_certificate_digest" ]]
+[[ "$(file_digest "$wms_dir/client.key")" == "$stale_key_wms_key_digest" ]]
+chmod 644 "$wms_dir/client.crt" "$wms_dir/client.key"
+cp -- "$canonical_wms_dir/client.crt" "$wms_dir/client.crt"
+cp -- "$canonical_wms_dir/client.key" "$wms_dir/client.key"
+chmod 444 "$wms_dir/client.crt" "$wms_dir/client.key"
+[[ "$(file_digest "$wms_dir/client.crt")" == "$migrated_wms_certificate_digest" ]]
+[[ "$(file_digest "$wms_dir/client.key")" == "$migrated_wms_key_digest" ]]
+
+unknown_wms_dir="$TEST_ROOT/unknown-wms"
+mkdir -m 700 -- "$unknown_wms_dir"
+"$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$fixture_root/authority/ca.crt" "$fixture_root/authority/ca.key" \
+  "$unknown_wms_dir/client.crt" "$unknown_wms_dir/client.key" test world-management-service
+chmod 444 "$unknown_wms_dir/client.crt" "$unknown_wms_dir/client.key"
+openssl verify -CAfile "$fixture_root/authority/ca.crt" "$unknown_wms_dir/client.crt" >/dev/null
+chmod 644 "$wms_dir/client.crt" "$wms_dir/client.key"
+cp -- "$unknown_wms_dir/client.crt" "$wms_dir/client.crt"
+cp -- "$unknown_wms_dir/client.key" "$wms_dir/client.key"
+chmod 444 "$wms_dir/client.crt" "$wms_dir/client.key"
+unknown_wms_certificate_digest="$(file_digest "$wms_dir/client.crt")"
+unknown_wms_key_digest="$(file_digest "$wms_dir/client.key")"
+if ensure_compose_mtls_fixture >"$TEST_ROOT/unknown-identity-output" 2>&1; then
+  echo "Compose mTLS certificate validation accepted an unknown WMS identity." >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS workload has the wrong SPIFFE identity: world-management-service' "$TEST_ROOT/unknown-identity-output"
+[[ "$(file_digest "$wms_dir/client.crt")" == "$unknown_wms_certificate_digest" ]]
+[[ "$(file_digest "$wms_dir/client.key")" == "$unknown_wms_key_digest" ]]
+chmod 644 "$wms_dir/client.crt" "$wms_dir/client.key"
+cp -- "$canonical_wms_dir/client.crt" "$wms_dir/client.crt"
+cp -- "$canonical_wms_dir/client.key" "$wms_dir/client.key"
+chmod 444 "$wms_dir/client.crt" "$wms_dir/client.key"
+[[ "$(file_digest "$wms_dir/client.crt")" == "$migrated_wms_certificate_digest" ]]
+[[ "$(file_digest "$wms_dir/client.key")" == "$migrated_wms_key_digest" ]]
 
 for service in "${services[@]}"; do
   echo "Checking Compose mTLS leaf: $service"

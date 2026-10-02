@@ -149,6 +149,37 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void textBrowseAndResolveSuppressTenantWithIncompletePointerAndKeepHealthyTenant() {
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                publicPointer("invalid", "Invalid World", 1L, 11L),
+                new GameplayAdmissionPointerSnapshot(
+                    "broken",
+                    "Broken World",
+                    "production",
+                    "Live Realm",
+                    1L,
+                    12L,
+                    0L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW"),
+                publicPointer("healthy", "Healthy World", 2L, 21L)));
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThat(catalog.browseView().worlds())
+        .extracting(
+            net.firedevops.firemud.gamesession.presentation.WorldsViewOutput.WorldEntry::slug)
+        .containsExactly("healthy");
+    assertThat(catalog.resolveWorld("invalid")).isEmpty();
+    assertThat(catalog.resolveWorld("broken")).isEmpty();
+    assertThat(catalog.resolveWorld("healthy")).isPresent();
+  }
+
+  @Test
   void authoritySnapshotFailsClosedWhenPointerTenantCannotBeIdentified() {
     when(authorityService.listPointers())
         .thenReturn(

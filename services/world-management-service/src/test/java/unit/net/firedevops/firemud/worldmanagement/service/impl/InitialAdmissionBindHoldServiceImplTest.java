@@ -283,6 +283,25 @@ class InitialAdmissionBindHoldServiceImplTest {
   }
 
   @Test
+  void abortedTombstoneRejectsPointerAuditRequestDigest() {
+    InitialAdmissionBindHold pending = pendingHold();
+    when(holdRepository.findByHoldId(HOLD_ID)).thenReturn(Optional.of(pending));
+    when(holdRepository.findByHoldIdForUpdate(HOLD_ID)).thenReturn(Optional.of(pending));
+    when(holdRepository.markReconciliationRequired(
+            any(), Mockito.eq("GS_OWNER_TERMINAL_PROOF_INCOMPLETE"), any()))
+        .thenAnswer(invocation -> Optional.of(withStatus(pending, "RECONCILIATION_REQUIRED", 1L)));
+
+    var result =
+        service.reconcileOwnerProof(HOLD_ID, ownerProof(Outcome.ABORTED, true, REQUEST_DIGEST));
+
+    assertEquals("RECONCILIATION_REQUIRED", result.status());
+    verify(worldInstanceRepository, never())
+        .findByTenantIdAndGameInstanceIdForUpdate(TENANT_ID, GAME_INSTANCE_ID);
+    verify(holdRepository, never())
+        .recordTerminalProof(any(), any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
   void repeatedIdenticalOwnerErrorsStillTouchAndRotateBlockedHold() {
     InitialAdmissionBindHold blocked = withStatus(pendingHold(), "RECONCILIATION_REQUIRED", 1L);
     when(holdRepository.findByHoldId(HOLD_ID)).thenReturn(Optional.of(blocked));

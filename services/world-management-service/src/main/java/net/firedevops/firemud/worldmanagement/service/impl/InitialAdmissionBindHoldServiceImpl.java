@@ -304,6 +304,8 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
     return proof.outcome() == InitialAdmissionBindOwnerProof.Outcome.ABORTED
         && proof.futureCommitPrevented()
         && (proof.pointerAuditId() == null || proof.pointerAuditId().isBlank())
+        && (proof.pointerAuditRequestDigest() == null
+            || proof.pointerAuditRequestDigest().isBlank())
         && proof.pointerVersion() == 0L;
   }
 

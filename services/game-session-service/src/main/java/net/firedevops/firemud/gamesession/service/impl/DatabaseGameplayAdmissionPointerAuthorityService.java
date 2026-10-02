@@ -84,7 +84,8 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
       throw new IllegalArgumentException(
           "state_scope changes require a new playable-state lifecycle");
     }
-    enforceExpectedPointerVersion(pointer, mutation.expectedPointerVersion());
+    enforceExpectedRevisions(
+        pointer, mutation.expectedPointerVersion(), mutation.expectedCatalogRevision());
     if (pointer.getId() != null
         && runtimeTargetMatches(pointer, mutation)
         && GameplayAdmissionCatalogPolicy.matches(pointer, mutation)) {
@@ -170,6 +171,9 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
                     event.getReason(),
                     event.getControlPlaneRequestId(),
                     event.getPreparedVersionUpgradeId(),
+                    event.getCatalogRevision(),
+                    event.getRealmId(),
+                    event.getPlayableStateNamespaceId(),
                     event.getOccurredAt()))
         .toList();
   }
@@ -239,15 +243,32 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     }
   }
 
-  private void enforceExpectedPointerVersion(
-      GameplayAdmissionPointer pointer, Long expectedPointerVersion) {
-    if (expectedPointerVersion == null) {
+  private void enforceExpectedRevisions(
+      GameplayAdmissionPointer pointer, Long expectedPointerVersion, Long expectedCatalogRevision) {
+    if (pointer.getId() == null) {
+      if (!isAbsentOrZero(expectedPointerVersion) || !isAbsentOrZero(expectedCatalogRevision)) {
+        throw new AdmissionPointerVersionMismatchException(
+            "new admission pointers require absent or zero initial revisions");
+      }
       return;
     }
-    long currentPointerVersion = pointer.getId() == null ? 0L : pointer.getPointerVersion();
-    if (currentPointerVersion != expectedPointerVersion) {
+    if (!isPositive(expectedPointerVersion)
+        || !Objects.equals(pointer.getPointerVersion(), expectedPointerVersion)) {
       throw new AdmissionPointerVersionMismatchException(
           "expected_pointer_version does not match current pointer version");
     }
+    if (!isPositive(expectedCatalogRevision)
+        || !Objects.equals(pointer.getCatalogRevision(), expectedCatalogRevision)) {
+      throw new AdmissionPointerVersionMismatchException(
+          "expected_catalog_revision does not match current catalog revision");
+    }
+  }
+
+  private boolean isPositive(Long value) {
+    return value != null && value > 0L;
+  }
+
+  private boolean isAbsentOrZero(Long value) {
+    return value == null || value == 0L;
   }
 }
