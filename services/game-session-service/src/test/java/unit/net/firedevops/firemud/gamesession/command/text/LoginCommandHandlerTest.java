@@ -1802,7 +1802,7 @@ class LoginCommandHandlerTest {
     InOrder inOrder = Mockito.inOrder(gameplayPresenceLifecycleService, sessionContextService);
     inOrder
         .verify(gameplayPresenceLifecycleService)
-        .clearGameplayBinding(prior, "LOGIN_ACCOUNT_CHANGED");
+        .clearGameplayBinding(prior, "LOGIN_TENANT_CHANGED");
     inOrder.verify(sessionContextService).save(saved.capture());
     assertEquals(22L, saved.getValue().tenantId());
     assertEquals(77L, saved.getValue().accountId());

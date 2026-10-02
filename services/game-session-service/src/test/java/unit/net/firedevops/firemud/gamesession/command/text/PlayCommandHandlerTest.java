@@ -3162,7 +3162,7 @@ class PlayCommandHandlerTest {
 
   private void assertDemoCharacterSelectionRequired(PlayCommandHandlingResult result) {
     String expectedMessage =
-        "Selection required. Use PLAY demo <character> or browse CHARS demo first.";
+        "Selection required. Use PLAY demo <character> with a known character; character browsing is currently unavailable.";
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
         .isEqualTo(GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE);
@@ -3173,10 +3173,8 @@ class PlayCommandHandlerTest {
     assertThat(error.message()).isEqualTo(expectedMessage);
     assertThat(error.messageKey()).isEqualTo("error.play.character-selection-required");
     assertThat(error.arguments())
-        .containsEntry("worldSlug", "demo")
-        .containsEntry("realmSlug", "production")
-        .containsEntry("playUsage", "PLAY demo <character>")
-        .containsEntry("charsUsage", "CHARS demo");
+        .containsOnlyKeys("playUsage")
+        .containsEntry("playUsage", "PLAY demo <character>");
   }
 
   private static GameplayCommand command(String commandId, String commandName, String commandText) {
@@ -3303,7 +3301,8 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
-    assertIdentityUnavailableWithoutMutation(result);
+    assertDemoCharacterSelectionRequired(result);
+    verifyNoGameplayBindingSideEffects();
   }
 
   @Test
@@ -3359,7 +3358,8 @@ class PlayCommandHandlerTest {
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
-    assertIdentityUnavailableWithoutMutation(result);
+    assertDemoCharacterSelectionRequired(result);
+    verifyNoGameplayBindingSideEffects();
     Mockito.verify(entityManagementClient, never())
         .findCharacterByName(
             Mockito.any(), Mockito.any(PlayableStateScope.class), Mockito.anyString());

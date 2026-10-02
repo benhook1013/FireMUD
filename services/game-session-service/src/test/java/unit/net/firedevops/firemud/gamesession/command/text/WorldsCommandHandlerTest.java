@@ -190,7 +190,7 @@ class WorldsCommandHandlerTest {
             Mockito.argThat(
                 target ->
                     target.tenantId().equals("33")
-                        && target.worldSlug().equals("demo")
+                        && target.worldSlug().equals("DEMO")
                         && target.realmSlug().equals("production")
                         && target.gameInstanceId().equals("2")));
     Mockito.verify(accountClient)
@@ -465,6 +465,7 @@ class WorldsCommandHandlerTest {
         .getFirst()
         .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
     SessionContext session =
@@ -478,7 +479,9 @@ class WorldsCommandHandlerTest {
         localHandler.browseCharacters(session, "demo", null);
 
     assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+    Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
+    Mockito.verifyNoMoreInteractions(accountClient);
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -504,6 +507,7 @@ class WorldsCommandHandlerTest {
         .getFirst()
         .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-isolated");
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
     SessionContext session =
@@ -517,7 +521,9 @@ class WorldsCommandHandlerTest {
         localHandler.browseCharacters(session, "demo", null);
 
     assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+    Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
+    Mockito.verifyNoMoreInteractions(accountClient);
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -1767,6 +1773,15 @@ class WorldsCommandHandlerTest {
         DirectTextConnectScopeSessionStore.inMemoryForTest());
   }
 
+  private void stubPublicConnectScope(AccountClient accountClient, String scopeId) {
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId(scopeId)
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+  }
+
   private GameplayAdmissionPointerSnapshot authorityPointer(
       String worldSlug,
       String realmSlug,
@@ -2108,7 +2123,7 @@ class WorldsCommandHandlerTest {
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
     assertThat(localHandler.browseCharacters(context, "mixed-world", "nonexistent"))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
-    assertThat(localHandler.browseCharacters(context, "mixed-world", null))
+    assertThat(localHandler.browseCharacters(context, "mixed-world", "production"))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
     Mockito.verifyNoInteractions(entityManagementClient);
   }
@@ -2171,7 +2186,7 @@ class WorldsCommandHandlerTest {
         handler.browseCharacters(
             new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
-            null);
+            "production");
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
     Mockito.verifyNoInteractions(entityManagementClient);
