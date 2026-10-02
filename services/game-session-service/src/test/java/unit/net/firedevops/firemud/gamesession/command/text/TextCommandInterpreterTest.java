@@ -974,7 +974,8 @@ class TextCommandInterpreterTest {
 
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
-    assertEquals("OK PLAY Entered world: demo\ndemo> ", renderedResponse("PLAY demo", play));
+    assertEquals(
+        "OK PLAY Entered world: demo as demo\ndemo> ", renderedResponse("PLAY demo", play));
     assertTrue(look.commandResult().accepted());
     assertEquals(
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
