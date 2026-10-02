@@ -8,6 +8,8 @@ This is a non-normative implementation tracker for world runtime and movement. C
 
 This tracker is the permanent reader-facing implementation record for world runtime, room reads, movement, lifecycle orchestration, and Draft topology mutation. Canonical target-state design remains under [design/architecture](../../architecture/README.md).
 
+The initial-admission foundation now has a typed Game Session workload-only acquire RPC, a durable World hold, lifecycle-row termination serialization, and scheduled fail-closed reconciliation. The authenticated owner-read adapter is not wired. The 27 World focused tests passed; three PostgreSQL race/restart tests were skipped without Docker. See the [World initial-bind contract](../../architecture/microservices/world-management-service/api-contracts.md#initial-admission-bind-hold-contract).
+
 ## Packet 4 Status and Proof Gaps
 
 - `GR-2.1` / `AR-3.1`: [ADR 0122](../../architecture/decisions/adr-0122-stable-playable-state-namespaces-for-runtime-replacement.md) requires world runtime state to distinguish the durable playable-state namespace and `playableStateScope` from a disposable instance and to classify owner data before replacement. Current world instance and lifecycle evidence remains partial; no exhaustive S1/S2/S3 mapping or cleanup proof is claimed.

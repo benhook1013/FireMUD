@@ -25,8 +25,6 @@ import org.springframework.stereotype.Repository;
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameplayAdmissionPointerRepository {
-  private static final String BOOTSTRAP_ADVISORY_LOCK_KEY = "gameplay-admission-pointer-bootstrap";
-
   private final DSLContext dsl;
 
   public GameplayAdmissionPointerRepository(DSLContext dsl) {
@@ -35,17 +33,6 @@ public class GameplayAdmissionPointerRepository {
 
   public long count() {
     return dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER);
-  }
-
-  /**
-   * Serializes the empty-store bootstrap check across Game Session pods.
-   *
-   * <p>The caller must invoke this inside the transaction that performs the subsequent count and
-   * any seed writes so PostgreSQL retains the advisory lock through commit or rollback.
-   * Non-Postgres dialects skip the lock for local test compatibility.
-   */
-  public void lockForBootstrap() {
-    lockAdvisoryTransaction(BOOTSTRAP_ADVISORY_LOCK_KEY);
   }
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(

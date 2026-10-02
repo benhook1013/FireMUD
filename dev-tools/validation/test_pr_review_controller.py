@@ -913,6 +913,7 @@ class ControllerTests(unittest.TestCase):
         heads=None,
         pr_number=1,
         fresh_taper=False,
+        sqlite=False,
     ):
         values = values or {pr_number: pr(pr_number, HEAD_1)}
         evidence = evidence or {
@@ -936,6 +937,7 @@ class ControllerTests(unittest.TestCase):
             values,
             evidence,
             heads=heads or {values[pr_number].head_ref: values[pr_number].head},
+            sqlite=sqlite,
         )
         controller.set_stack(tuple(values))
         controller.decide_allocation(
@@ -1048,22 +1050,23 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(evidence[(1, "hosted")][0]["checkpoint"], "hosted-old-head")
         self.assertGreaterEqual(len(evidence.stop_audit_calls), 3)
 
-    def test_bounded_hosted_judgment_override_requires_fresh_taper(self):
+    def test_bounded_hosted_extra_review_preserves_existing_taper_history(self):
         controller, _ = self.hosted_judgment_allocation_fixture()
 
-        with self.assertRaisesRegex(ControllerError, "must explicitly reopen fresh taper"):
-            controller.decide_allocation(
-                action="grant",
-                pr=1,
-                channel="hosted",
-                head=HEAD_3,
-                reason="bounded review allowance after judgment-required taper",
-                min_additional_completed=1,
-                max_additional_completed=1,
-                fresh_taper=False,
-            )
+        controller.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="hosted",
+            head=HEAD_3,
+            reason="bounded extra Hosted review after equivalent history",
+            min_additional_completed=1,
+            max_additional_completed=1,
+            fresh_taper=False,
+        )
 
-        self.assertNotIn("1:hosted", controller._state().allocations)
+        allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(allocation["status"], "CAP_ACTIVE")
+        self.assertFalse(allocation["reopens_taper"])
 
     def test_bounded_hosted_allocation_reopens_equivalent_old_head_identity(self):
         controller, _ = self.hosted_judgment_allocation_fixture(hosted_patch_id=f"patch-{HEAD_3[:4]}")
@@ -2435,6 +2438,7 @@ class ControllerTests(unittest.TestCase):
             checkpoint="wrong-worktree-cli-capture",
             channel="cli",
             accepted=1,
+            source_resolution_status="resolved",
         )
         corrected = self.allocation_evidence(
             head=HEAD_1,
@@ -2484,15 +2488,15 @@ class ControllerTests(unittest.TestCase):
         )
         non_fresh.set_stack([1])
         non_fresh.git.is_ancestor = is_ancestor_unless_wrong_worktree
-        with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
-            non_fresh.decide_allocation(
-                action="grant",
-                pr=1,
-                channel="cli",
-                head=HEAD_1,
-                reason="ordinary allocation retains ancestry protection",
-                min_additional_completed=1,
-            )
+        non_fresh_grant = non_fresh.decide_allocation(
+            action="grant",
+            pr=1,
+            channel="cli",
+            head=HEAD_1,
+            reason="durable source resolution proves the retained fix",
+            min_additional_completed=1,
+        )
+        self.assertEqual(non_fresh_grant["progress"]["status"], "CAP_ACTIVE")
 
     def test_bounded_progress_requires_ancestry_unless_fresh_taper_is_reopened(self):
         for fresh_taper in (False, True):
@@ -2538,13 +2542,11 @@ class ControllerTests(unittest.TestCase):
                 )
                 if fresh_taper:
                     self.assertTrue(allocation["reopens_taper"])
-                    self.assertNotEqual(allocation["status"], "CAP_FINDINGS_PENDING")
-                    self.assertEqual(controller.resolve_hosted_target().snapshot.head_sha, HEAD_2)
                 else:
                     self.assertFalse(allocation["reopens_taper"])
-                    self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
-                    with self.assertRaises(ControllerError):
-                        controller.resolve_hosted_target()
+                self.assertEqual(allocation["status"], "CAP_FINDINGS_PENDING")
+                with self.assertRaises(ControllerError):
+                    controller.resolve_hosted_target()
 
     def test_bounded_allocation_uses_durable_resolution_for_accepted_finding_clearance(self):
         resolved_history = {
@@ -2629,7 +2631,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(unavailable_progress["status"], "CAP_EXHAUSTED_PENDING")
         self.assertIn("source-resolution records are unavailable", unavailable_progress["details"])
 
-    def test_fresh_taper_legacy_none_resolution_preserves_ancestry_waiver(self):
+    def test_fresh_taper_legacy_none_resolution_keeps_accepted_finding_pending(self):
         class LegacyEvidence(Evidence):
             source_resolution_status = None
 
@@ -2647,17 +2649,14 @@ class ControllerTests(unittest.TestCase):
                 controller = self.make({1: pr(1, HEAD_2)}, history, heads={"feature-1": HEAD_2})
                 controller.set_stack([1])
                 controller.git.is_ancestor = lambda _ancestor, _descendant: False
-                result = controller.decide_allocation(
-                    action="grant", pr=1, channel="hosted", head=HEAD_2,
-                    checkpoint="current-baseline", min_additional_completed=1,
-                    max_additional_completed=1, fresh_taper=True,
-                    reason="retain judged legacy evidence across reconstruction",
-                )
-                self.assertEqual(result["progress"]["status"], "CAP_ACTIVE")
-                controller.git.is_ancestor = lambda _ancestor, _descendant: True
-                self.assertFalse(controller._accepted_findings_pending(history[(1, "hosted")][0], HEAD_2))
-                controller.git.is_ancestor = lambda _ancestor, _descendant: False
-                self.assertTrue(controller._accepted_findings_pending(history[(1, "hosted")][0], HEAD_2))
+                with self.assertRaisesRegex(ControllerError, "accepted findings need a published corrected head"):
+                    controller.decide_allocation(
+                        action="grant", pr=1, channel="hosted", head=HEAD_2,
+                        checkpoint="current-baseline", min_additional_completed=1,
+                        max_additional_completed=1, fresh_taper=True,
+                        reason="retain judged legacy evidence across reconstruction",
+                    )
+                self.assertNotIn("1:hosted", controller._state().allocations)
 
     def test_fresh_taper_keeps_same_head_audit_and_active_work_holds(self):
         historical_head = "3f" * 20
@@ -2727,7 +2726,7 @@ class ControllerTests(unittest.TestCase):
                     },
                 ],
                 None,
-                "cli channel has unresolved review evidence",
+                "accepted findings need a published corrected head",
             ),
         )
 
@@ -3428,14 +3427,14 @@ class ControllerTests(unittest.TestCase):
             reason="explicitly open a fresh bounded review tranche",
         )
 
-        self.assertEqual(provider.stop_audit_calls, [])
+        self.assertTrue(provider.stop_audit_calls)
         self.assertEqual(renewed["progress"]["status"], "CAP_ACTIVE")
         self.assertTrue(renewed["allocation"]["reopens_taper"])
 
     def test_bounded_renewal_preserves_accepted_finding_and_active_review_holds(self):
         for blocker, expected_error in (
             ("accepted", "unresolved actionable finding or thread"),
-            ("active", "current review evidence is blocked"),
+            ("active", "hosted channel has unresolved review evidence"),
         ):
             with self.subTest(blocker=blocker):
                 evidence = {(1, "hosted"): [self.allocation_evidence(checkpoint="baseline", channel="hosted")]}
@@ -5369,6 +5368,72 @@ class ControllerTests(unittest.TestCase):
         controller.github.batch_pull_requests = fetch
         return calls
 
+    def test_status_overview_retains_prior_closures_when_expanded_deep_read_fails(self):
+        values, heads = _stacked_prs(5)
+        evidence = CountingEvidence()
+        evidence[(1, "cli")] = [
+            self.allocation_evidence(
+                checkpoint="cli-baseline",
+                channel="cli",
+            ),
+            self.scope_timeline_evidence(1, "cli", values[1].head),
+        ]
+        controller = self.grant_bounded_allocation(
+            channel="cli",
+            checkpoint="cli-baseline",
+            cap=1,
+            minimum=0,
+            evidence=evidence,
+            values=values,
+            heads=heads,
+            sqlite=True,
+        )
+        evidence[(1, "cli")].append(
+            self.allocation_evidence(
+                checkpoint="cli-cap-result",
+                channel="cli",
+            )
+        )
+        evidence[(1, "hosted")] = [self.review_evidence(controller, 1, "hosted", "hosted-dry")]
+        controller.decide_stop(pr=2, channel="hosted", reason="explicitly stop this channel")
+        self._enable_batch_status(controller, values)
+
+        original_status = controller._status_from_state
+        calls = 0
+
+        def expand_after_success(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            report = original_status(*args, **kwargs)
+            if calls == 1:
+                report["review_targets"] = controller._unknown_review_targets("test expands the deep window")
+            return report
+
+        controller._status_from_state = expand_after_success
+        original_pull = controller.github.pull_request
+
+        def fail_expanded_pr(number):
+            if number == 5 and calls:
+                raise OSError("expanded PR evidence is unavailable")
+            return original_pull(number)
+
+        controller.github.pull_request = fail_expanded_pr
+        report = controller.status_overview()
+
+        row = report["prs"][0]
+        self.assertEqual(calls, 1)
+        self.assertEqual(report["review_targets"]["cli"]["status"], "UNKNOWN")
+        self.assertEqual(row["detail_level"], "identity_only")
+        self.assertEqual(row["evidence_status"], "stale")
+        self.assertEqual(row["reconciliation"], "UNRECONCILED")
+        self.assertEqual(row["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(row["channels"]["cli"], "CAP_AUDITED_STOP")
+        self.assertEqual(row["allocations"]["cli"]["status"], "CAP_AUDITED_STOP")
+        stopped_row = report["prs"][1]
+        self.assertEqual(stopped_row["channels"]["hosted"], "HUMAN_STOPPED")
+        self.assertEqual(stopped_row["allocations"]["hosted"]["status"], "STOPPED")
+        self.assertIn("expanded PR evidence is unavailable", row["reason"])
+
     def test_status_overview_shifts_four_pr_window_after_front_merge(self):
         ordered = list(range(1, 7))
         before_values, before_heads = _stacked_prs(6)
@@ -5494,6 +5559,77 @@ class ControllerTests(unittest.TestCase):
 
         with self.assertRaises(ControllerError):
             controller.resolve_hosted_target()
+
+    def test_status_overview_preserves_both_stops_after_parent_moves_during_deep_read(self):
+        values, heads = _stacked_prs(2)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        for channel in ("hosted", "cli"):
+            controller.decide_stop(pr=1, channel=channel, reason=f"stop {channel} discovery")
+        controller.decide_stop(pr=2, channel="hosted", reason="stop Hosted discovery")
+        self._enable_batch_status(controller, values)
+        original_pull = controller.github.pull_request
+
+        def move_default_base_during_deep_fetch(number):
+            value = original_pull(number)
+            if number == 2:
+                controller.git.heads["develop"] = "9" * 40
+            return value
+
+        controller.github.pull_request = move_default_base_during_deep_fetch
+        evidence.stop_audit_calls.clear()
+
+        report = controller.status_overview()
+
+        rows = {item["pr"]: item for item in report["prs"]}
+        self.assertEqual("UNRECONCILED", rows[1]["reconciliation"])
+        self.assertEqual("stale", rows[1]["evidence_status"])
+        for channel in ("hosted", "cli"):
+            self.assertEqual("HUMAN_STOPPED", rows[1]["channels"][channel])
+            self.assertEqual("STOPPED", rows[1]["allocations"][channel]["status"])
+        self.assertEqual("HUMAN_STOPPED", rows[2]["channels"]["hosted"])
+        self.assertEqual("STOPPED", rows[2]["allocations"]["hosted"]["status"])
+        self.assertEqual("UNRECONCILED", rows[2]["channels"]["cli"])
+        self.assertNotIn("cli", rows[2]["allocations"])
+        self.assertEqual([], evidence.stop_audit_calls)
+
+    def test_status_overview_preserves_pending_cap_when_parent_moves_during_deep_read(self):
+        evidence = {
+            (1, "hosted"): [self.allocation_evidence(checkpoint="bounded-baseline")],
+        }
+        values = {1: pr(1, HEAD_1)}
+        controller = self.grant_bounded_allocation(
+            cap=1,
+            minimum=1,
+            evidence=evidence,
+            values=values,
+        )
+        evidence[(1, "hosted")].append(
+            self.allocation_evidence(
+                checkpoint="cap-result-with-unresolved-finding",
+                accepted=1,
+                source_resolution_status="pending",
+            )
+        )
+        initial_allocation = controller.status()["prs"][0]["allocations"]["hosted"]
+        self.assertEqual(initial_allocation["status"], "CAP_EXHAUSTED_PENDING")
+        self._enable_batch_status(controller, values)
+        original_pull = controller.github.pull_request
+
+        def move_default_base_during_deep_fetch(number):
+            item = original_pull(number)
+            if number == 1:
+                controller.git.heads["develop"] = "9" * 40
+            return item
+
+        controller.github.pull_request = move_default_base_during_deep_fetch
+        row = controller.status_overview()["prs"][0]
+
+        self.assertEqual(row["reconciliation"], "UNRECONCILED")
+        self.assertEqual(row["channels"]["hosted"], "UNRECONCILED")
+        self.assertEqual(row["allocations"]["hosted"]["status"], "CAP_EXHAUSTED_PENDING")
+        self.assertEqual(row["allocations"]["hosted"]["reason"], "cap exhausted; findings pending")
 
     def test_status_overview_reports_divergent_controller_selected_targets(self):
         values, heads = _stacked_prs(3)
@@ -5967,6 +6103,31 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("COMPLETE", tail["channels"].values())
         self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
 
+    def test_status_overview_preserves_tail_stop_when_saved_parent_moves(self):
+        values, heads = _stacked_prs(5)
+        evidence = CountingEvidence()
+        controller = self.make(values, evidence, heads=heads, sqlite=True)
+        controller.set_stack(list(values))
+        controller.decide_stop(pr=5, channel="hosted", reason="stop tail Hosted discovery")
+        moved_parent = "9" * 40
+        values[4] = dataclasses.replace(values[4], head=moved_parent)
+        values[5] = dataclasses.replace(values[5], base_tip=moved_parent)
+        controller.git.heads["feature-4"] = moved_parent
+        self._enable_batch_status(controller, values)
+        evidence.history_reads.clear()
+
+        report = controller.status_overview()
+
+        tail = report["prs"][4]
+        self.assertEqual("identity_only", tail["detail_level"])
+        self.assertEqual("UNRECONCILED", tail["reconciliation"])
+        self.assertEqual("stale", tail["evidence_status"])
+        self.assertEqual("HUMAN_STOPPED", tail["channels"]["hosted"])
+        self.assertEqual("STOPPED", tail["allocations"]["hosted"]["status"])
+        self.assertEqual("NOT_CHECKED", tail["channels"]["cli"])
+        self.assertNotIn("cli", tail["allocations"])
+        self.assertTrue(all(pr_number <= 4 for pr_number, _ in evidence.history_reads))
+
     def test_status_overview_missing_batch_identity_fails_closed_without_deep_reads(self):
         values, heads = _stacked_prs(6)
         evidence = CountingEvidence()
@@ -6286,6 +6447,22 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "unreconciled|cannot run"):
             controller.resolve_hosted_target()
 
+        hosted_calls = []
+        cli_calls = []
+        controller.hosted_adapter = lambda target, **kwargs: hosted_calls.append((target, kwargs)) or "hosted-post"
+        controller.cli_adapter = lambda target, **kwargs: cli_calls.append((target, kwargs)) or "cli-run"
+        self.assertEqual(
+            controller.run_hosted(force=True, reason="known default-base merge conflict"),
+            "hosted-post",
+        )
+        self.assertEqual(
+            controller.run_cli(force=True, reason="known default-base merge conflict"),
+            "cli-run",
+        )
+        self.assertTrue(hosted_calls[0][1]["force"])
+        self.assertTrue(cli_calls[0][1]["force"])
+        self.assertEqual(hosted_calls[0][0].candidate_warnings[0], "stack reconciliation is UNRECONCILED")
+
     def test_direct_default_base_advance_holds_conflicts_and_changed_owned_patch(self):
         advanced_base = "9" * 40
         for label, mergeable, prior_patch in (
@@ -6493,7 +6670,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(target.snapshot.number, 1)
         self.assertTrue(callable(options.pop("admit")))
-        self.assertEqual(options, {"allow_unreconciled": False, "reason": None})
+        self.assertEqual(options, {"force": False, "reason": None})
 
     def test_terminal_hosted_attribution_ambiguity_does_not_hold_cli(self):
         ambiguous = {
@@ -7272,9 +7449,8 @@ class ControllerTests(unittest.TestCase):
                 state,
                 Channel.HOSTED,
                 hosted_history,
-                other_channel_head=HEAD_1,
             ).value,
-            "JUDGMENT_REQUIRED",
+            "COMPLETE",
         )
         with (
             patch.object(controller, "_reconciliation", return_value=(live, reconciliation)),
@@ -7370,7 +7546,7 @@ class ControllerTests(unittest.TestCase):
 
         unproven.git.is_ancestor = current_is_not_descendant
         report = unproven.status()
-        self.assertNotEqual(report["prs"][0]["channels"]["cli"], "COMPLETE")
+        self.assertEqual(report["prs"][0]["channels"]["cli"], "COMPLETE")
         self.assertTrue(report["review_targets"]["cli"]["taper_complete"])
         self.assertEqual(report["review_targets"]["cli"]["status"], "COMPLETE")
         with self.assertRaisesRegex(ControllerError, "all cli targets are complete"):
@@ -7500,7 +7676,7 @@ class ControllerTests(unittest.TestCase):
         }
         controller = self.make(values, evidence)
         controller.set_stack([1])
-        self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "JUDGMENT_REQUIRED")
+        self.assertEqual(controller.status()["prs"][0]["channels"]["cli"], "COMPLETE")
         self.assertEqual(controller.status()["review_targets"]["cli"]["status"], "COMPLETE")
         with self.assertRaisesRegex(ControllerError, "all cli targets are complete"):
             controller.resolve_cli_target()
@@ -7555,7 +7731,7 @@ class ControllerTests(unittest.TestCase):
 
                 self.assertEqual(
                     controller.status()["prs"][0]["channels"][channel],
-                    "JUDGMENT_REQUIRED",
+                    "COMPLETE",
                 )
                 result = controller.decide_judgment(
                     pr=1,
@@ -7776,6 +7952,9 @@ class ControllerTests(unittest.TestCase):
                 review(HEAD_2, "hosted-two"),
             ]
         )
+        # Runtime evidence marks the override-bound historical checkpoint
+        # uncorrected after the live head moves; its exact human binding stays valid.
+        history[0]["corrected_state"] = False
         values[1] = pr(1, HEAD_3)
         controller.git.heads["feature-1"] = HEAD_3
         state = controller._state()
@@ -7834,7 +8013,7 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaisesRegex(ControllerError, "patch identity"):
             controller.decide_policy(pr=1, head=HEAD_1, checkpoint="stale", hosted_zero_useful=1, reason="stale patch")
 
-    def test_provisional_discovery_is_one_exact_pass_and_never_tapers(self):
+    def test_legacy_provisional_history_does_not_limit_forced_cli_admission(self):
         values = {1: pr(1, HEAD_1, "unrelated-base", "9" * 40)}
         evidence = {
             (1, "cli"): [Evidence(1, HEAD_1, "p1", anchored=True, completed=True, attributable=True, provisional=True)]
@@ -7857,13 +8036,13 @@ class ControllerTests(unittest.TestCase):
                 "reason": "one",
             }
         )
-        with self.assertRaisesRegex(
-            ControllerError,
-            "one provisional CLI discovery is already recorded for this exact child/parent identity",
-        ):
-            controller.run_cli(allow_unreconciled=True, reason="one")
+        controller.cli_adapter = lambda target, **kwargs: (target, kwargs)
+        target, options = controller.run_cli(force=True, reason="known stale parent")
+        self.assertEqual(target.snapshot.number, 1)
+        self.assertTrue(options["force"])
+        self.assertEqual(options["reason"], "known stale parent")
 
-    def test_reconciled_provisional_history_holds_selection_without_counting_or_erasing_taper(self):
+    def test_legacy_provisional_observation_does_not_reopen_completed_taper(self):
         completed = {
             "pr": 1,
             "head": HEAD_1,
@@ -7886,18 +8065,16 @@ class ControllerTests(unittest.TestCase):
             corrected_state=False,
             provisional=True,
         )
-        history = [completed, provisional]
+        history = [dict(completed, checkpoint=f"completed-{index}") for index in range(3)] + [provisional]
         controller = self.make({1: pr(1, HEAD_1)}, {(1, "cli"): history})
         controller.set_stack([1])
 
         result = controller.status()
 
         self.assertEqual(result["prs"][0]["reconciliation"], "COHERENT")
-        self.assertEqual(result["prs"][0]["channels"]["cli"], "READY")
-        self.assertEqual(result["review_targets"]["cli"]["status"], "PROVISIONAL")
-        with self.assertRaisesRegex(ControllerError, "cli review cannot run: PROVISIONAL"):
-            controller.resolve_cli_target()
-        self.assertFalse(taper_satisfied(Channel.CLI, history, required=2))
+        self.assertEqual(result["prs"][0]["channels"]["cli"], "COMPLETE")
+        self.assertEqual(result["review_targets"]["cli"]["status"], "COMPLETE")
+        self.assertTrue(taper_satisfied(Channel.CLI, history, required=3))
 
     def test_provisional_discovery_allows_parent_moved_child_with_reason(self):
         values = {
@@ -7955,8 +8132,8 @@ class ControllerTests(unittest.TestCase):
 
         target, options = controller.run_cli(
             expected_pr=2,
-            allow_unreconciled=True,
-            reason="one provisional pass before parent reconciliation",
+            force=True,
+            reason="parent moved after reconciliation",
         )
 
         self.assertEqual(target.snapshot.number, 2)
@@ -7964,12 +8141,13 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             options,
             {
-                "allow_unreconciled": True,
-                "reason": "one provisional pass before parent reconciliation",
+                "force": True,
+                "reason": "parent moved after reconciliation",
             },
         )
-        with self.assertRaisesRegex(ControllerError, "provisional CLI requires an unreconciled target and a reason"):
-            controller.run_cli(expected_pr=2, allow_unreconciled=True)
+        target, forced_options = controller.run_cli(expected_pr=2, force=True)
+        self.assertEqual(target.snapshot.number, 2)
+        self.assertTrue(forced_options["force"])
 
     def test_compact_and_json_results_are_structured(self):
         value = {"status": "READY", "pr": 1, "anchor": {"head": HEAD_1}}
@@ -8002,7 +8180,7 @@ class ControllerTests(unittest.TestCase):
         controller.set_stack([1])
         report = controller.status()
         self.assertEqual(report["prs"][0]["reconciliation"], "COHERENT")
-        self.assertEqual(report["prs"][0]["channels"]["cli"], "JUDGMENT_REQUIRED")
+        self.assertEqual(report["prs"][0]["channels"]["cli"], "COMPLETE")
         self.assertEqual(report["review_targets"]["cli"]["status"], "COMPLETE")
         self.assertTrue(report["review_targets"]["cli"]["taper_complete"])
         with self.assertRaisesRegex(ControllerError, "all cli targets are complete"):
@@ -9037,7 +9215,7 @@ class ControllerTests(unittest.TestCase):
 
         self.assertEqual(result["reconciliation"], "COHERENT")
         self.assertEqual(result["channels"]["hosted"], "COMPLETE")
-        self.assertEqual(result["channels"]["cli"], "JUDGMENT_REQUIRED")
+        self.assertEqual(result["channels"]["cli"], "READY")
 
     def test_git_anchor_failures_are_unreconciled_per_pr_in_both_reconciliation_paths(self):
         scenarios = {
