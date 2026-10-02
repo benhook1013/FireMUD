@@ -545,6 +545,118 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void publicNumericPlayIgnoresPointerChangesToDeniedPrivateRealms() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
+        .thenReturn(Optional.empty());
+    GameplayCatalogProperties.World demoWorld = gameplayCatalogProperties.getWorlds().getFirst();
+    GameplayCatalogProperties.Realm hiddenPrivateRealm =
+        realm("vault", "Private Vault", 22L, 99L, true, false);
+    hiddenPrivateRealm.setPublicProductionRealm(false);
+    List<GameplayCatalogProperties.Realm> demoRealms = new ArrayList<>(demoWorld.getRealms());
+    demoRealms.add(hiddenPrivateRealm);
+    demoWorld.setRealms(demoRealms);
+    GameplayWorldCatalog.WorldView world = worldCatalog.resolveWorld("demo").orElseThrow();
+    List<GameplayWorldCatalog.RealmView> responseRealms =
+        world.realms().stream()
+            .filter(GameplayWorldCatalog.RealmView::publicProductionRealm)
+            .toList();
+    retainRealmSnapshot(context, "demo", world, responseRealms);
+
+    hiddenPrivateRealm.setPointerVersion(2L);
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "1", "demo"), "PLAY demo 1 demo"));
+
+    assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+    assertThat(joinedOutputText(result.outputs())).isEqualTo("Entered world: demo as demo");
+    Mockito.verify(sessionContextService).save(Mockito.any());
+  }
+
+  @Test
+  void numericPlayRealmRejectsChangedTargetThatWasShownToTheCaller() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayCatalogProperties.World demoWorld = gameplayCatalogProperties.getWorlds().getFirst();
+    GameplayCatalogProperties.Realm shownPrivateRealm =
+        realm("vault", "Private Vault", 22L, 99L, true, false);
+    shownPrivateRealm.setPublicProductionRealm(false);
+    List<GameplayCatalogProperties.Realm> demoRealms = new ArrayList<>(demoWorld.getRealms());
+    demoRealms.add(shownPrivateRealm);
+    demoWorld.setRealms(demoRealms);
+    GameplayWorldCatalog.WorldView world = worldCatalog.resolveWorld("demo").orElseThrow();
+    retainRealmSnapshot(context, "demo", world, world.realms());
+    shownPrivateRealm.setPointerVersion(2L);
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "2", "demo"), "PLAY demo 2 demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
+  void numericPlayStillDeniesWhenSelectedPrivateGrantHasBeenRevoked() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayCatalogProperties.World demoWorld = gameplayCatalogProperties.getWorlds().getFirst();
+    GameplayCatalogProperties.Realm privateRealm =
+        realm("preview", "Preview Realm", 22L, 99L, true, true);
+    List<GameplayCatalogProperties.Realm> demoRealms = new ArrayList<>(demoWorld.getRealms());
+    demoRealms.add(privateRealm);
+    demoWorld.setRealms(demoRealms);
+    GameplayWorldCatalog.WorldView world = worldCatalog.resolveWorld("demo").orElseThrow();
+    retainRealmSnapshot(
+        context,
+        "demo",
+        world,
+        world.realms().stream().filter(realm -> realm.slug().equals("preview")).toList());
+    when(accountClient.getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq("demo"),
+            Mockito.eq("preview"),
+            Mockito.anyString()))
+        .thenReturn(
+            validGrant("123", "22", "demo", "preview").toBuilder().setGranted(false).build());
+
+    PlayCommandHandlingResult result =
+        handler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY,
+                List.of("demo", "1", "Emberline"),
+                "PLAY demo 1 Emberline",
+                null,
+                new TextCommandPayload.PlayRequest("demo", "1", "Emberline")));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    Mockito.verify(accountClient)
+        .getRealmAccessGrantForRuntime(
+            Mockito.eq("123"),
+            Mockito.eq("22"),
+            Mockito.eq("demo"),
+            Mockito.eq("preview"),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient);
+    verifyNoGameplayBindingSideEffects();
+  }
+
+  @Test
   void numericPlayRealmUsesTenantQualifiedSnapshotForDuplicateWorldSlug() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
@@ -2896,6 +3008,25 @@ class PlayCommandHandlerTest {
 
   private void markPreviewRealmInvisible() {
     gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setVisible(false);
+  }
+
+  private void retainRealmSnapshot(
+      SessionContext context,
+      String worldSelector,
+      GameplayWorldCatalog.WorldView world,
+      List<GameplayWorldCatalog.RealmView> responseRealms) {
+    long tenantId = world.realms().getFirst().tenantId();
+    GameplayWorldCatalog.RealmDiscoverySnapshot snapshot =
+        worldCatalog.realmDiscoverySnapshot(world, responseRealms);
+    connectScopeSessionStore.replaceRealmSnapshot(
+        context,
+        worldSelector,
+        tenantId,
+        world.slug(),
+        snapshot.catalogFingerprint(),
+        snapshot.ordinalTargets(),
+        List.of(),
+        Instant.now());
   }
 
   private SessionContext previewRealmContext() {

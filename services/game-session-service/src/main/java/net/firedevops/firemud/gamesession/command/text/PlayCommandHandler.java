@@ -1325,11 +1325,21 @@ public class PlayCommandHandler {
       return new RealmSelectorResolution.Stale();
     }
     DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
-    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog =
-        gameplayWorldCatalog.readRealmDiscoverySnapshot(world);
-    if (!snapshot.catalogFingerprint().equals(currentRealmCatalog.catalogFingerprint())) {
+    Optional<GameplayWorldCatalog.RealmDiscoverySnapshot> maybeCurrentRealmCatalog;
+    try {
+      maybeCurrentRealmCatalog =
+          gameplayWorldCatalog.revalidateRealmDiscoverySnapshot(world, snapshot.ordinalTargets());
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return new RealmSelectorResolution.Unavailable();
+    }
+    if (maybeCurrentRealmCatalog.isEmpty()
+        || !snapshot
+            .catalogFingerprint()
+            .equals(maybeCurrentRealmCatalog.orElseThrow().catalogFingerprint())) {
       return new RealmSelectorResolution.Stale();
     }
+    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog =
+        maybeCurrentRealmCatalog.orElseThrow();
     int ordinal;
     try {
       ordinal = Integer.parseInt(selector.trim());

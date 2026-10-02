@@ -46,19 +46,35 @@ class HelpCommandHandlerTest {
             .get(0)
             .text()
             .contains("List currently connected players in this game instance."));
-    assertTrue(result.outputs().get(0).text().contains("Gods appear first, then players."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains(
+                "Connected users are currently classified as players; "
+                    + "gameplay-grant roles are not yet shown."));
     assertTrue(result.outputs().get(0).text().contains("You must already be in-world with PLAY."));
   }
 
   @Test
-  void characterHelpUsesNamesRatherThanUnsupportedListNumbers() {
+  void characterHelpMatchesCurrentBrowseAndSelectorSupport() {
     for (String topic : List.of("CHARS", "PLAY")) {
       TextCommandInterpretationResult result =
           handler.handle(new TextCommand(TextCommandType.HELP, List.of(topic), "HELP " + topic));
 
       assertTrue(result.commandResult().accepted());
-      assertTrue(result.outputs().get(0).text().contains("character name"));
-      assertTrue(result.outputs().get(0).text().contains("list number"));
+      String helpText = result.outputs().get(0).text();
+      if (topic.equals("CHARS")) {
+        assertTrue(helpText.contains("Character browsing is currently unavailable."));
+        assertTrue(helpText.contains("with a known character."));
+        assertFalse(helpText.contains("list number"));
+      } else {
+        assertTrue(helpText.contains("Character browsing is currently unavailable"));
+        assertTrue(helpText.contains("use a known character name, not a list number"));
+        assertFalse(helpText.contains("shown by CHARS"));
+        assertFalse(helpText.contains("List visible characters"));
+      }
     }
   }
 
