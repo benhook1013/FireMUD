@@ -1027,6 +1027,8 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n\n_Source: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines, Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
         )
         for tail in valid_tails:
             with self.subTest(tail=tail):
@@ -1043,6 +1045,8 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n_Source: Linters/SAST tools_\nUnmarked text.\n<!-- This is an auto-generated comment by CodeRabbit -->",
             "\n_Source: Coding guidelines_",
             "\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by another bot -->",
+            "\n_Sources: Coding guidelines, Unknown source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Sources: Coding guidelines, Path instructions_\nunmarked content\n<!-- This is an auto-generated comment by CodeRabbit -->",
         )
         for tail in invalid_tails:
             with (
