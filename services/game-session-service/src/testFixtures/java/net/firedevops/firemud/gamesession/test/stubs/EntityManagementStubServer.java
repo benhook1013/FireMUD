@@ -4,8 +4,10 @@ import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -14,6 +16,8 @@ import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameRequest;
 import net.firedevops.firemud.entitymanagement.v1.FindCharacterByNameResponse;
 import net.firedevops.firemud.entitymanagement.v1.InventoryItem;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountRequest;
+import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsRequest;
 import net.firedevops.firemud.entitymanagement.v1.ListContainerContentsResponse;
 import net.firedevops.firemud.entitymanagement.v1.ListEquipmentRequest;
@@ -24,6 +28,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
@@ -98,6 +103,36 @@ public final class EntityManagementStubServer implements AutoCloseable {
                       builder.setCharacter(character);
                     }
                     responseObserver.onNext(builder.build());
+                    responseObserver.onCompleted();
+                  }
+
+                  @Override
+                  public void listCharactersByAccount(
+                      ListCharactersByAccountRequest request,
+                      StreamObserver<ListCharactersByAccountResponse> responseObserver) {
+                    ListCharactersByAccountResponse.Builder response =
+                        ListCharactersByAccountResponse.newBuilder();
+                    if (request.getPlayableStateScope()
+                        == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
+                      List<Character> characters =
+                          List.of("Emberline", "Sora", "Nyx").stream()
+                              .map(ChatTestFixtures::characterByName)
+                              .filter(
+                                  character ->
+                                      request.getTenantId().equals(character.getTenantId())
+                                          && request
+                                              .getAccountId()
+                                              .equals(character.getAccountId()))
+                              .map(
+                                  character ->
+                                      character.toBuilder()
+                                          .setPlayableStateScope(
+                                              PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                                          .build())
+                              .toList();
+                      response.addAllCharacters(characters);
+                    }
+                    responseObserver.onNext(response.build());
                     responseObserver.onCompleted();
                   }
 
