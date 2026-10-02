@@ -78,7 +78,6 @@ def main() -> int:
         "smoke": {"websocket-client"},
         "docs": {"mkdocs", "mkdocs-material"},
     }
-    docs_direct_versions = {}
     for name, path in requirements_inputs.items():
         if not path.is_file() or not path.read_text().strip():
             fail(f"{path} must define unlocked direct requirements")
@@ -98,17 +97,10 @@ def main() -> int:
         input_includes = [line.strip() for line in path.read_text().splitlines() if line.strip().startswith("-r ")]
         if input_includes != (["-r yaml-requirements.in"] if name == "ci" else []):
             fail(f"{path} must use the canonical YAML input relationship")
+        if name == "docs" and direct_specs != expected_direct_requirements[name]:
+            fail(f"{path} must contain only the canonical unpinned documentation roots")
         if direct_requirements != expected_direct_requirements[name]:
             fail(f"{path} does not match its canonical direct dependencies")
-        if name == "docs":
-            for spec in direct_specs:
-                match = re.fullmatch(r"([a-z0-9][a-z0-9_.-]*)==([^=\s\\]+)", spec)
-                if not match:
-                    fail(f"{path} must pin each direct documentation dependency exactly")
-                dependency = match.group(1).replace("_", "-")
-                if dependency in docs_direct_versions:
-                    fail(f"{path} contains a duplicate direct dependency: {dependency}")
-                docs_direct_versions[dependency] = match.group(2)
         lock_text = requirements_profiles[name].read_text()
         if not any(expected_compile_commands[name] in line for line in lock_text.splitlines()[:8]):
             fail(f"{requirements_profiles[name]} must record regeneration from {path.name}")
@@ -150,9 +142,9 @@ def main() -> int:
     for name, (entries, includes) in locks.items():
         if includes:
             fail(f"{name} requirements must not include another profile")
-    for dependency, version in docs_direct_versions.items():
-        if locks["docs"][0].get(dependency, (None,))[0] != version:
-            fail(f"docs requirements must resolve its direct dependency from the source pin: {dependency}")
+    for dependency in expected_direct_requirements["docs"]:
+        if dependency not in locks["docs"][0]:
+            fail(f"docs requirements must pin its direct dependency in the generated lock: {dependency}")
     for dependency, (version, _) in locks["yaml"][0].items():
         if locks["ci"][0].get(dependency, (None,))[0] != version:
             fail(f"ci requirements must resolve the canonical YAML dependency: {dependency}")
