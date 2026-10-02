@@ -260,8 +260,10 @@ _HOSTED_COMMENT_AUXILIARY_PREFIXES = (
     "cr-indicator-types:",
     "cr-comment:v1:",
 )
+_HOSTED_SOURCE_LABEL = r"(?:Path instructions|Learnings|Coding guidelines|Linters/SAST tools)"
 _HOSTED_COMMENT_FOOTER = re.compile(
-    r"\A[ \t\r\n]*(?:_Source: (?:Path instructions|Learnings|Coding guidelines|Linters/SAST tools)_[ \t]*\r?\n[ \t\r\n]*)?"
+    rf"\A[ \t\r\n]*(?:_(?:Source: {_HOSTED_SOURCE_LABEL}|Sources: {_HOSTED_SOURCE_LABEL}(?:, {_HOSTED_SOURCE_LABEL})*)_"
+    r"[ \t]*\r?\n[ \t\r\n]*)?"
     r"<!-- This is an auto-generated (?:comment|reply) by CodeRabbit -->[ \t\r\n]*\Z"
 )
 
