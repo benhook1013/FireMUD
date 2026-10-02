@@ -144,6 +144,18 @@ class AccountTenantMembershipCanonicalIdentityIntegrationTest {
     assertThat(retainedReadback.getAuthorityProvenance()).isEqualTo("LEGACY_UNVERIFIED");
     assertThat(retainedReadback.isGameplayAdmissionAllowed()).isFalse();
 
+    AccountTenantMembership retainedBaseSelectReadback =
+        repositories
+            .memberships()
+            .findByAccountIdAndTenantId(retained.accountId(), RETAINED_TENANT_ID)
+            .orElseThrow();
+    assertThat(retainedBaseSelectReadback.getTenantUuid()).isEqualTo(retainedTenantUuid);
+    assertThat(retainedBaseSelectReadback.getTenantProvenanceKind()).isEqualTo("APPROVED_RETAINED");
+    assertThat(retainedBaseSelectReadback.getTenantSourceOperationId())
+        .isEqualTo(retainedOperationId);
+    assertThat(retainedBaseSelectReadback.getTenantProvenanceDigest())
+        .isEqualTo(RETAINED_MANIFEST_DIGEST);
+
     var retainedCanonicalRoleHistory =
         fixture
             .transaction()
@@ -332,7 +344,7 @@ class AccountTenantMembershipCanonicalIdentityIntegrationTest {
             dsl.fetchOne(
                 "INSERT INTO accounts (username, email, password_hash, tenant_id) "
                     + "VALUES (?, ?, ?, ?) RETURNING id, account_uuid",
-                "membership-identity-" + suffix,
+                "mi-" + suffix,
                 "membership-identity-" + suffix + "@example.test",
                 "opaque-test-hash",
                 RETAINED_TENANT_ID),
