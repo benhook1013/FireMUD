@@ -19,6 +19,7 @@ import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.repository.InitialAdmissionBindHoldRepository;
 import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository;
 import net.firedevops.firemud.worldmanagement.service.InitialAdmissionBindHoldService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +37,7 @@ public class InitialAdmissionBindHoldServiceImpl implements InitialAdmissionBind
   private final WorldInstanceRepository worldInstanceRepository;
   private final Clock clock;
 
+  @Autowired
   public InitialAdmissionBindHoldServiceImpl(
       InitialAdmissionBindHoldRepository holdRepository,
       WorldInstanceRepository worldInstanceRepository) {

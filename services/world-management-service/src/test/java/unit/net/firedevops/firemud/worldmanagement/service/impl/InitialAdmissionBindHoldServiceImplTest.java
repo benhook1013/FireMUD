@@ -2,6 +2,7 @@ package net.firedevops.firemud.worldmanagement.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -9,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -22,6 +24,7 @@ import net.firedevops.firemud.worldmanagement.repository.WorldInstanceRepository
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 class InitialAdmissionBindHoldServiceImplTest {
   private static final long TENANT_ID = 42L;
@@ -47,6 +50,39 @@ class InitialAdmissionBindHoldServiceImplTest {
     when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(
             TENANT_ID, GAME_INSTANCE_ID))
         .thenReturn(Optional.of(activeWorldInstance()));
+  }
+
+  @Test
+  void springContextSelectsAutowiredProductionConstructor() {
+    try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+      context.registerBean(
+          InitialAdmissionBindHoldRepository.class,
+          () -> Mockito.mock(InitialAdmissionBindHoldRepository.class));
+      context.registerBean(
+          WorldInstanceRepository.class, () -> Mockito.mock(WorldInstanceRepository.class));
+      context.registerBean(InitialAdmissionBindHoldServiceImpl.class);
+
+      context.refresh();
+
+      assertNotNull(context.getBean(InitialAdmissionBindHoldServiceImpl.class));
+    }
+  }
+
+  @Test
+  void acquireUsesInjectedClockForDiagnosticExpiry() {
+    Instant now = Instant.parse("2026-09-01T00:00:00Z");
+    service =
+        new InitialAdmissionBindHoldServiceImpl(
+            holdRepository, worldInstanceRepository, Clock.fixed(now, java.time.ZoneOffset.UTC));
+    when(holdRepository.findByTenantIdAndRequestId(TENANT_ID, REQUEST_ID))
+        .thenReturn(Optional.empty());
+    when(holdRepository.hasNonterminalForRealm(TENANT_ID, REALM_UUID)).thenReturn(false);
+    when(holdRepository.insertIfNoUniqueConflict(any()))
+        .thenAnswer(invocation -> Optional.of(invocation.getArgument(0)));
+
+    var hold = service.acquire(request());
+
+    assertEquals(now.plusSeconds(300), hold.diagnosticExpiresAt());
   }
 
   @Test
