@@ -1014,15 +1014,13 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
-      if (isEntitlementUnavailable(maybeError.get())) {
+      if (isEntitlementUnavailable(maybeError.get())
+          || "FAILED_PRECONDITION".equalsIgnoreCase(maybeError.get().getCode())) {
+        // Account uses FAILED_PRECONDITION when this request cannot prove its caller/target
+        // binding; that is unavailable authority, not a gameplay-policy denial.
         return Optional.of(
             entitlementUnavailableFailure(
                 tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
-      }
-      if ("FAILED_PRECONDITION".equalsIgnoreCase(maybeError.get().getCode())) {
-        return Optional.of(
-            worldAccessDeniedFailure(
-                context, tenantTag, selectedWorld, selectedRealm, requestedCharacterId));
       }
       if (isAuthorityUnavailable(maybeError.get())) {
         return Optional.of(

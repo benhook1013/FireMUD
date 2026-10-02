@@ -3937,41 +3937,80 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playEntitlementRuntimeGuardFailureReturnsAccessDeniedBeforeRosterRead() {
+  void playEntitlementCallerTargetPreconditionPreservesExistingBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            123L,
+            "Emberline",
+            1L,
+            "R-1",
+            "jwt-token",
+            "en",
+            0L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setError(ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION").build())
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("FAILED_PRECONDITION")
+                        .setMessage(
+                            "This request cannot establish an authorized caller and target binding")
+                        .build())
                 .build());
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
 
-    assertThat(result.commandResult().errorCode()).isEqualTo("WORLD_ACCESS_DENIED");
-    Mockito.verify(gameplayPresenceLifecycleService).clearGameplayBinding(context, "access_denied");
-    ArgumentCaptor<SessionContext> savedContextCaptor =
-        ArgumentCaptor.forClass(SessionContext.class);
-    Mockito.verify(sessionContextService, Mockito.times(1)).save(savedContextCaptor.capture());
-    SessionContext savedContext = savedContextCaptor.getValue();
-    assertThat(savedContext.sessionId()).isEqualTo(context.sessionId());
-    assertThat(savedContext.tenantId()).isEqualTo(context.tenantId());
-    assertThat(savedContext.accountId()).isEqualTo(context.accountId());
-    assertThat(savedContext.loginName()).isEqualTo(context.loginName());
-    assertThat(savedContext.jwt()).isEqualTo(context.jwt());
-    assertThat(savedContext.characterId()).isZero();
-    assertThat(savedContext.characterName()).isNull();
-    assertThat(savedContext.gameInstanceId()).isZero();
-    assertThat(savedContext.roomInstanceId()).isNull();
-    assertThat(savedContext.playableStateScope()).isNull();
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE);
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_MESSAGE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.entitlement-unavailable");
+    assertThat(context.hasGameplayBinding()).isTrue();
+    assertThat(context.tenantId()).isEqualTo(22L);
+    assertThat(context.accountId()).isEqualTo(123L);
+    assertThat(context.characterId()).isEqualTo(123L);
+    assertThat(context.gameInstanceId()).isEqualTo(1L);
+    assertThat(context.worldSlug()).isEqualTo("demo");
+    assertThat(context.realmSlug()).isEqualTo("production");
+    assertThat(context.pointerVersion()).isEqualTo(1L);
+    assertThat(context.playableStateScope()).isEqualTo("SHARED");
+    assertThat(context.connectScopeId()).isNull();
+    assertThat(context.connectRequestId()).isNull();
+    assertThat(meterRegistry.find("gamesession.session.resume_denied").counters()).isEmpty();
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
+    Mockito.verify(sessionContextService, never()).save(Mockito.any());
+    Mockito.verify(sessionAuthenticationService, never())
+        .resolveByGameplayIdentity(Mockito.anyLong(), Mockito.anyLong(), Mockito.anyLong());
     Mockito.verify(entityManagementClient, never())
         .listCharactersByAccount(
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.anyString(),
             Mockito.any(PlayableStateScope.class));
+    Mockito.verify(moderationPolicyClient, never())
+        .evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong());
+    Mockito.verify(accountClient, never())
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString());
+    Mockito.verifyNoInteractions(scriptEventPublisher);
   }
 
   private void assertIdentityUnavailableWithoutMutation(PlayCommandHandlingResult result) {
