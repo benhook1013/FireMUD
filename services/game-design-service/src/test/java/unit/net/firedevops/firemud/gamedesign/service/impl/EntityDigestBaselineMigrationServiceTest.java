@@ -181,6 +181,42 @@ class EntityDigestBaselineMigrationServiceTest {
   }
 
   @Test
+  void enumerationBlocksRetainedFullVersionBaselineForScriptOnlyVersion() {
+    EntityDigestBaselineMigrationService service = serviceWithMockWriter();
+    when(baselineRepository.findEntityV1FullVersionBatchAfterId(10L, 25))
+        .thenReturn(List.of(source));
+    Version scriptOnly = version();
+    scriptOnly.setScriptOnly(true);
+    when(versionRepository.findByTenantIdAndId(TENANT_ID, VERSION_ID))
+        .thenReturn(Optional.of(scriptOnly));
+
+    EntityDigestBaselineMigrationService.EntityV1Batch page =
+        service.enumerateEntityV1Batch(10L, 25);
+
+    assertEquals(BASELINE_ID, page.nextAfterBaselineId());
+    assertEquals(BASELINE_ID, page.baselines().get(0).baselineId());
+    assertEquals(TENANT_ID, page.baselines().get(0).tenantId());
+    assertEquals(VERSION_ID, page.baselines().get(0).versionId());
+    assertEquals(
+        EntityDigestBaselineMigrationService.ScopeStatus.BLOCKED_SCRIPT_ONLY,
+        page.baselines().get(0).status());
+    assertFalse(page.isEmptyAtCursor());
+
+    EntityDigestBaselineMigrationService.MigrationRejectedException preflightRejected =
+        assertThrows(
+            EntityDigestBaselineMigrationService.MigrationRejectedException.class,
+            () -> service.preflightScope(TENANT_ID, VERSION_ID));
+    assertEquals("VERSION_SCOPE_MISMATCH", preflightRejected.failureCode());
+    EntityDigestBaselineMigrationService.MigrationRejectedException migrationRejected =
+        assertThrows(
+            EntityDigestBaselineMigrationService.MigrationRejectedException.class,
+            () -> service.migrate(command));
+    assertEquals("VERSION_SCOPE_MISMATCH", migrationRejected.failureCode());
+    verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
+    verify(auditRepository, never()).insert(any());
+  }
+
+  @Test
   void migrateRejectsNewDraftOperationBeforeEntityDigestOrBaselineRead() {
     Version draft = version();
     draft.setVersionState(VersionLifecycleState.DRAFT);

@@ -515,9 +515,11 @@ public class EntityDigestBaselineMigrationService {
     ScopeStatus status =
         version == null
             ? ScopeStatus.BLOCKED_VERSION_MISSING
-            : version.getVersionState() == VersionLifecycleState.DRAFT
-                ? ScopeStatus.BLOCKED_DRAFT
-                : ScopeStatus.V1_REQUIRES_MIGRATION;
+            : version.isScriptOnly()
+                ? ScopeStatus.BLOCKED_SCRIPT_ONLY
+                : version.getVersionState() == VersionLifecycleState.DRAFT
+                    ? ScopeStatus.BLOCKED_DRAFT
+                    : ScopeStatus.V1_REQUIRES_MIGRATION;
     return toSummary(row, status);
   }
 
@@ -606,6 +608,7 @@ public class EntityDigestBaselineMigrationService {
     V1_REQUIRES_MIGRATION,
     BLOCKED_DRAFT,
     BLOCKED_VERSION_MISSING,
+    BLOCKED_SCRIPT_ONLY,
     V2_ALREADY_RECORDED,
     NO_RECORDED_BASELINE,
     AMBIGUOUS_BASELINE,
