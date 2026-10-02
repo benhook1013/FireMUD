@@ -197,13 +197,23 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     JdbcTemplate jdbc = jdbc();
     clearSyntheticAdmissionPointerState(jdbc);
     jdbc.execute("TRUNCATE TABLE runtime_region_status RESTART IDENTITY");
-    jdbc.execute("TRUNCATE TABLE game_instances RESTART IDENTITY");
     if (characterIds.length > 0) {
       clearScreenBuffers(tenantId, gameplayInstanceId, characterIds);
     }
-    long gameInstanceId =
-        GameInstanceTestFixtures.insertRunningGameInstance(
-            jdbc, tenantId, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, gameTemplateId);
+    long gameInstanceId;
+    if (tenantId == RetainedDemoTenantAssociationFixture.DEMO_LEGACY_TENANT_ID) {
+      // These fixed IDs are synthetic test-owner declarations that keep the bootstrapped demo
+      // and sandbox pointers attached to real source rows before retained snapshot capture.
+      gameInstanceId =
+          GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+              jdbc, 1L, tenantId, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, gameTemplateId);
+      GameInstanceTestFixtures.ensureDeclaredRunningGameInstance(
+          jdbc, 2L, tenantId, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, gameTemplateId);
+    } else {
+      gameInstanceId =
+          GameInstanceTestFixtures.insertRunningGameInstance(
+              jdbc, tenantId, GameInstanceTestFixtures.TEST_OWNER_ACCOUNT_UUID, gameTemplateId);
+    }
     seedRuntimeOwnership(tenantId, gameInstanceId);
     if (retainedDemoTenantAssociationFixture != null) {
       retainedDemoTenantAssociationFixture.ensureAssociation(tenantId);
@@ -321,7 +331,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
     if (clearExisting) {
       clearRedis();
       jdbc.update("DELETE FROM runtime_region_status");
-      jdbc.update("DELETE FROM game_instances");
+      // Retained instance identity may still be referenced by canonical admission pointers.
     }
     long gameInstanceId =
         GameInstanceTestFixtures.insertRunningGameInstance(

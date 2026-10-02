@@ -994,6 +994,7 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#syntheticDemoFixtureRegistersSnapshotAndResolvesItsDeclaredCanonicalTenant()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#syntheticDemoFixtureReusesHistoricalReceiptAfterMutableSourceChanges()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#syntheticDemoFixtureDoesNotInventUnknownOrContradictoryTenantMappings()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionRetainedTenantAssociationRepositoryIntegrationTest#syntheticDefaultPointerTargetsRemainValidAcrossRepeatedFixtureBaselines()' \
             game-session-service
 
       - name: Upload Game Session retained tenant UUID PostgreSQL proof results
@@ -1080,6 +1081,35 @@ jobs:
             ./gradlew :${{ matrix.module }}:check -PfullCheck
           fi
           echo "::endgroup::"
+
+      - name: Verify Account issuer authority PostgreSQL proof cases
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#atomicallyAdvancesSourceAndEventAndReadsBackExactCheckpoint()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#exactRetryRecoversLostResponseAndOriginalEventAfterLaterAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#concurrentExactRequestSerializesAndCommitsOneSourceEvent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#changedExpectedStateForSameRequestConflictsWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#wrongIssuerStaleRequestAndMissingSourceFailWithoutEnrollmentOrMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#sequenceZeroRequiresOriginalPositiveBaselineAndNoContradictoryStreamOrHistory()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#positiveReadbackRejectsSourceCountersThatDifferFromLatestEvent()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#positiveReadbackUsesExplicitLatestEventCountersInsteadOfDerivingThemFromSequence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#appendFailureRollsBackSourceAndOutboxTogether()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#transactionLocalEventReadbackFailureRollsBackTheAdvance()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#unavailablePostCommitReadDoesNotUndoAndExactRetryRecoversWithoutAdvancingAgain()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.IssuerAuthorityProducerPostgresIntegrationTest#generationAndSourceVersionOverflowFailBeforeAnyMutation()' \
+            account-service
+
+      - name: Upload Account issuer authority PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-issuer-authority-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*IssuerAuthorityProducerPostgresIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: 🔎 Verify Account password reset PostgreSQL proof cases
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
