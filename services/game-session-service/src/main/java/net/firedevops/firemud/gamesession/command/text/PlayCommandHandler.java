@@ -301,12 +301,25 @@ public class PlayCommandHandler {
             null,
             null);
       }
-      Optional<GameplayWorldCatalog.RealmView> maybeRealm =
-          realmSelection instanceof RealmSelectorResolution.Selected selected
-              ? Optional.of(selected.realm())
-              : selection.explicitRealmSelector() != null
-                  ? Optional.empty()
-                  : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
+      Optional<GameplayWorldCatalog.RealmView> maybeRealm;
+      try {
+        maybeRealm =
+            realmSelection instanceof RealmSelectorResolution.Selected selected
+                ? Optional.of(selected.realm())
+                : selection.explicitRealmSelector() != null
+                    ? Optional.empty()
+                    : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+        return failure(
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
+            "error.play.authority-unavailable",
+            Map.of(),
+            tenantTag,
+            null,
+            null,
+            ex);
+      }
       if (maybeRealm.isEmpty()) {
         return failure(
             GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
