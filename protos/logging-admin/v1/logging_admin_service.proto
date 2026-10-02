@@ -60,6 +60,7 @@ message CreateLogEventResponse {
   string payload_digest = 8;
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
+  int32 audit_projection_version = 11;
 }
 
 message ReadLogEventReceiptRequest {
@@ -86,6 +87,7 @@ message ReadLogEventReceiptResponse {
   string payload_digest = 8;
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
+  int32 audit_projection_version = 11;
 }
 
 enum AccountAuditScope {

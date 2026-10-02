@@ -11,14 +11,11 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.LongSupplier;
-import net.firedevops.firemud.common.LoggingUtil;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceRole;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.SessionContext;
-import org.slf4j.Logger;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -30,7 +27,6 @@ import org.springframework.util.StringUtils;
 /** Redis-backed gameplay presence store for the first WHO implementation. */
 @Service
 public final class RedisGameplayPresenceService implements GameplayPresenceService {
-  private static final Logger logger = LoggingUtil.getLogger(RedisGameplayPresenceService.class);
   private static final String PRESENCE_KEY_TEMPLATE = "gameplaypresence:session:%d";
   private static final String GAME_INSTANCE_SET_TEMPLATE = "gameplaypresence:%d:%d:sessions";
   private static final String ACCOUNT_SET_TEMPLATE = "gameplaypresence:%d:account:%d:sessions";
@@ -46,24 +42,20 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final Duration presenceTtl;
-  private final JwtUtil jwtUtil;
   private final LongSupplier currentTimeMillisSupplier;
 
   @Autowired
   public RedisGameplayPresenceService(
       RedisTemplate<String, Object> redisTemplate,
-      JwtUtil jwtUtil,
       @Value("${FIREMUD_AUTH_SESSION_EXPIRATION_MS:3600000}") long sessionExpirationMs) {
-    this(redisTemplate, jwtUtil, sessionExpirationMs, System::currentTimeMillis);
+    this(redisTemplate, sessionExpirationMs, System::currentTimeMillis);
   }
 
   RedisGameplayPresenceService(
       RedisTemplate<String, Object> redisTemplate,
-      JwtUtil jwtUtil,
       long sessionExpirationMs,
       LongSupplier currentTimeMillisSupplier) {
     this.redisTemplate = redisTemplate;
-    this.jwtUtil = jwtUtil;
     this.presenceTtl = Duration.ofMillis(sessionExpirationMs);
     this.currentTimeMillisSupplier = currentTimeMillisSupplier;
   }
@@ -91,7 +83,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
             StringUtils.hasText(context.characterName())
                 ? context.characterName().trim()
                 : fallbackCharacterName(context),
-            classifyRole(context),
+            GameplayPresenceRoleClassifier.classifyRole(),
             currentTimeMillisSupplier.getAsLong(),
             null,
             null,
@@ -316,10 +308,6 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   private String accountKey(long tenantId, long accountId) {
     return String.format(ACCOUNT_SET_TEMPLATE, tenantId, accountId);
-  }
-
-  private GameplayPresenceRole classifyRole(SessionContext context) {
-    return GameplayPresenceRoleClassifier.classifyRole(context, jwtUtil, logger);
   }
 
   private String fallbackCharacterName(SessionContext context) {

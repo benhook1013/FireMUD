@@ -82,27 +82,32 @@ public class HelpCommandHandler {
       case "PLAY" ->
           success(
               "PLAY <world> [realm] [character]\n"
-                  + "Select the world to enter, optionally name a visible realm, and optionally choose a character.");
+                  + "Select the world to enter, optionally name a visible realm, and optionally choose a character.\n"
+                  + "Character browsing is currently unavailable; "
+                  + "use a known character name, not a list number.");
       case "JOIN" ->
           success(
               "JOIN <world>\n"
                   + "Join the public-production membership for a world after LOGIN.\n"
-                  + "Use REALMS <world> first, then JOIN before CHARS and PLAY.");
+                  + "Use REALMS <world> first, then JOIN before PLAY.\n"
+                  + "Character browsing is currently unavailable; PLAY requires a known character when selection is needed.");
       case "REALMS" ->
           success(
               "REALMS <world>\n"
                   + "List visible realms for the selected world.\n"
-                  + "Use this before CHARS or PLAY when a world exposes more than one realm.");
+                  + "Use this before PLAY when a world exposes more than one realm.\n"
+                  + "Character browsing is currently unavailable; PLAY requires a known character when selection is needed.");
       case "CHARS" ->
           success(
               "CHARS <world> [realm]\n"
-                  + "List visible characters for the selected world and realm.\n"
-                  + "Use REALMS first when the world exposes more than one realm.");
+                  + "Character browsing is currently unavailable.\n"
+                  + "Use PLAY <world> [realm] <character> with a known character.");
       case "WHO" ->
           success(
               "WHO\n"
                   + "List currently connected players in this game instance.\n"
-                  + "Gods appear first, then players.\n"
+                  + "Connected users are currently classified as players; "
+                  + "gameplay-grant roles are not yet shown.\n"
                   + "You must already be in-world with PLAY.");
       case "STATUS" ->
           success(

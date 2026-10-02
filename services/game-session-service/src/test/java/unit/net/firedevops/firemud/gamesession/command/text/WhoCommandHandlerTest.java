@@ -26,7 +26,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoShowsBoundedEmptyStateWhenNobodyIsConnected() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -50,7 +50,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoKeepsTenantRoleClaimsInThePlayerListWithoutGrantEvidence() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String godJwt =
@@ -88,7 +88,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoOmitsRemovedPresenceAfterLogoutLikeCleanup() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -109,7 +109,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoAnnotatesExplicitAndAutoAfkPlayers() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     GameplayPresenceActivityResolver resolver =
         Mockito.mock(GameplayPresenceActivityResolver.class);
     WhoCommandHandler handler =

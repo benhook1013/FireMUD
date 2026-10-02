@@ -105,6 +105,34 @@ class LogEventServiceImplTest {
   }
 
   @Test
+  void changedEventTypeWithinIdentityReturnsIdempotencyConflict() {
+    CreateLogEventRequest original = request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{}");
+    CreateLogEventRequest changed =
+        new CreateLogEventRequest(
+            original.scope(),
+            original.tenantId(),
+            original.auditEventId(),
+            original.producerService(),
+            "ACCOUNT_RECOVERY",
+            original.occurredAt(),
+            original.schemaVersion(),
+            original.payload(),
+            original.payloadDigestVersion(),
+            original.payloadDigest());
+    when(repository.insertIfAbsent(eq(changed), any(UUID.class)))
+        .thenReturn(
+            new AccountAuditReceiptInsertResult(
+                receipt(original, original.payload().toByteArray(), "COMMITTED", "ACCEPTED"),
+                false));
+
+    var result = service.createLogEvent(changed);
+
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, result.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, result.outcome());
+    assertEquals(LOG_EVENT_ID, result.logEventId());
+  }
+
+  @Test
   void minimizedRetryIsSuccessfulButNonReplayable() {
     CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
     when(repository.insertIfAbsent(eq(request), any(UUID.class)))

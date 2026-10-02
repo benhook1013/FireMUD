@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from . import evidence, github, hosted, sqlite_hosted_capture, sqlite_review_records
-from .sqlite_finding_text import _first_line, _safe_finding_detail
+from .sqlite_finding_text import _first_line, _safe_finding_detail  # noqa: F401
 from .sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from .state import ControllerStateStore, FindingRoute, StateError, SummaryFindingDisposition, state_path
 
@@ -174,7 +174,7 @@ def import_cli_checkpoint(
     _validate_checkpoint(checkpoint, "CLI")
     if checkpoint.run_id is None:
         raise ProviderImportError("CLI checkpoint has no exact run marker")
-    capture = evidence.load_cli_capture(checkpoint, repo, pr_number, common, records=records)
+    capture = evidence.load_cli_capture_for_repair(checkpoint, repo, pr_number, common, records=records)
     source_head = capture.metadata.get("candidate_sha", "")
     if not evidence.EXACT_SHA.fullmatch(source_head):
         raise ProviderImportError("CLI capture has no exact candidate head")
@@ -289,13 +289,13 @@ def _hosted_archive_artifacts(
         "pull_request": pr_number,
         "review_id": review_id,
         "checkpoint": checkpoint.as_json(),
+        "checkpoint_fields": dataclasses.asdict(checkpoint),
         "checkpoint_fingerprint": _checkpoint_fingerprint(checkpoint),
         "snapshot_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
         "decision_file_present": capture.decision_file_present,
         "decisions_tsv": decisions_text,
         "decisions": {
-            str(key): {"disposition": value[0], "reason": value[1]}
-            for key, value in sorted(capture.decisions.items())
+            str(key): {"disposition": value[0], "reason": value[1]} for key, value in sorted(capture.decisions.items())
         },
         "unlinked_decisions": capture.unlinked_decisions,
     }
@@ -336,6 +336,7 @@ def _cli_archive_artifacts(
         "repository": repo.casefold(),
         "pull_request": pr_number,
         "checkpoint": checkpoint.as_json(),
+        "checkpoint_fields": dataclasses.asdict(checkpoint),
         "checkpoint_fingerprint": _checkpoint_fingerprint(checkpoint),
         "metadata_json": parsed_metadata,
         "metadata_json_text": metadata_json,
@@ -424,9 +425,8 @@ def _import_reply_only_hosted_checkpoint(
         if state.state != "completed" or not state.terminal or not state.attributed:
             raise ProviderImportError("checkpoint reply is not a completed, attributable Hosted trigger result")
         captured_head = record["head_sha"]
-        if (
-            state.head_sha.casefold() != captured_head.casefold()
-            or not captured_head.casefold().startswith(checkpoint.reviewed_sha.casefold())
+        if state.head_sha.casefold() != captured_head.casefold() or not captured_head.casefold().startswith(
+            checkpoint.reviewed_sha.casefold()
         ):
             raise ProviderImportError("Hosted trigger checkpoint does not match its reviewed head")
         proof = runtime.LiveEvidence._hosted_zero_reply_proof(
@@ -440,7 +440,10 @@ def _import_reply_only_hosted_checkpoint(
         if proof is None:
             raise ProviderImportError("Hosted reply has no exact trigger-window zero-finding proof")
         anchor = record.get("anchor")
-        if not runtime.LiveEvidence._anchor_complete(anchor) or anchor.get("child_head", "").casefold() != captured_head.casefold():
+        if (
+            not runtime.LiveEvidence._anchor_complete(anchor)
+            or anchor.get("child_head", "").casefold() != captured_head.casefold()
+        ):
             raise ProviderImportError("Hosted trigger has no complete candidate-head anchor")
         trigger_id = (record.get("trigger") or {}).get("id")
         trigger_comment = next(
@@ -457,9 +460,7 @@ def _import_reply_only_hosted_checkpoint(
         ):
             raise ProviderImportError("Hosted checkpoint author does not match the exact external trigger author")
         response_matches = [
-            item
-            for item in public_comments
-            if github.immutable_database_id(item) == checkpoint.hosted_review_id
+            item for item in public_comments if github.immutable_database_id(item) == checkpoint.hosted_review_id
         ]
         if len(response_matches) != 1:
             raise ProviderImportError("Hosted completion reply is missing or duplicated")
@@ -526,6 +527,7 @@ def _import_reply_only_hosted_checkpoint(
                 "trigger_state": trigger_state,
                 "zero_reply_proof": proof,
                 "checkpoint": checkpoint.as_json(),
+                "checkpoint_fields": dataclasses.asdict(checkpoint),
                 "checkpoint_fingerprint": _checkpoint_fingerprint(checkpoint),
                 "current_head": current_head,
                 "response_id": checkpoint.hosted_review_id,
@@ -595,32 +597,24 @@ def _summary_dispositions(
         for route_id in disposition.route_ids:
             route = routes.get(route_id)
             if route is None:
-                raise ProviderImportError(
-                    f"summary disposition references unavailable legacy route {route_id}"
-                )
+                raise ProviderImportError(f"summary disposition references unavailable legacy route {route_id}")
             if (
                 route.source_pr != disposition.pr
                 or route.source_channel != "hosted"
                 or route.source_review != f"summary:{disposition.source}:{disposition.summary_id}"
                 or not route.source_finding.startswith(f"{disposition.kind}:")
             ):
-                raise ProviderImportError(
-                    f"legacy route {route_id} does not match its exact summary disposition"
-                )
+                raise ProviderImportError(f"legacy route {route_id} does not match its exact summary disposition")
             reference = route.source_finding[len(disposition.kind) + 1 :]
             if reference.startswith("ref:"):
                 reference_valid = bool(reference[4:].strip())
             else:
                 match = re.fullmatch(r"(?P<count>[1-9][0-9]*):(?P<reference>.+)", reference)
                 reference_valid = bool(
-                    match
-                    and int(match.group("count")) == disposition.count
-                    and match.group("reference").strip()
+                    match and int(match.group("count")) == disposition.count and match.group("reference").strip()
                 )
             if not reference_valid:
-                raise ProviderImportError(
-                    f"legacy route {route_id} does not match its exact summary finding bucket"
-                )
+                raise ProviderImportError(f"legacy route {route_id} does not match its exact summary finding bucket")
     return dispositions, routes
 
 
@@ -693,18 +687,14 @@ def _summary_disposition(
     if len(candidates) > 1:
         raise ProviderImportError("multiple summary dispositions match one exact summary bucket")
     if not candidates:
-        raise ProviderImportError(
-            f"summary-only {kind} bucket ({count}) has no exact structural disposition"
-        )
+        raise ProviderImportError(f"summary-only {kind} bucket ({count}) has no exact structural disposition")
     disposition = candidates[0]
     if disposition.count != count:
         raise ProviderImportError(
             f"summary-only {kind} disposition count {disposition.count} does not match captured count {count}"
         )
     if disposition.decision == "routed" and len(disposition.route_ids) != count:
-        raise ProviderImportError(
-            f"routed summary-only {kind} bucket requires one stable route ID per item"
-        )
+        raise ProviderImportError(f"routed summary-only {kind} bucket requires one stable route ID per item")
     return disposition
 
 
@@ -735,20 +725,30 @@ def _hosted_findings(
     result: list[dict[str, Any]] = []
     ordered_decisions: dict[int, tuple[str, str]] = {}
     for comment in findings:
-        title = _first_line(comment.get("body"))
-        if title is None:
-            raise ProviderImportError("Hosted finding has no bounded title")
-        if len(title) > 300:
-            raise ProviderImportError("Hosted finding headline exceeds the SQLite title limit")
-        result.append(
-            {
-                "key": f"hosted-comment:{comment['id']}",
-                "title": title,
-                "detail": _safe_finding_detail(comment.get("body")),
-                "id": comment["id"],
-            }
-        )
-        ordered_decisions[len(result)] = capture.decisions[comment["id"]]
+        try:
+            comment_findings = sqlite_hosted_capture._hosted_comment_finding_segments(
+                comment["id"], comment.get("body")
+            )
+        except sqlite_hosted_capture.HostedCaptureError as exc:
+            raise ProviderImportError(f"Hosted finding identity is malformed: {exc}") from exc
+        for finding in comment_findings:
+            title = finding["title"]
+            if not title:
+                raise ProviderImportError("Hosted finding has no bounded title")
+            if len(title) > 300:
+                raise ProviderImportError("Hosted finding headline exceeds the SQLite title limit")
+            result.append(
+                {
+                    "key": finding["key"],
+                    "title": title,
+                    "detail": finding["detail"],
+                    "id": comment["id"],
+                }
+            )
+            # Legacy decisions.tsv records one disposition per immutable GitHub
+            # comment. When that comment now has several independent provider
+            # fingerprints, the captured disposition applies to each atom.
+            ordered_decisions[len(result)] = capture.decisions[comment["id"]]
 
     if summary is not None:
         source, summary_id, counts, _ = summary
@@ -774,15 +774,9 @@ def _hosted_findings(
                             f"{ordinal} of {count} (aggregate; no individual detail)"
                         ),
                         "detail": "summary-only aggregate; provider supplied no individual identity or detail",
-                        "legacy_route_id": (
-                            disposition.route_ids[ordinal - 1]
-                            if decision[0] == "routed"
-                            else None
-                        ),
+                        "legacy_route_id": (disposition.route_ids[ordinal - 1] if decision[0] == "routed" else None),
                         "legacy_route": (
-                            legacy_routes[disposition.route_ids[ordinal - 1]]
-                            if decision[0] == "routed"
-                            else None
+                            legacy_routes[disposition.route_ids[ordinal - 1]] if decision[0] == "routed" else None
                         ),
                     }
                 )
@@ -839,10 +833,7 @@ def _normalize_cli_title_text(value: str) -> str:
         "",
         value,
     )
-    return "".join(
-        " " if ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F else character
-        for character in value
-    )
+    return "".join(" " if ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F else character for character in value)
 
 
 def _cli_title_lines(value: str) -> list[str]:
@@ -865,7 +856,7 @@ def _cli_lines_after_locator(value: Any) -> tuple[list[str], bool]:
     candidates = _cli_title_lines(_cli_instruction_text(value))
     for index, line in enumerate(candidates):
         if line.strip().startswith("Review comment at @"):
-            return candidates[index + 1:], True
+            return candidates[index + 1 :], True
     return candidates, False
 
 
@@ -934,17 +925,9 @@ def _observations_and_decisions(
                 "decision": decision,
                 "actor": actor,
                 "reason": reason,
-                "target_pr": (
-                    finding["legacy_route"].target_pr
-                    if finding.get("legacy_route") is not None
-                    else None
-                ),
+                "target_pr": (finding["legacy_route"].target_pr if finding.get("legacy_route") is not None else None),
                 "route_id": finding.get("legacy_route_id"),
-                "route_status": (
-                    finding["legacy_route"].status
-                    if finding.get("legacy_route") is not None
-                    else None
-                ),
+                "route_status": (finding["legacy_route"].status if finding.get("legacy_route") is not None else None),
             }
         )
     return tuple(observations), tuple(decisions)
@@ -993,44 +976,27 @@ def _persist_import(
         # decisions, and archived evidence. All other run and decision fields
         # remain subject to import_completed_run's normal conflict checks.
         history = records.history(pr_number)
-        existing_run = next(
-            (item for item in history["runs"] if item["run_id"] == run_id), None
-        )
+        existing_run = next((item for item in history["runs"] if item["run_id"] == run_id), None)
         if existing_run is not None:
-            persisted = {
-                item["source_finding_key"]: item
-                for item in history["findings"]
-                if item["run_id"] == run_id
-            }
+            persisted = {item["source_finding_key"]: item for item in history["findings"] if item["run_id"] == run_id}
             supplied = {item.source_finding_key: item for item in observations}
-            finding_keys = {
-                item["finding_id"]: item["source_finding_key"]
-                for item in persisted.values()
-            }
+            finding_keys = {item["finding_id"]: item["source_finding_key"] for item in persisted.values()}
             original_decisions = {
                 finding_keys[item["finding_id"]]: item
                 for item in history["decisions"]
-                if item["run_id"] == run_id
-                and item["scope"] == "source"
-                and item["finding_id"] in finding_keys
+                if item["run_id"] == run_id and item["scope"] == "source" and item["finding_id"] in finding_keys
             }
             expected_counts = {
                 "found": len(persisted),
                 "accepted": sum(item["decision"] == "accepted" for item in original_decisions.values()),
                 "routed": sum(item["decision"] == "routed" for item in original_decisions.values()),
             }
-            supplied_decisions = {
-                item["source_finding_key"]: item["decision"]
-                for item in decisions
-            }
+            supplied_decisions = {item["source_finding_key"]: item["decision"] for item in decisions}
             if (
                 set(persisted) != set(supplied)
                 or set(original_decisions) != set(persisted)
                 or len(decisions) != len(original_decisions)
-                or supplied_decisions != {
-                    key: item["decision"]
-                    for key, item in original_decisions.items()
-                }
+                or supplied_decisions != {key: item["decision"] for key, item in original_decisions.items()}
                 or {
                     "found": len(observations),
                     "accepted": sum(item["decision"] == "accepted" for item in decisions),
@@ -1038,13 +1004,8 @@ def _persist_import(
                 }
                 != expected_counts
             ):
-                raise ProviderImportError(
-                    "run_id was already imported with different finding identity or decisions"
-                )
-            current_decisions = {
-                key: item["decision"]
-                for key, item in original_decisions.items()
-            }
+                raise ProviderImportError("run_id was already imported with different finding identity or decisions")
+            current_decisions = {key: item["decision"] for key, item in original_decisions.items()}
             for correction in history["corrections"]:
                 if correction["run_id"] != run_id:
                     continue

@@ -110,7 +110,7 @@ class AdmissionPointerControllerTest {
   }
 
   @Test
-  void openApiDocumentsAdmissionPointerList503Response() throws Exception {
+  void openApiDocumentsAdmissionPointerReadContracts() throws Exception {
     Map<?, ?> document;
     try (var input = getClass().getResourceAsStream("/openapi.yaml")) {
       assertNotNull(input);
@@ -118,20 +118,38 @@ class AdmissionPointerControllerTest {
     }
 
     Map<?, ?> paths = (Map<?, ?>) document.get("paths");
-    Map<?, ?> admissionPointers = (Map<?, ?>) paths.get("/admission-pointers");
-    Map<?, ?> getOperation = (Map<?, ?>) admissionPointers.get("get");
-    Map<?, ?> responses = (Map<?, ?>) getOperation.get("responses");
-    Map<?, ?> success = (Map<?, ?>) responses.get("200");
-    Map<?, ?> unavailable = (Map<?, ?>) responses.get("503");
-    Map<?, ?> successContent = (Map<?, ?>) success.get("content");
-    Map<?, ?> unavailableContent = (Map<?, ?>) unavailable.get("content");
-    Map<?, ?> successJson = (Map<?, ?>) successContent.get("application/json");
-    Map<?, ?> unavailableJson = (Map<?, ?>) unavailableContent.get("application/json");
-    Map<?, ?> successSchema = (Map<?, ?>) successJson.get("schema");
-    Map<?, ?> unavailableSchema = (Map<?, ?>) unavailableJson.get("schema");
+    for (String path :
+        List.of(
+            "/admission-pointers",
+            "/admission-pointers/{tenantId}/{worldSlug}/{realmSlug}/audit",
+            "/admission-pointers/runtime-state/{tenantId}/{gameInstanceId}")) {
+      Map<?, ?> admissionPointers = (Map<?, ?>) paths.get(path);
+      Map<?, ?> getOperation = (Map<?, ?>) admissionPointers.get("get");
+      Map<?, ?> responses = (Map<?, ?>) getOperation.get("responses");
+      Map<?, ?> success = (Map<?, ?>) responses.get("200");
+      Map<?, ?> unavailable = (Map<?, ?>) responses.get("503");
+      assertNotNull(unavailable, path + " must document the unavailable response");
+      Map<?, ?> successContent = (Map<?, ?>) success.get("content");
+      Map<?, ?> unavailableContent = (Map<?, ?>) unavailable.get("content");
+      Map<?, ?> successJson = (Map<?, ?>) successContent.get("application/json");
+      Map<?, ?> unavailableJson = (Map<?, ?>) unavailableContent.get("application/json");
+      Map<?, ?> successSchema = (Map<?, ?>) successJson.get("schema");
+      Map<?, ?> unavailableSchema = (Map<?, ?>) unavailableJson.get("schema");
 
-    assertEquals("#/components/schemas/ApiResponseError", unavailableSchema.get("$ref"));
-    assertEquals("object", successSchema.get("type"));
+      assertEquals("#/components/schemas/ApiResponseError", unavailableSchema.get("$ref"));
+      assertEquals("object", successSchema.get("type"));
+    }
+
+    Map<?, ?> components = (Map<?, ?>) document.get("components");
+    Map<?, ?> schemas = (Map<?, ?>) components.get("schemas");
+    Map<?, ?> pointer = (Map<?, ?>) schemas.get("AdmissionPointerDto");
+    Map<?, ?> properties = (Map<?, ?>) pointer.get("properties");
+    for (String revision : List.of("pointerVersion", "catalogRevision")) {
+      Map<?, ?> revisionSchema = (Map<?, ?>) properties.get(revision);
+      assertEquals("integer", revisionSchema.get("type"));
+      assertEquals("int64", revisionSchema.get("format"));
+    }
+    assertEquals(true, ((Map<?, ?>) properties.get("catalogRevision")).get("nullable"));
   }
 
   @Test
@@ -174,6 +192,26 @@ class AdmissionPointerControllerTest {
         .andExpect(
             jsonPath("$.data[0].playableStateNamespaceId")
                 .value("22222222-2222-2222-2222-222222222222"));
+  }
+
+  @Test
+  void auditMapsUnavailableAuthorityToServiceUnavailable() throws Exception {
+    when(admissionPointerService.listPointerAudit(2L, "demo", "production"))
+        .thenThrow(
+            new ResponseStatusException(
+                org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE,
+                "admission-pointer audit authority unavailable"));
+    SessionContext.setContext("user", List.of("platformAdmin"), Map.of());
+    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/admission-pointers/2/demo/production/audit")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.error.code").value("SERVICE_UNAVAILABLE"))
+        .andExpect(
+            jsonPath("$.error.message").value("admission-pointer audit authority unavailable"));
   }
 
   @Test

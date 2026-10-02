@@ -1,0 +1,84 @@
+# Canonical fresh/image/restart smoke profile. This deliberately overrides the
+# ordinary local Compose profile. Account, Game Session, Entity Management, and
+# Social Groups receive distinct dev-namespace SPIFFE leaves; the other seven
+# local apps share the generic client leaf. Each app gets only its scoped
+# read-only leaf mount and the public CA certificate under /app/certs. The CA
+# private key stays host-only and is never mounted into an app.
+x-grpc-mtls-environment: &grpc-mtls-environment
+  FIREMUD_GRPC_PLAINTEXT: "false"
+  GRPC_SERVER_TLS_ENABLED: "true"
+  GRPC_SERVER_CLIENT_AUTH: REQUIRE
+  FIREMUD_GRPC_CERT_CHAIN_PATH: /app/certs/client.crt
+  FIREMUD_GRPC_PRIVATE_KEY_PATH: /app/certs/client.key
+  FIREMUD_GRPC_CA_CERT_PATH: /app/certs/ca.crt
+
+services:
+  account-service:
+    environment:
+      <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/account-service:/app/certs:ro
+
+  gateway:
+    environment:
+      <<: *grpc-mtls-environment
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/gateway:/app/certs:ro
+
+  automation-scripting-service:
+    environment:
+      <<: *grpc-mtls-environment
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/automation-scripting-service:/app/certs:ro
+
+  entity-management-service:
+    environment:
+      <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/entity-management-service:/app/certs:ro
+
+  game-design-service:
+    environment:
+      <<: *grpc-mtls-environment
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-design-service:/app/certs:ro
+
+  game-logic-service:
+    environment:
+      <<: *grpc-mtls-environment
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-logic-service:/app/certs:ro
+
+  game-session-service:
+    environment:
+      <<: *grpc-mtls-environment
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/game-session-service:/app/certs:ro
+
+  logging-admin-service:
+    environment:
+      <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/logging-admin-service:/app/certs:ro
+
+  social-groups-service:
+    environment:
+      <<: *grpc-mtls-environment
+      FIREMUD_GRPC_WORKLOAD_NAMESPACE: dev
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/social-groups-service:/app/certs:ro
+
+  tcp-proxy-service:
+    environment:
+      <<: *grpc-mtls-environment
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/tcp-proxy-service:/app/certs:ro
+
+  world-management-service:
+    environment:
+      <<: *grpc-mtls-environment
+    volumes:
+      - ${FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT:?canonical smoke must set a run-owned mTLS certificate root}/workloads/world-management-service:/app/certs:ro

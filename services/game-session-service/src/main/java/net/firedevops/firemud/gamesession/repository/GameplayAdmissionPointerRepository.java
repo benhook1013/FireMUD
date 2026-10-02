@@ -38,7 +38,7 @@ public class GameplayAdmissionPointerRepository {
   }
 
   /**
-   * Serializes the empty-store bootstrap check and seed writes across Game Session pods.
+   * Serializes the empty-store bootstrap check across Game Session pods.
    *
    * <p>The caller must invoke this inside the transaction that performs the subsequent count and
    * any seed writes so PostgreSQL retains the advisory lock through commit or rollback.
@@ -94,6 +94,19 @@ public class GameplayAdmissionPointerRepository {
 
   public List<GameplayAdmissionPointer> findAllByOrderByWorldSlugAscRealmSlugAsc() {
     return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .orderBy(
+            GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
+            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
+        .fetch(this::toEntity);
+  }
+
+  public List<GameplayAdmissionPointer> findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(
+      List<Long> tenantIds) {
+    if (tenantIds.isEmpty()) {
+      return List.of();
+    }
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(GAMEPLAY_ADMISSION_POINTER.TENANT_ID.in(tenantIds))
         .orderBy(
             GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
             GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())

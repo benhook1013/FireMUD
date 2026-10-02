@@ -16,6 +16,7 @@ import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.client.AccountClient;
+import net.firedevops.firemud.gamesession.client.DirectTextConnectScopeTarget;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
@@ -67,6 +68,134 @@ class WorldsCommandHandlerTest {
     assertThat(response.realms().get(0).realmSlug()).isEqualTo("production");
     assertThat(response.realms().get(0).stateScope()).isEqualTo("SHARED");
     assertThat(response.realms().get(0).characterCreationPolicy()).isEqualTo("ALLOW_NEW");
+  }
+
+  @Test
+  void publicRealmSelectionsIgnorePointerChangesToDeniedPrivateRealms() {
+    GameplayCatalogProperties properties = publicWorldWithPrivateRealm();
+    GameplayCatalogProperties.Realm privateRealm =
+        properties.getWorlds().getFirst().getRealms().get(1);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq("demo"),
+                Mockito.eq("playtest"),
+                Mockito.anyString()))
+        .thenReturn(grant("demo", "playtest", false));
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    privateRealm.setPointerVersion(2L);
+
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "1"))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", null))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    Mockito.verify(accountClient, Mockito.times(1))
+        .issueDirectTextConnectScope(Mockito.any(), Mockito.any());
+    Mockito.verify(accountClient, Mockito.times(1))
+        .getRealmAccessGrantForRuntime(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.eq("demo"),
+            Mockito.eq("playtest"),
+            Mockito.anyString());
+    Mockito.verify(accountClient, Mockito.times(1))
+        .getTenantMembershipForRuntime(
+            Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void numericRealmSnapshotRejectsChangedVisibleTarget() {
+    GameplayCatalogProperties properties = publicProductionProperties();
+    GameplayCatalogProperties.Realm publicRealm =
+        properties.getWorlds().getFirst().getRealms().getFirst();
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    publicRealm.setPointerVersion(2L);
+
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "1"))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void authorizedPrivateRealmPointerChangeInvalidatesTheResponseSnapshot() {
+    GameplayCatalogProperties properties = publicWorldWithPrivateRealm();
+    GameplayCatalogProperties.Realm privateRealm =
+        properties.getWorlds().getFirst().getRealms().get(1);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
+    stubPrivateRealmAuthorization(accountClient, "demo", "playtest");
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOfSatisfying(
+            WorldsCommandHandler.RealmBrowseResult.Success.class,
+            success -> assertThat(success.output().realms()).hasSize(2));
+    privateRealm.setPointerVersion(2L);
+
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "1"))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void joinKeepsTheRetainedPublicScopeWhenDeniedPrivatePointerChanges() {
+    GameplayCatalogProperties properties = publicWorldWithPrivateRealm();
+    GameplayCatalogProperties.Realm privateRealm =
+        properties.getWorlds().getFirst().getRealms().get(1);
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq("demo"),
+                Mockito.eq("playtest"),
+                Mockito.anyString()))
+        .thenReturn(grant("demo", "playtest", false));
+    Mockito.when(
+            accountClient.joinPublicProductionMembership(
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    privateRealm.setPointerVersion(2L);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+    Mockito.verify(accountClient, Mockito.times(1))
+        .issueDirectTextConnectScope(Mockito.any(), Mockito.any());
+    Mockito.verify(accountClient, Mockito.times(1))
+        .joinPublicProductionMembership(
+            Mockito.any(),
+            Mockito.eq("scope-public"),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -124,10 +253,26 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void ambiguousWorldSlugAcrossTenantsCannotSelectOrJoinEitherTenant() {
+  void ambiguousWorldSlugRejectsBareSelectionWhileBoundOrdinalsKeepTenantTargets() {
     GameplayWorldCatalog.WorldView worldA = worldView("demo", "Tenant A", 22L, 1L);
     GameplayWorldCatalog.WorldView worldB = worldView("DEMO", "Tenant B", 33L, 2L);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              DirectTextConnectScopeTarget target = invocation.getArgument(1);
+              return IssueDirectTextConnectScopeResponse.newBuilder()
+                  .setConnectScopeId("scope-" + target.tenantId())
+                  .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                  .build();
+            });
+    Mockito.when(
+            accountClient.joinPublicProductionMembership(
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             GameplayWorldCatalog.forWorldViews(List.of(worldA, worldB)),
@@ -135,11 +280,59 @@ class WorldsCommandHandlerTest {
             accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
+    WorldsViewOutput worldSnapshot =
+        localHandler.browseView("7", Optional.of(authenticatedSession()));
+    assertThat(worldSnapshot.worlds())
+        .extracting(WorldsViewOutput.WorldEntry::displayName)
+        .containsExactly("Tenant A", "Tenant B");
+
     assertThat(localHandler.browseRealms("7", authenticatedSession(), "demo"))
         .isEqualTo(WorldsCommandHandler.RealmBrowseResult.invalidSelector());
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
         .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
-    Mockito.verifyNoInteractions(accountClient);
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+
+    WorldsCommandHandler.RealmBrowseResult tenantARealms =
+        localHandler.browseRealms("7", authenticatedSession(), "1");
+    WorldsCommandHandler.RealmBrowseResult tenantBRealms =
+        localHandler.browseRealms("7", authenticatedSession(), "2");
+    assertThat(tenantARealms).isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(tenantBRealms).isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "1"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "2"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+    Mockito.verify(accountClient)
+        .issueDirectTextConnectScope(
+            Mockito.argThat(context -> context.getTenantId().equals("22")),
+            Mockito.argThat(
+                target ->
+                    target.tenantId().equals("22")
+                        && target.worldSlug().equals("demo")
+                        && target.realmSlug().equals("production")
+                        && target.gameInstanceId().equals("1")));
+    Mockito.verify(accountClient)
+        .issueDirectTextConnectScope(
+            Mockito.argThat(context -> context.getTenantId().equals("33")),
+            Mockito.argThat(
+                target ->
+                    target.tenantId().equals("33")
+                        && target.worldSlug().equals("DEMO")
+                        && target.realmSlug().equals("production")
+                        && target.gameInstanceId().equals("2")));
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.argThat(context -> context.getTenantId().equals("22")),
+            Mockito.eq("scope-22"),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.argThat(context -> context.getTenantId().equals("33")),
+            Mockito.eq("scope-33"),
+            Mockito.anyString(),
+            Mockito.any(Instant.class));
   }
 
   @Test
@@ -165,6 +358,43 @@ class WorldsCommandHandlerTest {
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "1"))
         .isEqualTo(WorldsCommandHandler.JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH"));
     Mockito.verifyNoInteractions(accountClient);
+  }
+
+  @Test
+  void joinForwardsTheRetainedAccountScopeExpiry() {
+    Instant scopeExpiresAt = Instant.ofEpochMilli(Instant.now().plusSeconds(60).toEpochMilli());
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope-with-expiry")
+                .setConnectScopeExpiresAt(scopeExpiresAt.toString())
+                .build());
+    Mockito.when(
+            accountClient.joinPublicProductionMembership(
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
+        .thenReturn(JoinPublicProductionMembershipResponse.newBuilder().setSuccess(true).build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            GameplayWorldCatalog.forWorldViews(List.of(worldView("demo", "Demo", 22L, 1L))),
+            entityManagementClient,
+            accountClient,
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.RealmBrowseResult.Success.class);
+    assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))
+        .isInstanceOf(WorldsCommandHandler.JoinMembershipResult.Response.class);
+
+    Mockito.verify(accountClient)
+        .joinPublicProductionMembership(
+            Mockito.any(),
+            Mockito.eq("scope-with-expiry"),
+            Mockito.anyString(),
+            Mockito.eq(scopeExpiresAt));
   }
 
   @Test
@@ -235,7 +465,7 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void numericRealmSelectorRejectsReorderedRealmsBeforeAccountOrEntityAdmission() {
+  void numericRealmSelectorRetainsItsOriginalPublicTargetAfterCatalogReorder() {
     GameplayWorldCatalog.RealmView production =
         new GameplayWorldCatalog.RealmView(
             "production",
@@ -271,6 +501,15 @@ class WorldsCommandHandlerTest {
     AtomicReference<List<GameplayWorldCatalog.WorldView>> worlds =
         new AtomicReference<>(List.of(original));
     AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubActivePrivateAuthorization(accountClient, "demo");
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq("demo"),
+                Mockito.eq("preview"),
+                Mockito.anyString()))
+        .thenReturn(grant("demo", "preview", true));
     Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
         .thenReturn(
             IssueDirectTextConnectScopeResponse.newBuilder()
@@ -313,7 +552,7 @@ class WorldsCommandHandlerTest {
                 "demo", "Demo World", List.of(preview, production))));
 
     assertThat(localHandler.browseCharacters("7", authenticatedSession(), "demo", "1"))
-        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH"));
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
     Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
@@ -354,17 +593,23 @@ class WorldsCommandHandlerTest {
         .getFirst()
         .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-public");
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
+    SessionContext session =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+    assertThat(localHandler.browseRealms(session, "demo"))
+        .isInstanceOfSatisfying(
+            WorldsCommandHandler.RealmBrowseResult.Success.class,
+            success -> assertThat(success.output().realms()).hasSize(1));
 
     WorldsCommandHandler.CharacterBrowseResult result =
-        localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            null);
+        localHandler.browseCharacters(session, "demo", null);
 
     assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
-    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+    Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
+    Mockito.verifyNoMoreInteractions(accountClient);
+    Mockito.verifyNoInteractions(entityManagementClient);
   }
 
   @Test
@@ -390,16 +635,89 @@ class WorldsCommandHandlerTest {
         .getFirst()
         .setPublicProductionRealm(true);
     AccountClient accountClient = Mockito.mock(AccountClient.class);
+    stubPublicConnectScope(accountClient, "scope-isolated");
     WorldsCommandHandler localHandler =
         authenticatedHandler(gameplayCatalogProperties, accountClient);
+    SessionContext session =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+    assertThat(localHandler.browseRealms(session, "demo"))
+        .isInstanceOfSatisfying(
+            WorldsCommandHandler.RealmBrowseResult.Success.class,
+            success -> assertThat(success.output().realms()).hasSize(1));
 
     WorldsCommandHandler.CharacterBrowseResult result =
-        localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
-            "demo",
-            null);
+        localHandler.browseCharacters(session, "demo", null);
 
     assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    Mockito.verify(accountClient).issueDirectTextConnectScope(Mockito.any(), Mockito.any());
+    Mockito.verifyNoMoreInteractions(accountClient);
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void browseCharactersStopsBeforeMalformedOrNormalizedDuplicateRosterValidation() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        authenticatedHandler(publicProductionProperties(), accountClient);
+    net.firedevops.firemud.entitymanagement.v1.Character valid =
+        net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
+            .setId("7001")
+            .setTenantId("22")
+            .setAccountId("123")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setName("Emberline")
+            .build();
+    List<net.firedevops.firemud.entitymanagement.v1.Character> malformedRows =
+        List.of(
+            valid.toBuilder().setTenantId("23").build(),
+            valid.toBuilder().setAccountId("456").build(),
+            valid.toBuilder()
+                .setPlayableStateScope(
+                    net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                        .PLAYABLE_STATE_SCOPE_ISOLATED)
+                .build(),
+            valid.toBuilder().clearId().build(),
+            valid.toBuilder().setId("not-a-number").build(),
+            valid.toBuilder().setId("0").build(),
+            valid.toBuilder().setId("-1").build(),
+            valid.toBuilder().setId("9223372036854775808").build(),
+            valid.toBuilder().setId("-9223372036854775809").build(),
+            valid.toBuilder().clearName().build());
+    List<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse> rosterCases =
+        new ArrayList<>();
+    for (net.firedevops.firemud.entitymanagement.v1.Character malformed : malformedRows) {
+      rosterCases.add(
+          net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
+              .addCharacters(malformed)
+              .build());
+    }
+    rosterCases.add(
+        net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse.newBuilder()
+            .addCharacters(valid)
+            .addCharacters(valid.toBuilder().setId("07001").build())
+            .addCharacters(valid.toBuilder().setId("+7001").build())
+            .build());
+    AtomicReference<net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse>
+        response = new AtomicReference<>(rosterCases.getFirst());
+    Mockito.when(
+            entityManagementClient.listCharactersByAccount(
+                "22",
+                "123",
+                "1",
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED))
+        .thenAnswer(ignored -> response.get());
+
+    // Keep the parent malformed-row and normalized-duplicate cases visible. The current CHARS
+    // path closes before Account or Entity, so this fixture matrix does not execute row validation.
+    for (net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse rosterCase :
+        rosterCases) {
+      response.set(rosterCase);
+      assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "production"))
+          .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    }
     Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
@@ -421,7 +739,7 @@ class WorldsCommandHandlerTest {
         localHandler.browseCharacters(
             new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
-            null);
+            "production");
 
     assertThat(result)
         .isEqualTo(
@@ -794,6 +1112,171 @@ class WorldsCommandHandlerTest {
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
     assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", "preview"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
+  @Test
+  void privateOnlyUnknownAmbiguousAndUnboundRealmSelectorsMatchUnknownWorld() {
+    GameplayCatalogProperties properties = privateOnlyWorldProperties();
+    GameplayCatalogProperties.World privateWorld = properties.getWorlds().get(1);
+    GameplayCatalogProperties.Realm caseAlias =
+        world("private-only", 22L, 3L, false).getRealms().getFirst();
+    caseAlias.setSlug("PREVIEW");
+    caseAlias.setPublicProductionRealm(false);
+    privateWorld.setRealms(List.of(privateWorld.getRealms().getFirst(), caseAlias));
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler = authenticatedHandler(properties, accountClient);
+
+    WorldsCommandHandler.CharacterBrowseResult unknownWorld =
+        localHandler.browseCharacters(authenticatedSession(), "unknown", "preview");
+
+    assertThat(unknownWorld).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", "missing"))
+        .isEqualTo(unknownWorld);
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", "PrEvIeW"))
+        .isEqualTo(unknownWorld);
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", null))
+        .isEqualTo(unknownWorld);
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "PRIVATE-ONLY", "1"))
+        .isEqualTo(unknownWorld);
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
+  @Test
+  void unboundPublicRealmOrdinalRemainsConnectScopeMismatch() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        authenticatedHandler(publicProductionProperties(), accountClient);
+
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", "1"))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH"));
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
+  @Test
+  void omittedCharactersIgnoreHiddenPrivateRealmCardinalityForPublicDefault() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsCommandHandler localHandler =
+        authenticatedHandler(publicWorldWithPrivateRealm(), accountClient);
+
+    WorldsCommandHandler.CharacterBrowseResult result =
+        localHandler.browseCharacters(authenticatedSession(), "demo", null);
+
+    // The public default does not reveal hidden cardinality, but actor authority remains closed.
+    assertThat(result).isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient);
+  }
+
+  @Test
+  void discoveredPrivateRealmOrdinalsStayBoundWithoutOpeningCharacterRoster() {
+    GameplayCatalogProperties properties = privateOnlyWorldProperties();
+    GameplayCatalogProperties.World privateWorld = properties.getWorlds().get(1);
+    GameplayCatalogProperties.Realm staff =
+        world("private-only", 22L, 3L, false).getRealms().getFirst();
+    staff.setSlug("staff");
+    staff.setDisplayName("Staff Realm");
+    staff.setPublicProductionRealm(false);
+    privateWorld.setRealms(List.of(privateWorld.getRealms().getFirst(), staff));
+
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    DirectTextConnectScopeSessionStore scopeStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq("private-only"),
+                Mockito.anyString(),
+                Mockito.anyString()))
+        .thenAnswer(
+            invocation -> grant("private-only", invocation.getArgument(3, String.class), true));
+    Mockito.when(
+            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(false));
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            TestGameplayWorldCatalogs.fromProperties(properties),
+            entityManagementClient,
+            accountClient,
+            scopeStore);
+
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", null))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
+    assertThat(localHandler.browseRealms(authenticatedSession(), "PRIVATE-ONLY"))
+        .isInstanceOfSatisfying(
+            WorldsCommandHandler.RealmBrowseResult.Success.class,
+            success -> {
+              assertThat(success.output().realms())
+                  .extracting(RealmBrowseViewOutput.RealmEntry::ordinal)
+                  .containsExactly(1, 2);
+              assertThat(success.output().realms())
+                  .extracting(RealmBrowseViewOutput.RealmEntry::realmSlug)
+                  .containsExactly("preview", "staff");
+            });
+    assertThat(
+            scopeStore.realmsSnapshot(authenticatedSession(), 22L, "private-only", Instant.now()))
+        .hasValueSatisfying(
+            snapshot ->
+                assertThat(snapshot.ordinalTargets())
+                    .extracting(DirectTextConnectScopeSessionStore.RealmOrdinalTarget::realmSlug)
+                    .containsExactly("preview", "staff"));
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "private-only", null))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
+
+    WorldsCommandHandler.CharacterBrowseResult ordinalSelection =
+        localHandler.browseCharacters(authenticatedSession(), "PRIVATE-ONLY", "1");
+
+    // REALMS snapshot proof is distinct from the unavailable private actor/policy roster path.
+    assertThat(ordinalSelection)
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.invalidWorld());
+    Mockito.verifyNoInteractions(entityManagementClient);
+  }
+
+  @Test
+  void omittedCharactersRequireExplicitRealmWhenPublicAndPrivateChoicesWereDiscovered() {
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    DirectTextConnectScopeSessionStore scopeStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq("demo"),
+                Mockito.eq("playtest"),
+                Mockito.anyString()))
+        .thenReturn(grant("demo", "playtest", true));
+    Mockito.when(
+            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(false));
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId("scope")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            TestGameplayWorldCatalogs.fromProperties(publicWorldWithPrivateRealm()),
+            entityManagementClient,
+            accountClient,
+            scopeStore);
+
+    assertThat(localHandler.browseRealms(authenticatedSession(), "demo"))
+        .isInstanceOfSatisfying(
+            WorldsCommandHandler.RealmBrowseResult.Success.class,
+            success -> assertThat(success.output().realms()).hasSize(2));
+    Mockito.clearInvocations(accountClient, entityManagementClient);
+
+    assertThat(localHandler.browseCharacters(authenticatedSession(), "demo", null))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.realmSelectionRequired("demo"));
     Mockito.verifyNoInteractions(accountClient, entityManagementClient);
   }
 
@@ -1183,7 +1666,10 @@ class WorldsCommandHandlerTest {
                 .build());
     Mockito.when(
             accountClient.joinPublicProductionMembership(
-                Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+                Mockito.any(),
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.any(Instant.class)))
         .thenReturn(
             JoinPublicProductionMembershipResponse.newBuilder()
                 .setSuccess(false)
@@ -1272,7 +1758,8 @@ class WorldsCommandHandlerTest {
         .isEqualTo(
             WorldsCommandHandler.JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
     Mockito.verify(accountClient, Mockito.never())
-        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
   }
 
   @Test
@@ -1412,6 +1899,15 @@ class WorldsCommandHandlerTest {
         entityManagementClient,
         accountClient,
         DirectTextConnectScopeSessionStore.inMemoryForTest());
+  }
+
+  private void stubPublicConnectScope(AccountClient accountClient, String scopeId) {
+    Mockito.when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setConnectScopeId(scopeId)
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
+                .build());
   }
 
   private GameplayAdmissionPointerSnapshot authorityPointer(
@@ -1599,6 +2095,25 @@ class WorldsCommandHandlerTest {
                 .build());
   }
 
+  private void stubPrivateRealmAuthorization(
+      AccountClient accountClient, String worldSlug, String realmSlug) {
+    Mockito.when(
+            accountClient.getTenantMembershipForRuntime(
+                Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(activeMembership());
+    Mockito.when(
+            accountClient.getRealmAccessGrantForRuntime(
+                Mockito.anyString(),
+                Mockito.anyString(),
+                Mockito.eq(worldSlug),
+                Mockito.eq(realmSlug),
+                Mockito.anyString()))
+        .thenReturn(grant(worldSlug, realmSlug, true));
+    Mockito.when(
+            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
+        .thenReturn(publicEntitlement(true));
+  }
+
   private List<String> invalidEvaluationTimes() {
     return List.of(
         Instant.now().minusSeconds(16).toString(),
@@ -1755,7 +2270,7 @@ class WorldsCommandHandlerTest {
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
     assertThat(localHandler.browseCharacters(context, "mixed-world", "nonexistent"))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
-    assertThat(localHandler.browseCharacters(context, "mixed-world", null))
+    assertThat(localHandler.browseCharacters(context, "mixed-world", "production"))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
     Mockito.verifyNoInteractions(entityManagementClient);
   }
@@ -1818,7 +2333,7 @@ class WorldsCommandHandlerTest {
         handler.browseCharacters(
             new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
-            null);
+            "production");
 
     assertThat(result).isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.Unavailable.class);
     Mockito.verifyNoInteractions(entityManagementClient);

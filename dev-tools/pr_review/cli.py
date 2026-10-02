@@ -214,6 +214,18 @@ def _parser() -> argparse.ArgumentParser:
     source_finalize.add_argument("--run-id", required=True)
     source_finalize.add_argument("--finalized-at")
     records_database(source_finalize)
+    source_resolve = source_subcommands.add_parser(
+        "resolve", help="record an accepted-fix proof for one exact accepted source finding"
+    )
+    source_resolve.add_argument("--source-pr", required=True, type=_positive_int)
+    source_resolve.add_argument("--run-id", required=True)
+    source_resolve.add_argument("--finding-key", required=True)
+    source_resolve.add_argument("--resolution-id", required=True)
+    source_resolve.add_argument("--fix-sha", required=True, type=_exact_sha)
+    source_resolve.add_argument("--actor", required=True)
+    source_resolve.add_argument("--proof-note", required=True)
+    source_resolve.add_argument("--resolved-at")
+    records_database(source_resolve)
 
     cli_decisions = record_commands.add_parser(
         "cli-decision", help="record one captured CLI finding decision without a TSV file"
@@ -987,7 +999,7 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.records_command == "source":
         if args.source_command == "finalize":
             result = store.finalize_run(args.run_id, finalized_at=args.finalized_at)
-        else:
+        elif args.source_command == "decide":
             result = store.record_source_decision(
                 args.run_id,
                 args.finding_key,
@@ -997,6 +1009,17 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 reason=args.reason,
                 target_pr=args.target_pr,
                 decided_at=args.decided_at,
+            )
+        else:
+            result = store.record_source_resolution(
+                args.run_id,
+                args.finding_key,
+                source_pr=args.source_pr,
+                resolution_id=args.resolution_id,
+                fix_sha=args.fix_sha,
+                actor=args.actor,
+                proof_note=args.proof_note,
+                resolved_at=args.resolved_at,
             )
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "cli-decision":

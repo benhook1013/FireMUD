@@ -36,7 +36,7 @@ class RedisGameplayPresenceServiceTest {
   void setUp() {
     when(redisTemplate.opsForValue()).thenReturn(valueOperations);
     when(redisTemplate.opsForSet()).thenReturn(setOperations);
-    service = new RedisGameplayPresenceService(redisTemplate, jwtUtil, TTL.toMillis());
+    service = new RedisGameplayPresenceService(redisTemplate, TTL.toMillis());
   }
 
   @Test
@@ -246,7 +246,7 @@ class RedisGameplayPresenceServiceTest {
   @Test
   void recordCommandActivityRefreshesPresenceAndMeaningfulTimestampOnlyWhenRequested() {
     AtomicLong now = new AtomicLong(100L);
-    service = new RedisGameplayPresenceService(redisTemplate, jwtUtil, TTL.toMillis(), now::get);
+    service = new RedisGameplayPresenceService(redisTemplate, TTL.toMillis(), now::get);
     when(valueOperations.get("gameplaypresence:session:3"))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.GameplayPresence(
@@ -292,7 +292,7 @@ class RedisGameplayPresenceServiceTest {
   @Test
   void setExplicitAfkRefreshesPresenceRecord() {
     AtomicLong now = new AtomicLong(100L);
-    service = new RedisGameplayPresenceService(redisTemplate, jwtUtil, TTL.toMillis(), now::get);
+    service = new RedisGameplayPresenceService(redisTemplate, TTL.toMillis(), now::get);
     when(valueOperations.get("gameplaypresence:session:3"))
         .thenReturn(
             new net.firedevops.firemud.gamesession.service.GameplayPresence(

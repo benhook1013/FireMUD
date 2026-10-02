@@ -18,6 +18,7 @@ JWT implementation drift: the current runtime loads and immediately replaces one
 - [TLS & Certificates](#tls--certificates)
 - [Authentication & JWT](#authentication--jwt)
 - [Service Discovery](#service-discovery)
+- [Account JOIN Reconciliation](#account-join-reconciliation)
 - [Observability](#observability)
 - [Asset Storage](#asset-storage)
 - [Backup & Restore Variables](#backup--restore-variables)
@@ -214,6 +215,19 @@ Player-facing environments (`hobby-self-hosted`, staging, production) must treat
 
 ---
 
+## Account JOIN Reconciliation
+
+These Account-specific environment variables configure the current scheduled, readback-only reconciliation of uncertain `PENDING` public-production JOIN operations. The defaults below are shared by the normal and production Spring profiles.
+
+| Variable | Purpose and bounds | Default |
+| -------- | ------------------ | ------- |
+| `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_BATCH_SIZE` | Maximum due operations read back in one job pass; valid range `1..100` | `50` |
+| `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_MAX_ATTEMPTS` | Positive diagnostic threshold for unresolved attempts; reaching it does not terminalize an operation | `12` |
+| `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_INTERVAL_MS` | Positive fixed delay between scheduled job invocations, in milliseconds | `30000` |
+| `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_BACKOFF_MS` | Positive delay, in milliseconds, before retrying an unresolved operation | `30000` |
+
+The attempt threshold only raises diagnostics; it never converts an uncertain `PENDING` operation to a terminal state. Exact readback recovery continues with backoff while the operation remains pending. See [Account Service Configuration: JOIN Reconciliation](../microservices/account-service/configuration.md#join-reconciliation) for the Account-local mapping and consequences.
+
 ## Observability
 
 Services are instrumented to create OpenTelemetry spans, but an environment may advertise only a capability level proved end to end under ADR 0017. The collector endpoint can be overridden with the `OTEL_ENDPOINT` environment variable (mapped to the Spring property `otel.endpoint`):
@@ -298,12 +312,12 @@ See `../system-architecture-backup-recovery.md` for schedules and retention poli
 
 ## Additional Notes
 
-Service-specific settings such as SMTP credentials for the Account Service or `GAME_TICK_DURATION_MS` for the Game Session Service are documented in each service's design README. See the "Environment Variables" sections in:
+Service-specific settings remain documented in their service design documents; this catalog also indexes Account's JOIN reconciliation controls above because their diagnostic-only retry threshold needs an explicit operator note. See:
 
-- `../microservices/account-service/README.md#environment-variables`
+- [Account Service Configuration: JOIN Reconciliation](../microservices/account-service/configuration.md#join-reconciliation)
 - `../microservices/game-session-service/README.md#environment-variables`
 
-This catalog covers only shared configuration keys.
+This catalog primarily covers shared configuration keys and explicitly indexed service-specific controls.
 
 Operational scripts like `dev-tools/restores/restore-cluster.sh` use an optional `FIREMUD_K8S_NAMESPACE` override to target non-default namespaces during restore drills. In normal shared-environment operations, namespace selection should stay aligned with the standard overlay namespace (`firemud`).
 
