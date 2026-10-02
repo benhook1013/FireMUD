@@ -141,7 +141,8 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                           .sorted(
                               Comparator.comparing(
                                       (EquipmentSlotDefinition definition) ->
-                                          normalizeOptionalKey(definition.getSlotKey()))
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "equipment slot key"))
                                   .thenComparing(definition -> value(definition.getDisplayName()))
                                   .thenComparing(
                                       definition ->
@@ -149,7 +150,9 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                           .map(
                               definition ->
                                   Map.<String, Object>of(
-                                      "slotKey", normalizeOptionalKey(definition.getSlotKey()),
+                                      "slotKey",
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "equipment slot key"),
                                       "displayName", value(definition.getDisplayName()),
                                       "slotGroupKey",
                                           normalizeOptionalKey(definition.getSlotGroupKey())))
@@ -162,15 +165,21 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                           .sorted(
                               Comparator.comparing(
                                       (BodyLayoutSlotDefinition definition) ->
-                                          normalizeOptionalKey(definition.getBodyLayoutKey()))
+                                          canonicalRequiredKey(
+                                              definition.getBodyLayoutKey(), "body layout key"))
                                   .thenComparing(
-                                      definition -> normalizeOptionalKey(definition.getSlotKey())))
+                                      definition ->
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "body layout slot key")))
                           .map(
                               definition ->
                                   Map.<String, Object>of(
                                       "bodyLayoutKey",
-                                          normalizeOptionalKey(definition.getBodyLayoutKey()),
-                                      "slotKey", normalizeOptionalKey(definition.getSlotKey())))
+                                          canonicalRequiredKey(
+                                              definition.getBodyLayoutKey(), "body layout key"),
+                                      "slotKey",
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "body layout slot key")))
                           .toList()));
       return new EntityDraftDesignDigest(
           tenantId,
@@ -189,6 +198,13 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
 
   private String normalizeOptionalKey(String value) {
     return value == null || value.isBlank() ? "" : value.trim().toUpperCase(Locale.ROOT);
+  }
+
+  private String canonicalRequiredKey(String value, String fieldName) {
+    if (value == null || value.isBlank() || !value.equals(value.trim().toUpperCase(Locale.ROOT))) {
+      throw new IllegalArgumentException(fieldName + " must use its canonical stored key");
+    }
+    return value;
   }
 
   private String canonicalizeOptionalJson(String value) {

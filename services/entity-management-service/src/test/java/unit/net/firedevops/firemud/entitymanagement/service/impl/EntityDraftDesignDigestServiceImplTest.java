@@ -140,17 +140,44 @@ class EntityDraftDesignDigestServiceImplTest {
   }
 
   @Test
-  void canonicalizesVocabularyKeysAndIgnoresRowOrderAndOptimisticVersion() {
+  void rejectsNoncanonicalEquipmentSlotDefinitionKeys() {
+    for (String slotKey : new String[] {null, "", " \t ", " HEAD ", "head"}) {
+      assertThrows(
+          IllegalStateException.class,
+          () -> digestForDefinitions(List.of(slotDefinition(slotKey, "Head", null)), List.of()));
+    }
+  }
+
+  @Test
+  void rejectsNoncanonicalBodyLayoutDefinitionKeys() {
+    for (String bodyLayoutKey : new String[] {null, "", " \t ", " HUMANOID ", "humanoid"}) {
+      assertThrows(
+          IllegalStateException.class,
+          () -> digestForDefinitions(List.of(), List.of(bodyLayoutSlot(bodyLayoutKey, "HEAD"))));
+    }
+  }
+
+  @Test
+  void rejectsNoncanonicalBodyLayoutSlotKeys() {
+    for (String slotKey : new String[] {null, "", " \t ", " HEAD ", "head"}) {
+      assertThrows(
+          IllegalStateException.class,
+          () -> digestForDefinitions(List.of(), List.of(bodyLayoutSlot("HUMANOID", slotKey))));
+    }
+  }
+
+  @Test
+  void canonicalizesEquivalentGroupKeysAndIgnoresRowOrderAndOptimisticVersion() {
     var firstSlot = slotDefinition("TORSO", "Torso", null);
     firstSlot.setId(11L);
     firstSlot.setVersion(8);
-    var secondSlot = slotDefinition(" HEAD ", "Head", " upper ");
+    var secondSlot = slotDefinition("HEAD", "Head", " upper ");
     secondSlot.setId(22L);
     secondSlot.setVersion(2);
     var firstLayoutSlot = bodyLayoutSlot("HUMANOID", "TORSO");
     firstLayoutSlot.setId(31L);
     firstLayoutSlot.setVersion(9);
-    var secondLayoutSlot = bodyLayoutSlot(" ALPHA ", " Head ");
+    var secondLayoutSlot = bodyLayoutSlot("ALPHA", "HEAD");
     secondLayoutSlot.setId(32L);
     secondLayoutSlot.setVersion(3);
 
@@ -167,7 +194,7 @@ class EntityDraftDesignDigestServiceImplTest {
     var normalizedFirstLayoutSlot = bodyLayoutSlot("ALPHA", "HEAD");
     normalizedFirstLayoutSlot.setId(5L);
     normalizedFirstLayoutSlot.setVersion(300);
-    var normalizedSecondLayoutSlot = bodyLayoutSlot(" humanoid ", " torso ");
+    var normalizedSecondLayoutSlot = bodyLayoutSlot("HUMANOID", "TORSO");
     normalizedSecondLayoutSlot.setId(600L);
     normalizedSecondLayoutSlot.setVersion(900);
 
