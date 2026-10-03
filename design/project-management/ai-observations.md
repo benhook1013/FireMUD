@@ -212,3 +212,8 @@ Entry format:
   - Observation: an active watcher does not guarantee prompt adjudication. Its reassuring handoff wording cannot replace checking the attributable result and raw findings.
   - Expected pattern: consume terminal review evidence, adjudicate it, and publish the canonical checkpoint before returning to integration work. Keep CI repair independent rather than postponing completed review reporting.
   - Outcome: review `5398994837` was recorded as 5 found / 4 accepted / 1 routed before implementing its accepted batch; the inherited Account observation has a canonical target route.
+
+- `2026-10-04`: Inspect and finalize complete CLI evidence before publishing counts
+  - Context: on 2026-10-03, a 0/0 public checkpoint was briefly posted before the complete CLI capture was inspected. The terminal capture showed 1 found / 1 accepted; source finalization first refused the undecided finding, and linked checkpoint `5969229965` was corrected.
+  - Expected pattern: inspect the complete terminal raw capture, adjudicate every finding, and confirm successful source finalization before building public counts. If finalization refuses, resolve the disposition and correct the linked checkpoint before reporting the result.
+  - Outcome: the source decision and finalization were recorded with no dry-review credit.
