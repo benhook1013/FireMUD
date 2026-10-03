@@ -457,8 +457,7 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
         ResolveLegacyAccountTenantAssociationResponse.newBuilder()
             .setLegacyAccountTenantId(legacyTenantId)
             .setCanonicalTenantId(tenantUuid.toString())
-            .setSourceLegacyGameTenantId(
-                "retained-" + UUID.randomUUID().toString().replace("-", ""))
+            .setSourceLegacyGameTenantId("r-" + UUID.randomUUID().toString().replace("-", ""))
             .setSourceGameRowId(positiveRandomLong())
             .setAccountEvidenceDigest(sourceDigest)
             .setOperationId(associationOperation.toString())
@@ -629,7 +628,7 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
   private FreshTenantCreationEvidence freshEvidence(UUID tenantUuid) {
     UUID creationRequestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
-    String sourceTenantKey = "fresh-" + UUID.randomUUID().toString().replace("-", "");
+    String sourceTenantKey = "f-" + UUID.randomUUID().toString().replace("-", "");
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             TEST_NAMESPACE, creationRequestId, sourceTenantKey, "First join fixture", null);
