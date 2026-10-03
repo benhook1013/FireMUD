@@ -7,17 +7,21 @@ import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupp
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
 import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import tools.jackson.databind.json.JsonMapper;
 
 /** Owner-local audit identity, immutable envelope, and durable delivery state. */
 @Repository
@@ -25,6 +29,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class AccountAuditOutboxRepository {
+  private static final Pattern POSITIVE_DECIMAL = Pattern.compile("[1-9][0-9]*");
+  private static final JsonMapper CANONICAL_JOIN_AUDIT_JSON = JsonMapper.builder().build();
   private final DSLContext dsl;
 
   public AccountAuditOutboxRepository(DSLContext dsl) {
@@ -81,6 +87,93 @@ public class AccountAuditOutboxRepository {
           }
         });
     return found;
+  }
+
+  /**
+   * Locks the existing JOIN audit identity and returns it only for its exact canonical UUID scope.
+   * A present event with another scope, tenant representation, producer, or event type is
+   * contradictory evidence rather than an absent canonical audit.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<AccountAuditEnvelope> findCanonicalJoinEnvelopeForUpdate(
+      UUID auditEventId, UUID canonicalTenantUuid) {
+    requireReadWriteOwnerTransaction();
+    if (auditEventId == null
+        || canonicalTenantUuid == null
+        || new UUID(0L, 0L).equals(canonicalTenantUuid)) {
+      throw new IllegalArgumentException("Canonical JOIN audit identity and tenant are required");
+    }
+    Optional<AccountAuditEnvelope> found =
+        dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
+            .where(ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.eq(auditEventId))
+            .forUpdate()
+            .fetchOptional(this::toEnvelope);
+    found.ifPresent(
+        actual -> {
+          if (!"tenant".equals(actual.scope())
+              || actual.tenantIdentityVersion() != AccountAuditTenantIdentity.VERSION_2
+              || actual.tenantId() != null
+              || !canonicalTenantUuid.equals(actual.tenantUuid())
+              || !"account-service".equals(actual.producerService())
+              || !"ACCOUNT_JOINED_PUBLIC_PRODUCTION".equals(actual.eventType())) {
+            throw new IllegalStateException(
+                "Canonical JOIN audit identity differs from its immutable UUID envelope");
+          }
+        });
+    return found;
+  }
+
+  /**
+   * Serializes the existing six-field JOIN audit payload for canonical UUID identity. The field
+   * order and names remain those of the retained JOIN payload; only the UUID identities and the
+   * canonical one-tenant membership-version map are represented in their owning forms.
+   */
+  public static String canonicalJoinPayload(
+      UUID accountUuid,
+      UUID tenantUuid,
+      String worldSlug,
+      String realmSlug,
+      Map<String, String> membershipVersion,
+      String requestId) {
+    requireCanonicalUuid(accountUuid, "Account UUID");
+    requireCanonicalUuid(tenantUuid, "tenant UUID");
+    if (worldSlug == null || worldSlug.isEmpty() || realmSlug == null || realmSlug.isEmpty()) {
+      throw new IllegalArgumentException("Canonical JOIN audit target slugs are required");
+    }
+    String canonicalRequestId = MembershipTransitionReceiptDigest.requireRequestIdV2(requestId);
+    if (membershipVersion == null
+        || membershipVersion.size() != 1
+        || !membershipVersion.containsKey(tenantUuid.toString())) {
+      throw new IllegalArgumentException(
+          "Canonical JOIN audit membership version must contain exactly its tenant UUID");
+    }
+    String version = membershipVersion.get(tenantUuid.toString());
+    if (version == null || !POSITIVE_DECIMAL.matcher(version).matches()) {
+      throw new IllegalArgumentException(
+          "Canonical JOIN audit membership version must be a positive canonical decimal");
+    }
+    try {
+      if (Long.parseLong(version) <= 0L) {
+        throw new IllegalArgumentException(
+            "Canonical JOIN audit membership version must be a positive BIGINT");
+      }
+    } catch (NumberFormatException exception) {
+      throw new IllegalArgumentException(
+          "Canonical JOIN audit membership version must be a positive BIGINT", exception);
+    }
+    try {
+      return CANONICAL_JOIN_AUDIT_JSON.writeValueAsString(
+          new CanonicalJoinAuditPayload(
+              accountUuid.toString(),
+              tenantUuid.toString(),
+              worldSlug,
+              realmSlug,
+              Map.of(tenantUuid.toString(), version),
+              canonicalRequestId));
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException(
+          "Canonical JOIN audit payload serialization failed", exception);
+    }
   }
 
   private AccountAuditEnvelope append(
@@ -228,6 +321,20 @@ public class AccountAuditOutboxRepository {
           "Canonical Account audit identity requires an active read-write owner transaction");
     }
   }
+
+  private static void requireCanonicalUuid(UUID value, String field) {
+    if (value == null || new UUID(0L, 0L).equals(value)) {
+      throw new IllegalArgumentException(field + " must be a non-nil canonical UUID");
+    }
+  }
+
+  private record CanonicalJoinAuditPayload(
+      String accountId,
+      String tenantId,
+      String worldSlug,
+      String realmSlug,
+      Map<String, String> membershipVersion,
+      String requestId) {}
 
   private static AccountAuditTenantIdentity retainedIdentity(String scope, Long tenantId) {
     if ("platform".equals(scope) && tenantId == null) {
