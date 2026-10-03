@@ -1,10 +1,10 @@
 # Repository Health Check
 
-Run this workflow only when the human explicitly requests a repository health check. It is a bounded maintenance pass, not a calendar-driven job, a per-PR checklist, or a replacement for product, architecture, PR-lifecycle, validation, or infrastructure procedures.
+Run this workflow when the human explicitly requests a repository health check or asks to run repo maintenance, including a request for the repo maintenance process. This is a bounded manual check, not a calendar-driven job, a per-PR checklist, or a replacement for product, architecture, PR-lifecycle, validation, or infrastructure procedures.
 
 ## Scope And Inspection Window
 
-Unless the human specifies another period, inspect the preceding seven days. Establish the current `main` and `develop` heads before interpreting historical results, and inspect the latest relevant run even when it falls outside the window so an old failure is not mistaken for current state. Treat a queued or running job as potentially stalled after 60 minutes or when it materially exceeds comparable recent runs.
+Use a period specified by the human when provided. Otherwise, when the previous completed health check is known, inspect the gap since that check; use the preceding seven days as the routine fallback when the previous check is unknown. Establish the current `main` and `develop` heads before interpreting historical results, and inspect the latest relevant run even when it falls outside the selected period so an old failure is not mistaken for current state. Treat a queued or running job as potentially stalled after 60 minutes or when it materially exceeds comparable recent runs.
 
 Use [AGENTS.md](../../AGENTS.md) as the always-on authority. Reuse [PR lifecycle](./pr-lifecycle.md) for GitHub Actions and Renovate mechanics, [validation and runtime proof](./validation-and-runtime-proof.md) for repository changes, and the infrastructure documentation for hosted-environment behavior. This workflow coordinates those checks without duplicating their detailed procedures.
 
@@ -25,6 +25,14 @@ Resolve the current `develop` SHA. Confirm that dev-demo records it as its recon
 ## Aged Renovate Work
 
 Inspect every open Renovate PR older than 24 hours. For each one, check its head SHA, last update time, mergeability, required checks, and relevant automerge configuration. Explain whether CI, conflicts, stale base state, update policy, compatibility waiting, or Renovate scheduling/behavior prevents automerge, and state whether waiting remains reasonable or focused manual attention is likely to help.
+
+Before fixing a failed update, distinguish upstream incompatibility from a repository update-model gap. When version authorities, package groups, lockfiles, hashes, or image digests drift, prefer a single authoritative version source with Renovate-supported grouping and lockfile, hash, or digest management, or integrate an existing canonical updater where feasible. Make a bounded durable improvement that prevents repeat failures while preserving checksum integrity, compatibility bounds, and privilege safeguards. Use a manual patch when automation cannot safely express the update, and record the concrete limitation and a revisit trigger. Do not assume Renovate supports every source or invent a separate post-upgrade process.
+
+## Worktrees And Branches
+
+Include branch and worktree cleanup in the maintenance pass. Follow [PR lifecycle: Branch And PR Hygiene](./pr-lifecycle.md#branch-and-pr-hygiene) and use `bash dev-tools/validation/report-worktree-pr-topology.sh --json` for the canonical inventory; do not delete by age alone.
+
+Before removal, check for dependent open PRs, active worktrees, live controller or service pins, and retained unrecovered review evidence. Preserve dirty, unpublished, and unmerged work. Report removals and the specific reason each candidate was retained.
 
 ## Recurring Operational Friction
 

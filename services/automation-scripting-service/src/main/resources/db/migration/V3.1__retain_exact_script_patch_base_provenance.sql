@@ -42,39 +42,66 @@ CREATE TABLE script_patch_base_bindings (
         CHECK (base_version_id > 0)
 );
 
+/* [jooq ignore start] */
 ALTER TABLE scripts
     ADD CONSTRAINT ck_scripts_positive_base_version
-        CHECK (base_version_id IS NULL OR base_version_id > 0);
+        CHECK (base_version_id IS NULL OR base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_event_bindings
     ADD CONSTRAINT ck_script_event_bindings_positive_base_version
-        CHECK (base_version_id IS NULL OR base_version_id > 0);
+        CHECK (base_version_id IS NULL OR base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_schedule_definitions
     ADD CONSTRAINT ck_script_schedule_definitions_positive_base_version
-        CHECK (base_version_id IS NULL OR base_version_id > 0);
+        CHECK (base_version_id IS NULL OR base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_patch_readiness_projections
     ADD CONSTRAINT ck_script_patch_readiness_positive_base_version
-        CHECK (base_version_id IS NULL OR base_version_id > 0);
+        CHECK (base_version_id IS NULL OR base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_work_items
     ADD CONSTRAINT ck_script_work_items_positive_patch_base
-        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0);
+        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_event_ingress_audit
     ADD CONSTRAINT ck_script_event_ingress_positive_patch_base
-        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0);
+        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_event_audit
     ADD CONSTRAINT ck_script_event_audit_positive_patch_base
-        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0);
+        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_schedule_instances
     ADD CONSTRAINT ck_script_schedule_instances_positive_patch_base
-        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0);
+        CHECK (script_patch_base_version_id IS NULL OR script_patch_base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */
 
+/* [jooq ignore start] */
 ALTER TABLE script_patch_pin_projections
     ADD CONSTRAINT ck_script_patch_pin_projections_positive_patch_base
         CHECK (pinned_script_patch_base_version_id IS NULL
-            OR pinned_script_patch_base_version_id > 0);
+            OR pinned_script_patch_base_version_id > 0)
+        NOT VALID;
+/* [jooq ignore stop] */

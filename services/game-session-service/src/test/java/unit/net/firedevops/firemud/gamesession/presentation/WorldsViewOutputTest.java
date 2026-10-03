@@ -11,7 +11,7 @@ class WorldsViewOutputTest {
   void worldsAreCopiedDefensively() {
     List<WorldsViewOutput.WorldEntry> worlds =
         new java.util.ArrayList<>(
-            List.of(new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false)));
+            List.of(new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", false)));
 
     WorldsViewOutput output = new WorldsViewOutput(worlds);
     worlds.clear();
@@ -21,7 +21,7 @@ class WorldsViewOutputTest {
 
   @Test
   void ordinalMustBePositive() {
-    assertThatThrownBy(() -> new WorldsViewOutput.WorldEntry(0, "demo", "Demo World", 1L, false))
+    assertThatThrownBy(() -> new WorldsViewOutput.WorldEntry(0, "demo", "Demo World", false))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("ordinal");
   }

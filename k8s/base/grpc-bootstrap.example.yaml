@@ -1,7 +1,8 @@
 # This example only provisions the shared transport/trust Secret. Account Service, Game Session,
-# and the five publication workloads also require their separate cert-manager-issued leaf Secrets:
-# firemud-grpc-account-service, firemud-grpc-game-session-service, and one firemud-grpc-<workload>
-# Secret for each publication workload. The shared Secret alone is not sufficient to start them.
+# Social Groups, and the five publication workloads also require their separate cert-manager-issued
+# leaf Secrets: firemud-grpc-account-service, firemud-grpc-game-session-service,
+# firemud-grpc-social-groups-service, and one firemud-grpc-<workload> Secret for each publication
+# workload. The shared Secret alone is not sufficient to start them.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

@@ -28,9 +28,7 @@ final class ScriptWorkItemFenceEvaluationSupport {
 
   static String validateRuntimeState(
       ScriptWorkItem workItem, GetGameInstanceRuntimeStateResponse runtime) {
-    if (runtime == null
-        || (runtime.hasError() && !runtime.getError().getCode().isBlank())
-        || !runtime.hasRuntimeState()) {
+    if (runtime == null || runtime.hasError() || !runtime.hasRuntimeState()) {
       return "script_pin_authority_unavailable";
     }
     var state = runtime.getRuntimeState();
@@ -58,6 +56,36 @@ final class ScriptWorkItemFenceEvaluationSupport {
     if (!Objects.equals(workItem.getRegionId(), state.getRegionId())
         || !workItem.getRegionEpoch().equals(state.getRegionEpoch())) {
       return "runtime_scope_changed";
+    }
+    Long capturedBaseVersionId = workItem.getScriptPatchBaseVersionId();
+    long runtimeBaseVersionId = state.getPinnedScriptPatchBaseVersionId();
+    if (capturedBaseVersionId == null
+        || capturedBaseVersionId <= 0L
+        || runtimeBaseVersionId <= 0L) {
+      return "script_patch_base_version_unavailable";
+    }
+    if (capturedBaseVersionId != runtimeBaseVersionId) {
+      return "script_patch_base_version_mismatch";
+    }
+
+    String capturedPlayableStateScope =
+        RoutingBundleSupport.normalizePlayableStateScope(workItem.getPlayableStateScope());
+    String runtimePlayableStateScope =
+        RoutingBundleSupport.normalizePlayableStateScope(state.getPlayableStateScope());
+    RoutingBundleSupport.RoutingBundle runtimeRoutingBundle =
+        RoutingBundleSupport.fromRuntimeState(state);
+    if (!runtimeRoutingBundle.isPresent()) {
+      return "script_pin_authority_unavailable";
+    }
+    if (capturedPlayableStateScope.isBlank()
+        || !capturedPlayableStateScope.equals(runtimePlayableStateScope)) {
+      return "playable_state_scope_mismatch";
+    }
+    RoutingBundleSupport.RoutingBundle capturedRoutingBundle =
+        RoutingBundleSupport.normalize(
+            workItem.getWorldSlug(), workItem.getRealmSlug(), workItem.getPointerVersion());
+    if (!RoutingBundleSupport.sameRoutingBundle(runtimeRoutingBundle, capturedRoutingBundle)) {
+      return "routing_bundle_changed";
     }
     return null;
   }

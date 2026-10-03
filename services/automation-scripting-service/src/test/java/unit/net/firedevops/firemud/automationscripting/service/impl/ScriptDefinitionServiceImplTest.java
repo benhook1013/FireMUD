@@ -87,6 +87,23 @@ class ScriptDefinitionServiceImplTest {
   }
 
   @Test
+  void updateScriptRejectsNullOrMismatchedRetainedBindingBaseBeforeMaterialization() {
+    when(bindingRepository.existsByTenantIdAndScriptPatchVersionWithNullOrMismatchedBaseVersionId(
+            1L, "v1", 1L))
+        .thenReturn(true);
+    ScriptDefinitionDto dto = new ScriptDefinitionDto(null, 1L, "test", "v1", 1L, "{}", List.of());
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("script_patch_base_version_conflict");
+
+    verify(bindingRepository, never())
+        .findByTenantIdAndScriptPatchVersionOrderByEventTypeAscEventSchemaVersionAscPriorityAscScriptIdAsc(
+            1L, "v1");
+    verify(repository, never()).bindScriptPatchBaseVersionId("1", "v1", 1L);
+  }
+
+  @Test
   void updateScriptAllowsOnCommandActionTagBinding() throws SagaException {
     ScriptDefinition saved = new ScriptDefinition();
     saved.setId(6L);
@@ -115,6 +132,19 @@ class ScriptDefinitionServiceImplTest {
 
     assertNotNull(result);
     verify(bindingRepository).saveAll(any());
+  }
+
+  @Test
+  void stableIdentityConflictReportsRequestedBaseVersion() {
+    ScriptDefinition existing = script(5L, "test", "v1", "{}");
+    existing.setBaseVersionId(1L);
+    when(repository.findById(5L)).thenReturn(java.util.Optional.of(existing));
+    ScriptDefinitionDto dto = new ScriptDefinitionDto(5L, 1L, "renamed", "v1", 2L, "{}", List.of());
+
+    assertThatThrownBy(() -> service.updateScript(dto))
+        .isInstanceOf(ScriptDefinitionIdentityConflictException.class)
+        .hasMessageContaining("existing=(tenantId=1, version=v1, baseVersionId=1")
+        .hasMessageContaining("requested=(tenantId=1, version=v1, baseVersionId=2, name=renamed)");
   }
 
   @Test

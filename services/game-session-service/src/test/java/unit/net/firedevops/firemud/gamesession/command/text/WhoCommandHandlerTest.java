@@ -26,7 +26,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoShowsBoundedEmptyStateWhenNobodyIsConnected() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -49,8 +49,8 @@ class WhoCommandHandlerTest {
   }
 
   @Test
-  void whoGroupsElevatedPlayersFirstAndPlayersAfterward() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+  void whoKeepsTenantRoleClaimsInThePlayerListWithoutGrantEvidence() {
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String godJwt =
@@ -83,12 +83,12 @@ class WhoCommandHandlerTest {
             new SessionContext(2L, 22L, 2L, "second@example.com", 102L, "Ben", 7L, "R-1", null));
 
     assertThat(result.commandResult().accepted()).isTrue();
-    assertThat(render(result)).isEqualTo("Gods [2]: Aster, Dara\nPlayers [2]: Ben, Cara");
+    assertThat(render(result)).isEqualTo("Gods [0]: \nPlayers [4]: Aster, Ben, Cara, Dara");
   }
 
   @Test
   void whoShowsGlobalOnlyRolesAsPlayers() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
     String globalOnlyJwt =
@@ -115,7 +115,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoOmitsRemovedPresenceAfterLogoutLikeCleanup() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     WhoCommandHandler handler =
         new WhoCommandHandler(gameplayPresenceService, activityResolver, scriptEventPublisher);
 
@@ -136,7 +136,7 @@ class WhoCommandHandlerTest {
 
   @Test
   void whoAnnotatesExplicitAndAutoAfkPlayers() {
-    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService(jwtUtil);
+    FakeGameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
     GameplayPresenceActivityResolver resolver =
         Mockito.mock(GameplayPresenceActivityResolver.class);
     WhoCommandHandler handler =

@@ -56,13 +56,6 @@ spec:
                 name: spring-cloud-gateway
                 port:
                   number: 80
-          - path: /assets
-            pathType: Prefix
-            backend:
-              service:
-                name: spring-cloud-gateway
-                port:
-                  number: 80
           - path: /
             pathType: Prefix
             backend:

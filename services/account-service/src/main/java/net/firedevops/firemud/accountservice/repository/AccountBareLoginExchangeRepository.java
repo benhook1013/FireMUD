@@ -22,7 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * Account-owned first-writer storage and exact readback for bare first-party LOGIN exchange. Claim,
  * pending evidence, terminal success, and its exact envelope must share one Account transaction;
- * V37 permits {@code PENDING} only as an in-transaction intermediate and rejects a still-pending
+ * V37.1 permits {@code PENDING} only as an in-transaction intermediate and rejects a still-pending
  * exchange at transaction commit.
  */
 @Repository

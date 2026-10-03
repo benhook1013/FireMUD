@@ -105,6 +105,34 @@ class LogEventServiceImplTest {
   }
 
   @Test
+  void changedEventTypeWithinIdentityReturnsIdempotencyConflict() {
+    CreateLogEventRequest original = request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{}");
+    CreateLogEventRequest changed =
+        new CreateLogEventRequest(
+            original.scope(),
+            original.tenantId(),
+            original.auditEventId(),
+            original.producerService(),
+            "ACCOUNT_RECOVERY",
+            original.occurredAt(),
+            original.schemaVersion(),
+            original.payload(),
+            original.payloadDigestVersion(),
+            original.payloadDigest());
+    when(repository.insertIfAbsent(eq(changed), any(UUID.class)))
+        .thenReturn(
+            new AccountAuditReceiptInsertResult(
+                receipt(original, original.payload().toByteArray(), "COMMITTED", "ACCEPTED"),
+                false));
+
+    var result = service.createLogEvent(changed);
+
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, result.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, result.outcome());
+    assertEquals(LOG_EVENT_ID, result.logEventId());
+  }
+
+  @Test
   void minimizedRetryIsSuccessfulButNonReplayable() {
     CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
     when(repository.insertIfAbsent(eq(request), any(UUID.class)))
@@ -116,6 +144,115 @@ class LogEventServiceImplTest {
 
     assertEquals(AccountAuditReceiptStatus.MINIMIZED, result.status());
     assertEquals(AccountAuditReceiptOutcome.NON_REPLAYABLE, result.outcome());
+  }
+
+  @Test
+  void minimizedReadAcceptsOmittedPayloadWithMatchingIdentityMetadataAndDigest() {
+    CreateLogEventRequest original =
+        request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{\"retained\":true}");
+    CreateLogEventRequest digestOnly = withPayload(original, ByteString.EMPTY);
+    when(repository.findByIdentity(eq(digestOnly), eq(0L)))
+        .thenReturn(Optional.of(receipt(original, null, "MINIMIZED", "NON_REPLAYABLE")));
+
+    var result = service.readLogEventReceipt(digestOnly);
+
+    assertEquals(AccountAuditReceiptStatus.MINIMIZED, result.status());
+    assertEquals(AccountAuditReceiptOutcome.NON_REPLAYABLE, result.outcome());
+    assertEquals(RECEIPT_ID.toString(), result.receiptId());
+    verify(repository).findByIdentity(eq(digestOnly), eq(0L));
+  }
+
+  @Test
+  void minimizedReadReportsConflictForChangedDigestOrImmutableMetadata() {
+    CreateLogEventRequest original =
+        request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{\"retained\":true}");
+    CreateLogEventRequest changedDigest =
+        withPayloadAndDigest(
+            original,
+            ByteString.EMPTY,
+            digest("{\"changed\":true}".getBytes(StandardCharsets.UTF_8)));
+    CreateLogEventRequest changedEventType =
+        withEventType(withPayload(original, ByteString.EMPTY), "ACCOUNT_RECOVERY");
+    AccountAuditReceipt minimized = receipt(original, null, "MINIMIZED", "NON_REPLAYABLE");
+    when(repository.findByIdentity(eq(changedDigest), eq(42L))).thenReturn(Optional.of(minimized));
+    when(repository.findByIdentity(eq(changedEventType), eq(42L)))
+        .thenReturn(Optional.of(minimized));
+
+    var digestResult = service.readLogEventReceipt(changedDigest);
+    var metadataResult = service.readLogEventReceipt(changedEventType);
+
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, digestResult.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, digestResult.outcome());
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, metadataResult.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, metadataResult.outcome());
+  }
+
+  @Test
+  void readRejectsMalformedDigestAndUnsupportedVersionBeforeRepositoryAccess() {
+    CreateLogEventRequest valid =
+        request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{\"retained\":true}");
+    CreateLogEventRequest malformedDigest =
+        withPayloadAndDigest(valid, ByteString.EMPTY, "sha256:ABC");
+    CreateLogEventRequest unsupportedVersion = withPayloadDigestVersion(valid, 2);
+
+    assertThrows(
+        IllegalArgumentException.class, () -> service.readLogEventReceipt(malformedDigest));
+    assertThrows(
+        IllegalArgumentException.class, () -> service.readLogEventReceipt(unsupportedVersion));
+
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void readRejectsSuppliedPayloadWithMismatchedDigestBeforeRepositoryAccess() {
+    CreateLogEventRequest valid =
+        request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{\"retained\":true}");
+    ByteString differentPayload = ByteString.copyFromUtf8("{\"changed\":true}");
+    CreateLogEventRequest mismatched =
+        withPayloadAndDigest(valid, differentPayload, valid.payloadDigest());
+
+    assertThrows(IllegalArgumentException.class, () -> service.readLogEventReceipt(mismatched));
+
+    verifyNoInteractions(repository);
+  }
+
+  @Test
+  void retainedReadRequiresFullPayloadAndReturnsConflictForOmittedOrChangedPayload() {
+    CreateLogEventRequest original =
+        request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{\"retained\":true}");
+    CreateLogEventRequest omitted = withPayload(original, ByteString.EMPTY);
+    CreateLogEventRequest changed =
+        request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{\"changed\":true}");
+    AccountAuditReceipt retained =
+        receipt(original, original.payload().toByteArray(), "COMMITTED", "ACCEPTED");
+    when(repository.findByIdentity(eq(omitted), eq(0L))).thenReturn(Optional.of(retained));
+    when(repository.findByIdentity(eq(changed), eq(0L))).thenReturn(Optional.of(retained));
+
+    var omittedResult = service.readLogEventReceipt(omitted);
+    var changedResult = service.readLogEventReceipt(changed);
+
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, omittedResult.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, omittedResult.outcome());
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, changedResult.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, changedResult.outcome());
+  }
+
+  @Test
+  void exactEmptyPayloadReadRemainsDistinctFromDigestOnlyMinimizedRead() {
+    CreateLogEventRequest emptyPayload =
+        request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "");
+    AccountAuditReceipt retained = receipt(emptyPayload, new byte[0], "COMMITTED", "ACCEPTED");
+    AccountAuditReceipt minimized = receipt(emptyPayload, null, "MINIMIZED", "NON_REPLAYABLE");
+    when(repository.findByIdentity(eq(emptyPayload), eq(0L)))
+        .thenReturn(Optional.of(retained), Optional.of(minimized));
+
+    var retainedResult = service.readLogEventReceipt(emptyPayload);
+    var minimizedResult = service.readLogEventReceipt(emptyPayload);
+
+    assertEquals(AccountAuditReceiptStatus.COMMITTED, retainedResult.status());
+    assertEquals(AccountAuditReceiptOutcome.DUPLICATE, retainedResult.outcome());
+    assertEquals(AccountAuditReceiptStatus.MINIMIZED, minimizedResult.status());
+    assertEquals(AccountAuditReceiptOutcome.NON_REPLAYABLE, minimizedResult.outcome());
   }
 
   @Test
@@ -200,6 +337,56 @@ class LogEventServiceImplTest {
         payload,
         1,
         digest(payload.toByteArray()));
+  }
+
+  private static CreateLogEventRequest withPayload(
+      CreateLogEventRequest request, ByteString payload) {
+    return withPayloadAndDigest(request, payload, request.payloadDigest());
+  }
+
+  private static CreateLogEventRequest withPayloadAndDigest(
+      CreateLogEventRequest request, ByteString payload, String payloadDigest) {
+    return new CreateLogEventRequest(
+        request.scope(),
+        request.tenantId(),
+        request.auditEventId(),
+        request.producerService(),
+        request.eventType(),
+        request.occurredAt(),
+        request.schemaVersion(),
+        payload,
+        request.payloadDigestVersion(),
+        payloadDigest);
+  }
+
+  private static CreateLogEventRequest withEventType(
+      CreateLogEventRequest request, String eventType) {
+    return new CreateLogEventRequest(
+        request.scope(),
+        request.tenantId(),
+        request.auditEventId(),
+        request.producerService(),
+        eventType,
+        request.occurredAt(),
+        request.schemaVersion(),
+        request.payload(),
+        request.payloadDigestVersion(),
+        request.payloadDigest());
+  }
+
+  private static CreateLogEventRequest withPayloadDigestVersion(
+      CreateLogEventRequest request, int payloadDigestVersion) {
+    return new CreateLogEventRequest(
+        request.scope(),
+        request.tenantId(),
+        request.auditEventId(),
+        request.producerService(),
+        request.eventType(),
+        request.occurredAt(),
+        request.schemaVersion(),
+        request.payload(),
+        payloadDigestVersion,
+        request.payloadDigest());
   }
 
   private static AccountAuditReceipt receipt(

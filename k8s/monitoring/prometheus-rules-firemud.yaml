@@ -258,6 +258,25 @@ spec:
             summary: Player-facing reopen was attempted without complete convergence
             description: A controller-authoritative recovery release was attempted before cold-start convergence completed. Keep traffic quarantined and investigate the operation evidence and participant dispositions immediately.
 
+    - name: firemud.alerts.world-management
+      rules:
+        - alert: InitialAdmissionBindHoldOverdueObservations
+          expr: sum by (error_code) (increase(world_initial_admission_bind_overdue_observations_total[5m])) > 0
+          for: 10m
+          labels:
+            service: world-management-service
+            severity: P2
+            owner: gameplay
+            runbook: design/architecture/microservices/world-management-service/api-contracts.md#initial-admission-bind-hold-contract
+          annotations:
+            summary: World observed unresolved initial-admission holds beyond diagnostic age
+            description: Repeated overdue observations require owner-proof and transport triage. This diagnostic alert does not authorize readiness, termination, or hold release; follow the exact owner-evidence procedure in the World initial-admission bind contract.
+
+    - name: firemud.recording.automation
+      rules:
+        - record: automation_retention_dead_letter_blocked_rows:max
+          expr: max by (namespace, service) (automation_retention_dead_letter_blocked_rows)
+
     - name: firemud.alerts.observability
       rules:
         - alert: AlertmanagerServiceUnavailable

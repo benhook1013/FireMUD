@@ -411,7 +411,7 @@ assert_job_contains smoke.yml smoke-gate 'currentParents.length !== 2'
 assert_job_contains smoke.yml smoke-gate 'currentParents[0]?.sha !== currentBaseSha'
 assert_job_contains smoke.yml smoke-gate 'currentParents[1]?.sha !== headSha'
 assert_job_contains smoke.yml smoke-gate 'sourceEvent: "pull_request"'
-assert_job_contains smoke.yml smoke-gate 'run.event !== currentIdentity.sourceEvent'
+assert_job_contains smoke.yml smoke-gate 'run.event !== sourceEvent'
 assert_job_contains smoke.yml smoke-gate 'github.rest.git.getRef'
 assert_job_contains smoke.yml smoke-gate 'currentIdentity.sourceEvent === "pull_request"'
 assert_job_contains smoke.yml smoke-gate 'job.name === "PR Full-Stack Smoke"'
@@ -1196,7 +1196,7 @@ require_ordered_sequence \
   "$smoke_path" \
   'if (resolvedIdentity?.obsolete) {' \
   'return;' \
-  'github.rest.actions.listWorkflowRuns,'
+  'let matching = await findMatchingRuntimeImagesRun('
 require_branch_return \
   "$smoke_path" \
   'if (resolvedIdentity?.obsolete) {'
@@ -1204,7 +1204,7 @@ require_contains "$smoke_path" 'mode-required'
 require_contains "$smoke_path" 'Build Runtime Images secure-pr-artifact pr-'
 require_contains "$smoke_path" 'sourceEvent: "pull_request",'
 require_contains "$smoke_path" 'sourceEvent: "repository_dispatch",'
-require_contains "$smoke_path" 'event: currentIdentity.sourceEvent,'
+require_contains "$smoke_path" 'event: sourceEvent,'
 require_contains "$smoke_path" 'workflowRunQuery.created = `${pullRequestCreatedAt}..*`;'
 require_contains "$smoke_path" 'github.paginate.iterator('
 require_contains "$smoke_path" 'for await (const response of github.paginate.iterator('
@@ -1212,9 +1212,13 @@ require_contains "$smoke_path" 'run.display_title !== expectedDisplayTitle'
 require_contains "$smoke_path" 'const pullRequests = run.pull_requests ?? [];'
 require_contains "$smoke_path" 'pullRequests.length > 0 &&'
 require_contains "$smoke_path" '!pullRequests.some'
-require_contains "$smoke_path" 'pullRequest.head?.sha === currentIdentity.headSha'
+require_contains "$smoke_path" 'pullRequest.head?.sha === identity.headSha'
 require_contains "$smoke_path" 'break workflowRunPages;'
-require_contains "$smoke_path" 'workflowRunQuery.head_sha = currentIdentity.headSha;'
+require_contains "$smoke_path" 'workflowRunQuery.head_sha = identity.headSha;'
+require_contains "$smoke_path" 'matching.conclusion === "cancelled"'
+require_contains "$smoke_path" 'waiting for an exact repository_dispatch replacement'
+require_contains "$smoke_path" 'const cancelledReplacementTimeoutMs = 5 * 60 * 1000;'
+require_contains "$smoke_path" 'Cancelled runtime-images run ${cancelledRunId} has no exact repository_dispatch replacement '
 require_contains "$smoke_path" 'github.rest.actions.listJobsForWorkflowRun'
 require_contains "$smoke_path" 'job.name === "PR Full-Stack Smoke"'
 require_contains "$smoke_path" 'step.name === "Run credential-free full-stack smoke"'
@@ -1543,9 +1547,11 @@ let availableRuns = [];
 let requestedCommitRefs = [];
 let forbiddenCurrentBaseLookups = 0;
 let fakeNow = 1000;
+let onSmokeSleep = null;
 Date.now = () => fakeNow;
 global.setTimeout = (callback, milliseconds, ...args) => {
   fakeNow += Number(milliseconds);
+  onSmokeSleep?.(Number(milliseconds));
   queueMicrotask(() => callback(...args));
   return 0;
 };
@@ -1602,6 +1608,8 @@ const listJobsForWorkflowRun = async () => undefined;
 let smokeStepConclusion = "skipped";
 const workflowRunQueries = [];
 const jobQueries = [];
+let repositoryDispatchQueryCount = 0;
+let onRepositoryDispatchQuery = null;
 const github = {
   rest: {
     pulls: {
@@ -1655,6 +1663,10 @@ github.paginate.iterator = (method, input) => {
     throw new Error("unexpected workflow-run iterator method");
   }
   workflowRunQueries.push(input);
+  if (input.event === "repository_dispatch") {
+    repositoryDispatchQueryCount += 1;
+    onRepositoryDispatchQuery?.(repositoryDispatchQueryCount);
+  }
   return (async function* workflowRunPages() {
     yield { data: availableRuns };
   })();
@@ -1680,6 +1692,104 @@ async function check(conclusion, expectedFailure, expectedFailureText) {
 setExactEventRun(101);
 check("skipped", true, "credential-free full-stack smoke step did not pass")
   .then(() => check("success", false))
+  .then(() => {
+    const eventRun = {
+      ...runtimeRun(601, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed",
+      conclusion: "cancelled",
+    };
+    const replacement = {
+      ...dispatchRun(602, baseSha, headSha, mergeSha),
+      status: "in_progress",
+      conclusion: null,
+    };
+    const queryStart = workflowRunQueries.length;
+    const jobStart = jobQueries.length;
+    const dispatchQueryStart = repositoryDispatchQueryCount;
+    availableRuns = [eventRun];
+    onRepositoryDispatchQuery = (queryCount) => {
+      const replacementPoll = queryCount - dispatchQueryStart;
+      if (replacementPoll >= 2) {
+        availableRuns = [eventRun, replacement];
+      }
+      if (replacementPoll >= 3) {
+        replacement.status = "completed";
+        replacement.conclusion = "success";
+      }
+    };
+    return check("success", false).then(() => {
+      onRepositoryDispatchQuery = null;
+      const queries = workflowRunQueries.slice(queryStart);
+      if (!queries.some((query) => query.event === "repository_dispatch")) {
+        throw new Error("a cancelled exact event run must poll for a typed repository_dispatch replacement");
+      }
+      const dispatchQuery = queries.find((query) => query.event === "repository_dispatch");
+      if (dispatchQuery.created !== "2026-09-01T00:00:00Z..*" || Object.hasOwn(dispatchQuery, "head_sha")) {
+        throw new Error("same-anchor replacement lookup must be bounded to PR-created dispatch runs without head-SHA assumptions");
+      }
+      if (jobQueries.length !== jobStart + 1 || jobQueries.at(-1).run_id !== 602) {
+        throw new Error("Smoke Gate must wait for and validate the exact dispatch replacement smoke job");
+      }
+    });
+  })
+  .then(() => {
+    const eventRun = {
+      ...runtimeRun(603, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed",
+      conclusion: "cancelled",
+    };
+    const wrongAnchorDispatch = dispatchRun(604, "d".repeat(40), headSha, mergeSha);
+    const queryStart = workflowRunQueries.length;
+    const jobStart = jobQueries.length;
+    const startedAt = fakeNow;
+    availableRuns = [eventRun, wrongAnchorDispatch];
+    return check("success", true, "Cancelled runtime-images run 603 has no exact repository_dispatch replacement").then(() => {
+      if (!workflowRunQueries.slice(queryStart).some((query) => query.event === "repository_dispatch")) {
+        throw new Error("a cancelled exact event run must check for a repository_dispatch replacement");
+      }
+      if (jobQueries.length !== jobStart) {
+        throw new Error("Smoke Gate must reject a dispatch replacement with a mismatched base anchor");
+      }
+      if (fakeNow - startedAt >= 25 * 60 * 1000) {
+        throw new Error("a cancelled exact event run without replacement must fail before the generic smoke deadline");
+      }
+    });
+  })
+  .then(() => {
+    const eventRun = {
+      ...runtimeRun(605, runtimeTitle(baseSha, headSha, mergeSha)),
+      status: "completed",
+      conclusion: "cancelled",
+    };
+    const startedAt = fakeNow;
+    let cancellationWaits = 0;
+    availableRuns = [eventRun];
+    onSmokeSleep = () => {
+      cancellationWaits += 1;
+      if (cancellationWaits === 20) {
+        eventRun.status = "in_progress";
+        eventRun.conclusion = null;
+      } else if (cancellationWaits === 21) {
+        eventRun.status = "completed";
+        eventRun.conclusion = "cancelled";
+      }
+    };
+    return check(
+      "success",
+      true,
+      "Cancelled runtime-images run 605 has no exact repository_dispatch replacement"
+    ).then(() => {
+      onSmokeSleep = null;
+      if (cancellationWaits < 40 || fakeNow - startedAt < 10 * 60 * 1000) {
+        throw new Error(
+          "a cancelled run that becomes active and is cancelled again must receive a fresh five-minute replacement window"
+        );
+      }
+      if (eventRun.id !== 605 || eventRun.status !== "completed" || eventRun.conclusion !== "cancelled") {
+        throw new Error("the cancellation-window regression must reuse the same run ID");
+      }
+    });
+  })
   .then(() => {
     currentBaseSha = "d".repeat(40);
     currentMergeSha = "e".repeat(40);

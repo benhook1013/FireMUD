@@ -48,7 +48,8 @@ class SessionRoleControllerTest {
                     HttpHeaders.AUTHORIZATION,
                     "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data").value("refreshed"));
+        .andExpect(jsonPath("$.data").value("refreshed"))
+        .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test

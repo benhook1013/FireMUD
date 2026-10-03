@@ -6,7 +6,7 @@ Accepted
 
 ## Implementation Status
 
-Stripe hosting-billing lifecycle, verified webhooks, reconciliation, entitlement authority, billing-safe availability, and focused provider proof remain gaps; creator monetization remains deferred. Current `CreateSubscription` gRPC and service paths fail closed with `FAILED_PRECONDITION` before local or provider mutation. Generic payment operations remain live implementation drift.
+Stripe hosting-billing lifecycle, verified webhooks, reconciliation, entitlement authority, billing-safe availability, and focused provider proof remain gaps; creator monetization remains deferred. Current `CreateSubscription` gRPC and service paths fail closed with `FAILED_PRECONDITION` before local or provider mutation. The generic `CreatePaymentIntent`, `CreateDonation`, and `RefundPayment` RPCs now fail closed with `FAILED_PRECONDITION` before `PaymentService` or provider invocation; the underlying generic `PaymentService` substrate remains present but unsupported.
 
 ## Decision Record
 

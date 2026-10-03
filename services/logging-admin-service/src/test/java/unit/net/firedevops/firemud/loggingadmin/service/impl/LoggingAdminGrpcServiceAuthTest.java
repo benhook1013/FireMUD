@@ -7,8 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -27,9 +25,12 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -42,8 +43,9 @@ import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptOutcome;
 import net.firedevops.firemud.loggingadmin.dto.AccountAuditReceiptStatus;
 import net.firedevops.firemud.loggingadmin.dto.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
+import net.firedevops.firemud.loggingadmin.entity.AccountAuditReceipt;
+import net.firedevops.firemud.loggingadmin.repository.AccountAuditReceiptRepository;
 import net.firedevops.firemud.loggingadmin.service.AuditReceiptNotFoundException;
-import net.firedevops.firemud.loggingadmin.service.AuditStorageUnavailableException;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
@@ -136,23 +138,8 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void accountMtlSPeerCreatesReceiptWithoutJwtOrAdminRole() {
+  void exactAccountMtlsPeerGetsUnavailableWithoutJwtOrAdminRole() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    ModerationService moderationService = Mockito.mock(ModerationService.class);
-    String digest = digest("{\"accountId\":42}".getBytes(StandardCharsets.UTF_8));
-    when(logEventService.createLogEvent(any()))
-        .thenReturn(
-            new AccountAuditReceiptDto(
-                AccountAuditScope.PLATFORM,
-                null,
-                "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
-                "receipt-1",
-                77L,
-                1,
-                1,
-                digest,
-                AccountAuditReceiptStatus.COMMITTED,
-                AccountAuditReceiptOutcome.ACCEPTED));
     LoggingAdminGrpcService service = newService(logEventService);
 
     AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
@@ -161,22 +148,45 @@ class LoggingAdminGrpcServiceAuthTest {
         "account-service",
         () -> service.createLogEvent(validCreateRequest(), responseObserver(ref, error)));
 
-    assertNotNull(ref.get());
-    assertEquals("77", ref.get().getLogEventId());
+    assertNull(ref.get());
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
+    assertEquals(
+        "Account audit ingress is unavailable", Status.fromThrowable(error.get()).getDescription());
+    verifyNoInteractions(logEventService);
+  }
+
+  @Test
+  void offlineFixtureMapsAcceptedReceiptToTypedCreateResponse() {
+    String payload = "{\"accountId\":42}";
+    String digest = digest(payload.getBytes(StandardCharsets.UTF_8));
+    AccountAuditReceiptDto receipt =
+        new AccountAuditReceiptDto(
+            AccountAuditScope.PLATFORM,
+            null,
+            "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3",
+            "receipt-1",
+            77L,
+            1,
+            1,
+            digest,
+            AccountAuditReceiptStatus.COMMITTED,
+            AccountAuditReceiptOutcome.ACCEPTED);
+
+    CreateLogEventResponse response = LoggingAdminGrpcService.toCreateLogEventResponse(receipt);
+
+    assertEquals("77", response.getLogEventId());
+    assertEquals(1, response.getAuditProjectionVersion());
     assertEquals(
         net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM,
-        ref.get().getScope());
+        response.getScope());
     assertEquals(
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus
             .ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED,
-        ref.get().getStatus());
+        response.getStatus());
     assertEquals(
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
             .ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED,
-        ref.get().getOutcome());
-    assertNull(error.get());
-    verify(logEventService).createLogEvent(any());
-    verify(moderationService, never()).applyAction(any());
+        response.getOutcome());
   }
 
   @Test
@@ -210,14 +220,15 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void accountAuditMethodsRejectAccountPeerFromWrongNamespace() {
+  void accountAuditRejectsAccountServicePeerFromOtherNamespace() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     LoggingAdminGrpcService service = newService(logEventService);
     AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
 
-    invokeWithPeerUri(
-        "spiffe://firemud/ns/other/sa/account-service",
+    invokeWithPeer(
+        "other",
+        "account-service",
         () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
 
     assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
@@ -265,6 +276,10 @@ class LoggingAdminGrpcServiceAuthTest {
         "account-service",
         () -> service.readLogEventReceipt(validReadRequest(), responseObserver(response, error)));
 
+    assertNotNull(response.get());
+    assertEquals("receipt-1", response.get().getReceiptId());
+    assertEquals("77", response.get().getLogEventId());
+    assertEquals(1, response.get().getAuditProjectionVersion());
     assertEquals(
         net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
             .ACCOUNT_AUDIT_RECEIPT_OUTCOME_DUPLICATE,
@@ -274,20 +289,81 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void auditStorageFailureReturnsCanonicalUnavailableStatus() {
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    when(logEventService.createLogEvent(any()))
-        .thenThrow(new AuditStorageUnavailableException(new IllegalStateException("database")));
-    LoggingAdminGrpcService service = newService(logEventService);
-    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+  void accountMtlsPeerCanReadMinimizedReceiptThroughActualService() {
+    AccountAuditReceiptRepository repository = Mockito.mock(AccountAuditReceiptRepository.class);
+    ReadLogEventReceiptRequest wireRequest = validReadRequest().toBuilder().clearPayload().build();
+    Instant occurredAt =
+        Instant.ofEpochSecond(
+            wireRequest.getOccurredAt().getSeconds(), wireRequest.getOccurredAt().getNanos());
+    net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest serviceRequest =
+        new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
+            AccountAuditScope.PLATFORM,
+            null,
+            wireRequest.getAuditEventId(),
+            wireRequest.getProducerService(),
+            wireRequest.getEventType(),
+            occurredAt,
+            wireRequest.getSchemaVersion(),
+            wireRequest.getPayload(),
+            wireRequest.getPayloadDigestVersion(),
+            wireRequest.getPayloadDigest());
+    UUID receiptId = UUID.fromString("c0c1f03b-31b7-4281-aaf8-2d66f29e8770");
+    AccountAuditReceipt receipt =
+        new AccountAuditReceipt(
+            91L,
+            77L,
+            receiptId,
+            "platform",
+            null,
+            serviceRequest.auditEventId(),
+            serviceRequest.producerService(),
+            serviceRequest.eventType(),
+            occurredAt.getEpochSecond(),
+            occurredAt.getNano(),
+            serviceRequest.schemaVersion(),
+            serviceRequest.payloadDigestVersion(),
+            serviceRequest.payloadDigest(),
+            null,
+            "MINIMIZED",
+            "NON_REPLAYABLE");
+    when(repository.findByIdentity(serviceRequest, 0L)).thenReturn(Optional.of(receipt));
+    LoggingAdminGrpcService service = newService(new LogEventServiceImpl(repository));
+    AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
 
     invokeWithPeer(
         "account-service",
-        () -> service.createLogEvent(validCreateRequest(), responseObserver(response, error)));
+        () -> service.readLogEventReceipt(wireRequest, responseObserver(response, error)));
 
-    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
+    assertNull(error.get());
+    assertNotNull(response.get());
+    assertEquals(receiptId.toString(), response.get().getReceiptId());
+    assertEquals("77", response.get().getLogEventId());
+    assertEquals(
+        net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus
+            .ACCOUNT_AUDIT_RECEIPT_STATUS_MINIMIZED,
+        response.get().getStatus());
+    assertEquals(
+        net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome
+            .ACCOUNT_AUDIT_RECEIPT_OUTCOME_NON_REPLAYABLE,
+        response.get().getOutcome());
+    verify(repository).findByIdentity(serviceRequest, 0L);
+  }
+
+  @Test
+  void receiptReadRejectsWrongMtlsPeerBeforeRepositoryLookup() {
+    AccountAuditReceiptRepository repository = Mockito.mock(AccountAuditReceiptRepository.class);
+    LoggingAdminGrpcService service = newService(new LogEventServiceImpl(repository));
+    AtomicReference<ReadLogEventReceiptResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+
+    invokeWithPeer(
+        "game-session-service",
+        () -> service.readLogEventReceipt(validReadRequest(), responseObserver(response, error)));
+
     assertNull(response.get());
+    assertEquals(Status.Code.PERMISSION_DENIED, Status.fromThrowable(error.get()).getCode());
+    verifyNoInteractions(repository);
   }
 
   @Test
@@ -429,22 +505,53 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void createLogEventMapsUnsupportedDigestVersionRejectionToInvalidArgument() {
+  void createLogEventReturnsUnavailableBeforeEnvelopeValidation() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    when(logEventService.createLogEvent(any()))
-        .thenThrow(new IllegalArgumentException("payloadDigestVersion must be 1"));
-    LoggingAdminGrpcService service = newService(logEventService);
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            logEventService,
+            moderationService,
+            new SimpleMeterRegistry(),
+            "firemud");
 
     AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
+    java.util.concurrent.atomic.AtomicBoolean completed =
+        new java.util.concurrent.atomic.AtomicBoolean();
     CreateLogEventRequest request =
         validCreateRequest().toBuilder().setPayloadDigestVersion(2).build();
     invokeWithPeer(
-        "account-service", () -> service.createLogEvent(request, responseObserver(ref, error)));
+        "account-service",
+        () ->
+            service.createLogEvent(
+                request,
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(CreateLogEventResponse value) {
+                    ref.set(value);
+                  }
 
-    assertEquals(Status.Code.INVALID_ARGUMENT, Status.fromThrowable(error.get()).getCode());
+                  @Override
+                  public void onError(Throwable value) {
+                    error.set(value);
+                  }
+
+                  @Override
+                  public void onCompleted() {
+                    completed.set(true);
+                  }
+                }));
+
+    assertNotNull(error.get());
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
     assertNull(ref.get());
-    verify(logEventService).createLogEvent(argThat(dto -> dto.payloadDigestVersion() == 2));
+    String description = Status.fromThrowable(error.get()).getDescription();
+    assertEquals("Account audit ingress is unavailable", description);
+    assertTrue(description.length() <= 128);
+    assertFalse(completed.get());
+    verifyNoInteractions(logEventService, moderationService);
   }
 
   @Test
@@ -845,14 +952,15 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   private static void invokeWithPeer(String serviceName, Runnable invocation) {
-    String uri = "spiffe://firemud/ns/firemud/sa/" + serviceName;
-    invokeWithPeerUri(uri, invocation);
+    invokeWithPeer("firemud", serviceName, invocation);
   }
 
-  private static void invokeWithPeerUri(String uri, Runnable invocation) {
+  private static void invokeWithPeer(String namespace, String serviceName, Runnable invocation) {
+    String uri = "spiffe://firemud/ns/" + namespace + "/sa/" + serviceName;
     Context context =
         Context.current()
-            .withValue(GrpcPeerIdentity.CONTEXT_KEY, GrpcPeerIdentity.parseUri(uri).orElseThrow());
+            .withValue(
+                GrpcPeerIdentity.CONTEXT_KEY, new GrpcPeerIdentity(uri, namespace, serviceName));
     Context previous = context.attach();
     try {
       invocation.run();

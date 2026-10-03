@@ -362,10 +362,7 @@ class TelnetServerTest {
       assertEquals(Status.OUT_OF_SERVICE, TlsCertificateWatcher.health().getStatus());
       assertTrue(registry.counter("tcpproxy.tls.misconfig").count() >= 1.0);
 
-      try (SSLSocket connectionAfterPartialUpdate = connectTls(server, clientContext)) {
-        assertEquals(
-            rotatedSerial, peerCertificate(connectionAfterPartialUpdate).getSerialNumber());
-      }
+      assertThrows(IOException.class, () -> connectTls(server, clientContext));
       assertExistingTlsSession(existingConnection, initialCertificate);
 
       switchProjectedGeneration(

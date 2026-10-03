@@ -3,6 +3,8 @@ package net.firedevops.firemud.gamesession.client;
 import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import jakarta.annotation.PostConstruct;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
@@ -32,6 +34,7 @@ import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 /** gRPC client for the Account Service login endpoint. */
@@ -41,13 +44,25 @@ public final class AccountClient
   private static final long READINESS_DEADLINE_SECONDS = 2L;
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final Logger logger = LoggingUtil.getLogger(AccountClient.class);
+  private final Clock clock;
 
+  @Autowired
   public AccountClient(
       ServiceEndpointsProperties endpoints,
       CommonGrpcClientProperties tlsProps,
       GrpcChannelFactory channelFactory,
       BlockingGrpcStubCustomizer stubCustomizer) {
+    this(endpoints, tlsProps, channelFactory, stubCustomizer, Clock.systemUTC());
+  }
+
+  AccountClient(
+      ServiceEndpointsProperties endpoints,
+      CommonGrpcClientProperties tlsProps,
+      GrpcChannelFactory channelFactory,
+      BlockingGrpcStubCustomizer stubCustomizer,
+      Clock clock) {
     super(endpoints, tlsProps, channelFactory, stubCustomizer);
+    this.clock = Objects.requireNonNull(clock, "clock must not be null");
   }
 
   @PostConstruct
@@ -200,7 +215,7 @@ public final class AccountClient
           .issueDirectTextConnectScope(request);
     } catch (StatusRuntimeException ex) {
       logger.warn("Account direct-text scope issuance failed", ex);
-      return scopeIssueError(accountAuthorityErrorCode(ex), "Account authority unavailable");
+      return scopeIssueError("AUTH_UNAVAILABLE", "Account authority unavailable");
     } catch (Exception ex) {
       logger.warn("Account direct-text scope issuance did not complete", ex);
       return scopeIssueError("AUTH_UNAVAILABLE", "Account authority unavailable");
@@ -209,7 +224,10 @@ public final class AccountClient
 
   /** Applies explicit direct-text JOIN with a caller-bound, immutable request identity. */
   public JoinPublicProductionMembershipResponse joinPublicProductionMembership(
-      PlayerExecutionContext playerContext, String connectScopeId, String requestId) {
+      PlayerExecutionContext playerContext,
+      String connectScopeId,
+      String requestId,
+      Instant connectScopeExpiresAt) {
     Objects.requireNonNull(playerContext, "playerContext must not be null");
     if (!hasDirectTextCallerIdentity(playerContext)
         || connectScopeId == null
@@ -218,6 +236,9 @@ public final class AccountClient
         || requestId.isBlank()
         || !playerContext.getRequestId().equals(requestId)) {
       return joinError("INVALID_ARGUMENT", "Direct-text JOIN request was incomplete");
+    }
+    if (!hasUsableConnectScope(connectScopeExpiresAt)) {
+      return joinError("CONNECT_SCOPE_INVALID", "Direct-text JOIN scope is missing or expired");
     }
     if (stub() == null) {
       return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
@@ -229,19 +250,29 @@ public final class AccountClient
             .setRequestId(requestId)
             .build();
     try {
-      return callStub()
-          .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-          .joinPublicProductionMembership(request);
+      AccountServiceGrpc.AccountServiceBlockingStub initialStub =
+          callStub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+      if (!hasUsableConnectScope(connectScopeExpiresAt)) {
+        return joinError("CONNECT_SCOPE_INVALID", "Direct-text JOIN scope is missing or expired");
+      }
+      return initialStub.joinPublicProductionMembership(request);
     } catch (StatusRuntimeException ex) {
       if (ex.getStatus().getCode() == Status.Code.UNAVAILABLE
           || ex.getStatus().getCode() == Status.Code.DEADLINE_EXCEEDED) {
+        if (!hasUsableConnectScope(connectScopeExpiresAt)) {
+          logger.warn("Account direct-text JOIN response was unavailable after scope expiry", ex);
+          return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
+        }
         logger.warn(
             "Account direct-text JOIN response was unavailable; retrying same request id", ex);
         try {
           initClient();
-          return callStub()
-              .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-              .joinPublicProductionMembership(request);
+          AccountServiceGrpc.AccountServiceBlockingStub retryStub =
+              callStub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
+          if (!hasUsableConnectScope(connectScopeExpiresAt)) {
+            return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
+          }
+          return retryStub.joinPublicProductionMembership(request);
         } catch (Exception retryEx) {
           logger.warn("Account direct-text JOIN retry did not complete", retryEx);
         }
@@ -253,6 +284,10 @@ public final class AccountClient
       logger.warn("Account direct-text JOIN did not complete", ex);
       return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
     }
+  }
+
+  private boolean hasUsableConnectScope(Instant expiresAt) {
+    return expiresAt != null && expiresAt.isAfter(clock.instant());
   }
 
   private boolean hasDirectTextCallerIdentity(PlayerExecutionContext context) {
@@ -268,13 +303,6 @@ public final class AccountClient
     } catch (NumberFormatException ignored) {
       return false;
     }
-  }
-
-  private String accountAuthorityErrorCode(StatusRuntimeException exception) {
-    Status.Code statusCode = exception.getStatus().getCode();
-    return statusCode == Status.Code.UNAVAILABLE || statusCode == Status.Code.DEADLINE_EXCEEDED
-        ? "AUTH_UNAVAILABLE"
-        : statusCode.name();
   }
 
   private IssueDirectTextConnectScopeResponse scopeIssueError(String code, String message) {

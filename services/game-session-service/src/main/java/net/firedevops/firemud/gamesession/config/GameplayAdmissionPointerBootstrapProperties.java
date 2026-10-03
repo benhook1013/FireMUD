@@ -12,14 +12,15 @@ public class GameplayAdmissionPointerBootstrapProperties {
   private List<PointerSeed> pointers =
       new ArrayList<>(
           List.of(
-              defaultPointerSeed("demo", "Demo World", 1L, 1L, false),
-              defaultPointerSeed("sandbox", "Builder Sandbox", 1L, 2L, true)));
+              defaultPointerSeed("demo", "Demo World", 1L, 1L, true, false),
+              defaultPointerSeed("sandbox", "Builder Sandbox", 1L, 2L, false, true)));
 
   private static PointerSeed defaultPointerSeed(
       String worldSlug,
       String worldDisplayName,
       long tenantId,
       long gameInstanceId,
+      boolean publicProductionRealm,
       boolean requiresCharacterSelection) {
     PointerSeed pointer = new PointerSeed();
     pointer.setWorldSlug(worldSlug);
@@ -29,7 +30,7 @@ public class GameplayAdmissionPointerBootstrapProperties {
     pointer.setTenantId(tenantId);
     pointer.setGameInstanceId(gameInstanceId);
     pointer.setVisible(true);
-    pointer.setPublicProductionRealm(true);
+    pointer.setPublicProductionRealm(publicProductionRealm);
     pointer.setRequiresCharacterSelection(requiresCharacterSelection);
     pointer.setStateScope(StateScope.SHARED);
     pointer.setCharacterCreationPolicy(CharacterCreationPolicy.ALLOW_NEW);
