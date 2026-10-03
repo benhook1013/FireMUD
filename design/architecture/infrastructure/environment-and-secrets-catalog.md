@@ -224,7 +224,7 @@ These Account-specific environment variables configure the current scheduled, re
 | `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_BATCH_SIZE` | Maximum due operations read back in one job pass; valid range `1..100` | `50` |
 | `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_MAX_ATTEMPTS` | Positive diagnostic threshold for unresolved attempts; reaching it does not terminalize an operation | `12` |
 | `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_INTERVAL_MS` | Positive fixed delay between scheduled job invocations, in milliseconds | `30000` |
-| `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_BACKOFF_MS` | Positive delay, in milliseconds, before retrying an unresolved operation | `30000` |
+| `FIREMUD_ACCOUNT_JOIN_RECONCILIATION_BACKOFF_MS` | Positive initial delay, in milliseconds, before retrying an unresolved operation. The delay doubles for each persisted unresolved attempt and caps at `max(initial delay, 300000)` ms. | `30000` |
 
 The attempt threshold only raises diagnostics; it never converts an uncertain `PENDING` operation to a terminal state. Exact readback recovery continues with backoff while the operation remains pending. See [Account Service Configuration: JOIN Reconciliation](../microservices/account-service/configuration.md#join-reconciliation) for the Account-local mapping and consequences.
 

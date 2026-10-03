@@ -77,6 +77,36 @@ assert_invalid_existing_bundle_is_preserved() {
   assert_mode 640 "$unmanaged_file"
 }
 
+# Defaults derived from a copied checkout must use its physical path even
+# when each helper is invoked through a symlinked checkout ancestor.
+default_path_fixture="$CERT_DIR/default-path-fixture"
+default_path_checkout="$default_path_fixture/checkout"
+default_path_alias="$default_path_fixture/checkout-alias"
+mkdir -p "$default_path_checkout/dev-tools/certs"
+for helper in ensure-dev-certs.sh generate-dev-certs.sh clean-dev-certs.sh; do
+  cp "$ROOT_DIR/dev-tools/certs/$helper" "$default_path_checkout/dev-tools/certs/$helper"
+done
+ln -s "$default_path_checkout" "$default_path_alias"
+default_path_cert_dir="$default_path_checkout/dev-tools/certs"
+default_path_alias_cert_dir="$default_path_alias/dev-tools/certs"
+bash "$default_path_alias_cert_dir/generate-dev-certs.sh"
+[[ -f "$default_path_cert_dir/ca.crt" && -f "$default_path_cert_dir/server.crt" ]] || {
+  echo "default certificate generation did not write into the copied physical checkout" >&2
+  exit 1
+}
+bash "$default_path_alias_cert_dir/ensure-dev-certs.sh"
+[[ -f "$default_path_cert_dir/local-runtime/default/client.crt" ]] || {
+  echo "default certificate setup did not write into the copied physical checkout" >&2
+  exit 1
+}
+bash "$default_path_alias_cert_dir/clean-dev-certs.sh"
+[[ ! -e "$default_path_cert_dir/ca.crt" \
+  && ! -e "$default_path_cert_dir/local-runtime" \
+  && ! -e "$default_path_cert_dir/workloads" ]] || {
+  echo "default certificate cleanup did not clean the copied physical checkout" >&2
+  exit 1
+}
+
 assert_workload_certificate() {
   local workload="$1"
   local certificate="$CERT_DIR/local-runtime/$workload/workloads/$workload.crt"
@@ -427,6 +457,39 @@ assert_invalid_existing_bundle_is_preserved "$key_mismatch_case" key-mismatch
 
 other_authority="$CERT_DIR/other-authority"
 bash "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" "$other_authority" >/dev/null
+
+# An invalid shared client leaf in the run-owned Compose authority fixture
+# fails closed with a bounded certificate diagnostic.
+compose_mtls_run_id="invalid-client-cert-${BASHPID}"
+compose_mtls_project="firemud-smoke-$compose_mtls_run_id"
+compose_mtls_ownership="$CERT_DIR/compose-mtls-ownership"
+compose_mtls_project_key="$(printf '%s' "$compose_mtls_project" | sha256sum | awk '{print $1}')"
+compose_mtls_fixture="$compose_mtls_ownership/$compose_mtls_project_key.grpc-mtls"
+mkdir -m 700 -- "$compose_mtls_ownership"
+
+ensure_owned_compose_mtls_fixture() {
+  FIREMUD_SMOKE_TEST_MODE=1 \
+  FIREMUD_SMOKE_OWNERSHIP_DIR="$compose_mtls_ownership" \
+  FIREMUD_SMOKE_RUN_ID="$compose_mtls_run_id" \
+  COMPOSE_PROJECT_NAME="$compose_mtls_project" \
+    bash "$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh" --compose-mtls "$compose_mtls_fixture"
+}
+
+ensure_owned_compose_mtls_fixture >/dev/null
+cp -- "$other_authority/client.crt" "$compose_mtls_fixture/authority/client.crt"
+chmod 644 "$compose_mtls_fixture/authority/client.crt"
+compose_mtls_invalid_output="$CERT_DIR/invalid-compose-mtls-client.output"
+if ensure_owned_compose_mtls_fixture >"$compose_mtls_invalid_output" 2>&1; then
+  echo "ensure-dev-certs accepted an untrusted Compose mTLS shared client certificate" >&2
+  exit 1
+fi
+rg -Fq 'Compose mTLS shared client certificate does not verify under authority CA.' \
+  "$compose_mtls_invalid_output" || {
+  echo "ensure-dev-certs did not report the untrusted Compose mTLS shared client certificate" >&2
+  cat "$compose_mtls_invalid_output" >&2
+  exit 1
+}
+
 wrong_issuer_case="$CERT_DIR/invalid-wrong-issuer-bundle"
 copy_generic_bundle "$CERT_DIR" "$wrong_issuer_case"
 for file in server.crt server.key client.crt client.key dev-cert.pem dev-key.pem; do

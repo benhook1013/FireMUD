@@ -9,8 +9,12 @@ import org.springframework.cloud.gateway.config.GatewayProperties;
 import org.springframework.cloud.gateway.filter.FilterDefinition;
 import org.springframework.cloud.gateway.handler.predicate.PredicateDefinition;
 import org.springframework.cloud.gateway.route.RouteDefinition;
+import org.springframework.http.server.PathContainer;
+import org.springframework.web.util.pattern.PathPatternParser;
 
 final class GatewayRouteTestSupport {
+
+  private static final PathPatternParser PATH_PATTERN_PARSER = new PathPatternParser();
 
   private GatewayRouteTestSupport() {}
 
@@ -63,6 +67,10 @@ final class GatewayRouteTestSupport {
             .collect(Collectors.toSet());
 
     assertThat(configuredPaths).doesNotContain(path);
+    if (isConcretePath(path)) {
+      assertThat(configuredPaths)
+          .noneMatch(configuredPath -> pathPatternMatches(configuredPath, path));
+    }
   }
 
   static void assertNoRouteWithPathAndMethod(
@@ -74,7 +82,8 @@ final class GatewayRouteTestSupport {
                         route.getPredicates().stream()
                                 .filter(predicate -> "Path".equalsIgnoreCase(predicate.getName()))
                                 .flatMap(predicate -> predicate.getArgs().values().stream())
-                                .anyMatch(path::equals)
+                                .anyMatch(
+                                    configuredPath -> pathPatternMatches(configuredPath, path))
                             && (route.getPredicates().stream()
                                     .noneMatch(
                                         predicate -> "Method".equalsIgnoreCase(predicate.getName()))
@@ -91,8 +100,18 @@ final class GatewayRouteTestSupport {
     assertThat(gatewayProperties.getRoutes().stream().map(RouteDefinition::getId))
         .doesNotContain("social-chat", "social-friends");
     assertNoConfiguredPath(gatewayProperties, "/api/social/**");
+    assertNoConfiguredPath(gatewayProperties, "/api/social/chat/messages");
+    assertNoConfiguredPath(gatewayProperties, "/api/social/friends");
     assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/chat");
     assertNoConfiguredPathStartsWith(gatewayProperties, "/api/social/friends");
+  }
+
+  private static boolean isConcretePath(String path) {
+    return path.indexOf('*') < 0 && path.indexOf('{') < 0 && path.indexOf('}') < 0;
+  }
+
+  private static boolean pathPatternMatches(String configuredPath, String probePath) {
+    return PATH_PATTERN_PARSER.parse(configuredPath).matches(PathContainer.parsePath(probePath));
   }
 
   static void assertHasStripPrefixTwo(GatewayProperties gatewayProperties, String routeId) {

@@ -56,6 +56,86 @@ class AccountJoinReconciliationServiceTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
 
   @Test
+  void dueBacklogMetricsExposeBoundedPageExcessWithoutLoadingRows() {
+    Fixture fixture = fixture(3);
+    when(fixture.joinOperations.countDuePendingReconciliation(NOW)).thenReturn(14L);
+    when(fixture.joinOperations.findDuePendingReconciliation(NOW, 10)).thenReturn(List.of());
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    assertThat(reconciliationGauge(fixture, "due.backlog")).isEqualTo(14);
+    assertThat(reconciliationGauge(fixture, "due.not.selected")).isEqualTo(4);
+    assertThat(reconciliationGauge(fixture, "due.backlog.sample.unknown")).isZero();
+    verify(fixture.joinOperations).findDuePendingReconciliation(NOW, 10);
+    verify(fixture.joinOperations, never()).lockAccount(ACCOUNT_ID);
+  }
+
+  @Test
+  void dueBacklogMetricsClearWhenTheSampledQueueFallsBelowThePage() {
+    Fixture fixture = fixture(3);
+    when(fixture.joinOperations.countDuePendingReconciliation(NOW)).thenReturn(12L, 2L, 0L);
+    when(fixture.joinOperations.findDuePendingReconciliation(NOW, 10)).thenReturn(List.of());
+
+    fixture.service.reconcileDueOperations(NOW);
+    assertThat(reconciliationGauge(fixture, "due.backlog")).isEqualTo(12);
+    assertThat(reconciliationGauge(fixture, "due.not.selected")).isEqualTo(2);
+
+    fixture.service.reconcileDueOperations(NOW);
+    assertThat(reconciliationGauge(fixture, "due.backlog")).isEqualTo(2);
+    assertThat(reconciliationGauge(fixture, "due.not.selected")).isZero();
+
+    fixture.service.reconcileDueOperations(NOW);
+    assertThat(reconciliationGauge(fixture, "due.backlog")).isZero();
+    assertThat(reconciliationGauge(fixture, "due.not.selected")).isZero();
+    assertThat(reconciliationGauge(fixture, "due.backlog.sample.unknown")).isZero();
+  }
+
+  @Test
+  void dueBacklogCountFailureKeepsLastSampleAndStillRunsReadbackSafely() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    when(fixture.joinOperations.countDuePendingReconciliation(NOW))
+        .thenReturn(13L)
+        .thenThrow(new IllegalStateException("transient count failure"));
+    when(fixture.joinOperations.findDuePendingReconciliation(NOW, 10))
+        .thenReturn(List.of(), List.of(pending));
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.empty());
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "JOIN_SCOPE_EVIDENCE_ABSENT",
+            NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+    fixture.service.reconcileDueOperations(NOW);
+
+    assertThat(reconciliationGauge(fixture, "due.backlog")).isEqualTo(13);
+    assertThat(reconciliationGauge(fixture, "due.not.selected")).isEqualTo(3);
+    assertThat(reconciliationGauge(fixture, "due.backlog.sample.unknown")).isEqualTo(1);
+    verify(fixture.joinOperations, org.mockito.Mockito.times(2))
+        .findDuePendingReconciliation(NOW, 10);
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "JOIN_SCOPE_EVIDENCE_ABSENT",
+            NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+    verifyNoInteractions(fixture.memberships, fixture.auditOutbox);
+    assertThat(reconciliationCounter(fixture, "failure")).isEqualTo(1);
+  }
+
+  @Test
   void exactReadbackCommitsEvenWhenScopeExpiredAndAuditOccurredAfterExpiry() {
     Fixture fixture = fixture(5);
     JoinOperation pending = pendingOperation(5, NOW.minusSeconds(1));
@@ -163,7 +243,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "MEMBERSHIP_EVIDENCE_ABSENT",
-            NOW.plusMillis(5_000)))
+            NOW.plusMillis(40_000)))
         .thenReturn(true);
 
     fixture.service.reconcileDueOperations(NOW);
@@ -176,7 +256,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "MEMBERSHIP_EVIDENCE_ABSENT",
-            NOW.plusMillis(5_000));
+            NOW.plusMillis(40_000));
     verify(fixture.joinOperations, never())
         .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
     verifyNoInteractions(fixture.auditOutbox);
@@ -219,7 +299,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.plusMillis(5_000),
             NOW.plusMillis(6_000),
             "JOIN_AUDIT_ENVELOPE_ABSENT",
-            NOW.plusMillis(11_000)))
+            NOW.plusMillis(16_000)))
         .thenReturn(true);
 
     fixture.service.reconcileDueOperations(NOW.plusMillis(6_000));
@@ -244,7 +324,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.plusMillis(5_000),
             NOW.plusMillis(6_000),
             "JOIN_AUDIT_ENVELOPE_ABSENT",
-            NOW.plusMillis(11_000));
+            NOW.plusMillis(16_000));
   }
 
   @Test
@@ -262,7 +342,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "JOIN_READBACK_UNAVAILABLE",
-            NOW.plusMillis(5_000)))
+            NOW.plusMillis(20_000)))
         .thenReturn(true);
 
     fixture.service.reconcileDueOperations(NOW);
@@ -275,9 +355,56 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "JOIN_READBACK_UNAVAILABLE",
-            NOW.plusMillis(5_000));
+            NOW.plusMillis(20_000));
     assertThat(reconciliationCounter(fixture, "unresolved")).isEqualTo(1);
     assertThat(reconciliationCounter(fixture, "max_attempts_reached")).isZero();
+  }
+
+  @Test
+  void retryDelayDoublesFromInitialDelayAndSaturatesWithoutArithmeticOverflow() {
+    assertRetryDelay(0, 12, 5_000, 5_000);
+    assertRetryDelay(1, 12, 5_000, 10_000);
+    assertRetryDelay(5, 12, 5_000, 160_000);
+    assertRetryDelay(6, 12, 5_000, 300_000);
+    assertRetryDelay(2, 2, 5_000, 20_000);
+    assertRetryDelay(Integer.MAX_VALUE, Integer.MAX_VALUE, 5_000, 300_000);
+    assertRetryDelay(1, 2, Long.MAX_VALUE, Long.MAX_VALUE);
+  }
+
+  private static void assertRetryDelay(
+      int attemptCount, int maxAttempts, long initialDelayMillis, long expectedDelayMillis) {
+    Fixture fixture = fixture(maxAttempts, initialDelayMillis);
+    JoinOperation pending = pendingOperation(attemptCount, NOW.minusSeconds(1));
+    stubDue(fixture, pending);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
+        .thenReturn(Optional.empty());
+    Instant expectedNextAttempt = NOW.plusMillis(expectedDelayMillis);
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            attemptCount,
+            maxAttempts,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_EVIDENCE_ABSENT",
+            expectedNextAttempt))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            attemptCount,
+            maxAttempts,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_EVIDENCE_ABSENT",
+            expectedNextAttempt);
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -454,6 +581,10 @@ class AccountJoinReconciliationServiceTest {
   }
 
   private static Fixture fixture(int maxAttempts) {
+    return fixture(maxAttempts, 5_000);
+  }
+
+  private static Fixture fixture(int maxAttempts, long backoffMillis) {
     AccountJoinOperationRepository joinOperations = mock(AccountJoinOperationRepository.class);
     AccountConnectScopeRepository connectScopes = mock(AccountConnectScopeRepository.class);
     AccountTenantMembershipRepository memberships = mock(AccountTenantMembershipRepository.class);
@@ -472,7 +603,7 @@ class AccountJoinReconciliationServiceTest {
             transactionManager,
             10,
             maxAttempts,
-            5_000);
+            backoffMillis);
     return new Fixture(
         service, joinOperations, connectScopes, memberships, auditOutbox, meterRegistry);
   }
@@ -685,6 +816,10 @@ class AccountJoinReconciliationServiceTest {
         .tag("result", result)
         .counter()
         .count();
+  }
+
+  private static double reconciliationGauge(Fixture fixture, String suffix) {
+    return fixture.meterRegistry.get("account.join.reconciliation." + suffix).gauge().value();
   }
 
   private record Fixture(
