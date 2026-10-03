@@ -1318,6 +1318,66 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Run Account canonical audit storage PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.repository.AccountAuditCanonicalIdentityPostgresIntegrationTest \
+            --tests net.firedevops.firemud.accountservice.repository.AccountRepositoryIntegrationTest.accountUuidMigrationPreservesRetainedRowsAndRecordsExactSourceIdentity \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountAuditCanonicalIdentityPostgresIntegrationTest \
+            --require-suite net.firedevops.firemud.accountservice.repository.AccountRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuditCanonicalIdentityPostgresIntegrationTest#v49BackfillsRetainedV1AndReadsBackTheExactCanonicalEnvelope()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuditCanonicalIdentityPostgresIntegrationTest#canonicalAppendRollsBackAndRejectsReadOnlyOwnerTransactions()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountAuditCanonicalIdentityPostgresIntegrationTest#concurrentExactLockedReadbacksReturnTheSameOriginalEnvelope()' \
+            --require-case 'net.firedevops.firemud.accountservice.repository.AccountRepositoryIntegrationTest#accountUuidMigrationPreservesRetainedRowsAndRecordsExactSourceIdentity()' \
+            account-service
+
+      - name: Upload Account canonical audit storage PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-canonical-audit-storage-postgresql-proof-${{ github.sha }}
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountAuditCanonicalIdentityPostgresIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountRepositoryIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run Logging canonical Account audit PostgreSQL component proof
+        if: ${{ matrix.module == 'logging-admin-service' }}
+        run: |
+          ./gradlew :logging-admin-service:integrationTest \
+            --tests net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest \
+            --tests net.firedevops.firemud.loggingadmin.CanonicalAuditIdentityMigrationIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest \
+            --require-suite net.firedevops.firemud.loggingadmin.CanonicalAuditIdentityMigrationIntegrationTest \
+            --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#accountAuditReceiptAndProjectionShareStableIdentityAcrossRetryAndConflict()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#canonicalUuidReceiptIsIsolatedFromRetainedNumericIdentityAndMinimizesSafely()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#malformedPersistedIdentityCannotBypassDatabaseChecksOrGrowProjectionRows()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#platformAuditProjectionHasNoTenantAndIsExcludedFromTenantQuery()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#receiptFailureRollsBackTheAlreadyInsertedAuditProjection()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#canonicalUuidReceiptFailureRollsBackItsProjection()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.LoggingAdminApplicationIntegrationTest#concurrentExactRetriesCreateOneProjectionAndReturnTheSameIdentifiers()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.CanonicalAuditIdentityMigrationIntegrationTest#versionThreePreservesRetainedVersionOneReceiptAndProjectionBytes()' \
+            logging-admin-service
+
+      - name: Upload Logging canonical Account audit PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'logging-admin-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: logging-canonical-account-audit-postgresql-proof-${{ github.sha }}
+          path: |
+            services/logging-admin-service/build/test-results/integrationTest/TEST-*LoggingAdminApplicationIntegrationTest.xml
+            services/logging-admin-service/build/test-results/integrationTest/TEST-*CanonicalAuditIdentityMigrationIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run Account persisted UUID authentication PostgreSQL component proof
         if: ${{ matrix.module == 'account-service' }}
         run: |

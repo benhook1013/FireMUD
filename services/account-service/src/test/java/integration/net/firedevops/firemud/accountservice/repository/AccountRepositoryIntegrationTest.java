@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
@@ -1072,7 +1073,9 @@ class AccountRepositoryIntegrationTest {
     assertThat(retainedJoinRepresentation.get("game_instance_uuid", UUID.class)).isNull();
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(h)::text FROM "
+                "SELECT (to_jsonb(h) - 'receipt_head_id' - 'account_uuid' - 'tenant_uuid' "
+                    + "- 'tenant_provenance_kind' - 'tenant_source_operation_id' "
+                    + "- 'tenant_provenance_digest')::text FROM "
                     + schema
                     + ".account_membership_transition_receipt_stream_heads h "
                     + "WHERE account_id = ? AND tenant_id = 42",
@@ -1080,18 +1083,59 @@ class AccountRepositoryIntegrationTest {
         .isEqualTo(receiptStreamHeadBefore);
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(r)::text FROM "
+                "SELECT (to_jsonb(r) - 'receipt_head_id' - 'receipt_version' - 'account_uuid' "
+                    + "- 'tenant_uuid' - 'tenant_provenance_kind' - 'tenant_source_operation_id' "
+                    + "- 'tenant_provenance_digest')::text FROM "
                     + schema
                     + ".account_membership_transition_receipts r WHERE receipt_id = ?",
                 receiptId))
         .isEqualTo(membershipTransitionReceiptBefore);
+    Record retainedReceiptHeadIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT receipt_head_id, account_uuid, tenant_uuid, tenant_provenance_kind, "
+                    + "tenant_source_operation_id, tenant_provenance_digest FROM "
+                    + schema
+                    + ".account_membership_transition_receipt_stream_heads "
+                    + "WHERE account_id = ? AND tenant_id = 42",
+                secondAccountId));
+    Long retainedReceiptHeadId = retainedReceiptHeadIdentity.get("receipt_head_id", Long.class);
+    assertThat(retainedReceiptHeadId).isNotNull().isPositive();
+    Record retainedReceiptIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT receipt_head_id, receipt_version, account_uuid, tenant_uuid, "
+                    + "tenant_provenance_kind, tenant_source_operation_id, tenant_provenance_digest "
+                    + "FROM "
+                    + schema
+                    + ".account_membership_transition_receipts WHERE receipt_id = ?",
+                receiptId));
+    assertThat(retainedReceiptIdentity.get("receipt_head_id", Long.class))
+        .isEqualTo(retainedReceiptHeadId);
+    assertThat(retainedReceiptIdentity.get("receipt_version", Short.class)).isEqualTo((short) 1);
+    for (Record retainedIdentity : List.of(retainedReceiptHeadIdentity, retainedReceiptIdentity)) {
+      assertThat(retainedIdentity.get("account_uuid", UUID.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_uuid", UUID.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_provenance_kind", String.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_source_operation_id", UUID.class)).isNull();
+      assertThat(retainedIdentity.get("tenant_provenance_digest", String.class)).isNull();
+    }
     assertThat(
             jsonRow(
-                "SELECT to_jsonb(o)::text FROM "
+                "SELECT (to_jsonb(o) - 'tenant_identity_version' - 'tenant_uuid')::text FROM "
                     + schema
                     + ".account_audit_outbox o WHERE audit_event_id = ?",
                 auditEventId))
         .isEqualTo(outboxBefore);
+    Record retainedAuditIdentity =
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT tenant_identity_version, tenant_uuid FROM "
+                    + schema
+                    + ".account_audit_outbox WHERE audit_event_id = ?",
+                auditEventId));
+    assertThat(retainedAuditIdentity.get("tenant_identity_version", Integer.class)).isEqualTo(1);
+    assertThat(retainedAuditIdentity.get("tenant_uuid", UUID.class)).isNull();
 
     UUID firstUuid =
         Objects.requireNonNull(
