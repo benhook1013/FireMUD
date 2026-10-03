@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.Context;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -666,11 +668,61 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void createAccountInternalFailureReturnsBoundedTransportError() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.createAccount(Mockito.any()))
+        .thenThrow(new IllegalStateException("private backend detail"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AtomicInteger nextCalls = new AtomicInteger();
+    AtomicInteger errorCalls = new AtomicInteger();
+    AtomicInteger completedCalls = new AtomicInteger();
+    AtomicReference<Throwable> transportError = new AtomicReference<>();
+
+    service.createAccount(
+        CreateAccountRequest.newBuilder()
+            .setUsername("demo")
+            .setEmail("demo@example.com")
+            .setPassword("pass")
+            .build(),
+        new StreamObserver<CreateAccountResponse>() {
+          @Override
+          public void onNext(CreateAccountResponse value) {
+            nextCalls.incrementAndGet();
+          }
+
+          @Override
+          public void onError(Throwable throwable) {
+            errorCalls.incrementAndGet();
+            transportError.set(throwable);
+          }
+
+          @Override
+          public void onCompleted() {
+            completedCalls.incrementAndGet();
+          }
+        });
+
+    assertEquals(0, nextCalls.get());
+    assertEquals(1, errorCalls.get());
+    assertEquals(0, completedCalls.get());
+    assertEquals(Status.Code.INTERNAL, Status.fromThrowable(transportError.get()).getCode());
+    assertEquals(
+        "Account creation failed", Status.fromThrowable(transportError.get()).getDescription());
+    assertFalse(
+        Status.fromThrowable(transportError.get())
+            .getDescription()
+            .contains("private backend detail"));
+  }
+
+  @Test
   void createAccountReturnsAccountIdForGlobalRequest() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
     Mockito.when(accountService.createAccount(Mockito.any()))
-        .thenReturn(new AccountDto(1L, "demo", "e@example.com", "player", true));
+        .thenReturn(
+            new AccountDto(
+                "4cae05e8-7a6b-4b14-9d44-665e3eec450b", "demo", "e@example.com", "player", true));
     AccountGrpcService service = new AccountGrpcService(pingService, accountService);
 
     AtomicReference<CreateAccountResponse> ref = new AtomicReference<>();
@@ -694,7 +746,7 @@ class AccountGrpcServiceTest {
         });
 
     assertNotNull(ref.get());
-    assertEquals("1", ref.get().getAccountId());
+    assertEquals("4cae05e8-7a6b-4b14-9d44-665e3eec450b", ref.get().getAccountId());
     org.mockito.ArgumentCaptor<net.firedevops.firemud.accountservice.dto.CreateAccountRequest>
         captor =
             org.mockito.ArgumentCaptor.forClass(

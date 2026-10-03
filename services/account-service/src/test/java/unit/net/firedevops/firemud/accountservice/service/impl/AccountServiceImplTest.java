@@ -40,6 +40,7 @@ import net.firedevops.firemud.accountservice.dto.RealmAccessGrantRequest;
 import net.firedevops.firemud.accountservice.dto.UpdateAccountLoginAuthModesRequest;
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.entity.Account;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
@@ -232,21 +233,140 @@ class AccountServiceImplTest {
             transactionManager);
   }
 
+  @ParameterizedTest
+  @EnumSource(AccountIdentityProvenance.class)
+  void resolvesAccountUuidToPrivateStorageIdForEachSupportedProvenance(
+      AccountIdentityProvenance provenance) {
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    Account account = new Account();
+    account.setId(42L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(provenance);
+    account.setAccountUuidSourceNumericId(42L);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertEquals(42L, service.resolveAccountStorageId(accountUuid));
+    org.mockito.Mockito.verify(accountRepository).findByAccountUuid(accountUuid);
+  }
+
+  @Test
+  void rejectsNullAccountUuidBeforeResolvingPrivateStorageId() {
+    assertThrows(IllegalArgumentException.class, () -> service.resolveAccountStorageId(null));
+    verifyNoInteractions(accountRepository);
+  }
+
+  @Test
+  void rejectsNilAccountUuidBeforeResolvingPrivateStorageId() {
+    UUID nilUuid = new UUID(0L, 0L);
+
+    assertThrows(IllegalArgumentException.class, () -> service.resolveAccountStorageId(nilUuid));
+    verifyNoInteractions(accountRepository);
+  }
+
+  @Test
+  void rejectsAccountUuidWithoutPersistedAccountRow() {
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.empty());
+
+    assertThrows(
+        IllegalArgumentException.class, () -> service.resolveAccountStorageId(accountUuid));
+  }
+
+  @Test
+  void rejectsAccountUuidMappingWhenReturnedRowHasDifferentUuid() {
+    UUID requestedUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    Account account = new Account();
+    account.setId(42L);
+    account.setAccountUuid(UUID.fromString("b45dc804-6626-48e4-a657-4a8dfc4e9203"));
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(42L);
+    when(accountRepository.findByAccountUuid(requestedUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(requestedUuid));
+  }
+
+  @Test
+  void rejectsAccountUuidMappingWithoutPrivateStorageRowId() {
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    Account account = new Account();
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(42L);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(accountUuid));
+  }
+
+  @ParameterizedTest
+  @ValueSource(longs = {0L, -1L})
+  void rejectsAccountUuidMappingWithInvalidPrivateStorageRowId(long accountId) {
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    Account account = new Account();
+    account.setId(accountId);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    account.setAccountUuidSourceNumericId(accountId);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(accountUuid));
+  }
+
+  @Test
+  void rejectsAccountUuidMappingWithoutPrivateSourceNumericId() {
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    Account account = new Account();
+    account.setId(42L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(accountUuid));
+  }
+
+  @Test
+  void rejectsAccountUuidMappingWhoseProvenanceSourceDoesNotMatchTheRow() {
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    Account account = new Account();
+    account.setId(42L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_V29_MIGRATION);
+    account.setAccountUuidSourceNumericId(43L);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(accountUuid));
+  }
+
+  @Test
+  void rejectsAccountUuidMappingWithoutRecognizedProvenance() {
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
+    Account account = new Account();
+    account.setId(42L);
+    account.setAccountUuid(accountUuid);
+    account.setAccountUuidSourceNumericId(42L);
+    when(accountRepository.findByAccountUuid(accountUuid)).thenReturn(Optional.of(account));
+
+    assertThrows(IllegalStateException.class, () -> service.resolveAccountStorageId(accountUuid));
+  }
+
   @Test
   void createAccountPersistsOnlyGlobalIdentity() {
     CreateAccountRequest request =
         new CreateAccountRequest("demo", "  DEMO@example.com ", "password");
+    UUID accountUuid = UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b");
     when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
         .thenAnswer(
             invocation -> {
               Account saved = invocation.getArgument(0);
               saved.setId(1L);
+              saved.setAccountUuid(accountUuid);
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(1L);
               return saved;
             });
 
     AccountDto dto = service.createAccount(request);
 
-    assertEquals(1L, dto.id());
+    assertEquals(accountUuid.toString(), dto.id());
     assertEquals("demo", dto.username());
     org.mockito.ArgumentCaptor<Account> accountCaptor =
         org.mockito.ArgumentCaptor.forClass(Account.class);
@@ -258,9 +378,32 @@ class AccountServiceImplTest {
             org.mockito.ArgumentMatchers.eq("platform"),
             org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq("ACCOUNT_REGISTERED"),
-            org.mockito.ArgumentMatchers.eq("{\"accountId\":1}"));
+            org.mockito.ArgumentMatchers.eq("{\"accountId\":\"" + accountUuid + "\"}"));
     assertEquals(null, accountCaptor.getValue().getRole());
     verifyNoInteractions(profileRepository, accountTenantMembershipRepository);
+  }
+
+  @Test
+  void createAccountRejectsPublicIdentityWithoutExactPersistedSourceRow() {
+    when(accountRepository.save(org.mockito.ArgumentMatchers.any(Account.class)))
+        .thenAnswer(
+            invocation -> {
+              Account saved = invocation.getArgument(0);
+              saved.setId(1L);
+              saved.setAccountUuid(UUID.fromString("4cae05e8-7a6b-4b14-9d44-665e3eec450b"));
+              saved.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT);
+              saved.setAccountUuidSourceNumericId(2L);
+              return saved;
+            });
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            service.createAccount(
+                new CreateAccountRequest("demo", "demo@example.com", "password")));
+
+    verifyNoInteractions(
+        accountAuditOutboxRepository, profileRepository, accountTenantMembershipRepository);
   }
 
   @Test
@@ -5371,6 +5514,9 @@ class AccountServiceImplTest {
   void exportAccountDataIncludesProfilesAcrossTenants() {
     Account account = new Account();
     account.setId(2L);
+    account.setAccountUuid(UUID.fromString("d09f80cb-a46a-415e-8d35-c9e8068e49de"));
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_V29_MIGRATION);
+    account.setAccountUuidSourceNumericId(2L);
     account.setUsername("demo");
     account.setEmail("demo@example.com");
     Profile tenantOne = profile(account, 1L, "one");
@@ -5388,7 +5534,7 @@ class AccountServiceImplTest {
 
     var export = service.exportAccountData(2L);
 
-    assertEquals(2L, export.account().id());
+    assertEquals("d09f80cb-a46a-415e-8d35-c9e8068e49de", export.account().id());
     assertEquals(2, export.profiles().size());
   }
 
@@ -5403,6 +5549,26 @@ class AccountServiceImplTest {
     when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 7L)).thenReturn(false);
 
     assertThrows(IllegalArgumentException.class, () -> service.exportTenantData(7L, 2L));
+  }
+
+  @Test
+  void exportTenantDataUsesPublicAccountUuidAndRetainsTenantLocalFields() {
+    Account account = new Account();
+    account.setId(2L);
+    account.setAccountUuid(UUID.fromString("d09f80cb-a46a-415e-8d35-c9e8068e49de"));
+    account.setAccountUuidProvenance(AccountIdentityProvenance.ACCOUNT_V29_MIGRATION);
+    account.setAccountUuidSourceNumericId(2L);
+    account.setUsername("demo");
+    account.setEmail("demo@example.com");
+    when(accountRepository.findById(2L)).thenReturn(Optional.of(account));
+    when(profileRepository.findByAccountIdAndTenantId(2L, 7L)).thenReturn(Optional.empty());
+    when(accountTenantMembershipRepository.existsByAccountIdAndTenantId(2L, 7L)).thenReturn(true);
+
+    var export = service.exportTenantData(7L, 2L);
+
+    assertEquals("d09f80cb-a46a-415e-8d35-c9e8068e49de", export.account().id());
+    assertEquals(7L, export.tenantId());
+    assertNull(export.profile());
   }
 
   @Test
