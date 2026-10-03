@@ -7,16 +7,22 @@ mkdir -p "$OUT_DIR"
 
 readarray -t PROTO_FILES < <(find protos -name '*.proto' | sort)
 
-TEMP_FILE="$(mktemp)"
+TEMP_PROTO_DOC="$(mktemp "$OUT_DIR/.grpc-api-proto.XXXXXX")"
+TEMP_OUTPUT="$(mktemp "$OUT_DIR/.grpc-api-output.XXXXXX")"
+TEMP_NORMALIZED="$(mktemp "$OUT_DIR/.grpc-api-normalized.XXXXXX")"
+cleanup() {
+  rm -f "$TEMP_PROTO_DOC" "$TEMP_OUTPUT" "$TEMP_NORMALIZED"
+}
+trap cleanup EXIT
 
 protoc -I protos \
   --experimental_allow_proto3_optional \
   --doc_out="$OUT_DIR" \
-  --doc_opt=markdown,"$(basename "$TEMP_FILE")" \
+  --doc_opt=markdown,"$(basename "$TEMP_PROTO_DOC")" \
   "${PROTO_FILES[@]}"
 
 # Prepend usage instructions
-cat > "$OUT_DIR/grpc-api.md" <<'EOF'
+cat > "$TEMP_OUTPUT" <<'EOF'
 # Protocol Documentation
 
 This reference is generated from the protobuf files under `protos/` using
@@ -37,11 +43,24 @@ for conventions on schema evolution and error handling. See each service's
 
 EOF
 
-tail -n +2 "$OUT_DIR/$(basename "$TEMP_FILE")" >> "$OUT_DIR/grpc-api.md"
-rm "$OUT_DIR/$(basename "$TEMP_FILE")"
+tail -n +2 "$TEMP_PROTO_DOC" >> "$TEMP_OUTPUT"
 
 # Keep generated output stable and diff-hygienic across protoc-gen-doc versions.
-sed -i 's/[[:space:]]*$//' "$OUT_DIR/grpc-api.md"
-sed -i '${/^$/d;}' "$OUT_DIR/grpc-api.md"
+awk '
+  {
+    sub(/[[:space:]]+$/, "")
+    if ($0 == "") {
+      pending_blank_lines++
+      next
+    }
+    while (pending_blank_lines > 0) {
+      print ""
+      pending_blank_lines--
+    }
+    print
+  }
+' "$TEMP_OUTPUT" > "$TEMP_NORMALIZED"
+mv "$TEMP_NORMALIZED" "$TEMP_OUTPUT"
+mv "$TEMP_OUTPUT" "$OUT_DIR/grpc-api.md"
 
 echo "Generated gRPC docs in $OUT_DIR"

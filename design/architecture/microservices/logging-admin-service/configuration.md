@@ -26,6 +26,8 @@ The Logging & Admin Service does **not** connect to Redis at runtime. It consume
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
 
+The Account audit `CreateLogEvent` RPC currently returns gRPC `UNAVAILABLE` after exact Account workload authentication and before receipt or payload storage. There is no configuration, profile, or environment-variable switch that enables live writes before the retention/cleanup gates in [Account Audit Ingress and Receipt](./api-contracts.md#account-audit-ingress-and-receipt) are implemented and proved. `ReadLogEventReceipt` remains available to the exact Account workload.
+
 ## Proto Files
 
 API schemas are kept in [`protos/logging-admin/v1`](../../../../protos/logging-admin/v1). When these change, run `./gradlew generateProto` to refresh generated sources.

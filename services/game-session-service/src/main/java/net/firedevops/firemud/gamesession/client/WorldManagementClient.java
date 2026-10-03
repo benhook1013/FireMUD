@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.client;
 
 import jakarta.annotation.PostConstruct;
+import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -8,6 +9,9 @@ import net.firedevops.firemud.common.grpc.AbstractBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldRequest;
+import net.firedevops.firemud.worldmanagement.v1.AcquireInitialAdmissionBindHoldResponse;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceRequest;
@@ -164,6 +168,74 @@ public final class WorldManagementClient
                 .setTenantId(Long.toString(tenantId))
                 .setGameInstanceId(Long.toString(gameInstanceId))
                 .build());
+  }
+
+  /** Acquires the one-shot World hold for an exact initial admission pointer bind. */
+  public AcquireInitialAdmissionBindHoldResponse acquireInitialAdmissionBindHold(
+      long tenantId,
+      long gameInstanceId,
+      long versionId,
+      long activeLifecycleEpoch,
+      String initialAdmissionRequestId,
+      String requestDigest,
+      UUID realmId,
+      UUID playableStateNamespaceId,
+      PlayableStateScope playableStateScope,
+      long catalogRevision) {
+    return callStub()
+        .acquireInitialAdmissionBindHold(
+            buildAcquireInitialAdmissionBindHoldRequest(
+                tenantId,
+                gameInstanceId,
+                versionId,
+                activeLifecycleEpoch,
+                initialAdmissionRequestId,
+                requestDigest,
+                realmId,
+                playableStateNamespaceId,
+                playableStateScope,
+                catalogRevision));
+  }
+
+  static AcquireInitialAdmissionBindHoldRequest buildAcquireInitialAdmissionBindHoldRequest(
+      long tenantId,
+      long gameInstanceId,
+      long versionId,
+      long activeLifecycleEpoch,
+      String initialAdmissionRequestId,
+      String requestDigest,
+      UUID realmId,
+      UUID playableStateNamespaceId,
+      PlayableStateScope playableStateScope,
+      long catalogRevision) {
+    if (tenantId <= 0L
+        || gameInstanceId <= 0L
+        || versionId <= 0L
+        || activeLifecycleEpoch <= 0L
+        || catalogRevision <= 0L
+        || initialAdmissionRequestId == null
+        || initialAdmissionRequestId.isBlank()
+        || initialAdmissionRequestId.length() > 128
+        || requestDigest == null
+        || !requestDigest.matches("[0-9a-f]{64}")
+        || realmId == null
+        || playableStateNamespaceId == null
+        || playableStateScope != PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
+      throw new IllegalArgumentException("Initial admission bind request is incomplete");
+    }
+    return AcquireInitialAdmissionBindHoldRequest.newBuilder()
+        .setTenantId(Long.toString(tenantId))
+        .setGameInstanceId(Long.toString(gameInstanceId))
+        .setVersionId(Long.toString(versionId))
+        .setExpectedActiveLifecycleEpoch(activeLifecycleEpoch)
+        .setInitialAdmissionRequestId(initialAdmissionRequestId)
+        .setRequestDigest(requestDigest)
+        .setRealmUuid(realmId.toString())
+        .setPlayableStateNamespaceUuid(playableStateNamespaceId.toString())
+        .setPlayableStateScope(playableStateScope)
+        .setExpectedNoPriorPointer(true)
+        .setExpectedCatalogRevision(catalogRevision)
+        .build();
   }
 
   public TerminateWorldInstanceResponse terminateWorldInstance(

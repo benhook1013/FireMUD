@@ -14,19 +14,19 @@ import java.util.stream.Stream;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameplayAdmissionPointerRecord;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.jooq.SQLDialect;
 import org.jooq.exception.IntegrityConstraintViolationException;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
     justification = "Injected DSLContext is an internal Spring collaborator.")
 public class GameplayAdmissionPointerRepository {
-  private static final String BOOTSTRAP_ADVISORY_LOCK_KEY = "gameplay-admission-pointer-bootstrap";
-
   private final DSLContext dsl;
 
   public GameplayAdmissionPointerRepository(DSLContext dsl) {
@@ -35,17 +35,6 @@ public class GameplayAdmissionPointerRepository {
 
   public long count() {
     return dsl.fetchCount(GAMEPLAY_ADMISSION_POINTER);
-  }
-
-  /**
-   * Serializes the empty-store bootstrap check and seed writes across Game Session pods.
-   *
-   * <p>The caller must invoke this inside the transaction that performs the subsequent count and
-   * any seed writes so PostgreSQL retains the advisory lock through commit or rollback.
-   * Non-Postgres dialects skip the lock for local test compatibility.
-   */
-  public void lockForBootstrap() {
-    lockAdvisoryTransaction(BOOTSTRAP_ADVISORY_LOCK_KEY);
   }
 
   public Optional<GameplayAdmissionPointer> findByTenantIdAndWorldSlugAndRealmSlug(
@@ -100,30 +89,67 @@ public class GameplayAdmissionPointerRepository {
         .fetch(this::toEntity);
   }
 
+  public List<GameplayAdmissionPointer> findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(
+      List<Long> tenantIds) {
+    if (tenantIds.isEmpty()) {
+      return List.of();
+    }
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(GAMEPLAY_ADMISSION_POINTER.TENANT_ID.in(tenantIds))
+        .orderBy(
+            GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
+            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
+        .fetch(this::toEntity);
+  }
+
+  public List<GameplayAdmissionPointer> findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(
+      Long tenantId) {
+    return dsl.selectFrom(GAMEPLAY_ADMISSION_POINTER)
+        .where(GAMEPLAY_ADMISSION_POINTER.TENANT_ID.eq(tenantId))
+        .orderBy(
+            GAMEPLAY_ADMISSION_POINTER.WORLD_SLUG.asc(),
+            GAMEPLAY_ADMISSION_POINTER.REALM_SLUG.asc())
+        .fetch(this::toEntity);
+  }
+
   public GameplayAdmissionPointer save(GameplayAdmissionPointer entity) {
+    if (entity.getId() != null) {
+      throw new IllegalArgumentException(
+          "Existing admission pointer updates require caller expected revisions");
+    }
+    if (!"SHARED".equals(entity.getStateScope()) && !"ISOLATED".equals(entity.getStateScope())) {
+      throw new IllegalArgumentException("state_scope must be SHARED or ISOLATED");
+    }
+    lockRuntimeTargetForCreation(entity);
+    if (countByRuntimeTarget(entity.getTenantId(), entity.getGameInstanceId()) != 0) {
+      throw new IllegalStateException(
+          "Admission pointer creation conflicted with another route for the runtime target");
+    }
+    entity.setRealmId(UUID.randomUUID());
+    entity.setPlayableStateNamespaceId(
+        "SHARED".equals(entity.getStateScope())
+            ? getOrCreateTenantSharedNamespace(entity.getTenantId())
+            : UUID.randomUUID());
+    GameplayAdmissionPointerRecord record = dsl.newRecord(GAMEPLAY_ADMISSION_POINTER);
+    populate(record, entity);
+    try {
+      record.store();
+    } catch (IntegrityConstraintViolationException ex) {
+      throw new IllegalStateException(
+          "Admission pointer creation conflicted with another committed pointer", ex);
+    }
+    return findById(record.getId()).orElseThrow();
+  }
+
+  @Transactional
+  public GameplayAdmissionPointer updateExisting(
+      GameplayAdmissionPointer entity, Long expectedPointerVersion, Long expectedCatalogRevision) {
     if (entity.getId() == null) {
-      if (!"SHARED".equals(entity.getStateScope()) && !"ISOLATED".equals(entity.getStateScope())) {
-        throw new IllegalArgumentException("state_scope must be SHARED or ISOLATED");
-      }
-      lockRuntimeTargetForCreation(entity);
-      if (countByRuntimeTarget(entity.getTenantId(), entity.getGameInstanceId()) != 0) {
-        throw new IllegalStateException(
-            "Admission pointer creation conflicted with another route for the runtime target");
-      }
-      entity.setRealmId(UUID.randomUUID());
-      entity.setPlayableStateNamespaceId(
-          "SHARED".equals(entity.getStateScope())
-              ? getOrCreateTenantSharedNamespace(entity.getTenantId())
-              : UUID.randomUUID());
-      GameplayAdmissionPointerRecord record = dsl.newRecord(GAMEPLAY_ADMISSION_POINTER);
-      populate(record, entity);
-      try {
-        record.store();
-      } catch (IntegrityConstraintViolationException ex) {
-        throw new IllegalStateException(
-            "Admission pointer creation conflicted with another committed pointer", ex);
-      }
-      return findById(record.getId()).orElseThrow();
+      throw new IllegalArgumentException("Admission pointer update requires an existing row");
+    }
+    if (!isPositive(expectedPointerVersion) || !isPositive(expectedCatalogRevision)) {
+      throw new AdmissionPointerVersionMismatchException(
+          "Existing admission pointer updates require positive caller expected revisions");
     }
     if (entity.getPointerVersion() == null || entity.getPointerVersion() <= 0L) {
       throw new IllegalArgumentException("Existing admission pointer must have a positive version");
@@ -134,6 +160,7 @@ public class GameplayAdmissionPointerRepository {
                 () ->
                     new AdmissionPointerVersionMismatchException(
                         "Admission pointer no longer exists: id=" + entity.getId()));
+    requireExpectedRevisions(current, expectedPointerVersion, expectedCatalogRevision);
     lockRuntimeTargets(current, entity);
     current =
         findByIdForUpdate(entity.getId())
@@ -141,6 +168,7 @@ public class GameplayAdmissionPointerRepository {
                 () ->
                     new AdmissionPointerVersionMismatchException(
                         "Admission pointer no longer exists: id=" + entity.getId()));
+    requireExpectedRevisions(current, expectedPointerVersion, expectedCatalogRevision);
     if (current.getPointerVersion() == null
         || current.getCatalogRevision() == null
         || entity.getCatalogRevision() == null
@@ -156,17 +184,17 @@ public class GameplayAdmissionPointerRepository {
     }
     boolean runtimeTargetChanged =
         !Objects.equals(entity.getGameInstanceId(), current.getGameInstanceId());
-    boolean catalogChanged = !catalogPolicyMatches(current, entity);
-    long expectedPointerVersion =
+    boolean catalogChanged = !GameplayAdmissionCatalogPolicy.matches(current, entity);
+    long nextPointerVersion =
         runtimeTargetChanged
             ? Math.addExact(current.getPointerVersion(), 1L)
             : current.getPointerVersion();
-    long expectedCatalogRevision =
+    long nextCatalogRevision =
         catalogChanged
             ? Math.addExact(current.getCatalogRevision(), 1L)
             : current.getCatalogRevision();
-    if (entity.getPointerVersion() != expectedPointerVersion
-        || entity.getCatalogRevision() != expectedCatalogRevision) {
+    if (entity.getPointerVersion() != nextPointerVersion
+        || entity.getCatalogRevision() != nextCatalogRevision) {
       throw new AdmissionPointerVersionMismatchException(
           "Admission pointer version or catalog revision changed before the requested update could"
               + " be committed: id="
@@ -210,12 +238,8 @@ public class GameplayAdmissionPointerRepository {
                   GAMEPLAY_ADMISSION_POINTER
                       .ID
                       .eq(entity.getId())
-                      .and(
-                          GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(
-                              current.getPointerVersion()))
-                      .and(
-                          GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(
-                              current.getCatalogRevision())))
+                      .and(GAMEPLAY_ADMISSION_POINTER.POINTER_VERSION.eq(expectedPointerVersion))
+                      .and(GAMEPLAY_ADMISSION_POINTER.CATALOG_REVISION.eq(expectedCatalogRevision)))
               .execute();
     } catch (IntegrityConstraintViolationException ex) {
       throw new IllegalStateException(
@@ -227,6 +251,21 @@ public class GameplayAdmissionPointerRepository {
               + entity.getId());
     }
     return findById(entity.getId()).orElseThrow();
+  }
+
+  private static void requireExpectedRevisions(
+      GameplayAdmissionPointer current, Long expectedPointerVersion, Long expectedCatalogRevision) {
+    if (!Objects.equals(current.getPointerVersion(), expectedPointerVersion)
+        || !Objects.equals(current.getCatalogRevision(), expectedCatalogRevision)) {
+      throw new AdmissionPointerVersionMismatchException(
+          "Admission pointer version or catalog revision changed before the requested update could"
+              + " be committed: id="
+              + current.getId());
+    }
+  }
+
+  private static boolean isPositive(Long value) {
+    return value != null && value > 0L;
   }
 
   public void deleteAllInBatch() {
@@ -346,20 +385,6 @@ public class GameplayAdmissionPointerRepository {
     record.setLastUpdateReason(entity.getLastUpdateReason());
     record.setCreatedAt(toLocalDateTime(entity.getCreatedAt()));
     record.setUpdatedAt(toLocalDateTime(entity.getUpdatedAt()));
-  }
-
-  private boolean catalogPolicyMatches(
-      GameplayAdmissionPointer current, GameplayAdmissionPointer requested) {
-    return Objects.equals(current.getWorldSlug(), requested.getWorldSlug())
-        && Objects.equals(current.getWorldDisplayName(), requested.getWorldDisplayName())
-        && Objects.equals(current.getRealmSlug(), requested.getRealmSlug())
-        && Objects.equals(current.getRealmDisplayName(), requested.getRealmDisplayName())
-        && current.isVisible() == requested.isVisible()
-        && current.isPublicProductionRealm() == requested.isPublicProductionRealm()
-        && current.isRequiresCharacterSelection() == requested.isRequiresCharacterSelection()
-        && Objects.equals(current.getStateScope(), requested.getStateScope())
-        && Objects.equals(
-            current.getCharacterCreationPolicy(), requested.getCharacterCreationPolicy());
   }
 
   private GameplayAdmissionPointer toEntity(Record record) {

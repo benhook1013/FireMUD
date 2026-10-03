@@ -68,6 +68,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
+  private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
@@ -177,13 +178,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
                     .contains("ERROR JOIN_REQUIRED")
                     .contains(
-                        "Membership is required before PLAY; joining this world is not available yet."))) {
+                        "Membership is required before PLAY. "
+                            + "Run REALMS <world> first, then JOIN <world>."))) {
       assertThat(scenario.responses())
           .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"))
           .anyMatch(
               response ->
                   response.contains(
-                      "Membership is required before PLAY; joining this world is not available yet."));
+                      "Membership is required before PLAY. "
+                          + "Run REALMS <world> first, then JOIN <world>."));
     }
   }
 
@@ -224,7 +227,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 this::openTelnetClient,
                 GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT));
         GameplayWebSocketDriver webSocketClient =
-            openReadyGatewayWebSocketClient("Sora", "gateway-sora")) {
+            openReadyGatewayWebSocketClient("sora@example.com", "Sora", "gateway-sora")) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       telnetClient.sendLine("MOVE north");
 
@@ -538,7 +541,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         .matches(
             GameplayTranscriptMatchers.matchesCanonicalMoveRefreshWithOptionalPrompt(
                 LookTestFixtures.DESTINATION_ROOM_ID));
-    assertThat(telnetReplayResponse.trim()).isEqualTo("demo>");
+    assertThat(telnetReplayResponse.trim()).isEqualTo("Emberline>");
     assertThat(telnetReconnectLookResponse.trim())
         .matches(GameplayTranscriptMatchers.matchesCanonicalLookWithOptionalPrompt());
   }
@@ -605,9 +608,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.ThreePlayerScenario scenario =
         GameplayTelnetScenarios.openReadyTrio(
             this::openTelnetClient,
-            GameplayTelnetScenarios.demoAdmission(READY_LOOK_TEXT),
-            GameplayTelnetScenarios.demoAdmission("Sora", READY_LOOK_TEXT),
-            GameplayTelnetScenarios.demoAdmission("Nyx", READY_LOOK_TEXT))) {
+            characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
+            characterAdmission("sora@example.com", "Sora"),
+            characterAdmission("nyx@example.com", "Nyx"))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -652,8 +655,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
         GameplayTelnetScenarios.openReadyPair(
             this::openTelnetClient,
-            GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
-            GameplayTelnetScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+            characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
+            characterAdmission("sora@example.com", "Sora"))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -685,8 +688,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try (GameplayTelnetScenarios.TwoPlayerScenario scenario =
         GameplayTelnetScenarios.openReadyPair(
             this::openTelnetClient,
-            GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT),
-            GameplayTelnetScenarios.demoAdmission("Sora", READY_LOOK_TEXT))) {
+            characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
+            characterAdmission("sora@example.com", "Sora"))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -721,6 +724,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       stack =
           GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
               .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
+              .mapAccountId("nyx@example.com", NYX_ACCOUNT_ID)
               .withSocialEnabled(true)
               .withGameLogicProps(
                   Map.of(
@@ -848,14 +852,29 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
   }
 
   private GameplayWebSocketDriver openReadyGatewayWebSocketClient(
-      String characterName, String connectionId) throws Exception {
+      String accountEmail, String characterName, String connectionId) throws Exception {
     return GameplayWebSocketScenarios.openReady(
         URI.create(Objects.requireNonNull(GATEWAY, "gateway must be started").websocketUrl()),
         COMMAND_WAIT,
         TENANT_ID,
         1L,
-        GameplayWebSocketScenarios.demoAdmission(characterName, READY_LOOK_TEXT),
+        GameplayWebSocketScenarios.Admission.named(
+            accountEmail,
+            GameplayWebSocketScenarios.DEMO_PASSWORD,
+            GameplayWebSocketScenarios.DEMO_WORLD,
+            characterName,
+            READY_LOOK_TEXT),
         connectionId);
+  }
+
+  private static GameplayTelnetScenarios.Admission characterAdmission(
+      String accountEmail, String characterName) {
+    return GameplayTelnetScenarios.Admission.named(
+        accountEmail,
+        GameplayTelnetScenarios.DEMO_PASSWORD,
+        GameplayTelnetScenarios.DEMO_WORLD,
+        characterName,
+        READY_LOOK_TEXT);
   }
 
   private static AccountRuntimeStubServer accountStub() {

@@ -108,6 +108,57 @@ class AdmissionPointerServiceImplTest {
   }
 
   @Test
+  void listPointersRejectsMalformedRealmIdAsUpstreamFailure() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    AdmissionPointerControlPlaneEntry entry =
+        pointerEntry("demo", "production", 2L, 7L, 3L).toBuilder().setRealmId("invalid").build();
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
+        .thenReturn(ListAdmissionPointersResponse.newBuilder().addPointers(entry).build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.listPointers());
+
+    assertEquals(500, ex.getStatusCode().value());
+    assertEquals("realm_id from Game Session must be a UUID", ex.getReason());
+    assertEquals(IllegalArgumentException.class, ex.getCause().getClass());
+  }
+
+  @Test
+  void listPointersRejectsMalformedPlayableStateNamespaceIdAsUpstreamFailure() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    AdmissionPointerControlPlaneEntry entry =
+        pointerEntry("demo", "production", 2L, 7L, 3L).toBuilder()
+            .setPlayableStateNamespaceId("invalid")
+            .build();
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
+        .thenReturn(ListAdmissionPointersResponse.newBuilder().addPointers(entry).build());
+
+    ResponseStatusException ex =
+        assertThrows(ResponseStatusException.class, () -> service.listPointers());
+
+    assertEquals(500, ex.getStatusCode().value());
+    assertEquals("playable_state_namespace_id from Game Session must be a UUID", ex.getReason());
+    assertEquals(IllegalArgumentException.class, ex.getCause().getClass());
+  }
+
+  @Test
+  void listPointersMapsBlankOptionalIdentityFieldsToNull() {
+    SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+    AdmissionPointerControlPlaneEntry entry =
+        pointerEntry("demo", "production", 2L, 7L, 3L).toBuilder()
+            .setRealmId(" ")
+            .setPlayableStateNamespaceId("")
+            .build();
+    when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
+        .thenReturn(ListAdmissionPointersResponse.newBuilder().addPointers(entry).build());
+
+    AdmissionPointerDto result = service.listPointers().getFirst();
+
+    assertNull(result.realmId());
+    assertNull(result.playableStateNamespaceId());
+  }
+
+  @Test
   void listPointersMapsUnavailableAuthorityToServiceUnavailable() {
     SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
     when(gameSessionControlPlaneClient.listAdmissionPointers(List.of()))
@@ -484,6 +535,33 @@ class AdmissionPointerServiceImplTest {
 
     assertThrows(
         ResponseStatusException.class, () -> service.getPreparedVersionUpgrade(8L, "pvu-1"));
+  }
+
+  @Test
+  void getPreparedVersionUpgradeMapsUnavailableAuthorityToServiceUnavailable() {
+    SessionContext.setContext("7", List.of(), Map.of("2", List.of("tenantAdmin")));
+    when(gameSessionControlPlaneClient.getPreparedVersionUpgrade(any()))
+        .thenReturn(
+            GetPreparedVersionUpgradeResponse.newBuilder()
+                .setError(
+                    ErrorDetail.newBuilder()
+                        .setCode("AUTHORITY_UNAVAILABLE")
+                        .setMessage("prepared version-upgrade proof authority unavailable")
+                        .build())
+                .build());
+
+    ResponseStatusException ex =
+        assertThrows(
+            ResponseStatusException.class, () -> service.getPreparedVersionUpgrade(2L, "pvu-1"));
+
+    assertEquals(503, ex.getStatusCode().value());
+    assertEquals("prepared version-upgrade proof authority unavailable", ex.getReason());
+    verify(gameSessionControlPlaneClient)
+        .getPreparedVersionUpgrade(
+            org.mockito.ArgumentMatchers.argThat(
+                request ->
+                    request.getTenantId().equals("2")
+                        && request.getPreparationId().equals("pvu-1")));
   }
 
   @Test

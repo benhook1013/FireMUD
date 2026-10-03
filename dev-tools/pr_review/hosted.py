@@ -10,7 +10,7 @@ import os
 import re
 import stat
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1532,6 +1532,313 @@ def _is_finished_action_response(body: str, *, allow_action_wrapper: bool) -> bo
     )
 
 
+_ADDRESSED_COMMIT_ANNOTATION = re.compile(
+    r"(?:\r?\n){2}✅ Addressed in commits ([0-9a-f]{7,40}) to ([0-9a-f]{7,40})\Z",
+    re.IGNORECASE,
+)
+
+
+def _archived_completed_thread_bodies(
+    repo: str,
+    pr_number: int,
+    head: str,
+    response_id: int,
+    response_created_at: datetime,
+    record: Mapping[str, Any] | None,
+    current_record_path: str | Path | None,
+) -> dict[int, tuple[str, str]]:
+    """Read immutable prior Hosted thread bodies for exact trigger attribution."""
+
+    if not isinstance(record, Mapping):
+        return {}
+    current_attempt_id = record.get("sqlite_attempt_id")
+    trigger = record.get("trigger")
+    trigger_id = trigger.get("id") if isinstance(trigger, Mapping) else None
+    trigger_at = parse_timestamp(trigger.get("created_at")) if isinstance(trigger, Mapping) else None
+    if (
+        not isinstance(current_attempt_id, str)
+        or not current_attempt_id
+        or type(trigger_id) is not int
+        or trigger_id <= 0
+        or trigger_at is None
+        or type(response_id) is not int
+        or response_id <= 0
+        or not isinstance(record.get("head_sha"), str)
+        or record["head_sha"].casefold() != head.casefold()
+    ):
+        return {}
+
+    try:
+        selected_record = (
+            Path(current_record_path)
+            if current_record_path is not None
+            else default_trigger_record_path(repo, pr_number)
+        )
+        if selected_record.is_symlink():
+            return {}
+        common = _trigger_record_common_for_path(selected_record, repo, pr_number)
+        if common is None:
+            return {}
+        selected_state = state_path(common)
+        if selected_state.is_symlink() or not selected_state.is_dir():
+            return {}
+        database = sqlite_state_path(selected_state)
+        database_stat = database.stat(follow_symlinks=False)
+        if database.is_symlink() or not stat.S_ISREG(database_stat.st_mode):
+            return {}
+    except (OSError, TypeError, ValueError):
+        return {}
+
+    try:
+        records = SqliteReviewRecords(database)
+        current_attempt = records.attempt(current_attempt_id)
+        attempt_history = records.attempt_history(pr_number)
+        current_history = [item for item in attempt_history if item.get("attempt_id") == current_attempt_id]
+        current_head = current_attempt.get("candidate_sha")
+        request_metadata = current_attempt.get("metadata")
+        current_row = current_history[0] if len(current_history) == 1 else None
+        current_started_at = parse_timestamp(current_attempt.get("started_at"))
+        current_state = current_attempt.get("state")
+        current_trigger_id = current_row.get("trigger_id") if current_row is not None else None
+        current_response_id = current_row.get("provider_review_id") if current_row is not None else None
+        current_finished_at = parse_timestamp(current_attempt.get("finished_at"))
+        if (
+            current_attempt.get("source_pr") != pr_number
+            or current_attempt.get("channel") != "hosted"
+            or not isinstance(current_head, str)
+            or current_head.casefold() != head.casefold()
+            or not isinstance(request_metadata, dict)
+            or not isinstance(request_metadata.get("repository"), str)
+            or request_metadata["repository"].casefold() != repo.casefold()
+            or not isinstance(response_created_at, datetime)
+            or current_started_at is None
+            or current_started_at > trigger_at
+            or current_row is None
+            or current_row.get("state") != current_state
+            or current_row.get("started_at") != current_attempt.get("started_at")
+            or current_row.get("finished_at") != current_attempt.get("finished_at")
+        ):
+            return {}
+
+        if current_state == "started":
+            if (
+                current_trigger_id not in (None, str(trigger_id))
+                or current_response_id is not None
+                or current_finished_at is not None
+            ):
+                return {}
+            if records.attempt_artifacts(current_attempt_id):
+                return {}
+        elif current_state == "completed":
+            if (
+                current_trigger_id != str(trigger_id)
+                or current_response_id != str(response_id)
+                or current_finished_at is None
+                or current_finished_at < response_created_at
+                or current_attempt.get("run_id") != current_attempt_id
+            ):
+                return {}
+            try:
+                current_artifacts = records.attempt_artifacts(current_attempt_id)
+                if not {"hosted_review", "hosted_comments", "metadata"} <= current_artifacts.keys():
+                    return {}
+                current_metadata = json.loads(current_artifacts["metadata"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return {}
+            current_observed_at = (
+                parse_timestamp(current_metadata.get("observed_at")) if isinstance(current_metadata, dict) else None
+            )
+            if (
+                not isinstance(current_metadata, dict)
+                or current_metadata.get("state") != "completed"
+                or current_metadata.get("terminal") is not True
+                or current_metadata.get("attributable") is not True
+                or not isinstance(current_metadata.get("repository"), str)
+                or current_metadata["repository"].casefold() != repo.casefold()
+                or current_metadata.get("pull_request") != pr_number
+                or not isinstance(current_metadata.get("head_sha"), str)
+                or current_metadata["head_sha"].casefold() != head.casefold()
+                or type(current_metadata.get("trigger_id")) is not int
+                or str(current_metadata["trigger_id"]) != str(trigger_id)
+                or type(current_metadata.get("response_id")) is not int
+                or str(current_metadata["response_id"]) != str(response_id)
+                or current_observed_at is None
+                or current_observed_at != current_finished_at
+            ):
+                return {}
+        else:
+            # A terminal ambiguous or failed capture cannot be retroactively
+            # promoted by a later change in the public GitHub response.
+            return {}
+
+        candidates: dict[int, list[tuple[str, str]]] = {}
+        for attempt in attempt_history:
+            candidate_head = attempt.get("candidate_sha")
+            started_at = parse_timestamp(attempt.get("started_at"))
+            finished_at = parse_timestamp(attempt.get("finished_at"))
+            if (
+                attempt.get("channel") != "hosted"
+                or attempt.get("state") != "completed"
+                or not isinstance(candidate_head, str)
+                or not EXACT_SHA.fullmatch(candidate_head)
+                or started_at is None
+                or finished_at is None
+                or started_at > finished_at
+                or finished_at >= trigger_at
+            ):
+                continue
+            attempt_id = attempt.get("attempt_id")
+            provider_review_id = attempt.get("provider_review_id")
+            archived_trigger_id = attempt.get("trigger_id")
+            if (
+                not isinstance(attempt_id, str)
+                or not attempt_id
+                or not isinstance(provider_review_id, str)
+                or not provider_review_id.isdecimal()
+                or not isinstance(archived_trigger_id, str)
+                or not archived_trigger_id.isdecimal()
+            ):
+                continue
+            artifacts = records.attempt_artifacts(attempt_id)
+            try:
+                metadata = json.loads(artifacts.get("metadata", ""))
+                archived = json.loads(artifacts.get("hosted_comments", ""))
+                reviews = json.loads(artifacts.get("hosted_review", ""))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            observed_at = parse_timestamp(metadata.get("observed_at")) if isinstance(metadata, dict) else None
+            metadata_repository = metadata.get("repository") if isinstance(metadata, dict) else None
+            metadata_head = metadata.get("head_sha") if isinstance(metadata, dict) else None
+            if (
+                not isinstance(metadata, dict)
+                or metadata.get("state") != "completed"
+                or metadata.get("terminal") is not True
+                or metadata.get("attributable") is not True
+                or not isinstance(metadata_repository, str)
+                or metadata_repository.casefold() != repo.casefold()
+                or metadata.get("pull_request") != pr_number
+                or not isinstance(metadata_head, str)
+                or metadata_head.casefold() != candidate_head.casefold()
+                or type(metadata.get("trigger_id")) is not int
+                or str(metadata["trigger_id"]) != archived_trigger_id
+                or type(metadata.get("response_id")) is not int
+                or str(metadata["response_id"]) != provider_review_id
+                or observed_at is None
+                or observed_at != finished_at
+                or not isinstance(archived, dict)
+                or not isinstance(archived.get("comments"), list)
+                or not isinstance(archived.get("review_threads"), list)
+                or not isinstance(reviews, list)
+            ):
+                continue
+
+            matching_reviews = [
+                item
+                for item in reviews
+                if isinstance(item, dict)
+                and immutable_database_id(item) == metadata["response_id"]
+                and is_coderabbit_login((item.get("author") or {}).get("login"))
+                and item.get("state") != "DISMISSED"
+                and isinstance((item.get("commit") or {}).get("oid"), str)
+                and (item.get("commit") or {}).get("oid").casefold() == candidate_head.casefold()
+            ]
+            matching_triggers = [
+                item
+                for item in archived["comments"]
+                if isinstance(item, dict) and immutable_database_id(item) == int(archived_trigger_id)
+            ]
+            if (
+                len(matching_reviews) != 1
+                or len(matching_triggers) != 1
+                or is_coderabbit_login((matching_triggers[0].get("author") or {}).get("login"))
+                or normalize_command(matching_triggers[0].get("body") or "") != FULL_COMMAND
+            ):
+                continue
+            archived_trigger_at = parse_timestamp(matching_triggers[0].get("createdAt"))
+            review_submitted_at = parse_timestamp(matching_reviews[0].get("submittedAt"))
+            if (
+                archived_trigger_at is None
+                or archived_trigger_at < started_at
+                or archived_trigger_at > finished_at
+                or review_submitted_at is None
+                or review_submitted_at < archived_trigger_at
+                or review_submitted_at > finished_at
+            ):
+                continue
+
+            for thread in archived["review_threads"]:
+                comments = thread.get("comments") if isinstance(thread, dict) else None
+                nodes = comments.get("nodes") if isinstance(comments, dict) else None
+                if not isinstance(nodes, list):
+                    continue
+                for item in nodes:
+                    if not isinstance(item, dict) or not is_coderabbit_login((item.get("author") or {}).get("login")):
+                        continue
+                    comment_id = immutable_database_id(item)
+                    created_at = item.get("createdAt")
+                    created = parse_timestamp(created_at)
+                    body = item.get("body")
+                    if (
+                        comment_id is None
+                        or not isinstance(created_at, str)
+                        or created is None
+                        or created < archived_trigger_at
+                        or created > finished_at
+                        or not isinstance(body, str)
+                    ):
+                        continue
+                    candidates.setdefault(comment_id, []).append((created_at, body))
+
+        result: dict[int, tuple[str, str]] = {}
+        for comment_id, baselines in candidates.items():
+            if len(baselines) == 1:
+                result[comment_id] = baselines[0]
+    except Exception:  # noqa: BLE001 - unavailable or incompatible archive must remain fail closed
+        return {}
+    return result
+
+
+def _addressed_thread_update_matches_archive(
+    item: dict[str, Any],
+    head: str,
+    after: datetime,
+    before: datetime | None,
+    response_id: int,
+    archived_bodies: Mapping[int, tuple[str, str]],
+) -> bool:
+    """Accept only the exact known addressed footer appended to an archived finding."""
+
+    comment_id = immutable_database_id(item)
+    if comment_id is None:
+        return False
+    archived = archived_bodies.get(comment_id)
+    body = item.get("body")
+    created_at = item.get("createdAt")
+    updated = parse_timestamp(item.get("updatedAt"))
+    created = parse_timestamp(created_at)
+    if (
+        archived is None
+        or not isinstance(body, str)
+        or not isinstance(created_at, str)
+        or created_at != archived[0]
+        or not isinstance(archived[1], str)
+        or created is None
+        or created >= after
+        or updated is None
+        or updated <= after
+        or (before is not None and updated >= before)
+        or type(response_id) is not int
+        or response_id <= 0
+    ):
+        return False
+    annotation = _ADDRESSED_COMMIT_ANNOTATION.search(body)
+    return (
+        annotation is not None
+        and annotation.group(2).casefold() == head[: len(annotation.group(2))].casefold()
+        and body[: annotation.start()] == archived[1]
+    )
+
+
 def _summary_has_explicit_incompleteness(body: str) -> bool:
     text = _unquoted(body)
     not_reviewed_counts = [int(match.group(1)) for match in FILE_NOT_REVIEWED_COUNT.finditer(text)]
@@ -1815,6 +2122,10 @@ def finished_reply_without_findings(
     after: datetime,
     response_id: int | None,
     before: datetime | None = None,
+    record: Mapping[str, Any] | None = None,
+    current_record_path: str | Path | None = None,
+    repo: str | None = None,
+    pr_number: int | None = None,
 ) -> bool:
     """Accept CodeRabbit's terminal full-review reply when its complete window is empty.
 
@@ -1893,6 +2204,7 @@ def finished_reply_without_findings(
         submitted_in_window = in_window(item.get("submittedAt"))
         if submitted_in_window is None or submitted_in_window:
             return False
+    archived_bodies: dict[int, tuple[str, str]] | None = None
     for thread in connections["reviewThreads"]:
         comments = thread.get("comments")
         nodes = comments.get("nodes") if isinstance(comments, dict) else None
@@ -1903,7 +2215,28 @@ def finished_reply_without_findings(
                 continue
             created_in_window = in_window(item.get("createdAt"))
             updated_in_window = in_window(item.get("updatedAt"))
-            if created_in_window is None or updated_in_window is None or created_in_window or updated_in_window:
+            if created_in_window is None or updated_in_window is None:
+                return False
+            if created_in_window or updated_in_window:
+                if not created_in_window and updated_in_window:
+                    if archived_bodies is None:
+                        archived_bodies = (
+                            _archived_completed_thread_bodies(
+                                repo,
+                                pr_number,
+                                head,
+                                response_id,
+                                created,
+                                record,
+                                current_record_path,
+                            )
+                            if isinstance(repo, str) and type(pr_number) is int and pr_number > 0
+                            else {}
+                        )
+                    if _addressed_thread_update_matches_archive(
+                        item, head, after, before, response_id, archived_bodies
+                    ):
+                        continue
                 return False
     return True
 
@@ -2083,6 +2416,10 @@ def trigger_state(
                 trigger_dt,
                 immutable_database_id(item),
                 next_dt,
+                record,
+                current_record_path,
+                repo,
+                pr_number,
             ):
                 state = (
                     "ambiguous_retired_predecessor"

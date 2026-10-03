@@ -51,6 +51,18 @@ class HelpCommandHandlerTest {
   }
 
   @Test
+  void characterHelpUsesNamesRatherThanUnsupportedListNumbers() {
+    for (String topic : List.of("CHARS", "PLAY")) {
+      TextCommandInterpretationResult result =
+          handler.handle(new TextCommand(TextCommandType.HELP, List.of(topic), "HELP " + topic));
+
+      assertTrue(result.commandResult().accepted());
+      assertTrue(result.outputs().get(0).text().contains("character name"));
+      assertTrue(result.outputs().get(0).text().contains("list number"));
+    }
+  }
+
+  @Test
   void helpJoinExplainsTheExplicitPublicMembershipStep() {
     TextCommandInterpretationResult result =
         handler.handle(new TextCommand(TextCommandType.HELP, List.of("join"), "HELP join"));
@@ -58,7 +70,19 @@ class HelpCommandHandlerTest {
     assertTrue(result.commandResult().accepted());
     assertTrue(result.outputs().get(0).text().contains("JOIN <world>"));
     assertTrue(result.outputs().get(0).text().contains("public-production membership"));
-    assertTrue(result.outputs().get(0).text().contains("Use REALMS <world> first"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("Use REALMS <world> first, then JOIN to confirm membership."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("Character browsing and gameplay entry are currently unavailable."));
+    assertFalse(result.outputs().get(0).text().contains("CHARS and PLAY"));
   }
 
   @Test

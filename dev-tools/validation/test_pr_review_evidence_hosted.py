@@ -17,9 +17,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
-from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
+from pr_review import cli_attempts, evidence, github, hosted, runtime, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
-from pr_review.sqlite_review_records import ReviewRecordsError, SqliteReviewRecords
+from pr_review.sqlite_finding_text import _safe_finding_detail
+from pr_review.sqlite_provider_imports import _cli_detail, _cli_finding_title, _cli_headline
+from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, SqliteStateStore
 
 REPO = "owner/repo"
@@ -76,6 +78,134 @@ def trigger_record(head: str = HEAD):
             "command": hosted.FULL_COMMAND,
         },
     }
+
+
+def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = True):
+    trigger_at = "2026-09-23T00:02:00Z"
+    old_trigger_at = "2026-09-23T00:00:50Z"
+    old_started_at = "2026-09-23T00:00:40Z"
+    old_finished_at = "2026-09-23T00:01:15Z"
+    old_body = "An archived CodeRabbit finding.\n\n<!-- cr-comment:v1:0123456789abcdef01234567 -->"
+    addressed_body = f"{old_body}\n\n✅ Addressed in commits {'c' * 7} to {HEAD[:7]}"
+    inline = {
+        "databaseId": 30,
+        "author": {"login": "coderabbitai[bot]"},
+        "body": addressed_body,
+        "createdAt": "2026-09-23T00:01:10Z",
+        "updatedAt": "2026-09-23T00:02:15Z",
+    }
+    old_review = {
+        "databaseId": 20,
+        "author": {"login": "coderabbitai[bot]"},
+        "body": "<!-- walkthrough_start -->\nReviewing the archived candidate.",
+        "state": "COMMENTED",
+        "submittedAt": old_finished_at,
+        "commit": {"oid": BASE},
+    }
+    old_comments = {
+        "comments": [
+            comment(9, "owner", hosted.FULL_COMMAND, old_trigger_at),
+        ],
+        "review_threads": (
+            [
+                {
+                    "comments": {
+                        "nodes": [
+                            {
+                                **inline,
+                                "body": old_body,
+                                "createdAt": inline["createdAt"],
+                                "updatedAt": old_finished_at,
+                            }
+                        ]
+                    }
+                }
+            ]
+            if include_baseline
+            else []
+        ),
+    }
+    old_metadata = {
+        "state": "completed",
+        "terminal": True,
+        "attributable": True,
+        "repository": REPO,
+        "pull_request": PR,
+        "head_sha": BASE,
+        "trigger_id": 9,
+        "response_id": 20,
+        "observed_at": old_finished_at,
+    }
+
+    state_dir = common / "firemud" / "pr-review-stack.json"
+    state_dir.mkdir(parents=True)
+    database = common / "firemud" / "pr-review-stack.sqlite3"
+    SqliteStateStore(database).update(lambda state: state)
+    records = SqliteReviewRecords(database)
+    records.bootstrap()
+    records.start_attempt(
+        attempt_id="old-hosted-attempt",
+        source_pr=PR,
+        channel="hosted",
+        candidate_sha=BASE,
+        started_at=old_started_at,
+    )
+    records.finish_attempt(
+        "old-hosted-attempt",
+        state="completed",
+        finished_at=old_finished_at,
+        trigger_id="9",
+        provider_review_id="20",
+        artifacts={
+            "hosted_review": json.dumps([old_review]),
+            "hosted_comments": json.dumps(old_comments),
+            "metadata": json.dumps(old_metadata),
+        },
+    )
+    records.start_attempt(
+        attempt_id="current-hosted-attempt",
+        source_pr=PR,
+        channel="hosted",
+        candidate_sha=HEAD,
+        started_at="2026-09-23T00:01:50Z",
+        metadata={"repository": REPO},
+    )
+
+    trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
+    summary = comment(
+        12,
+        "coderabbitai[bot]",
+        "No actionable comments were generated in the recent review.\n"
+        f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+        "2026-09-23T00:01:40Z",
+    )
+    summary["updatedAt"] = "2026-09-23T00:02:30Z"
+    response = comment(
+        11,
+        "coderabbitai[bot]",
+        "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+        f"<!-- CodeRabbit review command invocation: v2:{'a' * 64} -->\n"
+        "<details>\n<summary>✅ Action performed</summary>\n"
+        "Full review finished.\n</details>",
+        "2026-09-23T00:02:08Z",
+    )
+    response["updatedAt"] = "2026-09-23T00:02:20Z"
+    payload = review_payload(
+        [trigger, summary, response],
+        threads=[{"comments": {"nodes": [inline]}}],
+    )
+    record = trigger_record()
+    record["sqlite_attempt_id"] = "current-hosted-attempt"
+    record["trigger"].update(
+        {
+            "id": 10,
+            "created_at": trigger_at,
+            "url": trigger["url"],
+        }
+    )
+    record_path = hosted.default_trigger_record_path(REPO, PR, common)
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    return payload, record, record_path
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
@@ -612,6 +742,417 @@ class GithubAndEvidenceTests(unittest.TestCase):
         )
         return evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
 
+    def _native_cli_records(
+        self,
+        common: Path,
+        *,
+        repository: str | None = REPO,
+        pull_request: int = PR,
+        candidate_sha: str = HEAD,
+        finalized: bool = True,
+        decide: bool = True,
+        instructions: tuple[str, ...] = ("The complete SQL finding remains available.",),
+        legacy_projection: bool = False,
+    ) -> SqliteReviewRecords:
+        database = common / "controller.sqlite3"
+        SqliteStateStore(database).update(lambda state: state)
+        records = SqliteReviewRecords(database)
+        records.bootstrap()
+        run_id = "run.Native"
+        metadata: dict[str, object] = {
+            "run_id": run_id,
+            "kind": "cli",
+            "pull_request": pull_request,
+            "candidate_sha": candidate_sha,
+            "child_head_sha": candidate_sha,
+            "published_head_sha": candidate_sha,
+            "parent_pr": None,
+            "parent_ref": "main",
+            "parent_sha": BASE,
+            "merge_base": BASE,
+            "patch_identity": "c" * 64,
+            "candidate_files": 1,
+            "published_files": 1,
+            "published_status": "current",
+            "provisional": False,
+            "reason": "",
+            "capture_completion_marker": "capture-complete",
+        }
+        if repository is not None:
+            metadata["repository"] = repository
+        events = "\n".join(json.dumps({
+            "type": "finding", "message": "The persisted SQL finding remains readable.", "codegenInstructions": text,
+        }) for text in instructions) + "\n" + json.dumps({
+            "type": "complete", "status": "review_completed", "findings": len(instructions), "reviewedFiles": ["src/a.py"],
+        }) + "\n"
+        result_metadata = {**metadata, "duration_seconds": 9, "exit_status": 0}
+        records.start_attempt(
+            attempt_id=run_id,
+            source_pr=PR,
+            channel="cli",
+            candidate_sha=candidate_sha,
+            started_at="2026-09-30T00:00:00Z",
+            metadata=metadata,
+        )
+        records.complete_attempt_run(
+            run_id,
+            finish={
+                "state": "completed",
+                "finished_at": "2026-09-30T00:00:09Z",
+                "duration_seconds": 9,
+                "exit_status": 0,
+                "artifacts": {"cli_events": events, "metadata": json.dumps(result_metadata)},
+            },
+            run={
+                "run_id": run_id,
+                "source_pr": PR,
+                "channel": "cli",
+                "findings": tuple(
+                    FindingObservation(
+                        source_finding_key=f"cli-run:{run_id}:finding:{index}",
+                        title=(
+                            _cli_headline(text) or f"CodeRabbit CLI finding {index}"
+                            if legacy_projection else _cli_finding_title(text, f"CodeRabbit CLI finding {index}")
+                        ),
+                        detail="" if legacy_projection else _safe_finding_detail(_cli_detail(text)),
+                    ) for index, text in enumerate(instructions, 1)
+                ),
+                "source_head": candidate_sha,
+                "reviewer": "CodeRabbit CLI",
+                "scope": "broad",
+                "started_at": "2026-09-30T00:00:00Z",
+                "finished_at": "2026-09-30T00:00:09Z",
+            },
+        )
+        if decide:
+            for index in range(1, len(instructions) + 1):
+                records.record_source_decision(
+                    run_id, f"cli-run:{run_id}:finding:{index}", decision_id=f"{run_id}.decision.{index}",
+                    decision="accepted", actor="reviewer", reason="Useful source finding",
+                    decided_at="2026-09-30T00:00:10Z",
+                )
+            if finalized:
+                records.finalize_run(run_id, finalized_at="2026-09-30T00:00:11Z")
+                for index in range(1, len(instructions) + 1):
+                    records.record_source_resolution(
+                        run_id, f"cli-run:{run_id}:finding:{index}", source_pr=PR,
+                        resolution_id=f"{run_id}.resolution.{index}", fix_sha="d" * 40,
+                        actor="reviewer", proof_note="The accepted source finding has verified proof.",
+                        resolved_at="2026-09-30T00:00:12Z",
+                    )
+        return records
+
+    @staticmethod
+    def _write_native_cli_raw_capture(common: Path) -> None:
+        run = common / "coderabbit-review-logs" / "run.Native"
+        run.mkdir(parents=True)
+        (run / "metadata").write_text(
+            f"run_id=run.Native\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
+            encoding="utf-8",
+        )
+        (run / "stdout").write_text(
+            json.dumps({"type": "finding", "message": "The retained CLI finding remains readable."})
+            + "\n"
+            + json.dumps({
+                "type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["src/a.py"],
+            })
+            + "\n",
+            encoding="utf-8",
+        )
+        (run / "exit-status").write_text("0\n", encoding="utf-8")
+
+    @staticmethod
+    def _native_cli_checkpoint(
+        *,
+        found: int = 1,
+        accepted: int = 1,
+        reviewed_sha: str = HEAD[:12],
+        file_count: int | None = 1,
+        duration: int | None = 9,
+    ) -> evidence.Checkpoint:
+        return evidence.Checkpoint(
+            comment_id=100,
+            created_at="2026-09-30T00:01:00Z",
+            type="CLI",
+            raw_found=found,
+            accepted=accepted,
+            reviewed_sha=reviewed_sha,
+            file_count=file_count,
+            correction=False,
+            updated_at=None,
+            run_id="run.Native",
+            hosted_review_id=None,
+            duration_seconds=duration,
+        )
+
+    def test_native_cli_checkpoint_loads_from_sql_after_raw_capture_removal(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+            self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
+            self.assertEqual(capture.findings[0]["message"], "The persisted SQL finding remains readable.")
+            self.assertEqual(capture.decisions, {1: ("accepted", "Useful source finding")})
+            self.assertIsNone(capture.source_identity)
+            self.assertEqual(
+                records.source_resolution_status(
+                    "run.Native", source_pr=PR, source_channel="cli", source_head=HEAD, accepted_count=1
+                ),
+                "resolved",
+            )
+
+    def test_native_cli_sql_observations_reject_malformed_and_duplicate_indices(self):
+        cases = (
+            ("non-mapping observation", lambda observations: observations.__setitem__(0, "malformed")),
+            ("missing index", lambda observations: observations[0].pop("index")),
+            ("string index", lambda observations: observations[0].__setitem__("index", "1")),
+            ("boolean index", lambda observations: observations[0].__setitem__("index", True)),
+            ("duplicate index", lambda observations: observations[1].__setitem__("index", 1)),
+        )
+        for label, corrupt in cases:
+            with self.subTest(observation=label), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(
+                    common,
+                    instructions=("The first SQL finding remains available.", "The second SQL finding remains available."),
+                )
+                checkpoint = self._native_cli_checkpoint(found=2, accepted=2)
+                self.assertEqual(
+                    len(evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records).findings),
+                    2,
+                )
+
+                snapshot = records.cli_capture_snapshot("run.Native", source_pr=PR)
+                self.assertIsNotNone(snapshot)
+                corrupt(snapshot["observations"])
+                records.cli_capture_snapshot = lambda _run_id, *, source_pr, snapshot=snapshot: snapshot
+
+                with self.assertRaises(evidence.CaptureInvalid):
+                    evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_native_cli_sql_refuses_same_count_finding_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                row = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()
+                changed = row[0].replace("The complete SQL finding remains available.", "A different valid source finding.")
+                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+    def test_native_cli_sql_projection_preserves_redacted_bounded_findings_and_rejects_reordering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            secret = "ghp_" + "A" * 36
+            instructions = ("Validate token " + secret + " before use. " + "more detail " * 130, "Preserve the second distinct source finding.")
+            records = self._native_cli_records(common, instructions=instructions)
+            checkpoint = self._native_cli_checkpoint(found=2, accepted=2)
+            capture = evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+            self.assertEqual(len(capture.findings), 2)
+            self.assertNotIn(secret, capture.findings[0]["codegenInstructions"])
+            self.assertGreater(len(capture.findings[0]["codegenInstructions"]), 1000)
+            with sqlite3.connect(records.path) as connection:
+                content = connection.execute("SELECT content FROM review_artifacts WHERE attempt_id = 'run.Native' AND kind = 'cli_events'").fetchone()[0]
+                events = [json.loads(line) for line in content.splitlines()]
+                changed = "\n".join(json.dumps(event) for event in (events[1], events[0], events[2])) + "\n"
+                connection.execute("UPDATE review_artifacts SET content = ? WHERE attempt_id = 'run.Native' AND kind = 'cli_events'", (changed,))
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "content conflicts"):
+                evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+    def test_prior_native_title_only_projection_remains_readable_without_capture_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(
+                common, instructions=("Check  old  input before use.",), legacy_projection=True,
+            )
+            capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+            self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
+            self.assertEqual(capture.findings[0]["codegenInstructions"], "Check  old  input before use.")
+            self.assertEqual(capture.decisions[1][0], "accepted")
+            self.assertEqual(records.source_resolution_status(
+                "run.Native", source_pr=PR, source_channel="cli", source_head=HEAD, accepted_count=1,
+            ), "resolved")
+
+    def test_deleted_modern_detail_cannot_downgrade_to_prior_native_projection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute("UPDATE finding_observations SET detail = '' WHERE run_id = 'run.Native'")
+            with self.assertRaises(evidence.CaptureInvalid) as raised:
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+            self.assertIn("immutable source projection", str(raised.exception.__cause__))
+
+    def test_native_cli_sql_checkpoint_refuses_explicit_identity_and_count_mismatches(self):
+        cases = (
+            ("repository", {"repository": "other/repo"}, {}, "repository does not match"),
+            ("PR", {"pull_request": PR + 1}, {}, "PR does not match"),
+            ("head", {"candidate_sha": BASE}, {}, "candidate SHA does not match checkpoint"),
+            ("finding count", {}, {"found": 2}, "finding count does not match checkpoint"),
+            ("file count", {}, {"file_count": 2}, "file count does not match checkpoint"),
+        )
+        for label, native_args, checkpoint_args, message in cases:
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(common, **native_args)
+                checkpoint = self._native_cli_checkpoint(**checkpoint_args)
+                with self.assertRaisesRegex(evidence.CaptureInvalid, message):
+                    evidence.load_cli_capture(checkpoint, REPO, PR, common, records=records)
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute("UPDATE review_attempts SET state = 'failed' WHERE attempt_id = 'run.Native'")
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "ended without a completed result"):
+                evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+    def test_native_cli_partial_sql_association_never_falls_back_to_raw_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            database = common / "controller.sqlite3"
+            SqliteStateStore(database).update(lambda state: state)
+            records = SqliteReviewRecords(database)
+            records.bootstrap()
+            records.start_attempt(
+                attempt_id="run.Native",
+                source_pr=PR,
+                channel="cli",
+                candidate_sha=HEAD,
+                metadata={"run_id": "run.Native", "kind": "cli", "pull_request": PR, "candidate_sha": HEAD},
+            )
+            run = common / "coderabbit-review-logs" / "run.Native"
+            run.mkdir(parents=True)
+            (run / "metadata").write_text(
+                f"run_id=run.Native\nrepository={REPO}\npull_request={PR}\ncandidate_sha={HEAD}\ncandidate_files=1\n",
+                encoding="utf-8",
+            )
+            (run / "stdout").write_text(
+                json.dumps({"type": "finding", "message": "raw"})
+                + "\n"
+                + json.dumps(
+                    {"type": "complete", "status": "review_completed", "findings": 1, "reviewedFiles": ["a"]}
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run / "exit-status").write_text("0\n", encoding="utf-8")
+            (run / "decisions.tsv").write_text("1\trejected\tlegacy raw fallback\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "linked SQLite CLI records"):
+                evidence.load_cli_capture(self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records)
+
+            repaired = evidence.load_cli_capture_for_repair(
+                self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records
+            )
+            self.assertEqual(repaired.decisions, {1: ("rejected", "legacy raw fallback")})
+            self.assertEqual(repaired.findings[0]["message"], "raw")
+
+            with sqlite3.connect(database) as connection:
+                connection.execute("DROP TABLE review_records_metadata")
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "incompatible schema"):
+                evidence.load_cli_capture(
+                    self._native_cli_checkpoint(accepted=0, duration=None), REPO, PR, common, records=records
+                )
+
+    def test_native_cli_discovery_loads_sql_attempts_and_deduplicates_retained_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common, finalized=False, decide=False)
+            run = common / "coderabbit-review-logs" / "run.Native"
+            run.mkdir(parents=True)
+            (run / "metadata").write_text("malformed shadow file\n", encoding="utf-8")
+
+            captures = evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(captures[0].metadata["run_id"], "run.Native")
+            self.assertEqual(captures[0].findings[0]["message"], "The persisted SQL finding remains readable.")
+            self.assertEqual(captures[0].decisions, {})
+            self.assertIsNone(captures[0].source_identity)
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "not finalized"):
+                evidence.load_cli_capture(
+                    self._native_cli_checkpoint(accepted=0), REPO, PR, common, records=records
+                )
+
+    def test_native_cli_discovery_skips_started_and_failed_sql_attempts_with_retained_files(self):
+        for state in ("started", "failed"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory:
+                common = Path(directory)
+                records = self._native_cli_records(common)
+                self._write_native_cli_raw_capture(common)
+                with sqlite3.connect(records.path) as connection:
+                    if state == "started":
+                        connection.execute(
+                            "UPDATE review_attempts SET state = ?, finished_at = NULL "
+                            "WHERE attempt_id = 'run.Native'",
+                            (state,),
+                        )
+                    else:
+                        connection.execute(
+                            "UPDATE review_attempts SET state = ? WHERE attempt_id = 'run.Native'", (state,)
+                        )
+
+                self.assertEqual(evidence.discover_cli_captures(REPO, PR, common, records=records), [])
+
+    def test_native_cli_discovery_accepts_capture_completed_after_snapshot_enumeration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            self._write_native_cli_raw_capture(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute(
+                    "UPDATE review_attempts SET state = 'started', finished_at = NULL "
+                    "WHERE attempt_id = 'run.Native'"
+                )
+            enumerate_completed = records.completed_cli_capture_snapshots
+
+            def enumerate_then_complete(source_pr):
+                snapshots = enumerate_completed(source_pr)
+                self.assertEqual(snapshots, [])
+                with sqlite3.connect(records.path) as connection:
+                    connection.execute(
+                        "UPDATE review_attempts SET state = 'completed', finished_at = ? "
+                        "WHERE attempt_id = 'run.Native'",
+                        ("2026-09-30T00:00:09Z",),
+                    )
+                return snapshots
+
+            records.completed_cli_capture_snapshots = enumerate_then_complete
+            captures = evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+            self.assertEqual(len(captures), 1)
+            self.assertEqual(captures[0].decisions, {1: ("accepted", "Useful source finding")})
+
+    def test_native_cli_discovery_surfaces_completed_sql_run_missing_attempt_without_raw_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common)
+            with sqlite3.connect(records.path) as connection:
+                connection.execute("DELETE FROM review_attempts WHERE attempt_id = 'run.Native'")
+
+            self.assertFalse((common / "coderabbit-review-logs" / "run.Native").exists())
+            with self.assertRaisesRegex(evidence.CaptureInvalid, "completed SQLite CLI captures are incomplete"):
+                evidence.discover_cli_captures(REPO, PR, common, records=records)
+
+    def test_native_cli_old_metadata_without_repository_uses_selected_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            records = self._native_cli_records(common, repository=None)
+            capture = evidence.load_cli_capture(self._native_cli_checkpoint(), REPO, PR, common, records=records)
+
+            self.assertNotIn("repository", capture.metadata)
+            self.assertEqual(capture.metadata["run_id"], "run.Native")
+
+    def test_unimported_legacy_cli_capture_remains_readable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = self._cli_capture(
+                Path(directory), decision_text="1\trejected\tretained legacy decision\n", records=None
+            )
+            self.assertEqual(capture.decisions, {1: ("rejected", "retained legacy decision")})
+
     def test_historical_cli_decisions_fall_back_when_records_schema_is_absent(self):
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -829,6 +1370,14 @@ class GithubAndEvidenceTests(unittest.TestCase):
             @staticmethod
             def cli_source_decisions(_run_id):
                 return None
+
+            @staticmethod
+            def cli_capture_snapshot(_run_id, *, source_pr):
+                return None
+
+            @staticmethod
+            def completed_cli_capture_snapshots(_source_pr):
+                return []
 
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory)
@@ -1327,6 +1876,147 @@ class HostedEvidenceTests(unittest.TestCase):
         bool_record["trigger"]["id"] = True
         with self.assertRaisesRegex(ValueError, "invalid full-review identity"):
             hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), bool_record)
+
+    def test_finished_reply_accepts_only_exact_archived_addressed_thread_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            common = hosted._trigger_record_common_for_path(record_path, REPO, PR)
+            self.assertIsNotNone(common)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            records = SqliteReviewRecords(database)
+            current_attempt = records.attempt("current-hosted-attempt")
+            self.assertEqual(current_attempt["state"], "started")
+            current_row = next(
+                item for item in records.attempt_history(PR) if item["attempt_id"] == "current-hosted-attempt"
+            )
+            self.assertIsNone(current_row["trigger_id"])
+
+            state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+        self.assertEqual(state.state, "completed")
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.response_id, 11)
+
+    def test_runtime_zero_reply_proof_uses_custom_trigger_record_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            checkpoint = evidence.Checkpoint(
+                comment_id=40,
+                created_at="2026-09-23T00:03:00Z",
+                type="Hosted",
+                raw_found=0,
+                accepted=0,
+                reviewed_sha=HEAD,
+                file_count=1,
+                correction=False,
+                updated_at=None,
+                run_id=None,
+                hosted_review_id=11,
+            )
+
+            proof = runtime.LiveEvidence._hosted_zero_reply_proof(
+                checkpoint,
+                11,
+                None,
+                REPO,
+                PR,
+                HEAD,
+                record,
+                payload,
+                record_path,
+            )
+
+        self.assertIsNotNone(proof)
+        self.assertEqual(proof["review_id"], 11)
+
+    def test_finished_reply_fails_closed_on_archive_lookup_filesystem_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            with patch.object(hosted, "state_path", side_effect=PermissionError("state directory inaccessible")):
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+        self.assertEqual(state.state, "ambiguous")
+        self.assertFalse(state.attributed)
+
+    def test_finished_reply_does_not_promote_ambiguous_or_mismatched_current_attempt(self):
+        cases = (("ambiguous", "10"), ("ambiguous", "99"), ("completed", "99"))
+        for attempt_state, trigger_id in cases:
+            with (
+                self.subTest(state=attempt_state, trigger_id=trigger_id),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+                common = hosted._trigger_record_common_for_path(record_path, REPO, PR)
+                self.assertIsNotNone(common)
+                database = common / "firemud" / "pr-review-stack.sqlite3"
+                records = SqliteReviewRecords(database)
+                records.finish_attempt(
+                    "current-hosted-attempt",
+                    state=attempt_state,
+                    finished_at="2026-09-23T00:02:08Z",
+                    trigger_id=trigger_id,
+                    provider_review_id="11",
+                    artifacts={
+                        "hosted_review": "[]",
+                        "hosted_comments": json.dumps({"comments": []}),
+                        "metadata": json.dumps({"state": attempt_state}),
+                    },
+                )
+
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+                self.assertEqual(state.state, "ambiguous")
+                self.assertFalse(state.attributed)
+
+    def test_finished_reply_keeps_unproven_or_changed_thread_output_ambiguous(self):
+        cases = (
+            ("unknown baseline", False, None),
+            ("modified archived body", True, "modified_body"),
+            ("addressed range ends on another head", True, "mismatched_range"),
+            ("new inline comment", True, "new_comment"),
+            ("positive finding count", True, "positive_count"),
+            ("incomplete coverage", True, "incomplete_coverage"),
+            ("mismatched summary head", True, "mismatched_summary_head"),
+        )
+        for label, include_baseline, mutation in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                payload, record, record_path = archived_addressed_reply_fixture(
+                    Path(directory), include_baseline=include_baseline
+                )
+                thread_nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0][
+                    "comments"
+                ]["nodes"]
+                if mutation == "modified_body":
+                    thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(
+                        "An archived CodeRabbit finding.", "A changed CodeRabbit finding."
+                    )
+                elif mutation == "mismatched_range":
+                    thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(
+                        f"to {HEAD[:7]}", f"to {BASE[:7]}"
+                    )
+                elif mutation == "new_comment":
+                    thread_nodes.append(
+                        {
+                            "databaseId": 31,
+                            "author": {"login": "coderabbitai[bot]"},
+                            "body": "A new inline finding.",
+                            "createdAt": "2026-09-23T00:02:16Z",
+                            "updatedAt": "2026-09-23T00:02:16Z",
+                        }
+                    )
+                elif mutation in {"positive_count", "incomplete_coverage", "mismatched_summary_head"}:
+                    issue_comments = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+                    summary = next(item for item in issue_comments if item["databaseId"] == 12)
+                    if mutation == "positive_count":
+                        summary["body"] += "\n**Actionable comments posted: 1**"
+                    elif mutation == "incomplete_coverage":
+                        summary["body"] += "\nFiles not reviewed: 3."
+                    else:
+                        summary["body"] = summary["body"].replace(HEAD, BASE)
+
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+                self.assertEqual(state.state, "ambiguous")
 
     def test_active_acknowledgement_does_not_hide_clean_finished_result(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

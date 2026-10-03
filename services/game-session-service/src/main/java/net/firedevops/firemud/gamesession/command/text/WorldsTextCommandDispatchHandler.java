@@ -61,6 +61,9 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
           "INVALID_ARGUMENT", "Transport session is unavailable. Reconnect and try again.");
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return errorResult("AUTH_UNAVAILABLE", "World list is temporarily unavailable.");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return errorResult(
+          "ADMISSION_POINTER_UNAVAILABLE", "World routing is unavailable. Retry WORLDS.");
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return errorResult("AUTH_UNAVAILABLE", "World list is temporarily unavailable.");
@@ -123,7 +126,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
         net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
         List.of(
             net.firedevops.firemud.gamesession.presentation.PlayerOutput.notice(
-                "Membership is ready. Continue with CHARS and PLAY.",
+                "Membership confirmed. Character browsing and gameplay entry are currently unavailable.",
                 "notice.join.success",
                 java.util.Map.of())));
   }

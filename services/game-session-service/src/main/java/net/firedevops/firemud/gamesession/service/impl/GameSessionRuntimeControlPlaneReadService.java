@@ -373,7 +373,9 @@ final class GameSessionRuntimeControlPlaneReadService {
 
   private AdmissionPointerControlPlaneEntry toControlPlaneEntry(
       GameplayAdmissionPointerSnapshot pointer) {
-    if (pointer.catalogRevision() <= 0L
+    if (pointer.tenantId() <= 0L
+        || pointer.gameInstanceId() <= 0L
+        || pointer.catalogRevision() <= 0L
         || pointer.realmId() == null
         || pointer.playableStateNamespaceId() == null) {
       throw new RuntimeStateException(

@@ -8,22 +8,41 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
+import org.jooq.exception.DataAccessException;
 import org.jooq.impl.DSL;
 import org.junit.jupiter.api.Test;
 
 class GameplayAdmissionPointerRepositoryTest {
   @Test
-  void bootstrapAdvisoryLockIsSkippedForH2() {
-    GameplayAdmissionPointerRepository repository =
-        new GameplayAdmissionPointerRepository(DSL.using(SQLDialect.H2));
+  void tenantScopedListFiltersRowsInTheDatabaseBeforeMapping() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-tenant-list-by-tenant;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      GameplayAdmissionPointer target = repository.save(pointer(7L, 44L, "SHARED", "production"));
+      GameplayAdmissionPointer unrelated =
+          repository.save(pointer(8L, 55L, "SHARED", "production"));
+      dsl.execute(
+          "UPDATE gameplay_admission_pointer SET realm_id = NULL, "
+              + "playable_state_namespace_id = NULL WHERE id = ?",
+          unrelated.getId());
 
-    repository.lockForBootstrap();
+      var scopedRows = repository.findAllByTenantIdOrderByWorldSlugAscRealmSlugAsc(7L);
+
+      assertEquals(1, scopedRows.size());
+      assertEquals(target.getId(), scopedRows.getFirst().getId());
+      assertEquals(7L, scopedRows.getFirst().getTenantId());
+      assertNotNull(scopedRows.getFirst().getRealmId());
+    }
   }
 
   @Test
@@ -59,11 +78,32 @@ class GameplayAdmissionPointerRepositoryTest {
       createdShared.setGameInstanceId(99L);
       createdShared.setPointerVersion(2L);
       createdShared.setCatalogRevision(1L);
-      GameplayAdmissionPointer replaced = repository.save(createdShared);
+      GameplayAdmissionPointer replaced = repository.updateExisting(createdShared, 1L, 1L);
 
       assertEquals(99L, replaced.getGameInstanceId());
       assertEquals(sharedRealmId, replaced.getRealmId());
       assertEquals(sharedNamespaceId, replaced.getPlayableStateNamespaceId());
+    }
+  }
+
+  @Test
+  void tenantScopedPointerListExcludesOtherTenants() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-tenant-list-in;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+      repository.save(pointer(8L, 55L, "SHARED", "production"));
+
+      var scoped = repository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of(8L));
+
+      assertEquals(1, scoped.size());
+      assertEquals(8L, scoped.getFirst().getTenantId());
+      assertEquals(2, repository.findAllByOrderByWorldSlugAscRealmSlugAsc().size());
+      assertEquals(
+          List.of(), repository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of()));
     }
   }
 
@@ -77,11 +117,14 @@ class GameplayAdmissionPointerRepositoryTest {
       GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
       GameplayAdmissionPointer created = repository.save(pointer(7L, 44L, "ISOLATED", "fork"));
 
-      created.setPointerVersion(2L);
       created.setRealmId(UUID.randomUUID());
 
-      org.junit.jupiter.api.Assertions.assertThrows(
-          IllegalStateException.class, () -> repository.save(created));
+      IllegalStateException exception =
+          assertThrows(
+              IllegalStateException.class, () -> repository.updateExisting(created, 1L, 1L));
+      assertEquals(
+          "Admission pointer update cannot replace durable realm or playable-state identity",
+          exception.getMessage());
     }
   }
 
@@ -103,7 +146,7 @@ class GameplayAdmissionPointerRepositoryTest {
       catalogUpdate.setPointerVersion(1L);
       catalogUpdate.setCatalogRevision(2L);
 
-      GameplayAdmissionPointer updated = repository.save(catalogUpdate);
+      GameplayAdmissionPointer updated = repository.updateExisting(catalogUpdate, 1L, 1L);
 
       assertEquals(1L, updated.getPointerVersion());
       assertEquals(2L, updated.getCatalogRevision());
@@ -111,7 +154,46 @@ class GameplayAdmissionPointerRepositoryTest {
       stale.setRealmDisplayName("Stale Realm Display");
       stale.setPointerVersion(1L);
       stale.setCatalogRevision(2L);
-      assertThrows(AdmissionPointerVersionMismatchException.class, () -> repository.save(stale));
+      assertThrows(
+          AdmissionPointerVersionMismatchException.class,
+          () -> repository.updateExisting(stale, 1L, 1L));
+    }
+  }
+
+  @Test
+  void rejectsSecondConcurrentRequestWhenWinnerCommittedTheSameTransition() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-convergent-update;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+
+      GameplayAdmissionPointer winner =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      GameplayAdmissionPointer staleConcurrentRequest =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      for (GameplayAdmissionPointer request : List.of(winner, staleConcurrentRequest)) {
+        request.setWorldDisplayName("Renamed Demo World");
+        request.setGameInstanceId(99L);
+        request.setPointerVersion(2L);
+        request.setCatalogRevision(2L);
+      }
+
+      GameplayAdmissionPointer committed = repository.updateExisting(winner, 1L, 1L);
+
+      assertEquals(2L, committed.getPointerVersion());
+      assertEquals(2L, committed.getCatalogRevision());
+      assertThrows(
+          AdmissionPointerVersionMismatchException.class,
+          () -> repository.updateExisting(staleConcurrentRequest, 1L, 1L));
+      GameplayAdmissionPointer persisted =
+          repository.findByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production").orElseThrow();
+      assertEquals(99L, persisted.getGameInstanceId());
+      assertEquals(2L, persisted.getPointerVersion());
+      assertEquals(2L, persisted.getCatalogRevision());
+      assertEquals("Renamed Demo World", persisted.getWorldDisplayName());
     }
   }
 
@@ -130,13 +212,58 @@ class GameplayAdmissionPointerRepositoryTest {
       GameplayAdmissionPointerEvent laterWriteWithSkewedClock =
           pointerEvent("2026-09-29T09:00:00Z");
       GameplayAdmissionPointerEvent secondSaved = repository.save(laterWriteWithSkewedClock);
+      GameplayAdmissionPointerEvent otherTenantWrite = pointerEvent("2026-09-29T11:00:00Z");
+      otherTenantWrite.setTenantId(8L);
+      repository.save(otherTenantWrite);
 
       var audit =
           repository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(7L, "demo", "production");
+      var latest =
+          repository
+              .findLatestByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production")
+              .orElseThrow();
 
+      assertEquals(2, audit.size());
       assertEquals(secondSaved.getId(), audit.getFirst().getId());
       assertEquals(firstSaved.getId(), audit.get(1).getId());
       assertEquals(Instant.parse("2026-09-29T09:00:00Z"), audit.getFirst().getOccurredAt());
+      assertEquals(secondSaved.getId(), latest.getId());
+      assertEquals(Instant.parse("2026-09-29T09:00:00Z"), latest.getOccurredAt());
+    }
+  }
+
+  @Test
+  void h2FixtureEnforcesProductionCatalogAndRealmIdentityConstraints() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-production-constraints;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      GameplayAdmissionPointer production =
+          repository.save(pointer(7L, 44L, "SHARED", "production"));
+      GameplayAdmissionPointer seasonal = repository.save(pointer(7L, 45L, "ISOLATED", "seasonal"));
+
+      assertThrows(
+          DataAccessException.class,
+          () ->
+              dsl.execute(
+                  "UPDATE gameplay_admission_pointer SET catalog_revision = 0 WHERE id = ?",
+                  production.getId()));
+      assertThrows(
+          DataAccessException.class,
+          () ->
+              dsl.execute(
+                  "UPDATE gameplay_admission_pointer SET playable_state_namespace_id = NULL "
+                      + "WHERE id = ?",
+                  production.getId()));
+      assertThrows(
+          DataAccessException.class,
+          () ->
+              dsl.execute(
+                  "UPDATE gameplay_admission_pointer SET realm_id = ? WHERE id = ?",
+                  production.getRealmId(),
+                  seasonal.getId()));
     }
   }
 
@@ -196,9 +323,18 @@ class GameplayAdmissionPointerRepositoryTest {
           created_at TIMESTAMP NOT NULL,
           updated_at TIMESTAMP NOT NULL,
           CONSTRAINT uq_pointer_tenant_world_realm UNIQUE (tenant_id, world_slug, realm_slug),
-          CONSTRAINT uq_pointer_tenant_runtime UNIQUE (tenant_id, game_instance_id)
+          CONSTRAINT uq_pointer_tenant_runtime UNIQUE (tenant_id, game_instance_id),
+          CONSTRAINT gameplay_admission_pointer_catalog_revision_positive
+            CHECK (catalog_revision > 0),
+          CONSTRAINT gameplay_admission_pointer_identity_pair_complete
+            CHECK ((realm_id IS NULL) = (playable_state_namespace_id IS NULL))
         )
         """);
+    // H2 cannot express this partial-index predicate; its nullable unique index exercises
+    // populated realm IDs, while the migration integration test proves the PostgreSQL index.
+    dsl.execute(
+        "CREATE UNIQUE INDEX uq_gameplay_admission_pointer_realm_id "
+            + "ON gameplay_admission_pointer (realm_id)");
   }
 
   private static GameplayAdmissionPointerEvent pointerEvent(String occurredAt) {

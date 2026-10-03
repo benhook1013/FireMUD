@@ -3,6 +3,7 @@ import fcntl
 import io
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -12,7 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from pr_review import cli, cli_attempts
+from pr_review import cli, cli_attempts, sqlite_review_records
 from pr_review.controller import ReviewController
 from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
@@ -20,6 +21,100 @@ from pr_review.state import FindingRoute, ReviewState, StateStore, SummaryFindin
 
 
 class ReviewRecordsCliTest(unittest.TestCase):
+    def test_records_source_resolve_requires_a_full_commit_sha(self) -> None:
+        prefix = [
+            "records",
+            "source",
+            "resolve",
+            "--source-pr",
+            "2885",
+            "--run-id",
+            "run.source-resolution-cli",
+            "--finding-key",
+            "accepted-key",
+            "--resolution-id",
+            "source-resolution-cli-proof",
+            "--fix-sha",
+        ]
+        parsed = cli._parser().parse_args([*prefix, "a" * 40, "--actor", "owner", "--proof-note", "verified"])
+        self.assertEqual(parsed.fix_sha, "a" * 40)
+        uppercase = "A" * 40
+        parsed_uppercase = cli._parser().parse_args(
+            [*prefix, uppercase, "--actor", "owner", "--proof-note", "verified"]
+        )
+        self.assertEqual(parsed_uppercase.fix_sha, uppercase)
+        for invalid_sha in ("a" * 12, "g" * 40, "a" * 39, "a" * 41):
+            with self.subTest(invalid_sha=invalid_sha), self.assertRaises(SystemExit):
+                cli._parser().parse_args(
+                    [*prefix, invalid_sha, "--actor", "owner", "--proof-note", "verified"]
+                )
+
+    def test_subagent_start_rejects_oversized_coverage_before_recording(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        for length, expected in ((200, 0), (201, 2)):
+            code, _ = self.invoke(
+                "subagent",
+                "start",
+                "--pr",
+                "2893",
+                "--run-id",
+                f"coverage-{length}",
+                "--reviewer",
+                "Sol medium",
+                "--scope",
+                "narrow",
+                "--coverage-limit",
+                "n" * length,
+                "--database",
+                str(self.database),
+            )
+            self.assertEqual(code, expected)
+        records = SqliteReviewRecords(self.database)
+        self.assertEqual([item["attempt_id"] for item in records.attempt_history(2893)], ["coverage-200"])
+
+    def test_existing_long_subagent_coverage_completes_without_changing_note_or_counts(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        note = "Original controller audit coverage retained. " * 7
+        with patch.object(sqlite_review_records, "_coverage_limits", return_value=(note,)):
+            code, _ = self.invoke(
+                "subagent",
+                "start",
+                "--pr",
+                "2893",
+                "--run-id",
+                "legacy-controller-round",
+                "--reviewer",
+                "Sol medium",
+                "--scope",
+                "narrow",
+                "--coverage-limit",
+                note,
+                "--head",
+                "a" * 40,
+                "--database",
+                str(self.database),
+            )
+        self.assertEqual(code, 0)
+        records = SqliteReviewRecords(self.database)
+        metadata = records.attempt("legacy-controller-round")["metadata"]
+        arguments = ["subagent", "complete", "--run-id", "legacy-controller-round", "--actor", "root verified"]
+        for title in ("Admission selection race", "Stopped historical evidence"):
+            arguments += [
+                "--finding-json",
+                json.dumps(
+                    {"title": title, "severity": "Major", "decision": "accepted", "reason": "verified"}
+                ),
+            ]
+        arguments += ["--database", str(self.database)]
+        code, result = self.invoke(*arguments)
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["result"]["run"]["counts"], {"found": 2, "accepted": 2, "routed": 0})
+        self.assertEqual(records.attempt("legacy-controller-round")["metadata"], metadata)
+        self.assertEqual(records.history(2893)["runs"][0]["coverage_limits"], [note])
+        code, replay = self.invoke(*arguments)
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay["result"]["run"]["idempotent_replay"])
+
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary_directory.cleanup)
@@ -85,13 +180,15 @@ class ReviewRecordsCliTest(unittest.TestCase):
         capture = self.database.parent / "pr-review" / "runs" / run_id
         capture.mkdir(parents=True)
         (capture / "metadata.json").write_text(
-            json.dumps({
-                "run_id": run_id,
-                "kind": "cli",
-                "capture_completion_marker": "capture-complete",
-                "pull_request": 2885,
-                "candidate_sha": "d" * 40,
-            }),
+            json.dumps(
+                {
+                    "run_id": run_id,
+                    "kind": "cli",
+                    "capture_completion_marker": "capture-complete",
+                    "pull_request": 2885,
+                    "candidate_sha": "d" * 40,
+                }
+            ),
             encoding="utf-8",
         )
         (capture / "exit-status").write_text("0\n", encoding="utf-8")
@@ -100,25 +197,63 @@ class ReviewRecordsCliTest(unittest.TestCase):
         with patch.object(records, "attempt", side_effect=ReviewRecordsError("review attempt does not exist")):
             result = cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
 
-        self.assertEqual(result["conflicts"], [{
-            "run_id": run_id,
-            "reason": "existing attempt could not be read",
-        }])
+        self.assertEqual(
+            result["conflicts"],
+            [
+                {
+                    "run_id": run_id,
+                    "reason": "existing attempt could not be read",
+                }
+            ],
+        )
 
     def test_subagent_pass_records_attempt_findings_decisions_and_route_without_taper(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         code, started = self.invoke(
-            "subagent", "start", "--pr", "2893", "--run-id", "subagent.review-1",
-            "--reviewer", "Luna independent pass", "--scope", "broad",
-            "--head", "a" * 40, "--database", str(self.database),
+            "subagent",
+            "start",
+            "--pr",
+            "2893",
+            "--run-id",
+            "subagent.review-1",
+            "--reviewer",
+            "Luna independent pass",
+            "--scope",
+            "broad",
+            "--head",
+            "a" * 40,
+            "--database",
+            str(self.database),
         )
         self.assertEqual(code, 0)
         self.assertEqual(started["result"]["state"], "started")
         items = (
-            {"title": "Bound the retry", "detail": "Exact candidate is retained", "decision": "accepted",
-             "reason": "Owned by this PR"},
-            {"title": "Another owner must repair proof", "decision": "routed",
-             "reason": "Belongs to target", "target_pr": 2895},
+            {
+                "title": "Bound the retry",
+                "detail": "Exact candidate is retained",
+                "severity": "Critical",
+                "decision": "accepted",
+                "reason": "Owned by this PR",
+            },
+            {
+                "title": "Another owner must repair proof",
+                "severity": "Major",
+                "decision": "routed",
+                "reason": "Belongs to target",
+                "target_pr": 2895,
+            },
+            {
+                "title": "Rejected bounded concern",
+                "severity": "Minor",
+                "decision": "rejected",
+                "reason": "Not valid",
+            },
+            {
+                "title": "Rejected cosmetic concern",
+                "severity": "Trivial",
+                "decision": "rejected",
+                "reason": "Not valid",
+            },
         )
         arguments = ["subagent", "complete", "--run-id", "subagent.review-1", "--actor", "Overseer"]
         for item in items:
@@ -126,30 +261,264 @@ class ReviewRecordsCliTest(unittest.TestCase):
         arguments.extend(("--database", str(self.database)))
         code, completed = self.invoke(*arguments)
         self.assertEqual(code, 0)
-        self.assertEqual(completed["result"]["run"]["counts"], {"found": 2, "accepted": 1, "routed": 1})
+        self.assertEqual(completed["result"]["run"]["counts"], {"found": 4, "accepted": 1, "routed": 1})
         code, replay = self.invoke(*arguments)
         self.assertEqual(code, 0)
         self.assertTrue(replay["result"]["run"]["idempotent_replay"])
         history = SqliteReviewRecords(self.database).history(2893)
         self.assertEqual(history["attempts"][0]["state"], "completed")
         self.assertEqual(history["runs"][0]["channel"], "subagent")
-        self.assertEqual(len(history["findings"]), 2)
+        self.assertEqual(len(history["findings"]), 4)
+        self.assertEqual(
+            {finding["title"]: finding["display_severity"] for finding in history["findings"]},
+            {item["title"]: item["severity"] for item in items},
+        )
         self.assertEqual(history["routes"][0]["target_pr"], 2895)
+        self.assertEqual(history["routes"][0]["display_severity"], "Major")
+        incoming = SqliteReviewRecords(self.database).history(2895)["routes"]
+        self.assertEqual(incoming[0]["display_severity"], "Major")
+        self.assertEqual(
+            SqliteReviewRecords(self.database).list_routes(target_pr=2895)[0]["display_severity"],
+            "Major",
+        )
+        changed = list(arguments)
+        changed[changed.index(json.dumps(items[0]))] = json.dumps({**items[0], "severity": "Major"})
+        code, conflict = self.invoke(*changed)
+        self.assertEqual(code, 2)
+        self.assertIn("different immutable content", conflict["error"])
+        self.assertEqual(SqliteReviewRecords(self.database).history(2893)["runs"][0]["counts"], {
+            "found": 4,
+            "accepted": 1,
+            "routed": 1,
+        })
+        with sqlite3.connect(self.database) as connection:
+            payload_before = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent.review-1'"
+            ).fetchone()[0]
+        route_key = "subagent:subagent.review-1:finding:2"
+        code, severity = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "subagent.review-1",
+            "--finding-key",
+            route_key,
+            "--severity",
+            "Critical",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, severity)
+        self.assertEqual(severity["result"]["previous_severity"], "Major")
+        self.assertEqual(severity["result"]["severity"], "Critical")
+        self.assertEqual(severity["result"]["run_id"], "subagent.review-1")
+        self.assertEqual(severity["result"]["source_finding_key"], route_key)
+        self.assertEqual(severity["result"]["source_pr"], 2893)
+        self.assertEqual(severity["result"]["source_channel"], "subagent")
+        self.assertTrue(severity["result"]["changed"])
+        code, replay = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "subagent.review-1",
+            "--finding-key",
+            route_key,
+            "--severity",
+            "Critical",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, replay)
+        self.assertFalse(replay["result"]["changed"])
+        self.assertEqual(replay["result"]["previous_severity"], "Critical")
+        code, completed_replay = self.invoke(*arguments)
+        self.assertEqual(code, 0, completed_replay)
+        self.assertTrue(completed_replay["result"]["run"]["idempotent_replay"])
+        records = SqliteReviewRecords(self.database)
+        self.assertEqual(records.history(2893)["routes"][0]["display_severity"], "Critical")
+        self.assertEqual(records.history(2895)["routes"][0]["display_severity"], "Critical")
+        self.assertEqual(records.list_routes(target_pr=2895)[0]["display_severity"], "Critical")
+        self.assertEqual(records.history(2893)["runs"][0]["counts"], {
+            "found": 4,
+            "accepted": 1,
+            "routed": 1,
+        })
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = 'subagent.review-1'"
+                ).fetchone()[0],
+                payload_before,
+            )
+
+    def test_subagent_completion_requires_exact_severity_labels(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        run_id = "subagent.severity-validation"
+        self.invoke(
+            "subagent",
+            "start",
+            "--pr",
+            "2893",
+            "--run-id",
+            run_id,
+            "--reviewer",
+            "Luna",
+            "--scope",
+            "narrow",
+            "--database",
+            str(self.database),
+        )
+        invalid_findings = (
+            {"title": "Missing", "decision": "rejected", "reason": "invalid"},
+            {"title": "Mixed case", "severity": "major", "decision": "rejected", "reason": "invalid"},
+            {"title": "Unknown", "severity": "Blocker", "decision": "rejected", "reason": "invalid"},
+            {"title": "List", "severity": ["Major"], "decision": "rejected", "reason": "invalid"},
+            {"title": "Object", "severity": {"label": "Major"}, "decision": "rejected", "reason": "invalid"},
+        )
+        for finding in invalid_findings:
+            with self.subTest(finding=finding):
+                code, result = self.invoke(
+                    "subagent",
+                    "complete",
+                    "--run-id",
+                    run_id,
+                    "--actor",
+                    "Overseer",
+                    "--finding-json",
+                    json.dumps(finding),
+                    "--database",
+                    str(self.database),
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("severity", result["error"])
+        records = SqliteReviewRecords(self.database)
+        self.assertEqual(records.attempt(run_id)["state"], "started")
+        self.assertEqual(records.history(2893)["runs"], [])
+
+    def test_historical_subagent_finding_may_retain_unspecified_severity(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        result = records.import_completed_run(
+            run_id="historical-subagent-unspecified-severity",
+            source_pr=2893,
+            channel="subagent",
+            findings=(FindingObservation("historical-finding", "Retained historical finding"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "historical-finding",
+                    "decision_id": "historical-finding-decision",
+                    "decision": "rejected",
+                    "actor": "historical import",
+                    "reason": "retained without inferred severity",
+                },
+            ),
+        )
+        self.assertEqual(result["counts"], {"found": 1, "accepted": 0, "routed": 0})
+        finding = records.history(2893)["findings"][0]
+        self.assertIn("display_severity", finding)
+        self.assertIsNone(finding["display_severity"])
+        with sqlite3.connect(self.database) as connection:
+            payload_before = connection.execute(
+                "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                ("historical-subagent-unspecified-severity",),
+            ).fetchone()[0]
+        code, updated = self.invoke(
+            "source",
+            "set-severity",
+            "--run-id",
+            "historical-subagent-unspecified-severity",
+            "--finding-key",
+            "historical-finding",
+            "--severity",
+            "Minor",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(code, 0, updated)
+        self.assertIsNone(updated["result"]["previous_severity"])
+        self.assertEqual(records.history(2893)["findings"][0]["display_severity"], "Minor")
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT import_payload_json FROM review_runs WHERE run_id = ?",
+                    ("historical-subagent-unspecified-severity",),
+                ).fetchone()[0],
+                payload_before,
+            )
+
+    def test_set_severity_unknown_identity_fails_without_changing_observation(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        records.import_completed_run(
+            run_id="severity-exact-identity",
+            source_pr=2893,
+            channel="manual",
+            findings=(FindingObservation("known-finding", "Known finding"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "known-finding",
+                    "decision_id": "known-finding-decision",
+                    "decision": "rejected",
+                    "actor": "historical import",
+                    "reason": "retained",
+                },
+            ),
+        )
+        for run_id, finding_key in (("missing-run", "known-finding"), ("severity-exact-identity", "missing")):
+            with self.subTest(run_id=run_id, finding_key=finding_key):
+                code, result = self.invoke(
+                    "source",
+                    "set-severity",
+                    "--run-id",
+                    run_id,
+                    "--finding-key",
+                    finding_key,
+                    "--severity",
+                    "Trivial",
+                    "--database",
+                    str(self.database),
+                )
+                self.assertEqual(code, 2)
+                self.assertIn("exact run", result["error"])
+        with sqlite3.connect(self.database) as connection:
+            self.assertIsNone(
+                connection.execute(
+                    "SELECT display_severity FROM finding_observations WHERE run_id = 'severity-exact-identity'"
+                ).fetchone()[0]
+            )
 
     def test_subagent_completion_replay_preserves_attempt_finish_time_without_prior_run(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
         run_id = "subagent.replay-finished-at"
         self.invoke(
-            "subagent", "start", "--pr", "2893", "--run-id", run_id,
-            "--reviewer", "Luna", "--scope", "narrow", "--database", str(self.database),
+            "subagent",
+            "start",
+            "--pr",
+            "2893",
+            "--run-id",
+            run_id,
+            "--reviewer",
+            "Luna",
+            "--scope",
+            "narrow",
+            "--database",
+            str(self.database),
         )
         expected_finished_at = "2026-09-29T01:02:03Z"
         SqliteReviewRecords(self.database).finish_attempt(
-            run_id, state="completed", finished_at=expected_finished_at,
+            run_id,
+            state="completed",
+            finished_at=expected_finished_at,
         )
         code, completed = self.invoke(
-            "subagent", "complete", "--run-id", run_id, "--actor", "Overseer",
-            "--database", str(self.database),
+            "subagent",
+            "complete",
+            "--run-id",
+            run_id,
+            "--actor",
+            "Overseer",
+            "--database",
+            str(self.database),
         )
         self.assertEqual(code, 0)
         self.assertFalse(completed["result"]["run"]["idempotent_replay"])
@@ -157,13 +526,144 @@ class ReviewRecordsCliTest(unittest.TestCase):
             SqliteReviewRecords(self.database).history(2893)["runs"][0]["finished_at"],
             expected_finished_at,
         )
+        history = SqliteReviewRecords(self.database).history(2893)
+        self.assertEqual(history["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(history["findings"], [])
+
+    def test_records_source_resolve_records_exact_accepted_fix_without_changing_counts(self) -> None:
+        self.invoke("bootstrap", "--database", str(self.database))
+        records = SqliteReviewRecords(self.database)
+        records.import_completed_run(
+            run_id="run.source-resolution-cli",
+            source_pr=2885,
+            channel="cli",
+            source_head="a" * 40,
+            reviewer="CodeRabbit",
+            findings=(FindingObservation(source_finding_key="accepted-key", title="Accepted finding"),),
+            source_decisions=(
+                {
+                    "source_finding_key": "accepted-key",
+                    "decision_id": "source-resolution-cli-decision",
+                    "decision": "accepted",
+                    "actor": "reviewer",
+                    "reason": "owned by this PR",
+                },
+            ),
+        )
+
+        code, result = self.invoke(
+            "source",
+            "resolve",
+            "--source-pr",
+            "2885",
+            "--run-id",
+            "run.source-resolution-cli",
+            "--finding-key",
+            "accepted-key",
+            "--resolution-id",
+            "source-resolution-cli-proof",
+            "--fix-sha",
+            "b" * 40,
+            "--actor",
+            "owner",
+            "--proof-note",
+            "Verified fixed in the exact source commit",
+            "--resolved-at",
+            "2026-09-30T12:00:00Z",
+            "--database",
+            str(self.database),
+        )
+
+        self.assertEqual(code, 0, result)
+        self.assertEqual(result["result"]["outcome"], "accepted_fixed")
+        self.assertFalse(result["result"]["idempotent_replay"])
+        self.assertEqual(
+            records.source_resolution_status(
+                "run.source-resolution-cli",
+                source_pr=2885,
+                source_channel="cli",
+                source_head="a" * 40,
+                accepted_count=1,
+            ),
+            "resolved",
+        )
+        self.assertEqual(records.history(2885)["runs"][0]["counts"], {"found": 1, "accepted": 1, "routed": 0})
+
+        correction_args = (
+            "source", "correct-resolution",
+            "--source-pr", "2885",
+            "--run-id", "run.source-resolution-cli",
+            "--finding-key", "accepted-key",
+            "--resolution-id", "source-resolution-cli-proof",
+            "--expected-fix-sha", "b" * 40,
+            "--fix-sha", "c" * 64,
+            "--correction-id", "source-resolution-cli-correction",
+            "--actor", "Overseer",
+            "--reason", "Correct a verified SHA transcription error",
+            "--proof-note", "Checked against the published full commit SHA",
+            "--database", str(self.database),
+        )
+        correction_code, correction_result = self.invoke(*correction_args)
+        self.assertEqual(correction_code, 0, correction_result)
+        self.assertEqual(correction_result["result"]["fix_sha"], "c" * 64)
+        self.assertFalse(correction_result["result"]["idempotent_replay"])
+        replay_code, replay_result = self.invoke(*correction_args)
+        self.assertEqual(replay_code, 0, replay_result)
+        self.assertTrue(replay_result["result"]["idempotent_replay"])
+        history = records.history(2885)
+        self.assertEqual(history["source_resolutions"][0]["fix_sha"], "b" * 40)
+        self.assertEqual(history["source_resolutions"][0]["effective_fix_sha"], "c" * 64)
+        self.assertEqual(len(history["source_resolution_corrections"]), 1)
+
+        wrong_pr_code, _ = self.invoke(
+            "source",
+            "resolve",
+            "--source-pr",
+            "2886",
+            "--run-id",
+            "run.source-resolution-cli",
+            "--finding-key",
+            "accepted-key",
+            "--resolution-id",
+            "wrong-pr-proof",
+            "--fix-sha",
+            "b" * 40,
+            "--actor",
+            "owner",
+            "--proof-note",
+            "Must bind to the exact source PR",
+            "--database",
+            str(self.database),
+        )
+        self.assertEqual(wrong_pr_code, 2)
+        self.assertEqual(len(records.history(2885)["source_resolutions"]), 1)
 
     def test_failed_subagent_pass_has_no_completed_run(self) -> None:
         self.invoke("bootstrap", "--database", str(self.database))
-        self.invoke("subagent", "start", "--pr", "2893", "--run-id", "subagent.failed-1",
-                    "--reviewer", "Luna", "--scope", "narrow", "--database", str(self.database))
-        code, result = self.invoke("subagent", "fail", "--run-id", "subagent.failed-1",
-                                   "--reason", "model unavailable", "--database", str(self.database))
+        self.invoke(
+            "subagent",
+            "start",
+            "--pr",
+            "2893",
+            "--run-id",
+            "subagent.failed-1",
+            "--reviewer",
+            "Luna",
+            "--scope",
+            "narrow",
+            "--database",
+            str(self.database),
+        )
+        code, result = self.invoke(
+            "subagent",
+            "fail",
+            "--run-id",
+            "subagent.failed-1",
+            "--reason",
+            "model unavailable",
+            "--database",
+            str(self.database),
+        )
         self.assertEqual(code, 0)
         self.assertEqual(result["result"]["state"], "failed")
         history = SqliteReviewRecords(self.database).history(2893)
@@ -175,16 +675,13 @@ class ReviewRecordsCliTest(unittest.TestCase):
         records = SqliteReviewRecords(self.database)
         records.start_attempt(attempt_id="run.failed-1", source_pr=2890, channel="cli")
         records.finish_attempt("run.failed-1", state="failed", diagnostic="provider closed")
-        code, response = self.invoke(
-            "history-batch", "--pr", "2890", "--pr", "2893", "--database", str(self.database)
-        )
+        code, response = self.invoke("history-batch", "--pr", "2890", "--pr", "2893", "--database", str(self.database))
         self.assertEqual(code, 0)
         histories = response["result"]["prs"]
         self.assertEqual(list(histories), ["2890", "2893"])
         self.assertEqual(histories["2890"]["attempts"][0]["attempt_id"], "run.failed-1")
         self.assertEqual(histories["2893"]["attempts"], [])
-        code, _ = self.invoke("history-batch", "--pr", "2890", "--pr", "2890",
-                              "--database", str(self.database))
+        code, _ = self.invoke("history-batch", "--pr", "2890", "--pr", "2890", "--database", str(self.database))
         self.assertNotEqual(code, 0)
 
     def test_route_cli_lists_open_by_default_and_filters_source_and_status(self) -> None:
@@ -221,9 +718,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             {route["title"] for route in default_listing["result"]["routes"]},
             {"cli-open-target", "cli-open-unassigned"},
         )
-        code, resolved_listing = self.invoke(
-            "routes", "--status", "resolved", "--database", str(self.database)
-        )
+        code, resolved_listing = self.invoke("routes", "--status", "resolved", "--database", str(self.database))
         self.assertEqual(code, 0)
         self.assertEqual(
             [(route["source_pr"], route["status"]) for route in resolved_listing["result"]["routes"]],
@@ -314,9 +809,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(attempt["origin"], "legacy_private_capture")
         self.assertNotIn("private provider details", str(single))
 
-        code, batch = self.invoke(
-            "history-batch", "--pr", "2881", "--pr", "2882", "--database", str(self.database)
-        )
+        code, batch = self.invoke("history-batch", "--pr", "2881", "--pr", "2882", "--database", str(self.database))
         self.assertEqual(code, 0)
         batch_attempts = batch["result"]["prs"]["2881"]["cli_attempts"]["attempts"]
         self.assertEqual(batch_attempts[0]["origin"], "legacy_private_capture")
@@ -341,10 +834,15 @@ class ReviewRecordsCliTest(unittest.TestCase):
         report = replay["result"]["legacy_cli_attempts"]
         self.assertEqual(report["imported"], [])
         self.assertEqual(report["already_imported"], [])
-        self.assertEqual(report["conflicts"], [{
-            "run_id": run_id,
-            "reason": "attempt identity or source fingerprint conflicts",
-        }])
+        self.assertEqual(
+            report["conflicts"],
+            [
+                {
+                    "run_id": run_id,
+                    "reason": "attempt identity or source fingerprint conflicts",
+                }
+            ],
+        )
         history = SqliteReviewRecords(self.database).history(2883)
         self.assertEqual(len(history["attempts"]), 1)
         self.assertEqual(history["attempts"][0]["state"], "rate_limited")
@@ -468,9 +966,9 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
         attempt = records.attempt(run_id)
         attempt_summary = records.attempt_history(2885)[0]
-        expected_finished = datetime.fromtimestamp(completed_epoch, timezone.utc).isoformat(
-            timespec="seconds"
-        ).replace("+00:00", "Z")
+        expected_finished = (
+            datetime.fromtimestamp(completed_epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        )
         self.assertEqual(attempt["finished_at"], expected_finished)
         self.assertEqual(attempt["state"], "rate_limited")
         self.assertEqual(attempt_summary["exit_status"], 23)
@@ -537,12 +1035,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
         attempt = records.attempt(run_id)
         self.assertEqual(attempt["state"], "failed")
-        self.assertEqual(attempt["finished_at"], datetime.fromtimestamp(
-            completed_epoch, timezone.utc
-        ).isoformat(timespec="seconds").replace("+00:00", "Z"))
-        attempt_summary = next(
-            item for item in records.attempt_history(2885) if item["attempt_id"] == run_id
+        self.assertEqual(
+            attempt["finished_at"],
+            datetime.fromtimestamp(completed_epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         )
+        attempt_summary = next(item for item in records.attempt_history(2885) if item["attempt_id"] == run_id)
         self.assertLessEqual(len(attempt_summary["diagnostic"]), 1000)
         self.assertTrue(attempt_summary["diagnostic"].startswith("CLI setup or capture failed:"))
         self.assertEqual(records.history(2885)["runs"], [])
@@ -594,8 +1091,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             attempt = records.attempt("run." + marker * 32)
             self.assertEqual(attempt["state"], "failed")
             attempt_summary = next(
-                item for item in records.attempt_history(2885)
-                if item["attempt_id"] == "run." + marker * 32
+                item for item in records.attempt_history(2885) if item["attempt_id"] == "run." + marker * 32
             )
             diagnostic = attempt_summary["diagnostic"]
             self.assertNotIn("\x1b", diagnostic)
@@ -633,8 +1129,12 @@ class ReviewRecordsCliTest(unittest.TestCase):
             json.dumps({"type": "finding", "codegenInstructions": finding_text}, ensure_ascii=False)
             + "\n"
             + json.dumps(
-                {"type": "complete", "status": "review_completed", "findings": 1,
-                 "reviewedFiles": ["src/Representative.java"]},
+                {
+                    "type": "complete",
+                    "status": "review_completed",
+                    "findings": 1,
+                    "reviewedFiles": ["src/Representative.java"],
+                },
                 ensure_ascii=False,
             )
             + "\n"
@@ -682,12 +1182,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertEqual(result["terminally_classified"], [{"run_id": run_id, "pr": "2885"}])
         attempt = records.attempt(run_id)
         self.assertEqual(attempt["state"], "failed")
-        self.assertEqual(attempt["finished_at"], datetime.fromtimestamp(
-            started_epoch, timezone.utc
-        ).isoformat(timespec="seconds").replace("+00:00", "Z"))
-        attempt_summary = next(
-            item for item in records.attempt_history(2885) if item["attempt_id"] == run_id
+        self.assertEqual(
+            attempt["finished_at"],
+            datetime.fromtimestamp(started_epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         )
+        attempt_summary = next(item for item in records.attempt_history(2885) if item["attempt_id"] == run_id)
         self.assertIn("without a terminal capture record", attempt_summary["diagnostic"])
         self.assertEqual(records.history(2885)["runs"], [])
 
@@ -759,8 +1258,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
         exit_path = capture / "exit-status"
         exit_path.write_text("0\n", encoding="utf-8")
         (capture / "stdout").write_text(
-            json.dumps({"type": "complete", "status": "review_completed", "findings": 0,
-                        "reviewedFiles": []}) + "\n",
+            json.dumps({"type": "complete", "status": "review_completed", "findings": 0, "reviewedFiles": []}) + "\n",
             encoding="utf-8",
         )
         (capture / "stderr").write_text("", encoding="utf-8")
@@ -796,9 +1294,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
         )
         capture = self.database.parent / "pr-review" / "runs" / run_id
         capture.mkdir(parents=True)
-        (capture / "metadata.json").write_text(
-            json.dumps({**started_metadata, "pull_request": 2886}), encoding="utf-8"
-        )
+        (capture / "metadata.json").write_text(json.dumps({**started_metadata, "pull_request": 2886}), encoding="utf-8")
         (capture / "error").write_text("setup failed\n", encoding="utf-8")
 
         cli_attempts.reconcile_legacy_failed_attempts(records, self.database)
@@ -1020,32 +1516,84 @@ class ReviewRecordsCliTest(unittest.TestCase):
         self.assertFalse(imported["result"]["finalized"])
 
         _, accepted = self.invoke(
-            "source", "decide", "--run-id", "subagent-run-1", "--finding-key", "accept-me",
-            "--decision-id", "source-accept", "--decision", "accepted", "--actor", "owner",
-            "--reason", "valid finding", "--database", str(self.database),
+            "source",
+            "decide",
+            "--run-id",
+            "subagent-run-1",
+            "--finding-key",
+            "accept-me",
+            "--decision-id",
+            "source-accept",
+            "--decision",
+            "accepted",
+            "--actor",
+            "owner",
+            "--reason",
+            "valid finding",
+            "--database",
+            str(self.database),
         )
         self.assertEqual(accepted["result"]["decision"], "accepted")
         _, routed = self.invoke(
-            "source", "decide", "--run-id", "subagent-run-1", "--finding-key", "route-me",
-            "--decision-id", "source-route", "--decision", "routed", "--target-pr", "2879",
-            "--actor", "owner", "--reason", "belongs to target", "--database", str(self.database),
+            "source",
+            "decide",
+            "--run-id",
+            "subagent-run-1",
+            "--finding-key",
+            "route-me",
+            "--decision-id",
+            "source-route",
+            "--decision",
+            "routed",
+            "--target-pr",
+            "2879",
+            "--actor",
+            "owner",
+            "--reason",
+            "belongs to target",
+            "--database",
+            str(self.database),
         )
         route_id = routed["result"]["route_id"]
-        _, finalized = self.invoke(
-            "source", "finalize", "--run-id", "subagent-run-1", "--database", str(self.database)
-        )
+        _, finalized = self.invoke("source", "finalize", "--run-id", "subagent-run-1", "--database", str(self.database))
         self.assertEqual(finalized["result"]["counts"], {"found": 2, "accepted": 1, "routed": 1})
 
         _, target_decision = self.invoke(
-            "route", "decide", "--route-id", route_id, "--decision-id", "target-decision",
-            "--target-pr", "2879", "--decision", "accepted", "--actor", "owner",
-            "--reason", "accepted by target owner", "--database", str(self.database),
+            "route",
+            "decide",
+            "--route-id",
+            route_id,
+            "--decision-id",
+            "target-decision",
+            "--target-pr",
+            "2879",
+            "--decision",
+            "accepted",
+            "--actor",
+            "owner",
+            "--reason",
+            "accepted by target owner",
+            "--database",
+            str(self.database),
         )
         self.assertEqual(target_decision["result"]["decision"], "accepted")
         _, resolution = self.invoke(
-            "route", "resolve", "--route-id", route_id, "--resolution-id", "target-resolution",
-            "--target-pr", "2879", "--outcome", "accepted_fixed", "--actor", "owner",
-            "--proof-or-reason", "verified fix", "--database", str(self.database),
+            "route",
+            "resolve",
+            "--route-id",
+            route_id,
+            "--resolution-id",
+            "target-resolution",
+            "--target-pr",
+            "2879",
+            "--outcome",
+            "accepted_fixed",
+            "--actor",
+            "owner",
+            "--proof-or-reason",
+            "verified fix",
+            "--database",
+            str(self.database),
         )
         self.assertEqual(resolution["result"]["outcome"], "accepted_fixed")
 
@@ -1072,18 +1620,14 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "findings": [{"source_finding_key": "f-1", "title": "Finding", "payload": {"stdout": "raw"}}],
         }
         self.import_file.write_text(json.dumps(document), encoding="utf-8")
-        status, result = self.invoke(
-            "import-run", "--input", str(self.import_file), "--database", str(self.database)
-        )
+        status, result = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
         self.assertEqual(status, 2)
         self.assertIn("arbitrary payload is not accepted", result["error"])
 
         document["run"]["channel"] = "hosted"
         document["findings"] = []
         self.import_file.write_text(json.dumps(document), encoding="utf-8")
-        status, result = self.invoke(
-            "import-run", "--input", str(self.import_file), "--database", str(self.database)
-        )
+        status, result = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
         self.assertEqual(status, 2)
         self.assertIn("provider imports are not enabled", result["error"])
 
@@ -1175,9 +1719,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        status, imported = self.invoke(
-            "import-run", "--input", str(self.import_file), "--database", str(self.database)
-        )
+        status, imported = self.invoke("import-run", "--input", str(self.import_file), "--database", str(self.database))
         self.assertEqual(status, 0)
         self.assertFalse(imported["result"]["finalized"])
         _, history = self.invoke("history", "--pr", "2828", "--database", str(self.database))
@@ -1194,13 +1736,7 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "updatedAt": "2026-09-28T01:02:03Z",
             "author": {"login": "coderabbitai[bot]"},
         }
-        payload = {
-            "data": {
-                "repository": {
-                    "pullRequest": {"number": 2828, "comments": {"nodes": [checkpoint]}}
-                }
-            }
-        }
+        payload = {"data": {"repository": {"pullRequest": {"number": 2828, "comments": {"nodes": [checkpoint]}}}}}
         records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
         with (
             patch.object(cli, "_records_store", return_value=records),
@@ -1216,9 +1752,22 @@ class ReviewRecordsCliTest(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 status = cli.main(
                     [
-                        "records", "import-provider", "--pr", "2828", "--channel", "hosted",
-                        "--checkpoint-id", "123", "--actor", "operator", "--scope", "broad",
-                        "--repo", "owner/repo", "--database", str(self.database),
+                        "records",
+                        "import-provider",
+                        "--pr",
+                        "2828",
+                        "--channel",
+                        "hosted",
+                        "--checkpoint-id",
+                        "123",
+                        "--actor",
+                        "operator",
+                        "--scope",
+                        "broad",
+                        "--repo",
+                        "owner/repo",
+                        "--database",
+                        str(self.database),
                     ]
                 )
         self.assertEqual(status, 0)
@@ -1235,31 +1784,54 @@ class ReviewRecordsCliTest(unittest.TestCase):
 
     def test_provider_repair_previews_exact_checkpoints_and_applies_only_when_requested(self) -> None:
         first = {
-            "id": "comment-123", "databaseId": 123,
+            "id": "comment-123",
+            "databaseId": 123,
             "body": "Hosted: 0 found / 0 accepted / 0 routed · abcdef0",
-            "createdAt": "2026-09-28T01:02:03Z", "updatedAt": "2026-09-28T01:02:03Z",
+            "createdAt": "2026-09-28T01:02:03Z",
+            "updatedAt": "2026-09-28T01:02:03Z",
             "author": {"login": "coderabbitai[bot]"},
         }
         second = {
-            "id": "comment-124", "databaseId": 124,
+            "id": "comment-124",
+            "databaseId": 124,
             "body": "CLI: 1 found / 0 accepted / 1 routed · abcdef0",
-            "createdAt": "2026-09-28T02:02:03Z", "updatedAt": "2026-09-28T02:02:03Z",
+            "createdAt": "2026-09-28T02:02:03Z",
+            "updatedAt": "2026-09-28T02:02:03Z",
             "author": {"login": "coderabbitai[bot]"},
         }
-        payload = {"data": {"repository": {"pullRequest": {
-            "number": 2828, "comments": {"nodes": [first, second]},
-        }}}}
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "number": 2828,
+                        "comments": {"nodes": [first, second]},
+                    }
+                }
+            }
+        }
         records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
         with (
             patch.object(cli, "_records_store", return_value=records),
             patch.object(cli.github, "infer_repo", return_value="owner/repo"),
             patch.object(cli.github, "fetch_pull_request", return_value=payload) as fetch,
-            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
-                         return_value={"status": "preview", "items": []}) as repair,
+            patch.object(
+                cli.sqlite_records_repair,
+                "repair_provider_checkpoints",
+                return_value={"status": "preview", "items": []},
+            ) as repair,
         ):
             code, _ = self.invoke(
-                "repair-provider", "--pr", "2828", "--checkpoint-id", "123",
-                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+                "repair-provider",
+                "--pr",
+                "2828",
+                "--checkpoint-id",
+                "123",
+                "--actor",
+                "operator",
+                "--scope",
+                "broad",
+                "--database",
+                str(self.database),
             )
         self.assertEqual(code, 0)
         fetch.assert_called_once()
@@ -1271,12 +1843,24 @@ class ReviewRecordsCliTest(unittest.TestCase):
             patch.object(cli, "_records_store", return_value=records),
             patch.object(cli.github, "infer_repo", return_value="owner/repo"),
             patch.object(cli.github, "fetch_pull_request", return_value=payload),
-            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
-                         return_value={"status": "complete", "items": []}) as repair,
+            patch.object(
+                cli.sqlite_records_repair,
+                "repair_provider_checkpoints",
+                return_value={"status": "complete", "items": []},
+            ) as repair,
         ):
             code, _ = self.invoke(
-                "repair-provider", "--pr", "2828", "--all", "--apply",
-                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+                "repair-provider",
+                "--pr",
+                "2828",
+                "--all",
+                "--apply",
+                "--actor",
+                "operator",
+                "--scope",
+                "broad",
+                "--database",
+                str(self.database),
             )
         self.assertEqual(code, 0)
         self.assertEqual([item.comment_id for item in repair.call_args.kwargs["checkpoints"]], [123, 124])
@@ -1286,12 +1870,24 @@ class ReviewRecordsCliTest(unittest.TestCase):
             patch.object(cli, "_records_store", return_value=records),
             patch.object(cli.github, "infer_repo", return_value="owner/repo"),
             patch.object(cli.github, "fetch_pull_request", return_value=payload),
-            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
-                         return_value={"status": "preview", "items": []}) as repair,
+            patch.object(
+                cli.sqlite_records_repair,
+                "repair_provider_checkpoints",
+                return_value={"status": "preview", "items": []},
+            ) as repair,
         ):
             code, result = self.invoke(
-                "repair-provider", "--pr", "2828", "--all", "--continue-on-error",
-                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+                "repair-provider",
+                "--pr",
+                "2828",
+                "--all",
+                "--continue-on-error",
+                "--actor",
+                "operator",
+                "--scope",
+                "broad",
+                "--database",
+                str(self.database),
             )
         self.assertEqual(code, 0)
         self.assertEqual(result["result"]["status"], "preview")
@@ -1322,28 +1918,54 @@ class ReviewRecordsCliTest(unittest.TestCase):
         checkpoint = {
             "databaseId": 123,
             "body": "Hosted: 1 found / 1 accepted / 0 routed · abcdef0",
-            "createdAt": "2026-09-28T01:02:03Z", "updatedAt": "2026-09-28T01:02:03Z",
+            "createdAt": "2026-09-28T01:02:03Z",
+            "updatedAt": "2026-09-28T01:02:03Z",
             "author": {"login": "ben"},
         }
-        payload = {"data": {"repository": {"pullRequest": {
-            "number": 2828, "comments": {"nodes": [checkpoint]},
-        }}}}
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "number": 2828,
+                        "comments": {"nodes": [checkpoint]},
+                    }
+                }
+            }
+        }
         records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
         output = io.StringIO()
         with (
             patch.object(cli, "_records_store", return_value=records),
             patch.object(cli.github, "infer_repo", return_value="owner/repo"),
             patch.object(cli.github, "fetch_pull_request", return_value=payload),
-            patch.object(cli.sqlite_records_repair, "repair_provider_checkpoints",
-                         side_effect=cli.sqlite_records_repair.MissingHistoricalEvidenceError("old decisions missing")),
-            patch.object(cli.sqlite_records_repair, "archive_incomplete_checkpoint",
-                         return_value={"status": "incomplete_preview", "checkpoint_id": 123}) as gap,
+            patch.object(
+                cli.sqlite_records_repair,
+                "repair_provider_checkpoints",
+                side_effect=cli.sqlite_records_repair.MissingHistoricalEvidenceError("old decisions missing"),
+            ),
+            patch.object(
+                cli.sqlite_records_repair,
+                "archive_incomplete_checkpoint",
+                return_value={"status": "incomplete_preview", "checkpoint_id": 123},
+            ) as gap,
             contextlib.redirect_stdout(output),
         ):
-            status = cli.main([
-                "records", "repair-provider", "--pr", "2828", "--all", "--continue-on-error",
-                "--actor", "operator", "--scope", "broad", "--database", str(self.database),
-            ])
+            status = cli.main(
+                [
+                    "records",
+                    "repair-provider",
+                    "--pr",
+                    "2828",
+                    "--all",
+                    "--continue-on-error",
+                    "--actor",
+                    "operator",
+                    "--scope",
+                    "broad",
+                    "--database",
+                    str(self.database),
+                ]
+            )
         self.assertEqual(status, 2)
         result = json.loads(output.getvalue())["result"]
         self.assertEqual(result["status"], "partial")
@@ -1355,12 +1977,20 @@ class ReviewRecordsCliTest(unittest.TestCase):
         checkpoint = {
             "databaseId": 123,
             "body": "Hosted: 1 found / 1 accepted / 0 routed · abcdef0",
-            "createdAt": "2026-09-28T01:02:03Z", "updatedAt": "2026-09-28T01:02:03Z",
+            "createdAt": "2026-09-28T01:02:03Z",
+            "updatedAt": "2026-09-28T01:02:03Z",
             "author": {"login": "ben"},
         }
-        payload = {"data": {"repository": {"pullRequest": {
-            "number": 2828, "comments": {"nodes": [checkpoint]},
-        }}}}
+        payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "number": 2828,
+                        "comments": {"nodes": [checkpoint]},
+                    }
+                }
+            }
+        }
         records = type("FakeRecords", (), {"history": lambda self, pr: {"pr": pr}})()
         for error in (
             "provider origin-link API is unavailable",
@@ -1370,8 +2000,18 @@ class ReviewRecordsCliTest(unittest.TestCase):
                 with self.subTest(error=error, apply=apply):
                     output = io.StringIO()
                     arguments = [
-                        "records", "repair-provider", "--pr", "2828", "--all", "--continue-on-error",
-                        "--actor", "operator", "--scope", "broad", "--database", str(self.database),
+                        "records",
+                        "repair-provider",
+                        "--pr",
+                        "2828",
+                        "--all",
+                        "--continue-on-error",
+                        "--actor",
+                        "operator",
+                        "--scope",
+                        "broad",
+                        "--database",
+                        str(self.database),
                     ]
                     if apply:
                         arguments.append("--apply")
@@ -1396,13 +2036,24 @@ class ReviewRecordsCliTest(unittest.TestCase):
                     self.assertNotIn("gap", result["items"][0])
                     gap.assert_not_called()
 
-
     def test_provider_import_requires_explicit_schema_bootstrap_before_reading_provider_state(self) -> None:
         with patch.object(cli.github, "fetch_pull_request") as fetch:
             status, result = self.invoke(
-                "import-provider", "--pr", "2828", "--channel", "hosted", "--checkpoint-id", "123",
-                "--actor", "operator", "--scope", "broad", "--repo", "owner/repo",
-                "--database", str(self.database),
+                "import-provider",
+                "--pr",
+                "2828",
+                "--channel",
+                "hosted",
+                "--checkpoint-id",
+                "123",
+                "--actor",
+                "operator",
+                "--scope",
+                "broad",
+                "--repo",
+                "owner/repo",
+                "--database",
+                str(self.database),
             )
         self.assertEqual(status, 2)
         self.assertIn("schema is not bootstrapped", result["error"])
@@ -1666,17 +2317,20 @@ class ReviewRecordsCliTest(unittest.TestCase):
         _, resolved_old_target = self.invoke(
             "routes", "--status", "resolved", "--target-pr", "2879", "--database", str(database)
         )
-        self.assertEqual(
-            [route["route_id"] for route in resolved_old_target["result"]["routes"]], [resolved.route_id]
-        )
+        self.assertEqual([route["route_id"] for route in resolved_old_target["result"]["routes"]], [resolved.route_id])
         self.assertEqual(resolved_old_target["result"]["routes"][0]["origin"], "legacy_controller")
         _, retargeted_routes = self.invoke(
-            "routes", "--status", "all", "--target-pr", "2880", "--source-pr", "2600",
-            "--database", str(database),
+            "routes",
+            "--status",
+            "all",
+            "--target-pr",
+            "2880",
+            "--source-pr",
+            "2600",
+            "--database",
+            str(database),
         )
-        self.assertEqual(
-            [route["route_id"] for route in retargeted_routes["result"]["routes"]], [retargeted.route_id]
-        )
+        self.assertEqual([route["route_id"] for route in retargeted_routes["result"]["routes"]], [retargeted.route_id])
         self.assertEqual(retargeted_routes["result"]["routes"][0]["origin"], "legacy_controller")
 
         cutover_state_path = Path(self.temporary_directory.name) / "cutover-shadow-state"

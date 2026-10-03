@@ -8,6 +8,10 @@ refuse_symlink_path() {
   local description="$2"
   local current_path="$path"
 
+  while [[ "$current_path" == */ && "$current_path" != "/" ]]; do
+    current_path="${current_path%/}"
+  done
+
   while [[ "$current_path" != "." && "$current_path" != "/" ]]; do
     [[ ! -L "$current_path" ]] || {
       echo "refusing symlinked $description: $path" >&2
@@ -15,6 +19,39 @@ refuse_symlink_path() {
     }
     current_path="$(dirname -- "$current_path")"
   done
+}
+
+preflight_managed_file() {
+  local path="$1"
+  local description="$2"
+  local link_count
+
+  refuse_symlink_path "$path" "$description"
+  [[ -e "$path" ]] || return 0
+  [[ -f "$path" ]] || {
+    echo "refusing non-regular $description: $path" >&2
+    exit 1
+  }
+  link_count="$(stat -c '%h' -- "$path")"
+  if ((link_count > 1)); then
+    echo "refusing hard-linked $description: $path" >&2
+    exit 1
+  fi
+}
+
+preflight_managed_directory() {
+  local path="$1"
+  local description="$2"
+
+  refuse_symlink_path "$path" "$description"
+  if [[ -e "$path" && ! -d "$path" ]]; then
+    echo "refusing non-directory $description: $path" >&2
+    exit 1
+  fi
+}
+
+paths_are_same_file() {
+  [[ "$1" == "$2" ]] || { [[ -e "$1" && -e "$2" ]] && [[ "$1" -ef "$2" ]]; }
 }
 
 if [[ "${1:-}" == "--workload" ]]; then
@@ -30,10 +67,19 @@ if [[ "${1:-}" == "--workload" ]]; then
   output_key="$5"
   runtime_namespace="$6"
   workload="$7"
-  refuse_symlink_path "$ca_cert" "certificate authority source"
-  refuse_symlink_path "$ca_key" "certificate authority source"
-  refuse_symlink_path "$output_cert" "workload certificate output"
-  refuse_symlink_path "$output_key" "workload private-key output"
+  preflight_managed_file "$ca_cert" "certificate authority source"
+  preflight_managed_file "$ca_key" "certificate authority source"
+  preflight_managed_file "$output_cert" "workload certificate output"
+  preflight_managed_file "$output_key" "workload private-key output"
+  if paths_are_same_file "$ca_cert" "$ca_key" \
+    || paths_are_same_file "$output_cert" "$output_key" \
+    || paths_are_same_file "$output_cert" "$ca_cert" \
+    || paths_are_same_file "$output_cert" "$ca_key" \
+    || paths_are_same_file "$output_key" "$ca_cert" \
+    || paths_are_same_file "$output_key" "$ca_key"; then
+    echo "certificate authority sources and workload outputs must be distinct paths." >&2
+    exit 1
+  fi
   for required_file in "$ca_cert" "$ca_key"; do
     [[ -f "$required_file" ]] || {
       echo "missing certificate authority file: $required_file" >&2
@@ -105,13 +151,13 @@ else
   CERT_DIR="${CERT_DIR:-$SCRIPT_DIR}"
 fi
 
-refuse_symlink_path "$CERT_DIR" "certificate directory"
 generated_files=(
   ca.crt ca.key ca.srl client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem
   server.crt server.key server.csr dev-cert.cnf
 )
+preflight_managed_directory "$CERT_DIR" "certificate directory"
 for filename in "${generated_files[@]}"; do
-  refuse_symlink_path "$CERT_DIR/$filename" "certificate material"
+  preflight_managed_file "$CERT_DIR/$filename" "certificate material"
 done
 if [[ -d "$CERT_DIR" ]]; then
   while IFS= read -r -d '' symlink_path; do
@@ -123,10 +169,130 @@ if [[ -d "$CERT_DIR" ]]; then
   \) -print0)
 fi
 
-if [ -f "$CERT_DIR/ca.crt" ] && [ -f "$CERT_DIR/ca.key" ] \
-  && [ -f "$CERT_DIR/client.crt" ] && [ -f "$CERT_DIR/client.key" ] \
-  && [ -f "$CERT_DIR/server.crt" ] && [ -f "$CERT_DIR/server.key" ] \
-  && [ -f "$CERT_DIR/dev-cert.pem" ] && [ -f "$CERT_DIR/dev-key.pem" ] && [ -f "$CERT_DIR/dev-ca.pem" ]; then
+generic_bundle_files=(
+  ca.crt ca.key client.crt client.key dev-ca.pem dev-cert.pem dev-key.pem server.crt server.key
+)
+local_service_dns_names=(
+  localhost account-service automation-scripting-service entity-management-service
+  game-design-service game-logic-service game-session-service logging-admin-service
+  social-groups-service spring-cloud-gateway tcp-proxy-service world-management-service
+)
+
+certificate_matches_private_key() {
+  local certificate="$1"
+  local private_key="$2"
+  local certificate_public_key private_key_public_key
+
+  certificate_public_key="$(openssl x509 -in "$certificate" -pubkey -noout 2>/dev/null \
+    | openssl pkey -pubin -outform DER 2>/dev/null | openssl dgst -sha256 2>/dev/null)" || return 1
+  private_key_public_key="$(openssl pkey -in "$private_key" -pubout -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null)" || return 1
+  [[ -n "$certificate_public_key" && "$certificate_public_key" == "$private_key_public_key" ]]
+}
+
+validate_existing_leaf() {
+  local certificate="$1"
+  local private_key="$2"
+  local description="$3"
+  local purpose subject_alt_names dns_name san_pattern
+
+  if ! openssl x509 -in "$certificate" -noout >/dev/null 2>&1; then
+    echo "existing local $description certificate is malformed: $certificate" >&2
+    return 1
+  fi
+  if ! openssl x509 -in "$certificate" -checkend 0 -noout >/dev/null 2>&1; then
+    echo "existing local $description certificate is expired or expires now: $certificate" >&2
+    return 1
+  fi
+  for purpose in sslclient sslserver; do
+    if ! openssl verify -purpose "$purpose" -CAfile "$CERT_DIR/ca.crt" "$certificate" >/dev/null 2>&1; then
+      echo "existing local $description certificate does not verify for $purpose under ca.crt: $certificate" >&2
+      return 1
+    fi
+  done
+  if ! certificate_matches_private_key "$certificate" "$private_key"; then
+    echo "existing local $description certificate and private key do not match: $certificate / $private_key" >&2
+    return 1
+  fi
+  if ! subject_alt_names="$(openssl x509 -in "$certificate" -noout -ext subjectAltName 2>/dev/null)"; then
+    echo "existing local $description certificate has no readable subject alternative names: $certificate" >&2
+    return 1
+  fi
+  if [[ "$subject_alt_names" == *"URI:"* ]]; then
+    echo "existing local generic $description certificate must not contain a workload URI SAN: $certificate" >&2
+    return 1
+  fi
+  for dns_name in "${local_service_dns_names[@]}"; do
+    san_pattern="DNS:${dns_name}([,[:space:]]|$)"
+    if [[ ! "$subject_alt_names" =~ $san_pattern ]]; then
+      echo "existing local $description certificate is missing the expected DNS SAN $dns_name: $certificate" >&2
+      return 1
+    fi
+  done
+  if [[ "$subject_alt_names" != *"IP Address:127.0.0.1"* ]]; then
+    echo "existing local $description certificate is missing the expected loopback IP SAN: $certificate" >&2
+    return 1
+  fi
+}
+
+validate_existing_generic_bundle() {
+  local ca_cert="$CERT_DIR/ca.crt"
+  local ca_key="$CERT_DIR/ca.key"
+
+  if ! openssl x509 -in "$ca_cert" -noout >/dev/null 2>&1; then
+    echo "existing local certificate authority certificate is malformed: $ca_cert" >&2
+    return 1
+  fi
+  if ! openssl x509 -in "$ca_cert" -checkend 0 -noout >/dev/null 2>&1; then
+    echo "existing local certificate authority certificate is expired or expires now: $ca_cert" >&2
+    return 1
+  fi
+  if ! openssl verify -check_ss_sig -CAfile "$ca_cert" "$ca_cert" >/dev/null 2>&1; then
+    echo "existing local certificate authority is not a valid trusted self-signed certificate: $ca_cert" >&2
+    return 1
+  fi
+  if ! certificate_matches_private_key "$ca_cert" "$ca_key"; then
+    echo "existing local certificate authority certificate and private key do not match: $ca_cert / $ca_key" >&2
+    return 1
+  fi
+
+  if ! validate_existing_leaf "$CERT_DIR/server.crt" "$CERT_DIR/server.key" "server"; then
+    return 1
+  fi
+  if ! validate_existing_leaf "$CERT_DIR/client.crt" "$CERT_DIR/client.key" "client"; then
+    return 1
+  fi
+
+  if ! cmp -s "$CERT_DIR/ca.crt" "$CERT_DIR/dev-ca.pem"; then
+    echo "existing local legacy CA alias does not match ca.crt: $CERT_DIR/dev-ca.pem" >&2
+    return 1
+  fi
+  if ! cmp -s "$CERT_DIR/client.crt" "$CERT_DIR/dev-cert.pem"; then
+    echo "existing local legacy certificate alias does not match client.crt: $CERT_DIR/dev-cert.pem" >&2
+    return 1
+  fi
+  if ! cmp -s "$CERT_DIR/client.key" "$CERT_DIR/dev-key.pem"; then
+    echo "existing local legacy private-key alias does not match client.key: $CERT_DIR/dev-key.pem" >&2
+    return 1
+  fi
+}
+
+bundle_present=true
+for filename in "${generic_bundle_files[@]}"; do
+  if [[ ! -f "$CERT_DIR/$filename" ]]; then
+    bundle_present=false
+    break
+  fi
+done
+
+if [[ "$bundle_present" == "true" ]]; then
+  if ! validate_existing_generic_bundle; then
+    echo "Existing local certificate bundle is invalid in $CERT_DIR; no files were changed and the CA or issued leaves were not rotated." >&2
+    echo "Back up this local certificate set, then deliberately reissue it with:" >&2
+    printf '  %q %q\n' "$SCRIPT_DIR/clean-dev-certs.sh" "$CERT_DIR" >&2
+    printf '  %q %q\n' "$SCRIPT_DIR/generate-dev-certs.sh" "$CERT_DIR" >&2
+    exit 1
+  fi
   echo "Dev certificates already exist in $CERT_DIR"
   exit 0
 fi

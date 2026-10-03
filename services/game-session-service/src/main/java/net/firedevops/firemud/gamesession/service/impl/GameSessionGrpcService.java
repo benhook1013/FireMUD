@@ -523,7 +523,7 @@ public final class GameSessionGrpcService
       ListGameplayWorldsResponse response =
           ListGameplayWorldsResponse.newBuilder()
               .addAllWorlds(
-                  gameplayWorldCatalog.visibleWorldsFromAuthoritySnapshot().stream()
+                  gameplayWorldCatalog.publicWorldsFromAuthoritySnapshot().stream()
                       .map(
                           world ->
                               net.firedevops.firemud.gamesession.v1.GameplayWorld.newBuilder()
@@ -543,6 +543,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListGameplayWorldsResponse response =
+          ListGameplayWorldsResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ListGameplayWorlds", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     }
   }
 
@@ -555,7 +562,7 @@ public final class GameSessionGrpcService
       String worldSelector = requireWorldSelector(request.getWorldSlug());
       WorldView world =
           gameplayWorldCatalog
-              .resolveWorldFromAuthoritySnapshot(worldSelector)
+              .resolvePublicWorldFromAuthoritySnapshot(worldSelector)
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.visibleRealms(world).stream()
@@ -565,16 +572,8 @@ public final class GameSessionGrpcService
           ListGameplayRealmsResponse.newBuilder().addAllRealms(realms).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (CatalogRevisionUnavailableException ex) {
-      ListGameplayRealmsResponse response =
-          ListGameplayRealmsResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException
+        | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(
@@ -587,6 +586,13 @@ public final class GameSessionGrpcService
       ListGameplayRealmsResponse response =
           ListGameplayRealmsResponse.newBuilder()
               .setError(GrpcAppErrors.error(meterRegistry, "INVALID_ARGUMENT", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
+    } catch (Exception ex) {
+      ListGameplayRealmsResponse response =
+          ListGameplayRealmsResponse.newBuilder()
+              .setError(GrpcAppErrors.internal(meterRegistry, LOG, "ListGameplayRealms", ex))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -605,8 +611,12 @@ public final class GameSessionGrpcService
           gameplayAdmissionPointerAuthorityService
               .findPointer(tenantId, request.getWorldSlug(), request.getRealmSlug())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay realm selection"));
-      if (realm.publicProductionRealm()) {
-        gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
+      if (realm.visible()) {
+        if (realm.publicProductionRealm()) {
+          gameplayWorldCatalog.requireUniqueVisiblePublicProductionRealm(realm);
+        } else {
+          gameplayWorldCatalog.requireHealthyVisiblePrivateRealm(realm);
+        }
       }
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
@@ -633,16 +643,8 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (CatalogRevisionUnavailableException ex) {
-      GetAdmissionPointerResponse response =
-          GetAdmissionPointerResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, "ADMISSION_POINTER_UNAVAILABLE", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+    } catch (AuthorityProjectionUnavailableException
+        | GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
               .setError(
@@ -848,12 +850,12 @@ public final class GameSessionGrpcService
     if (!trimmed.matches("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")) {
       throw new IllegalArgumentException("worldSlug must be a valid selector");
     }
-    return worldSelector;
+    return trimmed;
   }
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {
     if (identity == null) {
-      throw new CatalogRevisionUnavailableException(
+      throw new AuthorityProjectionUnavailableException(
           "Authoritative gameplay " + fieldName + " is missing");
     }
     return identity.toString();
@@ -861,14 +863,14 @@ public final class GameSessionGrpcService
 
   private static long requireCatalogRevision(long catalogRevision) {
     if (catalogRevision <= 0L) {
-      throw new CatalogRevisionUnavailableException(
+      throw new AuthorityProjectionUnavailableException(
           "Authoritative gameplay catalog revision is missing or invalid");
     }
     return catalogRevision;
   }
 
-  private static final class CatalogRevisionUnavailableException extends RuntimeException {
-    private CatalogRevisionUnavailableException(String message) {
+  private static final class AuthorityProjectionUnavailableException extends RuntimeException {
+    private AuthorityProjectionUnavailableException(String message) {
       super(message);
     }
   }

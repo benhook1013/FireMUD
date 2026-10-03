@@ -208,30 +208,16 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
     try {
       requireAccountAuditCaller("CreateLogEvent");
-      AccountAuditReceiptDto receipt = logEventService.createLogEvent(toAuditRequest(request));
-      CreateLogEventResponse response = toCreateLogEventResponse(receipt);
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       responseObserver.onError(
           Status.PERMISSION_DENIED.withDescription(ex.getMessage()).asRuntimeException());
-    } catch (IllegalArgumentException ex) {
-      responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription(ex.getMessage()).asRuntimeException());
-    } catch (AuditStorageUnavailableException ex) {
-      responseObserver.onError(
-          Status.UNAVAILABLE.withDescription(ex.getMessage()).asRuntimeException());
-    } catch (DataAccessException | TransactionException ex) {
-      logger.warn("CreateLogEvent transaction is unavailable: {}", ex.getClass().getSimpleName());
-      responseObserver.onError(
-          Status.UNAVAILABLE
-              .withDescription("Account audit ingress storage is unavailable")
-              .asRuntimeException());
-    } catch (Exception ex) {
-      logger.error("CreateLogEvent failed before producing an audit receipt", ex);
-      responseObserver.onError(
-          Status.INTERNAL.withDescription("Account audit ingress failed").asRuntimeException());
+      return;
     }
+
+    responseObserver.onError(
+        Status.UNAVAILABLE
+            .withDescription("Account audit ingress is unavailable")
+            .asRuntimeException());
   }
 
   @Override
@@ -270,21 +256,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .withDescription("Account audit receipt read failed")
               .asRuntimeException());
     }
-  }
-
-  private static net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest toAuditRequest(
-      CreateLogEventRequest request) {
-    return toAuditRequest(
-        request.getScope(),
-        request.getTenantId(),
-        request.getAuditEventId(),
-        request.getProducerService(),
-        request.getEventType(),
-        request.hasOccurredAt() ? request.getOccurredAt() : null,
-        request.getSchemaVersion(),
-        request.getPayload(),
-        request.getPayloadDigestVersion(),
-        request.getPayloadDigest());
   }
 
   private static net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest toAuditRequest(
@@ -354,7 +325,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         payloadDigest);
   }
 
-  private static CreateLogEventResponse toCreateLogEventResponse(AccountAuditReceiptDto receipt) {
+  static CreateLogEventResponse toCreateLogEventResponse(AccountAuditReceiptDto receipt) {
     return CreateLogEventResponse.newBuilder()
         .setScope(toProtoScope(receipt.scope()))
         .setTenantId(receipt.tenantId() == null ? "" : receipt.tenantId().toString())
@@ -366,6 +337,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setPayloadDigest(receipt.payloadDigest())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
+        .setAuditProjectionVersion(1)
         .build();
   }
 
@@ -382,6 +354,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
         .setPayloadDigest(receipt.payloadDigest())
         .setStatus(toProtoStatus(receipt.status()))
         .setOutcome(toProtoOutcome(receipt.outcome()))
+        .setAuditProjectionVersion(1)
         .build();
   }
 

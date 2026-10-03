@@ -10,10 +10,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
@@ -77,7 +79,7 @@ import org.mockito.Mockito;
 @SuppressWarnings("unchecked")
 class SessionResumptionFlowTest {
   private static final String LOGIN_PAYLOAD = "LOGIN demo@example.com swordfish";
-  private static final String PLAY_PAYLOAD = "PLAY demo";
+  private static final String PLAY_PAYLOAD = "PLAY demo production";
   private static final String LOOK_PAYLOAD = "LOOK";
 
   private final CommandService commandService = Mockito.mock(CommandService.class);
@@ -146,11 +148,11 @@ class SessionResumptionFlowTest {
     sessionContextService.save(bootstrapShell(1L, 1L));
     sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 23L, 2L, true)));
+        List.of(world("demo", 22L, 1L, false, true), world("sandbox", 22L, 2L, true, false)));
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
-    when(pointerAuthorityService.listByRuntimeTarget(23L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 23L, 2L, 1L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L, true)));
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
+        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L, false)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -213,11 +215,11 @@ class SessionResumptionFlowTest {
                         .setId("7001")
                         .setTenantId("22")
                         .setAccountId("77")
+                        .setName("Emberline")
+                        .setLevel(12)
                         .setPlayableStateScope(
                             net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                 .PLAYABLE_STATE_SCOPE_SHARED)
-                        .setName("Emberline")
-                        .setLevel(12)
                         .build())
                 .build());
     sessionAuthenticationService =
@@ -276,6 +278,8 @@ class SessionResumptionFlowTest {
                     true,
                     List.of(),
                     List.of())));
+    DirectTextConnectScopeSessionStore connectScopeSessionStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
     playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -290,13 +294,10 @@ class SessionResumptionFlowTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            connectScopeSessionStore);
     worldsHandler =
         new WorldsCommandHandler(
-            worldCatalog,
-            entityManagementClient,
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            worldCatalog, entityManagementClient, accountClient, connectScopeSessionStore);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     interpreter =
@@ -449,7 +450,7 @@ class SessionResumptionFlowTest {
     assertTrue(interpreter.interpret("1", PLAY_PAYLOAD, false).commandResult().accepted());
     SessionContext before = sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow();
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L, true)));
 
     for (String alias : List.of("LOGOUT", "LOGOFF", "QUIT")) {
       TextCommandInterpretationResult result = interpreter.interpret("1", alias, false);
@@ -518,7 +519,8 @@ class SessionResumptionFlowTest {
         gameplayPresenceService.listConnectedByGameInstance(22L, 1L).stream()
             .anyMatch(presence -> presence.sessionId() == 1L));
     Mockito.verify(accountClient, Mockito.never())
-        .joinPublicProductionMembership(Mockito.any(), Mockito.anyString(), Mockito.anyString());
+        .joinPublicProductionMembership(
+            Mockito.any(), Mockito.anyString(), Mockito.anyString(), Mockito.any(Instant.class));
 
     TextCommandInterpretationResult lookAfterDeniedReconnect =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
@@ -565,7 +567,7 @@ class SessionResumptionFlowTest {
     assertTrue(firstLook.commandResult().accepted());
 
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L, true)));
 
     TextCommandInterpretationResult lookAfterCutover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
@@ -598,8 +600,11 @@ class SessionResumptionFlowTest {
 
     interpreter.interpret("1", command, false);
     interpreter.interpret(
-        "1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"), false);
-    sessionContextService.evictIdentity(22L, 1L, 77L);
+        "1",
+        new TextCommand(
+            TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"),
+        false);
+    sessionContextService.evictIdentity(22L, 1L, 7001L);
 
     TextCommandInterpretationResult staleRetry = interpreter.interpret("2", command, false);
 
@@ -610,7 +615,11 @@ class SessionResumptionFlowTest {
   }
 
   private static GameplayCatalogProperties.World world(
-      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+      String slug,
+      long tenantId,
+      long gameInstanceId,
+      boolean requiresCharacterSelection,
+      boolean publicProductionRealm) {
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
     world.setSlug(slug);
     world.setDisplayName(slug);
@@ -621,7 +630,7 @@ class SessionResumptionFlowTest {
     realm.setGameInstanceId(gameInstanceId);
     realm.setPointerVersion(1L);
     realm.setVisible(true);
-    realm.setPublicProductionRealm(true);
+    realm.setPublicProductionRealm(publicProductionRealm);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
     realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
@@ -630,7 +639,12 @@ class SessionResumptionFlowTest {
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
-      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean publicProductionRealm) {
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldSlug,
@@ -640,10 +654,17 @@ class SessionResumptionFlowTest {
         gameInstanceId,
         pointerVersion,
         true,
-        true,
+        publicProductionRealm,
         false,
         "SHARED",
-        "ALLOW_NEW");
+        "ALLOW_NEW",
+        1L,
+        stableUuid("realm:" + tenantId + ":" + worldSlug + ":" + realmSlug),
+        stableUuid("shared-namespace:" + tenantId));
+  }
+
+  private static UUID stableUuid(String value) {
+    return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
   }
 
   private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {

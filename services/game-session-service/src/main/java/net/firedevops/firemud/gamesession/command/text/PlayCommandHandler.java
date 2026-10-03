@@ -3,12 +3,14 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
@@ -75,6 +77,7 @@ public class PlayCommandHandler {
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final ScriptEventPublisher scriptEventPublisher;
   private final MeterRegistry meterRegistry;
+  private final Clock authorityEvaluationClock;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -93,6 +96,38 @@ public class PlayCommandHandler {
       ScriptEventPublisher scriptEventPublisher,
       MeterRegistry meterRegistry,
       DirectTextConnectScopeSessionStore connectScopeSessionStore) {
+    this(
+        sessionAuthenticationService,
+        sessionContextService,
+        sessionRoutingNormalizationService,
+        gameplayWorldCatalog,
+        gameLogicProperties,
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        firstPartyConnectContextRegistry,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher,
+        meterRegistry,
+        connectScopeSessionStore,
+        Clock.systemUTC());
+  }
+
+  PlayCommandHandler(
+      SessionAuthenticationService sessionAuthenticationService,
+      SessionContextService sessionContextService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
+      GameplayWorldCatalog gameplayWorldCatalog,
+      GameLogicProperties gameLogicProperties,
+      AccountClient accountClient,
+      EntityManagementClient entityManagementClient,
+      ModerationPolicyClient moderationPolicyClient,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
+      ScriptEventPublisher scriptEventPublisher,
+      MeterRegistry meterRegistry,
+      DirectTextConnectScopeSessionStore connectScopeSessionStore,
+      Clock authorityEvaluationClock) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -123,6 +158,9 @@ public class PlayCommandHandler {
     this.scriptEventPublisher =
         Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
+    this.authorityEvaluationClock =
+        Objects.requireNonNull(
+            authorityEvaluationClock, "authorityEvaluationClock must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
   }
@@ -193,6 +231,8 @@ public class PlayCommandHandler {
             null,
             null,
             ex);
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return admissionPointerUnavailableFailure(tenantTag, null);
       }
       WorldSelectorResolution worldSelection =
           resolvePlayWorld(context, requestedSelection.worldSelector(), currentCatalog);
@@ -232,17 +272,6 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld =
           ((WorldSelectorResolution.Selected) worldSelection).world();
       ResolvedPlaySelection selection = disambiguateSelection(requestedSelection, selectedWorld);
-      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(currentCatalog, selectedWorld)) {
-        return failure(
-            "ADMISSION_POINTER_UNAVAILABLE",
-            "Gameplay admission pointer is unavailable",
-            "error.play.authority-unavailable",
-            Map.of(),
-            tenantTag,
-            null,
-            null,
-            null);
-      }
 
       boolean numericRealmSelector =
           GameplayWorldCatalog.isOrdinalSelector(selection.explicitRealmSelector());
@@ -310,22 +339,27 @@ public class PlayCommandHandler {
             null,
             null);
       }
-      Optional<GameplayWorldCatalog.RealmView> maybeRealm =
-          realmSelection instanceof RealmSelectorResolution.Selected selected
-              ? Optional.of(selected.realm())
-              : selection.explicitRealmSelector() != null
-                  ? Optional.empty()
-                  : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
-      if (maybeRealm.isEmpty()) {
+      Optional<GameplayWorldCatalog.RealmView> maybeRealm;
+      try {
+        maybeRealm =
+            realmSelection instanceof RealmSelectorResolution.Selected selected
+                ? Optional.of(selected.realm())
+                : selection.explicitRealmSelector() != null
+                    ? Optional.empty()
+                    : selectDefaultRealm(selectedWorld, connectContextResolution.connectContext());
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
         return failure(
-            GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
-            explicitRealmSelectionMessage(selectedWorld),
-            "error.play.realm-selection-required",
-            Map.of("worldSlug", selectedWorld.slug()),
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE,
+            GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE,
+            "error.play.authority-unavailable",
+            Map.of(),
             tenantTag,
             null,
             null,
-            null);
+            ex);
+      }
+      if (maybeRealm.isEmpty()) {
+        return realmSelectionRequiredFailure(selectedWorld, tenantTag);
       }
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
@@ -363,43 +397,37 @@ public class PlayCommandHandler {
         Optional<PlayCommandHandlingResult> authorityFailure =
             validateRuntimeAdmission(context, selectedWorld, selectedRealm, selectedTenantTag, 0L);
         if (authorityFailure.isPresent()) {
-          PlayCommandHandlingResult failure = authorityFailure.orElseThrow();
-          if (!gameplayWorldCatalog.isPubliclyDiscoverable(currentCatalog, selectedWorld)
-              && isDefinitivePrivateWorldDenial(failure)) {
-            return failure(
-                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
-                GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
-                "error.play.selection-required",
-                Map.of(),
-                tenantTag,
-                null,
-                null,
-                null);
+          PlayCommandHandlingResult admissionFailure = authorityFailure.orElseThrow();
+          if (isDefinitivePrivateWorldDenial(admissionFailure)) {
+            boolean publiclyDiscoverableWorld =
+                gameplayWorldCatalog.isPubliclyDiscoverable(currentCatalog, selectedWorld);
+            if (!publiclyDiscoverableWorld
+                || !selectedRealm.visible()
+                || !selectedRealm.publicProductionRealm()) {
+              return publiclyDiscoverableWorld
+                  ? realmSelectionRequiredFailure(selectedWorld, tenantTag)
+                  : failure(
+                      GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+                      GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_MESSAGE,
+                      "error.play.selection-required",
+                      Map.of(),
+                      tenantTag,
+                      null,
+                      null,
+                      null);
+            }
           }
-          return failure;
+          return admissionFailure;
         }
+
         if (selectedRealm.requiresCharacterSelection() && !StringUtils.hasText(character)) {
-          return failure(
-              "PLAY_SELECTION_REQUIRED",
-              characterSelectionMessage(selectedWorld, selectedRealm),
-              "error.play.character-selection-required",
-              Map.of(
-                  "worldSlug",
-                  selectedWorld.slug(),
-                  "realmSlug",
-                  selectedRealm.slug(),
-                  "playUsage",
-                  playUsage(selectedWorld, selectedRealm),
-                  "charsUsage",
-                  charsUsage(selectedWorld, selectedRealm)),
-              selectedTenantTag,
-              Long.toString(selectedRealm.gameInstanceId()),
-              null,
-              null);
+          return characterSelectionRequiredFailure(selectedWorld, selectedRealm, selectedTenantTag);
         }
         ResolvedCharacter resolvedCharacter;
         try {
           resolvedCharacter = resolveCharacter(context, selectedRealm, character);
+        } catch (CharacterSelectionRequiredException ex) {
+          return characterSelectionRequiredFailure(selectedWorld, selectedRealm, selectedTenantTag);
         } catch (IllegalStateException ex) {
           return characterIdentityUnavailableFailure(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), character, ex);
@@ -432,7 +460,7 @@ public class PlayCommandHandler {
                 context.sessionId());
             return new PlayCommandHandlingResult(
                 CommandEnqueueResult.success(),
-                List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), character)),
+                List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
                 true);
           }
 
@@ -485,7 +513,7 @@ public class PlayCommandHandler {
 
           return new PlayCommandHandlingResult(
               CommandEnqueueResult.success(),
-              List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), character)),
+              List.of(successNotice(selectedWorld.slug(), selectedRealm.slug(), characterName)),
               resumedOrTookOver || freshEntryFallback);
         }
       }
@@ -624,7 +652,7 @@ public class PlayCommandHandler {
     }
 
     List<Character> roster = response.getCharactersList();
-    java.util.Set<Long> characterIds = new java.util.HashSet<>();
+    Set<Long> characterIds = new HashSet<>();
     for (Character character : roster) {
       long characterId = requireResolvedCharacterId(character.getId());
       if (!Long.toString(selectedRealm.tenantId()).equals(character.getTenantId())
@@ -647,7 +675,7 @@ public class PlayCommandHandler {
                           normalizeName(character.getName()), normalizeName(requestedCharacter)))
               .toList();
       if (matches.size() != 1) {
-        throw new IllegalStateException(
+        throw new CharacterSelectionRequiredException(
             matches.isEmpty()
                 ? "Selected character is not present in the authenticated account roster"
                 : "Selected character is ambiguous in the authenticated account roster");
@@ -655,7 +683,7 @@ public class PlayCommandHandler {
       selected = matches.getFirst();
     } else {
       if (roster.size() != 1) {
-        throw new IllegalStateException(
+        throw new CharacterSelectionRequiredException(
             "PLAY without a character requires exactly one current account character");
       }
       selected = roster.getFirst();
@@ -1127,7 +1155,8 @@ public class PlayCommandHandler {
             response.getTenantId(),
             context.accountId(),
             selectedRealm.tenantId())
-        || !isFreshAuthorityEvaluation(response.getEvaluatedAt())) {
+        || !AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock)) {
       return false;
     }
     if (!response.getMembershipExists()) {
@@ -1157,7 +1186,8 @@ public class PlayCommandHandler {
             response.getAccountId(), response.getTenantId(), context.accountId(), realm.tenantId())
         && world.slug().equals(response.getWorldSlug())
         && realm.slug().equals(response.getRealmSlug())
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
+        && AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock);
   }
 
   private boolean isValidEntitlement(
@@ -1165,20 +1195,8 @@ public class PlayCommandHandler {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
-  }
-
-  private boolean isFreshAuthorityEvaluation(String evaluatedAt) {
-    if (!StringUtils.hasText(evaluatedAt)) {
-      return false;
-    }
-    try {
-      Instant evaluated = Instant.parse(evaluatedAt);
-      Instant now = Instant.now();
-      return !evaluated.isAfter(now) && !evaluated.isBefore(now.minusSeconds(15));
-    } catch (DateTimeParseException ex) {
-      return false;
-    }
+        && AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock);
   }
 
   private boolean hasMatchingAuthorityIdentity(
@@ -1384,11 +1402,13 @@ public class PlayCommandHandler {
   private ResolvedPlaySelection disambiguateSelection(
       ResolvedPlaySelection requestedSelection, GameplayWorldCatalog.WorldView selectedWorld) {
     String secondSelector = requestedSelection.explicitRealmSelector();
-    if (!StringUtils.hasText(secondSelector)
+    if (StringUtils.hasText(requestedSelection.characterSelector())
+        || !StringUtils.hasText(secondSelector)
         || GameplayWorldCatalog.isOrdinalSelector(secondSelector)
-        || gameplayWorldCatalog.hasRealmForAdmission(selectedWorld, secondSelector)) {
+        || gameplayWorldCatalog.resolveRealm(selectedWorld, secondSelector).isPresent()) {
       return requestedSelection;
     }
+    // Character shorthand must not reveal hidden realm existence through interpretation.
     return new ResolvedPlaySelection(requestedSelection.worldSelector(), null, secondSelector);
   }
 
@@ -1416,6 +1436,19 @@ public class PlayCommandHandler {
         + " <realm> [character] or browse REALMS first.";
   }
 
+  private PlayCommandHandlingResult realmSelectionRequiredFailure(
+      GameplayWorldCatalog.WorldView selectedWorld, String tenantTag) {
+    return failure(
+        GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+        explicitRealmSelectionMessage(selectedWorld),
+        "error.play.realm-selection-required",
+        Map.of("worldSlug", selectedWorld.slug()),
+        tenantTag,
+        null,
+        null,
+        null);
+  }
+
   private String characterSelectionMessage(
       GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
     return "Selection required. Use "
@@ -1423,6 +1456,29 @@ public class PlayCommandHandler {
         + " or browse "
         + charsUsage(selectedWorld, selectedRealm)
         + " first.";
+  }
+
+  private PlayCommandHandlingResult characterSelectionRequiredFailure(
+      GameplayWorldCatalog.WorldView selectedWorld,
+      GameplayWorldCatalog.RealmView selectedRealm,
+      String tenantTag) {
+    return failure(
+        GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
+        characterSelectionMessage(selectedWorld, selectedRealm),
+        "error.play.character-selection-required",
+        Map.of(
+            "worldSlug",
+            selectedWorld.slug(),
+            "realmSlug",
+            selectedRealm.slug(),
+            "playUsage",
+            playUsage(selectedWorld, selectedRealm),
+            "charsUsage",
+            charsUsage(selectedWorld, selectedRealm)),
+        tenantTag,
+        Long.toString(selectedRealm.gameInstanceId()),
+        null,
+        null);
   }
 
   private String displaySelection(String world, String realm) {
@@ -1457,6 +1513,14 @@ public class PlayCommandHandler {
 
   private record ResolvedCharacter(long id, String name) {}
 
+  private static final class CharacterSelectionRequiredException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    private CharacterSelectionRequiredException(String message) {
+      super(message);
+    }
+  }
+
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
       String requestedWorldSlug,
@@ -1466,18 +1530,17 @@ public class PlayCommandHandler {
       long requestedCharacterId,
       String tenantTag,
       String reason) {
-    boolean selectedTenantMatchesContext = hasMatchingTenantId(tenantTag, context.tenantId());
     boolean sameGameplayIdentity =
-        selectedTenantMatchesContext
+        Long.toString(context.tenantId()).equals(tenantTag)
             && context.gameInstanceId() == requestedGameInstanceId
-            && context.characterId() == requestedCharacterId;
+            && (requestedCharacterId > 0
+                ? context.characterId() == requestedCharacterId
+                : context.hasGameplayBinding());
     boolean sameVisibleRealm =
-        selectedTenantMatchesContext
+        Long.toString(context.tenantId()).equals(tenantTag)
             && sameSlug(context.worldSlug(), requestedWorldSlug)
             && sameSlug(context.realmSlug(), requestedRealmSlug);
-    boolean sameRuntimeTarget =
-        selectedTenantMatchesContext && context.gameInstanceId() == requestedGameInstanceId;
-    if (!sameGameplayIdentity && !sameVisibleRealm && !sameRuntimeTarget) {
+    if (!sameGameplayIdentity && !sameVisibleRealm) {
       return;
     }
     meterRegistry.counter(RESUME_DENIED_METRIC, "reason", reason).increment();

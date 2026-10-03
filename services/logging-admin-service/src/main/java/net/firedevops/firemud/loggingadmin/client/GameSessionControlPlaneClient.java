@@ -87,7 +87,10 @@ public class GameSessionControlPlaneClient
   public ListAdmissionPointersResponse listAdmissionPointers(List<Long> tenantIds) {
     return stub()
         .listAdmissionPointers(
-            ListAdmissionPointersRequest.newBuilder().addAllTenantIds(tenantIds).build());
+            ListAdmissionPointersRequest.newBuilder()
+                .addAllTenantIds(
+                    tenantIds.stream().map(tenantId -> Long.toString(tenantId)).toList())
+                .build());
   }
 
   public ListAdmissionPointerAuditResponse listAdmissionPointerAudit(

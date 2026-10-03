@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -125,7 +126,9 @@ class SqliteProviderImportsTest(unittest.TestCase):
         events = [
             {
                 "type": "finding",
-                "codegenInstructions": instructions or (
+                "severity": "minor",
+                "codegenInstructions": instructions
+                or (
                     "Validate the route before using it.\n"
                     "Then replace the surrounding control flow and update the caller."
                 ),
@@ -180,6 +183,85 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertEqual(history["findings"][0]["detail"], "Use the checked value before dereferencing it.")
         self.assertEqual(len(history["decisions"]), 1)
         self.assertEqual(history["decisions"][0]["reason"], "valid source finding")
+
+    def test_hosted_import_atoms_fingerprints_and_fans_out_the_comment_decision(self) -> None:
+        first_fingerprint = "a1e39b83f15845dc073e0b8b"
+        second_fingerprint = "30d1ed367e7421c8d02b1413"
+        body = (
+            "**Check the first boundary.**\n\n"
+            "The first section has its own detail.\n\n"
+            "<!-- fingerprinting:phantom:medusa:pangolin -->\n"
+            "<!-- cr-indicator-types:potential_issue -->\n"
+            f"<!-- cr-comment:v1:{first_fingerprint} -->\n\n"
+            "---\n\n"
+            "**Check the second boundary.**\n\n"
+            "The second section has different detail.\n\n"
+            "<!-- fingerprinting:phantom:medusa:pangolin -->\n"
+            "<!-- cr-indicator-types:potential_issue -->\n"
+            f"<!-- cr-comment:v1:{second_fingerprint} -->\n"
+            "<!-- This is an auto-generated comment by CodeRabbit -->"
+        )
+        self.hosted_capture(finding_body=body)
+        checkpoint = self.checkpoint(
+            "Hosted",
+            "<!-- firemud-hosted-review: 700 -->",
+            raw=2,
+            accepted=2,
+        )
+
+        imported = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+            self.records,
+            repo=REPO,
+            pr_number=PR,
+            checkpoint=checkpoint,
+            actor="reviewer",
+            common=self.common,
+            scope="broad",
+        )
+
+        history = self.records.history(PR)
+        findings = {item["source_finding_key"]: item for item in history["findings"]}
+        self.assertEqual(imported["counts"], {"found": 2, "accepted": 2, "routed": 0})
+        self.assertEqual(
+            set(findings),
+            {
+                f"hosted-comment:701:fingerprint:{first_fingerprint}",
+                f"hosted-comment:701:fingerprint:{second_fingerprint}",
+            },
+        )
+        self.assertEqual({item["decision"] for item in history["decisions"]}, {"accepted"})
+        self.assertEqual({item["reason"] for item in history["decisions"]}, {"valid source finding"})
+        first = findings[f"hosted-comment:701:fingerprint:{first_fingerprint}"]
+        second = findings[f"hosted-comment:701:fingerprint:{second_fingerprint}"]
+        self.assertEqual(first["title"], "Check the first boundary.")
+        self.assertEqual(second["title"], "Check the second boundary.")
+        self.assertIn("first section has its own detail", first["detail"])
+        self.assertNotIn("second section", first["detail"])
+        self.assertIn("second section has different detail", second["detail"])
+        self.assertNotIn("fingerprinting:", first["detail"] + second["detail"])
+        self.assertNotIn("cr-indicator-types:", first["detail"] + second["detail"])
+        archive = json.loads(imported["archive_artifacts"]["hosted_comments"])
+        self.assertEqual(archive["comments"][0]["body"], body)
+
+    def test_hosted_import_rejects_malformed_fingerprint_markers(self) -> None:
+        self.hosted_capture(finding_body="**Finding.**\n<!-- cr-comment:v1:not-a-fingerprint -->")
+        checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
+
+        with self.assertRaisesRegex(
+            pr_review.sqlite_provider_imports.ProviderImportError,
+            "malformed cr-comment:v1 marker",
+        ):
+            pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=checkpoint,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+            )
+
+        self.assertEqual(self.records.history(PR)["runs"], [])
 
     def test_hosted_import_replay_uses_original_decision_after_accepted_rejected_corrections(self) -> None:
         self.hosted_capture()
@@ -343,6 +425,31 @@ class SqliteProviderImportsTest(unittest.TestCase):
                 scope="broad",
             )
 
+    def test_hosted_reimport_preserves_original_wrapper_projection(self) -> None:
+        body = (
+            "<details>\n<summary>Supported by static analysis</summary>\n"
+            "Script executed:\n```bash\necho analysis\n```\n</details>\n"
+            "Compare the incoming request with the existing workflow identity."
+        )
+        self.hosted_capture(finding_body=body)
+        arguments = {
+            "repo": REPO, "pr_number": PR,
+            "checkpoint": self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->"),
+            "actor": "reviewer", "common": self.common, "scope": "broad",
+        }
+        with patch("pr_review.sqlite_hosted_capture._hosted_title_choice", return_value=("<details>", False)):
+            first = pr_review.sqlite_provider_imports.import_hosted_checkpoint(self.records, **arguments)
+        self.records.archive_imported_artifacts(first["run_id"], first["archive_artifacts"])
+        before = self.records.history(PR)
+        replay = pr_review.sqlite_provider_imports.import_hosted_checkpoint(self.records, **arguments)
+        self.records.archive_imported_artifacts(replay["run_id"], replay["archive_artifacts"])
+        after = self.records.history(PR)
+        self.assertTrue(replay["idempotent_replay"])
+        self.assertEqual(before, after)
+        self.assertEqual(after["findings"][0]["title"], "<details>")
+        self.assertEqual(after["findings"][0]["display_title"],
+                         "Compare the incoming request with the existing workflow identity.")
+
     def test_hosted_import_prefers_bold_actionable_headline_over_badge(self) -> None:
         self.hosted_capture(
             finding_body=(
@@ -375,8 +482,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
     def test_hosted_import_skips_multitag_badge_when_no_bold_headline_exists(self) -> None:
         self.hosted_capture(
             finding_body=(
-                "_🎯 Functional Correctness_ | _🟡 Minor_ | _⚡ Quick win_\n"
-                "An actionable fallback explanation follows."
+                "_🎯 Functional Correctness_ | _🟡 Minor_ | _⚡ Quick win_\nAn actionable fallback explanation follows."
             )
         )
         checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->")
@@ -466,6 +572,13 @@ class SqliteProviderImportsTest(unittest.TestCase):
             scope="broad",
         )
 
+        self.records.archive_imported_artifacts(first["run_id"], first["archive_artifacts"])
+        self.records.link_provider_origin(
+            repository=REPO, source_pr=PR, channel="cli", provider_id="run:run.Importer",
+            checkpoint_id=checkpoint.comment_id,
+            checkpoint_fingerprint=pr_review.sqlite_provider_imports._checkpoint_fingerprint(checkpoint),
+            run_id=first["run_id"],
+        )
         history = self.records.history(PR)
         self.assertFalse(first["idempotent_replay"])
         self.assertTrue(replay["idempotent_replay"])
@@ -487,6 +600,15 @@ class SqliteProviderImportsTest(unittest.TestCase):
         routes = self.records.open_routes()
         self.assertEqual(len(routes), 1)
         self.assertIsNone(routes[0]["target_pr"])
+        self.assertEqual(history["findings"][0]["display_severity"], "Minor")
+        self.assertEqual(routes[0]["display_severity"], "Minor")
+        self.records.retarget_route(routes[0]["route_id"], target_pr=2879, actor="owner", reason="Assign receiver")
+        self.assertEqual(self.records.history(2879)["routes"][0]["display_severity"], "Minor")
+        with sqlite3.connect(self.records.path) as connection:
+            connection.execute("UPDATE provider_origins SET provider_id = 'run:wrong' WHERE run_id = ?",
+                               (history["runs"][0]["run_id"],))
+        self.assertNotIn("display_severity", self.records.history(PR)["findings"][0])
+        self.assertNotIn("display_severity", self.records.history(2879)["routes"][0])
 
     def test_cli_import_starts_detail_after_safety_preamble_and_locator(self) -> None:
         instructions = (
@@ -495,9 +617,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
             + ("The committed route must be validated before retrying. " * 80)
         )
         self.cli_capture(instructions=instructions)
-        checkpoint = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.Importer -->", accepted=0, routed=1
-        )
+        checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Importer -->", accepted=0, routed=1)
 
         pr_review.sqlite_provider_imports.import_cli_checkpoint(
             self.records,
@@ -515,15 +635,8 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.assertLessEqual(len(detail), 1000)
 
     def test_cli_import_uses_sanitized_shared_title_projection(self) -> None:
-        self.cli_capture(
-            instructions=(
-                "Review comment at @src/service.py:10\n"
-                "Keep\x00 the \x1b[31msafer\x1b[0m path."
-            )
-        )
-        checkpoint = self.checkpoint(
-            "CLI", "<!-- firemud-cli-run: run.Importer -->", accepted=0, routed=1
-        )
+        self.cli_capture(instructions=("Review comment at @src/service.py:10\nKeep\x00 the \x1b[31msafer\x1b[0m path."))
+        checkpoint = self.checkpoint("CLI", "<!-- firemud-cli-run: run.Importer -->", accepted=0, routed=1)
 
         pr_review.sqlite_provider_imports.import_cli_checkpoint(
             self.records,
@@ -606,8 +719,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
         response_updated = "2026-09-27T11:55:00Z"
         checkpoint_at = "2026-09-27T12:00:00Z"
         checkpoint_body = (
-            f"Hosted: 0 found / 0 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
-            "<!-- firemud-hosted-review: 202 -->"
+            f"Hosted: 0 found / 0 accepted / 0 routed · {HEAD[:12]} · 1 files\n<!-- firemud-hosted-review: 202 -->"
         )
         checkpoint_comment = {
             "databaseId": 303,
@@ -694,17 +806,24 @@ class SqliteProviderImportsTest(unittest.TestCase):
         path.parent.mkdir(parents=True)
         path.write_text(json.dumps(record), encoding="utf-8")
 
-        imported = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
-            self.records,
-            repo=REPO,
-            pr_number=PR,
-            checkpoint=checkpoint,
-            actor="reviewer",
-            common=self.common,
-            scope="broad",
-            hosted_payload=payload,
-        )
+        proof_method = pr_review.runtime.LiveEvidence._hosted_zero_reply_proof
+        with patch.object(
+            pr_review.runtime.LiveEvidence,
+            "_hosted_zero_reply_proof",
+            wraps=proof_method,
+        ) as zero_reply_proof:
+            imported = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records,
+                repo=REPO,
+                pr_number=PR,
+                checkpoint=checkpoint,
+                actor="reviewer",
+                common=self.common,
+                scope="broad",
+                hosted_payload=payload,
+            )
 
+        self.assertEqual(zero_reply_proof.call_args.args[3:5], (REPO, PR))
         self.assertEqual(imported["provider_id"], "trigger:101")
         self.assertEqual(imported["counts"], {"found": 0, "accepted": 0, "routed": 0})
         self.assertEqual(set(imported["archive_artifacts"]), {"hosted_comments", "hosted_review", "metadata"})
@@ -781,8 +900,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
 
     def test_finished_reply_without_trigger_is_not_counted(self) -> None:
         checkpoint_body = (
-            f"Hosted: 0 found / 0 accepted / 0 routed · {HEAD[:12]} · 1 files\n"
-            "<!-- firemud-hosted-review: 202 -->"
+            f"Hosted: 0 found / 0 accepted / 0 routed · {HEAD[:12]} · 1 files\n<!-- firemud-hosted-review: 202 -->"
         )
         comments, unparsed = pr_review.evidence.parse_checkpoint_comments(
             [
@@ -896,9 +1014,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
 
         history = self.records.history(PR)
         self.assertEqual([run["run_id"] for run in history["runs"]], ["seed-provider-route"])
-        self.assertEqual(
-            [finding["source_finding_key"] for finding in history["findings"]], ["provider-route"]
-        )
+        self.assertEqual([finding["source_finding_key"] for finding in history["findings"]], ["provider-route"])
 
     def test_hosted_import_preserves_summary_cardinality_with_exact_dispositions(self) -> None:
         self.hosted_capture(review_body="### Outside diff range comments (2)\nDuplicate comments (1)")
@@ -943,7 +1059,9 @@ class SqliteProviderImportsTest(unittest.TestCase):
         history = self.records.history(PR)
         self.assertEqual(result["counts"], {"found": 4, "accepted": 3, "routed": 1})
         self.assertEqual(len(history["findings"]), 4)
-        summary_findings = [item for item in history["findings"] if item["source_finding_key"].startswith("hosted-summary:")]
+        summary_findings = [
+            item for item in history["findings"] if item["source_finding_key"].startswith("hosted-summary:")
+        ]
         self.assertEqual(len(summary_findings), 3)
         self.assertTrue(all("aggregate" in item["detail"] for item in summary_findings))
         self.assertEqual(len(history["routes"]), 1)
@@ -1008,7 +1126,9 @@ class SqliteProviderImportsTest(unittest.TestCase):
         self.hosted_capture(review_body="### Duplicate comments (1)")
         checkpoint = self.checkpoint("Hosted", "<!-- firemud-hosted-review: 700 -->", raw=2, accepted=1, routed=1)
         dispositions = (
-            SummaryFindingDisposition(PR, HEAD, "review", 700, "duplicate", 1, "routed", "owned elsewhere", route_ids=("a" * 24,)),
+            SummaryFindingDisposition(
+                PR, HEAD, "review", 700, "duplicate", 1, "routed", "owned elsewhere", route_ids=("a" * 24,)
+            ),
         )
         with self.assertRaisesRegex(
             pr_review.sqlite_provider_imports.ProviderImportError,
@@ -1041,8 +1161,9 @@ class SqliteProviderImportsTest(unittest.TestCase):
         )
         unmarked = self.checkpoint("Hosted", "")
         for checkpoint in (correction_comments[0], unmarked):
-            with self.subTest(checkpoint=checkpoint), self.assertRaises(
-                pr_review.sqlite_provider_imports.ProviderImportError
+            with (
+                self.subTest(checkpoint=checkpoint),
+                self.assertRaises(pr_review.sqlite_provider_imports.ProviderImportError),
             ):
                 pr_review.sqlite_provider_imports.import_hosted_checkpoint(
                     self.records,

@@ -21,7 +21,7 @@ from pr_review.sqlite_backup import (
     restore_remote_backup,
     restore_snapshot,
 )
-from pr_review.sqlite_review_records import FindingObservation, SqliteReviewRecords
+from pr_review.sqlite_review_records import FindingObservation, ReviewRecordsError, SqliteReviewRecords
 from pr_review.sqlite_store import SqliteStateStore
 
 
@@ -57,15 +57,54 @@ class SqliteBackupTest(unittest.TestCase):
         records.record_run(
             run_id="backup-fixture-run",
             source_pr=123,
-            channel="manual",
+            channel="subagent",
+            source_head="c" * 40,
             reviewer="fixture reviewer",
             findings=[
                 FindingObservation(
                     source_finding_key="backup-fixture-finding",
                     title="Synthetic backup finding",
                     detail="Synthetic bounded review detail.",
+                    display_severity="Major",
                 )
             ],
+        )
+        records.record_source_decision(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            decision_id="backup-fixture-source-decision",
+            decision="accepted",
+            actor="fixture reviewer",
+            reason="owned by the source PR",
+        )
+        records.set_source_severity(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            severity="Trivial",
+        )
+        records.finalize_run("backup-fixture-run")
+        records.record_source_resolution(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            source_pr=123,
+            resolution_id="backup-fixture-resolution",
+            fix_sha="d" * 40,
+            actor="fixture owner",
+            proof_note="Verified fix proof for backup readback",
+            resolved_at="2026-09-29T01:02:00Z",
+        )
+        records.correct_source_resolution(
+            "backup-fixture-run",
+            "backup-fixture-finding",
+            source_pr=123,
+            resolution_id="backup-fixture-resolution",
+            expected_fix_sha="d" * 40,
+            fix_sha="e" * 40,
+            correction_id="backup-fixture-resolution-correction",
+            actor="fixture operator",
+            reason="Correct a synthetic source SHA transcription",
+            proof_note="The corrected synthetic commit identity is retained in the fixture",
+            corrected_at="2026-09-29T01:03:00Z",
         )
         records.start_attempt(
             attempt_id="run.backupfixture", source_pr=123, channel="cli",
@@ -101,6 +140,10 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertEqual(sorted(run["run_id"] for run in history["runs"]),
                          ["backup-fixture-run", "backup-provider-run"])
         self.assertEqual([finding["title"] for finding in history["findings"]], ["Synthetic backup finding"])
+        self.assertEqual(history["findings"][0]["display_severity"], "Trivial")
+        self.assertEqual(history["source_resolutions"][0]["fix_sha"], "d" * 40)
+        self.assertEqual(history["source_resolutions"][0]["effective_fix_sha"], "e" * 40)
+        self.assertEqual(len(history["source_resolution_corrections"]), 1)
         self.assertEqual([attempt["state"] for attempt in history["attempts"]], ["completed"])
         self.assertEqual(history["provider_origins"][0]["checkpoint_id"], 123456)
         self.assertEqual(history["imported_artifacts"][0]["kind"], "cli_events")
@@ -308,6 +351,17 @@ class SqliteBackupTest(unittest.TestCase):
             backup_database(self.database, **self._backup_arguments())
         self.assertEqual(self.sftp_batches, [])
 
+    def test_source_resolution_proof_is_screened_before_sftp(self) -> None:
+        with sqlite3.connect(self.database) as connection:
+            connection.execute(
+                "UPDATE source_finding_resolutions SET proof_note = ? WHERE resolution_id = ?",
+                ("Bearer synthetic-secret-value", "backup-fixture-resolution"),
+            )
+        (sftp_patch,) = self._transport_patches()
+        with sftp_patch, self.assertRaisesRegex(BackupError, "credential- or raw-secret"):
+            backup_database(self.database, **self._backup_arguments())
+        self.assertEqual(self.sftp_batches, [])
+
     def test_secret_named_json_artifact_fields_are_rejected_before_sftp(self) -> None:
         cases = (
             (
@@ -420,6 +474,52 @@ class SqliteBackupTest(unittest.TestCase):
         self.assertTrue(sqlite_backup._looks_secret("Bearer synthetic-token-value"))
         self.assertTrue(sqlite_backup._looks_secret("-----BEGIN OPENSSH PRIVATE KEY-----"))
         self.assertFalse(sqlite_backup._looks_secret("access_token_rotation_material_for_operator_storage"))
+
+    def test_restore_rejects_source_resolution_hidden_from_history(self) -> None:
+        malformed = self.root / "orphan-source-resolution.sqlite3"
+        with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:
+            connection.backup(copied)
+        with sqlite3.connect(malformed) as connection:
+            connection.execute(
+                "UPDATE source_finding_resolutions SET finding_id = ?", ("0" * 64,)
+            )
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
+        destination = self.root / "orphan-resolution-restore.sqlite3"
+
+        with self.assertRaisesRegex(BackupError, "broken SQLite foreign-key references"):
+            restore_snapshot(malformed, destination)
+        self.assertFalse(destination.exists())
+
+    def test_broken_source_resolution_correction_chain_fails_proof_history_and_restore(self) -> None:
+        malformed = self.root / "broken-source-resolution-correction.sqlite3"
+        with sqlite3.connect(self.database) as connection, sqlite3.connect(malformed) as copied:
+            connection.backup(copied)
+        with sqlite3.connect(malformed) as connection:
+            connection.execute(
+                "UPDATE source_finding_resolution_corrections SET expected_fix_sha = ?",
+                ("f" * 40,),
+            )
+            self.assertEqual(connection.execute("PRAGMA integrity_check").fetchall(), [("ok",)])
+            self.assertEqual(connection.execute("PRAGMA foreign_key_check").fetchall(), [])
+
+        records = SqliteReviewRecords(malformed)
+        self.assertEqual(
+            records.source_resolution_status(
+                "backup-fixture-run",
+                source_pr=123,
+                source_channel="manual",
+                source_head="c" * 40,
+                accepted_count=1,
+            ),
+            "pending",
+        )
+        with self.assertRaisesRegex(ReviewRecordsError, "correction history is malformed"):
+            records.history(123)
+
+        destination = self.root / "broken-correction-restore.sqlite3"
+        with self.assertRaisesRegex(BackupError, "failed FireMUD SQLite schema or logical readback validation"):
+            restore_snapshot(malformed, destination)
+        self.assertFalse(destination.exists())
 
     def test_restore_rejects_integral_database_with_invalid_controller_state(self) -> None:
         malformed = self.root / "malformed-state.sqlite3"

@@ -39,6 +39,22 @@ class CliError(RuntimeError):
     pass
 
 
+class _CliArgumentParser(argparse.ArgumentParser):
+    def parse_args(self, args=None, namespace=None):
+        parsed = super().parse_args(args, namespace)
+        if (
+            getattr(parsed, "command", None) == "decide"
+            and getattr(parsed, "decide_command", None) == "allocation"
+            and getattr(parsed, "exact_additional_completed", None) is not None
+            and (
+                getattr(parsed, "min_additional_completed", None) is not None
+                or getattr(parsed, "max_additional_completed", None) is not None
+            )
+        ):
+            self.error("--exact-additional-completed cannot be combined with min or max additional-completed bounds")
+        return parsed
+
+
 def _positive_int(value: str) -> int:
     try:
         parsed = int(value)
@@ -65,8 +81,14 @@ def _exact_sha(value: str) -> str:
     return value
 
 
+def _source_fix_sha(value: str) -> str:
+    if not re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", value):
+        raise argparse.ArgumentTypeError("must be a full 40- or 64-character commit SHA")
+    return value
+
+
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dev-tools/pr-review")
+    parser = _CliArgumentParser(prog="dev-tools/pr-review")
     parser.add_argument(
         "--acceptance-fixture",
         metavar="JSON",
@@ -214,6 +236,46 @@ def _parser() -> argparse.ArgumentParser:
     source_finalize.add_argument("--run-id", required=True)
     source_finalize.add_argument("--finalized-at")
     records_database(source_finalize)
+    source_resolve = source_subcommands.add_parser(
+        "resolve", help="record an accepted-fix proof for one exact accepted source finding"
+    )
+    source_resolve.add_argument("--source-pr", required=True, type=_positive_int)
+    source_resolve.add_argument("--run-id", required=True)
+    source_resolve.add_argument("--finding-key", required=True)
+    source_resolve.add_argument("--resolution-id", required=True)
+    source_resolve.add_argument("--fix-sha", required=True, type=_source_fix_sha)
+    source_resolve.add_argument("--actor", required=True)
+    source_resolve.add_argument("--proof-note", required=True)
+    source_resolve.add_argument("--resolved-at")
+    records_database(source_resolve)
+
+    source_correct_resolution = source_subcommands.add_parser(
+        "correct-resolution", help="append an audited correction to one exact source-fix proof SHA"
+    )
+    source_correct_resolution.add_argument("--source-pr", required=True, type=_positive_int)
+    source_correct_resolution.add_argument("--run-id", required=True)
+    source_correct_resolution.add_argument("--finding-key", required=True)
+    source_correct_resolution.add_argument("--resolution-id", required=True)
+    source_correct_resolution.add_argument("--expected-fix-sha", required=True, type=_source_fix_sha)
+    source_correct_resolution.add_argument("--fix-sha", required=True, type=_source_fix_sha)
+    source_correct_resolution.add_argument("--correction-id", required=True)
+    source_correct_resolution.add_argument("--actor", required=True)
+    source_correct_resolution.add_argument("--reason", required=True)
+    source_correct_resolution.add_argument("--proof-note", required=True)
+    source_correct_resolution.add_argument("--corrected-at")
+    records_database(source_correct_resolution)
+
+    source_set_severity = source_subcommands.add_parser(
+        "set-severity", help="set display severity on one exact recorded source finding"
+    )
+    source_set_severity.add_argument("--run-id", required=True)
+    source_set_severity.add_argument("--finding-key", required=True)
+    source_set_severity.add_argument(
+        "--severity",
+        required=True,
+        choices=("Critical", "Major", "Minor", "Trivial"),
+    )
+    records_database(source_set_severity)
 
     cli_decisions = record_commands.add_parser(
         "cli-decision", help="record one captured CLI finding decision without a TSV file"
@@ -259,7 +321,10 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         metavar="JSON",
-        help="one bounded finding object with title, decision, reason and optional detail/target_pr/key",
+        help=(
+            "one bounded finding object with title, exact Critical/Major/Minor/Trivial severity, decision, "
+            "reason and optional detail/target_pr/key"
+        ),
     )
     records_database(subagent_complete)
     subagent_fail = subagent_commands.add_parser("fail", help="record a failed pass without review credit")
@@ -302,9 +367,8 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("hosted", "cli"):
         sub = run_commands.add_parser(name)
         sub.add_argument("--expect-pr", type=_positive_int)
-        if name == "cli":
-            sub.add_argument("--allow-unreconciled", action="store_true")
-            sub.add_argument("--reason")
+        sub.add_argument("--force", action="store_true")
+        sub.add_argument("--reason")
 
     wait = commands.add_parser("wait", help="observe one existing review request without posting another")
     wait_commands = wait.add_subparsers(dest="wait_command", required=True)
@@ -359,6 +423,12 @@ def _parser() -> argparse.ArgumentParser:
         type=_positive_int,
         metavar="N",
         help="maximum additional completed attributable results after the decision",
+    )
+    allocation.add_argument(
+        "--exact-additional-completed",
+        type=_positive_int,
+        metavar="N",
+        help="require exactly N additional completed attributable results after the decision",
     )
     allocation.add_argument(
         "--fresh-taper",
@@ -734,10 +804,13 @@ def _subagent_findings(
             item = json.loads(raw, object_pairs_hook=_reject_duplicate_json_keys, parse_constant=_reject_json_constant)
         except (ValueError, TypeError) as exc:
             raise CliError(f"subagent finding {index} is not valid JSON") from exc
-        if not isinstance(item, dict) or not {"title", "decision", "reason"} <= item.keys():
-            raise CliError(f"subagent finding {index} needs title, decision, and reason")
-        if item.keys() - {"key", "title", "detail", "decision", "reason", "target_pr"}:
+        if not isinstance(item, dict) or not {"title", "severity", "decision", "reason"} <= item.keys():
+            raise CliError(f"subagent finding {index} needs title, severity, decision, and reason")
+        if item.keys() - {"key", "title", "detail", "severity", "decision", "reason", "target_pr"}:
             raise CliError(f"subagent finding {index} contains unsupported fields")
+        severity = item["severity"]
+        if not isinstance(severity, str) or severity not in {"Critical", "Major", "Minor", "Trivial"}:
+            raise CliError(f"subagent finding {index} has an invalid severity")
         decision = item["decision"]
         if decision not in {"accepted", "routed", "rejected"}:
             raise CliError(f"subagent finding {index} has an invalid decision")
@@ -746,7 +819,12 @@ def _subagent_findings(
             raise CliError(f"subagent finding {index} has an invalid target PR")
         key = item.get("key", f"subagent:{run_id}:finding:{index}")
         observations.append(
-            FindingObservation(source_finding_key=key, title=item["title"], detail=item.get("detail", ""))
+            FindingObservation(
+                source_finding_key=key,
+                title=item["title"],
+                detail=item.get("detail", ""),
+                display_severity=severity,
+            )
         )
         digest = hashlib.sha256(f"{run_id}\0{key}".encode()).hexdigest()
         decisions.append(
@@ -987,7 +1065,7 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
     if args.records_command == "source":
         if args.source_command == "finalize":
             result = store.finalize_run(args.run_id, finalized_at=args.finalized_at)
-        else:
+        elif args.source_command == "decide":
             result = store.record_source_decision(
                 args.run_id,
                 args.finding_key,
@@ -997,6 +1075,37 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 reason=args.reason,
                 target_pr=args.target_pr,
                 decided_at=args.decided_at,
+            )
+        elif args.source_command == "correct-resolution":
+            result = store.correct_source_resolution(
+                args.run_id,
+                args.finding_key,
+                source_pr=args.source_pr,
+                resolution_id=args.resolution_id,
+                expected_fix_sha=args.expected_fix_sha,
+                fix_sha=args.fix_sha,
+                correction_id=args.correction_id,
+                actor=args.actor,
+                reason=args.reason,
+                proof_note=args.proof_note,
+                corrected_at=args.corrected_at,
+            )
+        elif args.source_command == "set-severity":
+            result = store.set_source_severity(
+                args.run_id,
+                args.finding_key,
+                severity=args.severity,
+            )
+        else:
+            result = store.record_source_resolution(
+                args.run_id,
+                args.finding_key,
+                source_pr=args.source_pr,
+                resolution_id=args.resolution_id,
+                fix_sha=args.fix_sha,
+                actor=args.actor,
+                proof_note=args.proof_note,
+                resolved_at=args.resolved_at,
             )
         return {"api_version": 1, "result": result}, 0
     if args.records_command == "cli-decision":
@@ -1278,14 +1387,10 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
         }, 0
     if args.command == "run":
         if args.run_command == "hosted":
-            return controller.run_hosted(expected_pr=args.expect_pr), 0
-        if args.reason and not args.allow_unreconciled:
-            raise CliError("--reason is only valid with --allow-unreconciled")
-        if args.allow_unreconciled and not args.reason:
-            raise CliError("--allow-unreconciled requires --reason")
+            return controller.run_hosted(expected_pr=args.expect_pr, force=args.force, reason=args.reason), 0
         result = controller.run_cli(
             expected_pr=args.expect_pr,
-            allow_unreconciled=args.allow_unreconciled,
+            force=args.force,
             reason=args.reason,
         )
         return result, int(getattr(result, "exit_status", 0))
@@ -1579,6 +1684,7 @@ def _dispatch(args: argparse.Namespace) -> tuple[Any, int]:
                 checkpoint=args.checkpoint,
                 min_additional_completed=args.min_additional_completed,
                 max_additional_completed=args.max_additional_completed,
+                exact_additional_completed=args.exact_additional_completed,
                 fresh_taper=args.fresh_taper,
             ), 0
         if args.decide_command == "stop":

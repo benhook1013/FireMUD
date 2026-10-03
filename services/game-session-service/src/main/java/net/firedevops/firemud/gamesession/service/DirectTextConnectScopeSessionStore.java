@@ -158,27 +158,25 @@ public final class DirectTextConnectScopeSessionStore {
             .filter(scope -> scope.expiresAt().toEpochMilli() > nowMillis)
             .map(scope -> storeScope(scope, nowMillis))
             .toList();
-    long expiresAt =
-        storedScopes.stream()
-            .mapToLong(StoredScopedRealm::expiresAtEpochMs)
-            .max()
-            .orElse(now.plus(WORLDS_SNAPSHOT_TTL).toEpochMilli());
     String key = worldIdentityKey(tenantId, worldSlug);
     mutate(
         caller.sessionId(),
         nowMillis,
         current -> {
           LobbyRecord record = current == null ? LobbyRecord.empty(caller.sessionId()) : current;
+          if (record.sessionId() != caller.sessionId()) {
+            throw new ConflictingIdentityException("lobby record transport session did not match");
+          }
+          if (record.accountId() > 0L && record.accountId() != caller.accountId()) {
+            record = LobbyRecord.empty(caller.sessionId());
+          }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
           byWorld.remove(key);
           if (!storedScopes.isEmpty()) {
             byWorld.put(key, storedScopes);
           }
           Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
-          realmsByWorld.put(
-              key,
-              new StoredRealmsSnapshot(
-                  tenantId, worldSlug, requestedSelector, "", expiresAt, List.of()));
+          realmsByWorld.remove(key);
           return new LobbyRecord(
               caller.sessionId(),
               caller.accountId(),
@@ -186,7 +184,6 @@ public final class DirectTextConnectScopeSessionStore {
               record.catalogFingerprint(),
               record.ordinalTargets(),
               byWorld,
-              record.worldBySelector(),
               realmsByWorld);
         });
   }
@@ -252,11 +249,9 @@ public final class DirectTextConnectScopeSessionStore {
             record = LobbyRecord.empty(caller.sessionId());
           }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
-          Map<String, String> worldBySelector = new HashMap<>(record.worldBySelector());
           Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
           byWorld.remove(worldKey);
           realmsByWorld.remove(worldKey);
-          worldBySelector.entrySet().removeIf(entry -> worldKey.equals(entry.getValue()));
           if (!storedScopes.isEmpty()) {
             byWorld.put(worldKey, storedScopes);
           }
@@ -278,7 +273,6 @@ public final class DirectTextConnectScopeSessionStore {
               record.catalogFingerprint(),
               record.ordinalTargets(),
               byWorld,
-              worldBySelector,
               realmsByWorld);
         });
   }
@@ -371,8 +365,6 @@ public final class DirectTextConnectScopeSessionStore {
           Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
           byWorld.remove(worldKey);
           realmsByWorld.remove(worldKey);
-          Map<String, String> worldBySelector = new HashMap<>(record.worldBySelector());
-          worldBySelector.entrySet().removeIf(entry -> worldKey.equals(entry.getValue()));
           return new LobbyRecord(
               caller.sessionId(),
               caller.accountId(),
@@ -380,7 +372,6 @@ public final class DirectTextConnectScopeSessionStore {
               record.catalogFingerprint(),
               record.ordinalTargets(),
               byWorld,
-              worldBySelector,
               realmsByWorld);
         });
   }
@@ -494,7 +485,7 @@ public final class DirectTextConnectScopeSessionStore {
                     .toList();
             Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(current.scopesByWorld());
             byWorld.put(worldKey, updatedScopes);
-            current = current.withScopes(byWorld, current.worldBySelector());
+            current = current.withScopes(byWorld);
           }
           selected[0] = new JoinScope(fromStoredScope(boundScope), requestId);
           return current;
@@ -594,13 +585,6 @@ public final class DirectTextConnectScopeSessionStore {
                 realmsByWorld.put(world, snapshot);
               }
             });
-    Map<String, String> worldBySelector = new HashMap<>(record.worldBySelector());
-    worldBySelector
-        .entrySet()
-        .removeIf(
-            entry ->
-                !scopesByWorld.containsKey(entry.getValue())
-                    && !realmsByWorld.containsKey(entry.getValue()));
     if (worldsExpiry == 0L && scopesByWorld.isEmpty() && realmsByWorld.isEmpty()) {
       return null;
     }
@@ -611,7 +595,6 @@ public final class DirectTextConnectScopeSessionStore {
         fingerprint,
         ordinalTargets,
         scopesByWorld,
-        worldBySelector,
         realmsByWorld);
   }
 
@@ -1098,7 +1081,6 @@ public final class DirectTextConnectScopeSessionStore {
       String catalogFingerprint,
       List<WorldOrdinalTarget> ordinalTargets,
       Map<String, List<StoredScopedRealm>> scopesByWorld,
-      Map<String, String> worldBySelector,
       Map<String, StoredRealmsSnapshot> realmsByWorld) {
     private LobbyRecord {
       ordinalTargets = ordinalTargets == null ? List.of() : List.copyOf(ordinalTargets);
@@ -1107,12 +1089,11 @@ public final class DirectTextConnectScopeSessionStore {
         scopesByWorld.forEach((slug, scopes) -> scopesCopy.put(slug, List.copyOf(scopes)));
       }
       scopesByWorld = Map.copyOf(scopesCopy);
-      worldBySelector = worldBySelector == null ? Map.of() : Map.copyOf(worldBySelector);
       realmsByWorld = realmsByWorld == null ? Map.of() : Map.copyOf(realmsByWorld);
     }
 
     private static LobbyRecord empty(long sessionId) {
-      return new LobbyRecord(sessionId, 0L, 0L, null, List.of(), Map.of(), Map.of(), Map.of());
+      return new LobbyRecord(sessionId, 0L, 0L, null, List.of(), Map.of(), Map.of());
     }
 
     private LobbyRecord normalized() {
@@ -1126,7 +1107,6 @@ public final class DirectTextConnectScopeSessionStore {
           catalogFingerprint,
           ordinalTargets,
           scopesByWorld,
-          worldBySelector,
           realmsByWorld);
     }
 
@@ -1142,7 +1122,6 @@ public final class DirectTextConnectScopeSessionStore {
           fingerprint,
           targets,
           scopesByWorld,
-          worldBySelector,
           realmsByWorld);
     }
 
@@ -1154,7 +1133,6 @@ public final class DirectTextConnectScopeSessionStore {
           other.catalogFingerprint(),
           other.ordinalTargets(),
           scopesByWorld,
-          worldBySelector,
           realmsByWorld);
     }
 
@@ -1166,12 +1144,10 @@ public final class DirectTextConnectScopeSessionStore {
           catalogFingerprint,
           ordinalTargets,
           scopesByWorld,
-          worldBySelector,
           realmsByWorld);
     }
 
-    private LobbyRecord withScopes(
-        Map<String, List<StoredScopedRealm>> updatedScopes, Map<String, String> updatedSelectors) {
+    private LobbyRecord withScopes(Map<String, List<StoredScopedRealm>> updatedScopes) {
       return new LobbyRecord(
           sessionId,
           accountId,
@@ -1179,7 +1155,6 @@ public final class DirectTextConnectScopeSessionStore {
           catalogFingerprint,
           ordinalTargets,
           updatedScopes,
-          updatedSelectors,
           realmsByWorld);
     }
   }

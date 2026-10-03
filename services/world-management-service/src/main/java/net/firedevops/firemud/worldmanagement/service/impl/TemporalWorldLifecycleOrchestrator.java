@@ -5,6 +5,7 @@ import io.temporal.client.WorkflowExecutionAlreadyStarted;
 import io.temporal.client.WorkflowOptions;
 import io.temporal.client.WorkflowStub;
 import java.time.Duration;
+import java.util.function.Predicate;
 import net.firedevops.firemud.common.temporal.FiremudWorkflowIds;
 import net.firedevops.firemud.common.temporal.TemporalTaskQueueResolver;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
@@ -68,7 +69,7 @@ public class TemporalWorldLifecycleOrchestrator {
     TemporalWorldLifecycleWorkflow workflow = existingWorkflowStub(tenantId, gameInstanceId);
     workflow.terminate(expectedLifecycleEpoch, terminationRequestId, reason);
     return waitForSnapshot(
-        workflow, tenantId, gameInstanceId, "TERMINATED", expectedLifecycleEpoch + 2L);
+        workflow, tenantId, gameInstanceId, snapshot -> "TERMINATED".equals(snapshot.status()));
   }
 
   public WorldInstanceLifecycleSnapshotDto getWorldInstanceLifecycle(
@@ -97,12 +98,27 @@ public class TemporalWorldLifecycleOrchestrator {
       long gameInstanceId,
       String expectedStatus,
       long minimumLifecycleEpoch) {
+    return waitForSnapshot(
+        workflow,
+        tenantId,
+        gameInstanceId,
+        snapshot ->
+            expectedStatus.equals(snapshot.status())
+                && snapshot.lifecycleEpoch() >= minimumLifecycleEpoch);
+  }
+
+  private WorldInstanceLifecycleSnapshotDto waitForSnapshot(
+      TemporalWorldLifecycleWorkflow workflow,
+      long tenantId,
+      long gameInstanceId,
+      Predicate<WorldInstanceLifecycleSnapshotDto> matchesSnapshot) {
     long deadline = System.nanoTime() + QUERY_WAIT_TIMEOUT.toNanos();
     while (System.nanoTime() < deadline) {
       WorldInstanceLifecycleSnapshotDto snapshot = workflow.currentSnapshot();
       if (snapshot != null
-          && expectedStatus.equals(snapshot.status())
-          && snapshot.lifecycleEpoch() >= minimumLifecycleEpoch) {
+          && snapshot.tenantId() == tenantId
+          && snapshot.gameInstanceId() == gameInstanceId
+          && matchesSnapshot.test(snapshot)) {
         return metadataResolver.attach(snapshot);
       }
       sleepQuietly();
