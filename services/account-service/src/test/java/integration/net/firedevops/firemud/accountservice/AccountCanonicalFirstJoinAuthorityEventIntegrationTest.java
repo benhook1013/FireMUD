@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -295,15 +296,33 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
         deniedPolicy, deniedPolicy.scope(), deniedPolicy.requestId(), deniedPolicy.callerBinding());
 
     JoinFixture changedDigest = freshFixture(true, 14L);
-    dsl.execute(
-        "UPDATE account_join_operations SET request_digest = ? WHERE request_id = ?",
-        "sha256:" + "d".repeat(64),
-        changedDigest.requestId());
-    assertDeniedWithoutCommittedMembership(
-        changedDigest,
-        changedDigest.scope(),
-        changedDigest.requestId(),
-        changedDigest.callerBinding());
+    MapSnapshot beforeChangedDigest = pairSnapshot(changedDigest);
+    String changedDigestStreamKey =
+        membershipStreamKey(changedDigest.account().accountUuid(), changedDigest.tenantUuid());
+    String originalDigest =
+        AccountJoinDigest.requestV2(
+            changedDigest.scope(),
+            changedDigest.callerBinding(),
+            AccountJoinDigest.EntitlementAvailabilityV2.AVAILABLE,
+            true,
+            14L);
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE account_join_operations SET request_digest = ? WHERE request_id = ?",
+                    "sha256:" + "d".repeat(64),
+                    changedDigest.requestId()))
+        .hasMessageContaining("Canonical JOIN available policy evidence is immutable");
+    assertThat(
+            dsl.resultQuery(
+                    "SELECT request_digest FROM account_join_operations WHERE request_id = ?",
+                    changedDigest.requestId())
+                .fetchOne(0, String.class))
+        .isEqualTo(originalDigest);
+    assertThat(pairSnapshot(changedDigest)).isEqualTo(beforeChangedDigest);
+    assertThat(countMemberships(changedDigest)).isZero();
+    assertThat(countEvents(changedDigestStreamKey)).isZero();
+    assertThat(countStreams(changedDigestStreamKey)).isZero();
   }
 
   @Test
@@ -315,14 +334,18 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
         AopTestUtils.getUltimateTargetObject(authorityOutboxSpy);
     doAnswer(
             invocation -> {
-              Event exact = (Event) invocation.callRealMethod();
-              return new Event(
-                  exact.outboxStreamKey(),
-                  exact.requestId(),
-                  exact.outboxSequence(),
-                  exact.eventId(),
-                  "sha256:" + "e".repeat(64),
-                  exact.payload());
+              Optional<?> exact = (Optional<?>) invocation.callRealMethod();
+              return exact.map(
+                  value -> {
+                    Event event = (Event) value;
+                    return new Event(
+                        event.outboxStreamKey(),
+                        event.requestId(),
+                        event.outboxSequence(),
+                        event.eventId(),
+                        "sha256:" + "e".repeat(64),
+                        event.payload());
+                  });
             })
         .when(authorityOutboxTarget)
         .findEvent(eq(streamKey), eq(fixture.requestId()));
