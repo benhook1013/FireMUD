@@ -113,7 +113,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   @Override
   public void removeBySessionId(long sessionId) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    GameplayPresence existing = (GameplayPresence) valueOps.get(presenceKey(sessionId));
+    GameplayPresence existing = readRetainedPresenceForMutation(valueOps, presenceKey(sessionId));
     redisTemplate.delete(presenceKey(sessionId));
     if (existing != null) {
       String gameInstanceKey = gameInstanceKey(existing.tenantId(), existing.gameInstanceId());
@@ -129,7 +129,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   @Override
   public void setExplicitAfk(long sessionId, boolean explicitAfk) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    GameplayPresence existing = (GameplayPresence) valueOps.get(presenceKey(sessionId));
+    GameplayPresence existing = readRetainedPresenceForMutation(valueOps, presenceKey(sessionId));
     if (existing == null) {
       return;
     }
@@ -161,7 +161,7 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
   @Override
   public void recordCommandActivity(long sessionId, boolean meaningfulGameplayActivity) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    GameplayPresence existing = (GameplayPresence) valueOps.get(presenceKey(sessionId));
+    GameplayPresence existing = readRetainedPresenceForMutation(valueOps, presenceKey(sessionId));
     if (existing == null) {
       return;
     }
@@ -299,6 +299,16 @@ public final class RedisGameplayPresenceService implements GameplayPresenceServi
 
   private String presenceKey(long sessionId) {
     return String.format(PRESENCE_KEY_TEMPLATE, sessionId);
+  }
+
+  private GameplayPresence readRetainedPresenceForMutation(
+      ValueOperations<String, Object> valueOps, String presenceKey) {
+    try {
+      return (GameplayPresence) valueOps.get(presenceKey);
+    } catch (SerializationException | ClassCastException ex) {
+      throw new IllegalStateException(
+          "Retained gameplay presence is unreadable or incompatible; mutation aborted", ex);
+    }
   }
 
   private String presenceKey(String sessionId) {

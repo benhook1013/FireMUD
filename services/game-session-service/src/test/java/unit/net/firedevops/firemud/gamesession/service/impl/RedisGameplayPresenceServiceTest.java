@@ -2,7 +2,10 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -411,9 +414,72 @@ class RedisGameplayPresenceServiceTest {
 
     assertEquals(Map.of(), service.listConnectedByAccountIds(22L, List.of("102")));
     assertEquals(java.util.Optional.empty(), service.findConnectedBySessionId(3L));
-    assertThrows(SerializationException.class, () -> service.removeBySessionId(3L));
+    assertThrows(IllegalStateException.class, () -> service.removeBySessionId(3L));
 
     verify(setOperations, Mockito.never()).remove(accountIndexKey, "3");
     verify(redisTemplate, Mockito.never()).delete(presenceKey);
+    verifyNoPresenceMutation();
+  }
+
+  @Test
+  void removeBySessionIdRejectsUnreadableAndWrongTypePresenceWithoutMutation() {
+    String presenceKey = "gameplaypresence:session:3";
+    when(valueOperations.get(presenceKey))
+        .thenThrow(new SerializationException("old GameplayPresence record shape"))
+        .thenReturn("incompatible retained presence");
+
+    assertThrows(IllegalStateException.class, () -> service.removeBySessionId(3L));
+    assertThrows(IllegalStateException.class, () -> service.removeBySessionId(3L));
+
+    verifyNoPresenceMutation();
+  }
+
+  @Test
+  void setExplicitAfkRejectsUnreadableAndWrongTypePresenceWithoutMutation() {
+    String presenceKey = "gameplaypresence:session:3";
+    when(valueOperations.get(presenceKey))
+        .thenThrow(new SerializationException("old GameplayPresence record shape"))
+        .thenReturn("incompatible retained presence");
+
+    assertThrows(IllegalStateException.class, () -> service.setExplicitAfk(3L, true));
+    assertThrows(IllegalStateException.class, () -> service.setExplicitAfk(3L, true));
+
+    verifyNoPresenceMutation();
+  }
+
+  @Test
+  void recordCommandActivityRejectsUnreadableAndWrongTypePresenceWithoutMutation() {
+    String presenceKey = "gameplaypresence:session:3";
+    when(valueOperations.get(presenceKey))
+        .thenThrow(new SerializationException("old GameplayPresence record shape"))
+        .thenReturn("incompatible retained presence");
+
+    assertThrows(IllegalStateException.class, () -> service.recordCommandActivity(3L, true));
+    assertThrows(IllegalStateException.class, () -> service.recordCommandActivity(3L, true));
+
+    verifyNoPresenceMutation();
+  }
+
+  @Test
+  void registerConnectedRejectsUnreadableAndWrongTypePresenceBeforeWriting() {
+    String presenceKey = "gameplaypresence:session:3";
+    when(valueOperations.get(presenceKey))
+        .thenThrow(new SerializationException("old GameplayPresence record shape"))
+        .thenReturn("incompatible retained presence");
+    SessionContext context =
+        new SessionContext(3L, 22L, "102", "player@example.com", 202L, "Ben", 7L, "R-1", null);
+
+    assertThrows(IllegalStateException.class, () -> service.registerConnected(context));
+    assertThrows(IllegalStateException.class, () -> service.registerConnected(context));
+
+    verifyNoPresenceMutation();
+  }
+
+  private void verifyNoPresenceMutation() {
+    verify(redisTemplate, never()).delete(anyString());
+    verify(redisTemplate, never()).expire(anyString(), any(Duration.class));
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+    verify(setOperations, never()).add(anyString(), any());
+    verify(setOperations, never()).remove(anyString(), any());
   }
 }
