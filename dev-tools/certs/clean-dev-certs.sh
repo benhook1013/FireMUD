@@ -12,10 +12,25 @@ else
   CERT_DIR="${CERT_DIR:-$SCRIPT_DIR}"
 fi
 
-if [[ -L "$CERT_DIR" ]]; then
-  echo "Refusing symlink certificate directory; preserving it: $CERT_DIR" >&2
-  exit 1
-fi
+refuse_symlink_path() {
+  local path="$1"
+  local description="$2"
+  local current_path="$path"
+
+  while [[ "$current_path" == */ && "$current_path" != "/" ]]; do
+    current_path="${current_path%/}"
+  done
+
+  while [[ "$current_path" != "." && "$current_path" != "/" ]]; do
+    [[ ! -L "$current_path" ]] || {
+      echo "Refusing symlinked $description; preserving it: $path" >&2
+      exit 1
+    }
+    current_path="$(dirname -- "$current_path")"
+  done
+}
+
+refuse_symlink_path "$CERT_DIR" "certificate directory"
 if [ ! -d "$CERT_DIR" ]; then
   echo "No certificate directory at $CERT_DIR"
   exit 0

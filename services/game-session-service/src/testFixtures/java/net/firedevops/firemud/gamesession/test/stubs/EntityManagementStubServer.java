@@ -4,8 +4,10 @@ import io.grpc.Server;
 import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
+import net.firedevops.firemud.entitymanagement.v1.Character;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
@@ -26,6 +28,7 @@ import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryRequest
 import net.firedevops.firemud.entitymanagement.v1.ListRoomGroundInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomRequest;
 import net.firedevops.firemud.entitymanagement.v1.PickupItemFromRoomResponse;
+import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerRequest;
 import net.firedevops.firemud.entitymanagement.v1.PutItemIntoContainerResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryActorStateRequest;
@@ -59,6 +62,8 @@ public final class EntityManagementStubServer implements AutoCloseable {
 
   private final Server server;
   private final int port;
+  private final AtomicReference<List<Character>> characters =
+      new AtomicReference<>(defaultCharacters());
   private final AtomicReference<ListRoomEntitiesResponse> roomEntities =
       new AtomicReference<>(LookTestFixtures.sampleEntities());
   private final AtomicReference<ListCharactersByAccountRequest> lastListCharactersByAccountRequest =
@@ -97,10 +102,11 @@ public final class EntityManagementStubServer implements AutoCloseable {
                       StreamObserver<FindCharacterByNameResponse> responseObserver) {
                     FindCharacterByNameResponse.Builder builder =
                         FindCharacterByNameResponse.newBuilder();
-                    var character = ChatTestFixtures.characterByName(request.getName());
-                    if (!character.equals(character.getDefaultInstanceForType())) {
-                      builder.setCharacter(character);
-                    }
+                    characters.get().stream()
+                        .filter(
+                            character -> character.getName().equalsIgnoreCase(request.getName()))
+                        .findFirst()
+                        .ifPresent(builder::setCharacter);
                     responseObserver.onNext(builder.build());
                     responseObserver.onCompleted();
                   }
@@ -112,21 +118,23 @@ public final class EntityManagementStubServer implements AutoCloseable {
                     lastListCharactersByAccountRequest.set(request);
                     ListCharactersByAccountResponse.Builder response =
                         ListCharactersByAccountResponse.newBuilder();
-                    if ("1".equals(request.getTenantId())
-                        && "1".equals(request.getGameInstanceId())
-                        && request.getPlayableStateScope()
-                            == net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                                .PLAYABLE_STATE_SCOPE_SHARED) {
-                      net.firedevops.firemud.entitymanagement.v1.Character character =
-                          characterForAccount(request.getAccountId());
-                      if (character != null) {
-                        response.addCharacters(
-                            character.toBuilder()
-                                .setPlayableStateScope(
-                                    net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
-                                        .PLAYABLE_STATE_SCOPE_SHARED)
-                                .build());
-                      }
+                    if (request.getPlayableStateScope()
+                        == PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED) {
+                      response.addAllCharacters(
+                          characters.get().stream()
+                              .filter(
+                                  character ->
+                                      request.getTenantId().equals(character.getTenantId())
+                                          && request
+                                              .getAccountId()
+                                              .equals(character.getAccountId()))
+                              .map(
+                                  character ->
+                                      character.toBuilder()
+                                          .setPlayableStateScope(
+                                              PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+                                          .build())
+                              .toList());
                     }
                     responseObserver.onNext(response.build());
                     responseObserver.onCompleted();
@@ -241,6 +249,14 @@ public final class EntityManagementStubServer implements AutoCloseable {
     roomEntities.set(LookTestFixtures.sampleEntities());
   }
 
+  public void setCharacters(List<Character> characters) {
+    this.characters.set(List.copyOf(characters));
+  }
+
+  public void resetCharacters() {
+    characters.set(defaultCharacters());
+  }
+
   public void setActorState(QueryActorStateResponse response) {
     actorState.set(response == null ? QueryActorStateResponse.getDefaultInstance() : response);
   }
@@ -257,33 +273,10 @@ public final class EntityManagementStubServer implements AutoCloseable {
     return Optional.ofNullable(lastListCharactersByAccountRequest.get());
   }
 
-  private net.firedevops.firemud.entitymanagement.v1.Character characterForAccount(
-      String accountId) {
-    net.firedevops.firemud.entitymanagement.v1.Character fixedCharacter =
-        switch (accountId) {
-          case "7" -> ChatTestFixtures.characterByName("Emberline");
-          case "8" -> ChatTestFixtures.characterByName("Sora");
-          case "9" -> ChatTestFixtures.characterByName("Nyx");
-          default -> null;
-        };
-    if (fixedCharacter != null) {
-      return fixedCharacter;
-    }
-    try {
-      long numericAccountId = Long.parseLong(accountId);
-      if (numericAccountId >= 7_001L && numericAccountId <= 7_010L) {
-        long playerNumber = numericAccountId - 7_000L;
-        return net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-            .setId(Long.toString(numericAccountId))
-            .setTenantId("1")
-            .setAccountId(Long.toString(numericAccountId))
-            .setName("player-" + playerNumber)
-            .build();
-      }
-    } catch (NumberFormatException ignored) {
-      // Non-numeric account identities are not persisted actors in this fixture.
-    }
-    return null;
+  private static List<Character> defaultCharacters() {
+    return List.of("Emberline", "Sora", "Nyx").stream()
+        .map(ChatTestFixtures::characterByName)
+        .toList();
   }
 
   public synchronized void resetItemState() {

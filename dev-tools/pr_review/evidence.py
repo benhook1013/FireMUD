@@ -12,7 +12,10 @@ import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .sqlite_review_records import SqliteReviewRecords
 
 CHECKPOINT_HEADING = re.compile(
     r"^(?P<bold>\*\*)?(?P<correction>Correction — )?(?P<type>Hosted|CLI): "
@@ -36,6 +39,7 @@ SCOPE_CHANGE = re.compile(r"^\*\*Review scope changed:\*\* (?P<description>.+)$"
 SCOPE_MARKER = "<!-- firemud-review-scope-change -->"
 RUN_ID = re.compile(r"^run\.[A-Za-z0-9]{1,32}$")
 EXACT_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
+MAX_CAPTURE_FINDINGS = 200
 SUMMARY_MARKERS = {
     "outside_diff": ("Outside diff range comments", "Outside the diff"),
     "duplicate": ("Duplicate comments",),
@@ -163,6 +167,35 @@ class CaptureUnavailable(EvidenceError):
 
 class CaptureInvalid(EvidenceError):
     """A linked private capture is present but cannot be trusted."""
+
+
+class _SqlCaptureInvalid(CaptureInvalid):
+    """A modern SQLite association is incomplete or conflicts with its source."""
+
+
+class _SqlCaptureNotCounted(CaptureInvalid):
+    """A native SQL attempt is in progress or failed and is not countable evidence."""
+
+
+_UNRESOLVED_RECORDS = object()
+
+
+def resolve_cli_capture_context(
+    common: Path | None = None,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> tuple[Path, SqliteReviewRecords | None]:
+    """Resolve shared repository and SQLite record context once for CLI reads."""
+
+    from .sqlite_review_records import SqliteReviewRecords as RecordsStore
+    from .state import sqlite_state_path, state_path
+
+    selected_common = common if common is not None else git_common_dir()
+    if records is _UNRESOLVED_RECORDS:
+        selected_state = state_path(selected_common)
+        selected_records = RecordsStore(sqlite_state_path(selected_state)) if selected_state.is_dir() else None
+    else:
+        selected_records = records
+    return selected_common, selected_records
 
 
 def _summary_marker_context(line: str, marker: str) -> tuple[bool, str] | None:
@@ -514,28 +547,45 @@ def _read_metadata(path: Path) -> dict[str, str]:
 
 
 def _parse_capture_stdout(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    stdout = _read_capture_text(path, "stdout")
+    try:
+        return parse_capture_events(stdout)
+    except EvidenceError as exc:
+        raise CaptureInvalid(str(exc)) from exc
+
+
+def parse_capture_events(value: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Parse and validate the newline-delimited events from a successful CLI capture."""
+
     findings: list[dict[str, Any]] = []
     completes: list[dict[str, Any]] = []
-    lines = _read_capture_text(path, "stdout").splitlines()
-    for number, line in enumerate(lines, 1):
+    for number, line in enumerate(_capture_lines(value), 1):
         if not line.strip():
             continue
         try:
             event = json.loads(line)
         except json.JSONDecodeError as exc:
-            raise CaptureInvalid(f"linked capture stdout has invalid JSON at line {number}") from exc
+            raise EvidenceError(f"linked capture stdout has invalid JSON at line {number}") from exc
         if not isinstance(event, dict):
-            raise CaptureInvalid(f"linked capture stdout has a non-object event at line {number}")
+            raise EvidenceError(f"linked capture stdout has a non-object event at line {number}")
         if event.get("type") == "finding":
             findings.append(event)
         elif event.get("type") == "complete":
             completes.append(event)
     if len(completes) != 1 or completes[0].get("status") != "review_completed":
-        raise CaptureInvalid("linked capture has no unique successful completion")
+        raise EvidenceError("linked capture has no unique successful completion")
     complete = completes[0]
     if complete.get("findings") != len(findings) or not isinstance(complete.get("reviewedFiles"), list):
-        raise CaptureInvalid("linked capture completion does not match findings/files")
+        raise EvidenceError("linked capture completion does not match findings/files")
+    if len(findings) > MAX_CAPTURE_FINDINGS:
+        raise EvidenceError("linked capture contains too many findings")
     return findings, complete
+
+
+def _capture_lines(value: str) -> list[str]:
+    """Split capture records on literal newlines while accepting trailing CR."""
+
+    return [line.removesuffix("\r") for line in value.split("\n")]
 
 
 def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureData) -> None:
@@ -559,6 +609,203 @@ def _validate_cli_checkpoint_decisions(checkpoint: Checkpoint, capture: CaptureD
         raise CaptureInvalid("CLI checkpoint routed count does not match linked findings decisions")
 
 
+def _capture_metadata(metadata: dict[str, Any]) -> dict[str, str]:
+    """Keep the string metadata contract shared by SQL and retained captures."""
+
+    result: dict[str, str] = {}
+    for key, value in metadata.items():
+        if not isinstance(key, str):
+            raise CaptureInvalid("linked SQLite CLI metadata has a non-text key")
+        if value is None:
+            result[key] = ""
+        elif isinstance(value, bool):
+            result[key] = str(value).lower()
+        elif isinstance(value, (str, int)):
+            result[key] = str(value)
+        else:
+            try:
+                result[key] = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            except (TypeError, ValueError) as exc:
+                raise CaptureInvalid("linked SQLite CLI metadata is malformed") from exc
+    return result
+
+
+def _cli_capture_from_sql(
+    snapshot: dict[str, Any],
+    repo: str,
+    pr_number: int,
+    checkpoint: Checkpoint | None = None,
+) -> CaptureData:
+    """Validate one consistent native SQL capture snapshot for checkpoint or recovery use."""
+
+    attempt = snapshot.get("attempt")
+    run = snapshot.get("run")
+    artifacts = snapshot.get("artifacts")
+    if not isinstance(attempt, dict) or not isinstance(run, dict) or not isinstance(artifacts, dict):
+        raise CaptureInvalid("linked SQLite CLI capture is incomplete")
+    attempt_metadata = attempt.get("metadata")
+    if not isinstance(attempt_metadata, dict):
+        raise CaptureInvalid("linked SQLite CLI attempt metadata is malformed")
+    metadata_text = artifacts.get("metadata")
+    events_text = artifacts.get("cli_events")
+    if not isinstance(metadata_text, str) or not isinstance(events_text, str):
+        raise CaptureInvalid("linked SQLite CLI capture lacks complete archived events or metadata")
+    try:
+        metadata_value = json.loads(metadata_text)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise CaptureInvalid("linked SQLite CLI metadata artifact is malformed") from exc
+    if not isinstance(metadata_value, dict):
+        raise CaptureInvalid("linked SQLite CLI metadata artifact is not an object")
+    if attempt.get("state") != "completed" or attempt.get("exit_status") != 0:
+        raise CaptureInvalid("linked SQLite CLI attempt did not complete successfully")
+    if run.get("outcome") != "completed" or run.get("attributable") is not True:
+        raise CaptureInvalid("linked SQLite CLI source run is not completed and attributable")
+    if (
+        attempt.get("attempt_id") != attempt.get("run_id")
+        or attempt.get("run_id") != run.get("run_id")
+        or run.get("source_pr") != pr_number
+        or attempt.get("source_pr") != pr_number
+        or attempt.get("channel") != "cli"
+        or run.get("channel") != "cli"
+    ):
+        raise CaptureInvalid("linked SQLite CLI attempt and source run do not match checkpoint identity")
+
+    for stored_metadata in (attempt_metadata, metadata_value):
+        if stored_metadata.get("run_id") != attempt.get("attempt_id") or stored_metadata.get("kind") != "cli":
+            raise CaptureInvalid("linked SQLite CLI metadata does not match its attempt identity")
+        recorded_repository = stored_metadata.get("repository")
+        if recorded_repository is not None and (
+            not isinstance(recorded_repository, str)
+            or not recorded_repository
+            or recorded_repository.casefold() != repo.casefold()
+        ):
+            raise CaptureInvalid("linked SQLite CLI metadata repository does not match selected repository")
+        recorded_pr = stored_metadata.get("pull_request")
+        if type(recorded_pr) is int:
+            pr_matches = recorded_pr == pr_number
+        elif isinstance(recorded_pr, str) and re.fullmatch(r"[1-9][0-9]*", recorded_pr):
+            pr_matches = int(recorded_pr) == pr_number
+        else:
+            pr_matches = False
+        if not pr_matches:
+            raise CaptureInvalid("linked SQLite CLI metadata PR does not match checkpoint identity")
+
+    candidate_sha = attempt.get("candidate_sha")
+    if (
+        not isinstance(candidate_sha, str)
+        or not EXACT_SHA.fullmatch(candidate_sha)
+        or run.get("source_head") != candidate_sha
+        or metadata_value.get("candidate_sha") != candidate_sha
+        or attempt_metadata.get("candidate_sha") != candidate_sha
+    ):
+        raise CaptureInvalid("linked SQLite CLI candidate SHA does not match its source run")
+    if checkpoint is not None and checkpoint.reviewed_sha and not candidate_sha.lower().startswith(
+        checkpoint.reviewed_sha.lower()
+    ):
+        raise CaptureInvalid("linked SQLite CLI candidate SHA does not match checkpoint")
+
+    anchor_keys = ("parent_pr", "parent_ref", "child_head_sha", "parent_sha", "merge_base", "patch_identity")
+    if any(attempt_metadata.get(key) != metadata_value.get(key) for key in anchor_keys):
+        raise CaptureInvalid("linked SQLite CLI attempt and result anchors conflict")
+    parent_pr = metadata_value.get("parent_pr")
+    if parent_pr is not None and (type(parent_pr) is not int or parent_pr <= 0):
+        raise CaptureInvalid("linked SQLite CLI parent PR anchor is invalid")
+    parent_ref = metadata_value.get("parent_ref")
+    if not isinstance(parent_ref, str) or not parent_ref:
+        raise CaptureInvalid("linked SQLite CLI parent ref anchor is missing")
+    for key in ("child_head_sha", "parent_sha", "merge_base"):
+        if not isinstance(metadata_value.get(key), str) or not EXACT_SHA.fullmatch(metadata_value[key]):
+            raise CaptureInvalid("linked SQLite CLI commit anchor is incomplete")
+    if metadata_value["child_head_sha"] != candidate_sha:
+        raise CaptureInvalid("linked SQLite CLI child head conflicts with candidate SHA")
+    if not isinstance(metadata_value.get("patch_identity"), str) or not re.fullmatch(
+        r"[0-9a-f]{64}", metadata_value["patch_identity"]
+    ):
+        raise CaptureInvalid("linked SQLite CLI patch anchor is incomplete")
+    if snapshot.get("provider_origin") is not None:
+        origin = snapshot["provider_origin"]
+        if (
+            not isinstance(origin[0], str)
+            or origin[0].casefold() != repo.casefold()
+            or origin[1] != pr_number
+            or origin[2] != "cli"
+        ):
+            raise CaptureInvalid("linked SQLite CLI provider origin conflicts with selected repository")
+
+    if metadata_value.get("capture_completion_marker") != "capture-complete":
+        raise CaptureInvalid("linked SQLite CLI metadata has no complete-capture marker")
+    if type(metadata_value.get("exit_status")) is not int or metadata_value["exit_status"] != 0:
+        raise CaptureInvalid("linked SQLite CLI metadata does not record successful completion")
+    if type(metadata_value.get("duration_seconds")) is not int or metadata_value["duration_seconds"] < 0:
+        raise CaptureInvalid("linked SQLite CLI metadata has no valid review duration")
+    if attempt.get("duration_seconds") != metadata_value["duration_seconds"]:
+        raise CaptureInvalid("linked SQLite CLI duration metadata conflicts with its attempt")
+    try:
+        findings, complete = parse_capture_events(events_text)
+    except EvidenceError as exc:
+        raise CaptureInvalid(str(exc)) from exc
+    counts = run.get("counts")
+    if not isinstance(counts, dict) or counts.get("found") != len(findings):
+        raise CaptureInvalid("linked SQLite CLI event count does not match source run")
+    from .sqlite_finding_text import _safe_finding_detail
+    from .sqlite_provider_imports import _cli_detail, _cli_finding_title
+
+    observations = snapshot.get("observations")
+    if not isinstance(observations, list) or len(observations) != len(findings):
+        raise CaptureInvalid("linked SQLite CLI findings lack their source projections")
+    by_index: dict[int, dict[str, Any]] = {}
+    for observation in observations:
+        if not isinstance(observation, dict):
+            raise CaptureInvalid("linked SQLite CLI finding observation is malformed")
+        index = observation.get("index")
+        if type(index) is not int or index <= 0 or index > len(findings):
+            raise CaptureInvalid("linked SQLite CLI finding observation has an invalid index")
+        if index in by_index:
+            raise CaptureInvalid("linked SQLite CLI finding observations contain duplicate indices")
+        by_index[index] = observation
+    # Writer titles truncate before redaction; redacted archive titles cannot
+    # reproduce that original boundary. Details redact before their bound.
+    compare_titles = snapshot.get("artifact_redactions", {}).get("cli_events", 0) == 0
+    for index, finding in enumerate(findings, 1):
+        observation = by_index.get(index)
+        instructions = finding.get("codegenInstructions")
+        # Prior native writers recorded titles only, before current title
+        # normalization and detail capture. Preserve their retained semantics.
+        if observation is not None and observation.get("detail_recorded") is False:
+            continue
+        if observation is None or (
+            (compare_titles and observation.get("title") != _cli_finding_title(instructions, f"CodeRabbit CLI finding {index}"))
+            or observation.get("detail") != _safe_finding_detail(_cli_detail(instructions))
+        ):
+            raise CaptureInvalid("linked SQLite CLI finding content conflicts with its source projection")
+    candidate_files = metadata_value.get("candidate_files")
+    if type(candidate_files) is not int or candidate_files < 0 or len(complete["reviewedFiles"]) != candidate_files:
+        raise CaptureInvalid("linked SQLite CLI file count does not match archived result")
+    if checkpoint is not None:
+        if len(findings) != checkpoint.raw_found:
+            raise CaptureInvalid("linked SQLite CLI finding count does not match checkpoint")
+        if checkpoint.file_count not in (None, candidate_files):
+            raise CaptureInvalid("linked SQLite CLI file count does not match checkpoint")
+        if checkpoint.duration_seconds is not None and checkpoint.duration_seconds != metadata_value["duration_seconds"]:
+            raise CaptureInvalid("checkpoint duration does not match linked SQLite CLI metadata")
+        if run.get("finalized") is not True:
+            raise CaptureInvalid("linked SQLite CLI source decisions are not finalized")
+        if counts.get("accepted") != checkpoint.accepted or (
+            checkpoint.routed is not None and counts.get("routed") != checkpoint.routed
+        ):
+            raise CaptureInvalid("CLI checkpoint counts do not match linked SQLite source decisions")
+    capture = CaptureData(
+        metadata=_capture_metadata(metadata_value),
+        findings=findings,
+        decisions=snapshot.get("decisions", {}),
+        decision_file_present=True,
+        source_identity=None,
+    )
+    if checkpoint is not None:
+        _validate_cli_checkpoint_decisions(checkpoint, capture)
+    return capture
+
+
 def _load_cli_capture(
     checkpoint: Checkpoint,
     repo: str,
@@ -566,11 +813,49 @@ def _load_cli_capture(
     common: Path | None,
     *,
     validate_checkpoint_decisions: bool,
+    validate_sql_checkpoint: bool = True,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+    sql_first: bool = True,
 ) -> CaptureData:
     if checkpoint.type != "CLI" or not checkpoint.run_id or not RUN_ID.fullmatch(checkpoint.run_id):
         raise CaptureUnavailable("checkpoint has no valid CLI capture marker")
     if checkpoint.duration_invalid:
         raise CaptureInvalid("checkpoint has invalid visible/hidden duration evidence")
+    common, selected_records = resolve_cli_capture_context(common, records)
+    from .sqlite_review_records import (
+        CliCaptureInProgress,
+        CliCaptureTerminalFailure,
+        RecordsNotBootstrapped,
+        RecordsSchemaIncompatible,
+        ReviewRecordsError,
+    )
+
+    if selected_records is not None and sql_first:
+        try:
+            snapshot = selected_records.cli_capture_snapshot(checkpoint.run_id, source_pr=pr_number)
+        except RecordsNotBootstrapped:
+            snapshot = None
+        except CliCaptureInProgress as exc:
+            raise _SqlCaptureNotCounted("linked SQLite CLI records show an attempt still in progress") from exc
+        except CliCaptureTerminalFailure as exc:
+            raise _SqlCaptureNotCounted("linked SQLite CLI attempt ended without a completed result") from exc
+        except RecordsSchemaIncompatible as exc:
+            raise _SqlCaptureInvalid(
+                "linked SQLite CLI records use an incompatible schema; run records migrate before importing"
+            ) from exc
+        except ReviewRecordsError as exc:
+            raise _SqlCaptureInvalid("linked SQLite CLI records are incomplete or unavailable") from exc
+        if snapshot is not None:
+            try:
+                capture = _cli_capture_from_sql(
+                    snapshot, repo, pr_number, checkpoint if validate_sql_checkpoint else None
+                )
+            except EvidenceError as exc:
+                raise _SqlCaptureInvalid(str(exc)) from exc
+            if validate_checkpoint_decisions:
+                _validate_cli_checkpoint_decisions(checkpoint, capture)
+            return capture
+
     roots = private_review_roots(common)
     # Legacy CLI captures are directly below <git-common>/coderabbit-review-logs.
     # New callers may place captures below the firemud review namespace.
@@ -619,6 +904,24 @@ def _load_cli_capture(
         artifact_duration = _read_capture_text(duration_path, "review duration").strip()
         if int(recorded_duration) != checkpoint.duration_seconds or artifact_duration != recorded_duration:
             raise CaptureInvalid("checkpoint duration does not match linked capture metadata")
+    if selected_records is not None and not sql_first:
+        try:
+            sql_decisions = selected_records.cli_source_decisions(checkpoint.run_id)
+        except RecordsNotBootstrapped:
+            # Explicit recovery can still use retained decisions.tsv when the
+            # record schema predates SQLite source decisions.
+            sql_decisions = None
+        except RecordsSchemaIncompatible as exc:
+            raise CaptureInvalid(
+                "linked SQLite CLI decisions use an incompatible schema; run records migrate before importing"
+            ) from exc
+        except ReviewRecordsError as exc:
+            raise CaptureInvalid("linked SQLite CLI decisions are unavailable") from exc
+        if sql_decisions is not None:
+            capture = CaptureData(metadata, findings, sql_decisions, [], True, str(run_dir.resolve()))
+            if validate_checkpoint_decisions:
+                _validate_cli_checkpoint_decisions(checkpoint, capture)
+            return capture
     decision_path = _contained_file(run_dir, "decisions.tsv", required=False)
     if decision_path is None:
         rejection_path = _contained_file(run_dir, "rejections.tsv", required=False)
@@ -672,7 +975,10 @@ def _load_cli_capture(
     return capture
 
 
-def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None) -> CaptureData:
+def load_cli_capture(
+    checkpoint: Checkpoint, repo: str, pr_number: int, common: Path | None = None,
+    *, records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> CaptureData:
     """Load a public checkpoint's capture and require its decisions to match."""
 
     return _load_cli_capture(
@@ -681,12 +987,41 @@ def load_cli_capture(checkpoint: Checkpoint, repo: str, pr_number: int, common: 
         pr_number,
         common,
         validate_checkpoint_decisions=True,
+        records=records,
     )
 
 
-def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None) -> list[CaptureData]:
+def load_cli_capture_for_repair(
+    checkpoint: Checkpoint,
+    repo: str,
+    pr_number: int,
+    common: Path | None = None,
+    *,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> CaptureData:
+    """Load a retained raw CLI capture only for an explicit repair/import path."""
+
+    return _load_cli_capture(
+        checkpoint,
+        repo,
+        pr_number,
+        common,
+        validate_checkpoint_decisions=True,
+        records=records,
+        sql_first=False,
+    )
+
+
+def discover_cli_captures(
+    repo: str,
+    pr_number: int,
+    common: Path | None = None,
+    *,
+    records: SqliteReviewRecords | None | object = _UNRESOLVED_RECORDS,
+) -> list[CaptureData]:
     """Find complete private CLI captures that may not yet have a public checkpoint."""
 
+    common, records = resolve_cli_capture_context(common, records)
     roots = private_review_roots(common)
     candidate_roots = (
         roots[-1],
@@ -694,7 +1029,31 @@ def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None)
         roots[0] / "runs",
         roots[0] / "coderabbit-review-logs",
     )
+    from .sqlite_review_records import RecordsNotBootstrapped, RecordsSchemaIncompatible, ReviewRecordsError
+
     captures: list[CaptureData] = []
+    sql_run_ids: set[str] = set()
+    if records is not None:
+        try:
+            snapshots = records.completed_cli_capture_snapshots(pr_number)
+        except RecordsNotBootstrapped:
+            snapshots = []
+        except RecordsSchemaIncompatible as exc:
+            raise _SqlCaptureInvalid(
+                "linked SQLite CLI records use an incompatible schema; run records migrate before importing"
+            ) from exc
+        except ReviewRecordsError as exc:
+            raise _SqlCaptureInvalid("completed SQLite CLI captures are incomplete or unavailable") from exc
+        for snapshot in snapshots:
+            try:
+                capture = _cli_capture_from_sql(snapshot, repo, pr_number)
+            except EvidenceError as exc:
+                raise _SqlCaptureInvalid(str(exc)) from exc
+            captures.append(capture)
+            run_id = capture.metadata.get("run_id")
+            if run_id:
+                sql_run_ids.add(run_id)
+
     visited: set[Path] = set()
     for root in candidate_roots:
         if root.is_symlink() or not root.is_dir():
@@ -705,6 +1064,8 @@ def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None)
             continue
         for run_dir in run_dirs:
             if not RUN_ID.fullmatch(run_dir.name) or run_dir.is_symlink() or not run_dir.is_dir():
+                continue
+            if run_dir.name in sql_run_ids:
                 continue
             resolved = run_dir.resolve()
             if resolved in visited:
@@ -743,8 +1104,21 @@ def discover_cli_captures(repo: str, pr_number: int, common: Path | None = None)
                         pr_number,
                         common,
                         validate_checkpoint_decisions=False,
+                        validate_sql_checkpoint=False,
+                        records=records,
                     )
                 )
+            except _SqlCaptureNotCounted:
+                continue
+            except _SqlCaptureInvalid:
+                raise
+            except CaptureInvalid as exc:
+                # A schema cutover error is actionable evidence. Do not let
+                # discovery silently drop a current-head capture (or hide a
+                # required migration behind an empty history result).
+                if isinstance(exc.__cause__, RecordsSchemaIncompatible):
+                    raise
+                continue
             except (EvidenceError, OSError, ValueError):
                 continue
     return captures

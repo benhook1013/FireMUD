@@ -8,8 +8,12 @@ import java.util.Comparator;
 import java.util.Locale;
 import java.util.Map;
 import net.firedevops.firemud.common.security.RequestIdValidation;
+import net.firedevops.firemud.entitymanagement.entity.BodyLayoutSlotDefinition;
 import net.firedevops.firemud.entitymanagement.entity.CraftingIngredient;
+import net.firedevops.firemud.entitymanagement.entity.EquipmentSlotDefinition;
+import net.firedevops.firemud.entitymanagement.repository.BodyLayoutSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.CraftingRecipeRepository;
+import net.firedevops.firemud.entitymanagement.repository.EquipmentSlotDefinitionRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.NpcRepository;
 import net.firedevops.firemud.entitymanagement.service.EntityDraftDesignDigestService;
@@ -29,16 +33,22 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
   private final ItemRepository itemRepository;
   private final NpcRepository npcRepository;
   private final CraftingRecipeRepository craftingRecipeRepository;
+  private final EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository;
+  private final BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository;
   private final ObjectMapper objectMapper;
 
   public EntityDraftDesignDigestServiceImpl(
       ItemRepository itemRepository,
       NpcRepository npcRepository,
       CraftingRecipeRepository craftingRecipeRepository,
+      EquipmentSlotDefinitionRepository equipmentSlotDefinitionRepository,
+      BodyLayoutSlotDefinitionRepository bodyLayoutSlotDefinitionRepository,
       ObjectMapper objectMapper) {
     this.itemRepository = itemRepository;
     this.npcRepository = npcRepository;
     this.craftingRecipeRepository = craftingRecipeRepository;
+    this.equipmentSlotDefinitionRepository = equipmentSlotDefinitionRepository;
+    this.bodyLayoutSlotDefinitionRepository = bodyLayoutSlotDefinitionRepository;
     this.objectMapper = objectMapper;
   }
 
@@ -123,6 +133,53 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
                                                       "itemId", ingredient.getItem().getId(),
                                                       "quantity", ingredient.getQuantity()))
                                           .toList()))
+                          .toList(),
+                      "equipmentSlotDefinitions",
+                      equipmentSlotDefinitionRepository
+                          .findByTenantIdAndVersionIdOrderBySlotKeyAsc(tenantKey, versionKey)
+                          .stream()
+                          .sorted(
+                              Comparator.comparing(
+                                      (EquipmentSlotDefinition definition) ->
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "equipment slot key"))
+                                  .thenComparing(definition -> value(definition.getDisplayName()))
+                                  .thenComparing(
+                                      definition ->
+                                          normalizeOptionalKey(definition.getSlotGroupKey())))
+                          .map(
+                              definition ->
+                                  Map.<String, Object>of(
+                                      "slotKey",
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "equipment slot key"),
+                                      "displayName", value(definition.getDisplayName()),
+                                      "slotGroupKey",
+                                          normalizeOptionalKey(definition.getSlotGroupKey())))
+                          .toList(),
+                      "bodyLayoutSlotDefinitions",
+                      bodyLayoutSlotDefinitionRepository
+                          .findByTenantIdAndVersionIdOrderByBodyLayoutKeyAscSlotKeyAsc(
+                              tenantKey, versionKey)
+                          .stream()
+                          .sorted(
+                              Comparator.comparing(
+                                      (BodyLayoutSlotDefinition definition) ->
+                                          canonicalRequiredKey(
+                                              definition.getBodyLayoutKey(), "body layout key"))
+                                  .thenComparing(
+                                      definition ->
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "body layout slot key")))
+                          .map(
+                              definition ->
+                                  Map.<String, Object>of(
+                                      "bodyLayoutKey",
+                                          canonicalRequiredKey(
+                                              definition.getBodyLayoutKey(), "body layout key"),
+                                      "slotKey",
+                                          canonicalRequiredKey(
+                                              definition.getSlotKey(), "body layout slot key")))
                           .toList()));
       return new EntityDraftDesignDigest(
           tenantId,
@@ -141,6 +198,13 @@ public class EntityDraftDesignDigestServiceImpl implements EntityDraftDesignDige
 
   private String normalizeOptionalKey(String value) {
     return value == null || value.isBlank() ? "" : value.trim().toUpperCase(Locale.ROOT);
+  }
+
+  private String canonicalRequiredKey(String value, String fieldName) {
+    if (value == null || value.isBlank() || !value.equals(value.trim().toUpperCase(Locale.ROOT))) {
+      throw new IllegalArgumentException(fieldName + " must use its canonical stored key");
+    }
+    return value;
   }
 
   private String canonicalizeOptionalJson(String value) {

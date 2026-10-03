@@ -4,9 +4,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.time.Instant;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
+import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
+import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.common.account.AccountProfileJson;
@@ -14,7 +17,7 @@ import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerTest {
   @Test
-  void authenticationCanonicalizesMappedEmailAndMembershipLifecycleMatchesAdmission()
+  void authenticationCanonicalizesEmailAndRuntimeAuthoritySnapshotsAreFreshAndComplete()
       throws Exception {
     try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
       ManagedChannel channel =
@@ -39,14 +42,30 @@ class AccountRuntimeStubServerTest {
                 .setTenantId("1")
                 .setRequestId("request-1")
                 .build();
-        assertThat(stub.getTenantMembershipForRuntime(request).getMembershipLifecycleState())
-            .isEqualTo("ACTIVE");
         var activeMembership = stub.getTenantMembershipForRuntime(request);
+        assertThat(activeMembership.getMembershipExists()).isTrue();
+        assertThat(activeMembership.getGameplayAdmissionAllowed()).isTrue();
+        assertThat(activeMembership.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+        assertThat(activeMembership.getMembershipVersion()).isEqualTo(1L);
         assertThat(activeMembership.getMembershipAuthorityGeneration()).isPositive();
-        assertThat(java.time.Instant.parse(activeMembership.getEvaluatedAt()))
-            .isAfter(java.time.Instant.now().minusSeconds(5));
+        assertFresh(activeMembership.getEvaluatedAt());
 
-        server.denyGameplayAdmission();
+        server.setGameplayAdmissionAllowed(false);
+        var deniedMembership =
+            stub.getTenantMembershipForRuntime(
+                GetTenantMembershipForRuntimeRequest.newBuilder()
+                    .setAccountId("7")
+                    .setTenantId("1")
+                    .setRequestId("request-denied")
+                    .build());
+        assertThat(deniedMembership.getMembershipExists()).isTrue();
+        assertThat(deniedMembership.getGameplayAdmissionAllowed()).isFalse();
+        assertThat(deniedMembership.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+        assertThat(deniedMembership.getMembershipVersion()).isEqualTo(1L);
+        assertThat(deniedMembership.getMembershipAuthorityGeneration()).isEqualTo(1L);
+        assertFresh(deniedMembership.getEvaluatedAt());
+
+        server.setMembershipInactive();
         var inactive = stub.getTenantMembershipForRuntime(request);
         assertThat(inactive.getMembershipExists()).isTrue();
         assertThat(inactive.getGameplayAdmissionAllowed()).isFalse();
@@ -57,10 +76,45 @@ class AccountRuntimeStubServerTest {
         assertThat(membership.getMembershipExists()).isFalse();
         assertThat(membership.getGameplayAdmissionAllowed()).isFalse();
         assertThat(membership.getMembershipLifecycleState()).isEqualTo("MISSING");
+        assertThat(membership.getMembershipVersion()).isZero();
+        assertThat(membership.getMembershipAuthorityGeneration()).isZero();
+        assertFresh(membership.getEvaluatedAt());
+
+        var grant =
+            stub.getRealmAccessGrantForRuntime(
+                GetRealmAccessGrantForRuntimeRequest.newBuilder()
+                    .setAccountId("7")
+                    .setTenantId("1")
+                    .setWorldSlug("demo")
+                    .setRealmSlug("production")
+                    .setRequestId("request-grant")
+                    .build());
+        assertThat(grant.getGranted()).isTrue();
+        assertThat(grant.getGrantVersion()).isEqualTo(1L);
+        assertFresh(grant.getEvaluatedAt());
+
+        var entitlement =
+            stub.getTenantEntitlementsForRuntime(
+                GetTenantEntitlementsForRuntimeRequest.newBuilder()
+                    .setTenantId("1")
+                    .setRequestId("request-entitlement")
+                    .build());
+        assertThat(entitlement.getGameplayAvailable()).isTrue();
+        assertThat(entitlement.getAllowPublicJoin()).isTrue();
+        assertThat(entitlement.getEntitlementVersion()).isEqualTo(1L);
+        assertThat(entitlement.getTenantBillingSequence()).isEqualTo(1L);
+        assertFresh(entitlement.getEvaluatedAt());
       } finally {
         channel.shutdownNow();
       }
     }
+  }
+
+  private static void assertFresh(String evaluatedAt) {
+    Instant evaluated = Instant.parse(evaluatedAt);
+    Instant now = Instant.now();
+    assertThat(!evaluated.isBefore(now.minusSeconds(15))).isTrue();
+    assertThat(!evaluated.isAfter(now)).isTrue();
   }
 
   @Test

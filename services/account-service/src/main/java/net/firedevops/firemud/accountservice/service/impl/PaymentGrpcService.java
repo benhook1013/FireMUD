@@ -13,7 +13,6 @@ import net.firedevops.firemud.account.v1.CreateSubscriptionResponse;
 import net.firedevops.firemud.account.v1.PaymentServiceGrpc;
 import net.firedevops.firemud.account.v1.RefundPaymentRequest;
 import net.firedevops.firemud.account.v1.RefundPaymentResponse;
-import net.firedevops.firemud.accountservice.service.PaymentService;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
@@ -25,20 +24,20 @@ import org.springframework.grpc.server.service.GrpcService;
 @GrpcService
 public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBase {
   private static final Logger logger = LoggerFactory.getLogger(PaymentGrpcService.class);
-  private final PaymentService paymentService;
+  private static final String GENERIC_PAYMENT_UNAVAILABLE_MESSAGE =
+      "Generic payment operations are unavailable";
   private final MeterRegistry meterRegistry;
-
-  public PaymentGrpcService(PaymentService paymentService) {
-    this(paymentService, null);
-  }
 
   @Autowired
   @SuppressFBWarnings(
       value = "EI_EXPOSE_REP2",
-      justification = "Injected service and registry remain internal collaborators.")
-  public PaymentGrpcService(PaymentService paymentService, MeterRegistry meterRegistry) {
-    this.paymentService = paymentService;
+      justification = "The injected registry is an internal metrics collaborator.")
+  public PaymentGrpcService(MeterRegistry meterRegistry) {
     this.meterRegistry = meterRegistry;
+  }
+
+  PaymentGrpcService() {
+    this(null);
   }
 
   @Override
@@ -46,10 +45,16 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   public void createPaymentIntent(
       CreatePaymentIntentRequest request,
       StreamObserver<CreatePaymentIntentResponse> responseObserver) {
-    responseObserver.onNext(
+    // ADR 0143 defers generic payment intents; reject before validating or dispatching the request.
+    CreatePaymentIntentResponse response =
         CreatePaymentIntentResponse.newBuilder()
-            .setError(unavailable("CreatePaymentIntent"))
-            .build());
+            .setError(
+                errorDetail(
+                    "CreatePaymentIntent",
+                    "FAILED_PRECONDITION",
+                    GENERIC_PAYMENT_UNAVAILABLE_MESSAGE))
+            .build();
+    responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
 
@@ -62,28 +67,14 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
       RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId");
       RequestIdValidation.requirePositiveLong(request.getAccountId(), "accountId");
     } catch (IllegalArgumentException ex) {
-      var error =
-          meterRegistry == null
-              ? net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                  .setCode("INVALID_ARGUMENT")
-                  .setMessage(ex.getMessage())
-                  .build()
-              : GrpcAppErrors.error(
-                  meterRegistry, logger, "CreateSubscription", "INVALID_ARGUMENT", ex.getMessage());
+      ErrorDetail error = errorDetail("CreateSubscription", "INVALID_ARGUMENT", ex.getMessage());
       responseObserver.onNext(CreateSubscriptionResponse.newBuilder().setError(error).build());
       responseObserver.onCompleted();
       return;
     }
 
     String message = "Subscription creation is unavailable";
-    var error =
-        meterRegistry == null
-            ? net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
-                .setCode("FAILED_PRECONDITION")
-                .setMessage(message)
-                .build()
-            : GrpcAppErrors.error(
-                meterRegistry, logger, "CreateSubscription", "FAILED_PRECONDITION", message);
+    ErrorDetail error = errorDetail("CreateSubscription", "FAILED_PRECONDITION", message);
     responseObserver.onNext(CreateSubscriptionResponse.newBuilder().setError(error).build());
     responseObserver.onCompleted();
   }
@@ -92,8 +83,13 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   @Timed(value = "paymentGrpc.createDonation")
   public void createDonation(
       CreateDonationRequest request, StreamObserver<CreateDonationResponse> responseObserver) {
-    responseObserver.onNext(
-        CreateDonationResponse.newBuilder().setError(unavailable("CreateDonation")).build());
+    CreateDonationResponse response =
+        CreateDonationResponse.newBuilder()
+            .setError(
+                errorDetail(
+                    "CreateDonation", "FAILED_PRECONDITION", GENERIC_PAYMENT_UNAVAILABLE_MESSAGE))
+            .build();
+    responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
 
@@ -101,18 +97,24 @@ public class PaymentGrpcService extends PaymentServiceGrpc.PaymentServiceImplBas
   @Timed(value = "paymentGrpc.refundPayment")
   public void refundPayment(
       RefundPaymentRequest request, StreamObserver<RefundPaymentResponse> responseObserver) {
-    responseObserver.onNext(
+    RefundPaymentResponse response =
         RefundPaymentResponse.newBuilder()
             .setSuccess(false)
-            .setError(unavailable("RefundPayment"))
-            .build());
+            .setError(
+                errorDetail(
+                    "RefundPayment", "FAILED_PRECONDITION", GENERIC_PAYMENT_UNAVAILABLE_MESSAGE))
+            .build();
+    responseObserver.onNext(response);
     responseObserver.onCompleted();
   }
 
-  private ErrorDetail unavailable(String operation) {
-    String message = operation + " is unavailable";
-    return meterRegistry == null
-        ? ErrorDetail.newBuilder().setCode("FAILED_PRECONDITION").setMessage(message).build()
-        : GrpcAppErrors.error(meterRegistry, logger, operation, "FAILED_PRECONDITION", message);
+  private ErrorDetail errorDetail(String operation, String code, String message) {
+    if (meterRegistry != null) {
+      return GrpcAppErrors.error(meterRegistry, logger, operation, code, message);
+    }
+
+    String normalizedMessage = message == null || message.isBlank() ? code : message;
+    logger.warn("{} returned app error {}: {}", operation, code, normalizedMessage);
+    return ErrorDetail.newBuilder().setCode(code).setMessage(normalizedMessage).build();
   }
 }
