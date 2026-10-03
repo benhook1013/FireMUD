@@ -1026,7 +1026,11 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n\n_Source: Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines, Path instructions_\n\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines, Path instructions, Learnings_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
             "\n\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
+            "\n\n_Sources: Coding guidelines, Path instructions_\n<!-- This is an auto-generated comment by CodeRabbit -->\n",
         )
         for tail in valid_tails:
             with self.subTest(tail=tail):
@@ -1039,10 +1043,14 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             "\n```text\nFenced substantive detail.\n```",
             "\n<!-- unknown auxiliary: preserve this finding -->",
             "\n_Source: Unrecognized source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Sources: Coding guidelines, Unrecognized source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
             "\n<!-- This is an auto-generated comment by CodeRabbit -->\n_Source: Path instructions_",
             "\n_Source: Linters/SAST tools_\nUnmarked text.\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Sources: Coding guidelines, Path instructions_\nArbitrary suffix.\n<!-- This is an auto-generated comment by CodeRabbit -->",
             "\n_Source: Coding guidelines_",
             "\n_Source: Linters/SAST tools_\n<!-- This is an auto-generated reply by another bot -->",
+            "\n_Sources: Coding guidelines, Unknown source_\n<!-- This is an auto-generated comment by CodeRabbit -->",
+            "\n_Sources: Coding guidelines, Path instructions_\nunmarked content\n<!-- This is an auto-generated comment by CodeRabbit -->",
         )
         for tail in invalid_tails:
             with (
@@ -1340,6 +1348,226 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 replay = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
             replay_fetch.assert_not_called()
             self.assertTrue(replay["synced"], replay)
+            self.assertTrue(replay["synced"][0]["idempotent_replay"])
+
+    def test_sync_attributes_archived_addressed_thread_on_first_started_attempt_and_replays(self) -> None:
+        self._assert_sync_archived_addressed_thread_and_replay(partial_completed=False)
+
+    def test_sync_recovers_unlinked_completed_addressed_thread_and_replays(self) -> None:
+        self._assert_sync_archived_addressed_thread_and_replay(partial_completed=True)
+
+    def _assert_sync_archived_addressed_thread_and_replay(self, *, partial_completed: bool) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory) / "git-common"
+            (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
+            records = self.new_records(common / "firemud" / "pr-review-stack.sqlite3")
+            old_head = "b" * 40
+            old_attempt_id = "hosted-addressed-prior"
+            old_trigger_id = 801
+            old_response_id = 802
+            old_thread_comment_id = 803
+            old_started_at = "2026-09-29T00:49:50Z"
+            old_trigger_at = "2026-09-29T00:50:00Z"
+            old_thread_created_at = "2026-09-29T00:50:30Z"
+            old_finished_at = "2026-09-29T00:51:00Z"
+            old_body = (
+                "An archived CodeRabbit finding.\n\n"
+                "<!-- cr-comment:v1:0123456789abcdef01234567 -->"
+            )
+            old_review = {
+                "databaseId": old_response_id,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "<!-- walkthrough_start -->\nReviewing the archived candidate.",
+                "state": "COMMENTED",
+                "submittedAt": old_finished_at,
+                "commit": {"oid": old_head},
+            }
+            old_trigger = self.trigger_comment(
+                trigger_id=old_trigger_id,
+                created_at=old_trigger_at,
+            )
+            old_comments = {
+                "comments": [old_trigger],
+                "review_threads": [
+                    {
+                        "comments": {
+                            "nodes": [
+                                {
+                                    "databaseId": old_thread_comment_id,
+                                    "author": {"login": "coderabbitai[bot]"},
+                                    "body": old_body,
+                                    "createdAt": old_thread_created_at,
+                                    "updatedAt": old_finished_at,
+                                }
+                            ]
+                        }
+                    }
+                ],
+            }
+            records.start_attempt(
+                attempt_id=old_attempt_id,
+                source_pr=PR,
+                channel="hosted",
+                candidate_sha=old_head,
+                started_at=old_started_at,
+            )
+            records.finish_attempt(
+                old_attempt_id,
+                state="completed",
+                finished_at=old_finished_at,
+                trigger_id=str(old_trigger_id),
+                provider_review_id=str(old_response_id),
+                artifacts={
+                    "hosted_review": json.dumps([old_review]),
+                    "hosted_comments": json.dumps(old_comments),
+                    "metadata": json.dumps(
+                        {
+                            "state": "completed",
+                            "terminal": True,
+                            "attributable": True,
+                            "repository": REPO,
+                            "pull_request": PR,
+                            "head_sha": old_head,
+                            "trigger_id": old_trigger_id,
+                            "response_id": old_response_id,
+                            "observed_at": old_finished_at,
+                        }
+                    ),
+                },
+            )
+
+            attempt_id = "hosted-sync-addressed-thread"
+            started_at = "2026-09-29T00:59:00Z"
+            trigger_at = "2026-09-29T01:00:00Z"
+            trigger = self.trigger_record(
+                trigger_id=901,
+                created_at=trigger_at,
+                posting_started_at=started_at,
+                attempt_id=attempt_id,
+            )
+            record_path = self.write_trigger_record(common, trigger)
+            sqlite_hosted_capture.start_hosted_attempt(
+                records,
+                attempt_id=attempt_id,
+                source_pr=PR,
+                candidate_sha=HEAD,
+                started_at=started_at,
+                metadata={"repository": REPO},
+            )
+            summary = {
+                "databaseId": 903,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": (
+                    "No actionable comments were generated in the recent review.\n"
+                    f"Reviewing files that changed from the base of the PR and between {old_head} and {HEAD}."
+                ),
+                "createdAt": "2026-09-29T00:59:30Z",
+                "updatedAt": "2026-09-29T01:02:00Z",
+            }
+            response = {
+                "databaseId": 902,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": "Full review finished.",
+                "createdAt": "2026-09-29T01:01:00Z",
+                "updatedAt": "2026-09-29T01:04:00Z",
+                "url": "https://github.example/owner/repo/pull/42#issuecomment-902",
+            }
+            addressed_thread_comment = {
+                "databaseId": old_thread_comment_id,
+                "author": {"login": "coderabbitai[bot]"},
+                "body": f"{old_body}\n\n✅ Addressed in commits {'c' * 7} to {HEAD[:7]}",
+                "createdAt": old_thread_created_at,
+                "updatedAt": "2026-09-29T01:03:00Z",
+            }
+            payload = self.payload(
+                comments=[self.trigger_comment(trigger_id=901, created_at=trigger_at), summary, response],
+                review_threads=[{"comments": {"nodes": [addressed_thread_comment]}}],
+            )
+
+            if partial_completed:
+                pull = payload["data"]["repository"]["pullRequest"]
+                finished_at = "2026-09-29T01:04:00Z"
+                records.finish_attempt(
+                    attempt_id,
+                    state="completed",
+                    finished_at=finished_at,
+                    trigger_id="901",
+                    provider_review_id="902",
+                    artifacts={
+                        "hosted_review": json.dumps([]),
+                        "hosted_comments": json.dumps(
+                            {
+                                "comments": pull["comments"]["nodes"],
+                                "review_threads": pull["reviewThreads"]["nodes"],
+                            }
+                        ),
+                        "metadata": json.dumps(
+                            {
+                                "state": "completed",
+                                "terminal": True,
+                                "attributable": True,
+                                "repository": REPO,
+                                "pull_request": PR,
+                                "head_sha": HEAD,
+                                "trigger_id": 901,
+                                "response_id": 902,
+                                "observed_at": finished_at,
+                            }
+                        ),
+                    },
+                )
+                self.assertIsNone(records.attempt(attempt_id)["run_id"])
+                original_attempt = sqlite_review_records.SqliteReviewRecords.attempt
+
+                def conflicting_run_link(store, selected_attempt_id):
+                    attempt = original_attempt(store, selected_attempt_id)
+                    if selected_attempt_id == attempt_id:
+                        return {**attempt, "run_id": "conflicting-source-run"}
+                    return attempt
+
+                with patch.object(
+                    sqlite_review_records.SqliteReviewRecords, "attempt", autospec=True, side_effect=conflicting_run_link
+                ):
+                    self.assertEqual(
+                        hosted.trigger_state(REPO, PR, payload, trigger, record_path).state,
+                        "ambiguous",
+                    )
+
+            with patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch:
+                if partial_completed:
+                    fetch.side_effect = AssertionError("partial archive recovery must not fetch GitHub")
+                first = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
+
+            if partial_completed:
+                fetch.assert_not_called()
+                self.assertEqual(first["errors"], [])
+                self.assertTrue(first["synced"][0]["recovered_from_archive"], first)
+                self.assertEqual(records.attempt(attempt_id)["run_id"], attempt_id)
+            else:
+                fetch.assert_called_once_with(REPO, PR)
+            self.assertEqual(len(first["synced"]), 1, first)
+            self.assertEqual(first["synced"][0]["state"], "completed")
+            self.assertEqual(first["synced"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+            self.assertEqual(records.attempt(attempt_id)["state"], "completed")
+            current_attempt = next(
+                item for item in records.attempt_history(PR) if item["attempt_id"] == attempt_id
+            )
+            self.assertEqual(current_attempt["trigger_id"], "901")
+            self.assertEqual(current_attempt["provider_review_id"], "902")
+            self.assertEqual(
+                hosted.trigger_state(REPO, PR, payload, trigger, record_path).state,
+                "completed",
+            )
+
+            with patch.object(
+                sqlite_hosted_capture.github,
+                "fetch_pull_request",
+                side_effect=AssertionError("linked replay must not refetch GitHub"),
+            ) as replay_fetch:
+                replay = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
+
+            replay_fetch.assert_not_called()
+            self.assertEqual(len(replay["synced"]), 1, replay)
             self.assertTrue(replay["synced"][0]["idempotent_replay"])
 
     def test_sync_keeps_active_pending_and_records_rate_limit(self) -> None:

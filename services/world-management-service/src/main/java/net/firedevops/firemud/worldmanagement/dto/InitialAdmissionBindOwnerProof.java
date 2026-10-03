@@ -20,7 +20,6 @@ public record InitialAdmissionBindOwnerProof(
     String pointerAuditId,
     long pointerVersion,
     String pointerAuditRequestDigest,
-    boolean priorPointerStillAbsent,
     boolean futureCommitPrevented) {
   public enum Outcome {
     COMMITTED,

@@ -2469,6 +2469,58 @@ class RuntimeTest(unittest.TestCase):
             runner._assert_no_other_active_reservations(42, Path(directory))
         fetch_full.assert_not_called()
 
+    def test_hosted_global_scan_reports_redacted_reservation_readback_cause(self) -> None:
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        target = ReviewTarget(
+            snapshot,
+            EffectiveParent("develop", BASE),
+            patch_identity=PATCH,
+            merge_base=BASE,
+            repository="owner/repo",
+        )
+        payload = self._payload()
+        calls = []
+
+        def api_endpoint(endpoint: str) -> list[dict[str, Any]]:
+            if endpoint == "repos/owner/repo/pulls?state=open&per_page=100":
+                return [{"number": 42, "state": "open"}, {"number": 43, "state": "open"}]
+            if endpoint == "repos/owner/repo/issues/43/comments?per_page=100":
+                return []
+            raise AssertionError(f"unexpected REST endpoint: {endpoint}")
+
+        def gh_call(args, **_kwargs):
+            calls.append(args)
+            if args == ["gh", "api", "user"]:
+                return CompletedProcess(args, 0, json.dumps({"login": "maintainer"}), "")
+            raise AssertionError("reservation readback failure must prevent POST")
+
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            other_path = common / "firemud" / "hosted" / "owner_repo" / "pr-43" / "trigger.json"
+            other_path.parent.mkdir(parents=True)
+            other_path.write_text("{}", encoding="utf-8")
+            target_path = common / "firemud" / "hosted" / "owner_repo" / "pr-42" / "trigger.json"
+            with (
+                patch.object(LiveGitHub, "pull_request", return_value=snapshot),
+                patch.object(LiveGitHub, "branch_head", return_value=BASE),
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(github, "fetch_api_endpoint", side_effect=api_endpoint),
+                patch.object(hosted, "load_trigger_reservation", side_effect=ValueError("sensitive fixture detail")),
+                patch.object(hosted, "default_trigger_record_path", return_value=target_path),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch("pr_review.runtime.subprocess.run", side_effect=gh_call),
+                self.assertRaisesRegex(
+                    ControllerError,
+                    r"current Hosted reservation for PR #43 cannot be verified "
+                    r"\(phase=hosted_reservation_readback, error=ValueError\)",
+                ) as raised,
+            ):
+                HostedRunner("owner/repo", LiveGitHub("owner/repo"))(target, expect_pr=42)
+
+            self.assertNotIn("sensitive fixture detail", str(raised.exception))
+            self.assertFalse(target_path.exists())
+            self.assertEqual(calls, [["gh", "api", "user"]])
+
     def test_hosted_global_scan_blocks_off_queue_active_manual_request(self) -> None:
         manual = {
             "databaseId": 901,
@@ -4499,6 +4551,48 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(observation["anchor"], record["anchor"])
         self.assertEqual(observation["trigger_id"], 10)
         self.assertEqual(observation["response_id"], 11)
+
+    def test_posted_awaiting_hosted_observation_exposes_exact_trigger_and_durable_anchor(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            response_id=None,
+            state="awaiting_response",
+            terminal=False,
+            attributed=True,
+            head_sha=HEAD,
+            reason="no attributable terminal response",
+        )
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+        observation = next(item for item in history if item.get("checkpoint") == "trigger:10")
+        self.assertEqual(observation["state"], "awaiting_response")
+        self.assertTrue(observation["posted"])
+        self.assertTrue(observation["active_reservation"])
+        self.assertTrue(observation["held"])
+        self.assertTrue(observation["attributable"])
+        self.assertFalse(observation["terminal"])
+        self.assertEqual(observation["anchor"], record["anchor"])
+        self.assertEqual(observation["trigger_id"], 10)
+        self.assertIsNone(observation["response_id"])
 
     def test_complete_audit_exposes_exact_active_hosted_response_identity(self) -> None:
         now = datetime.now(timezone.utc).replace(microsecond=0)

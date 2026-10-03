@@ -15,6 +15,9 @@ ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
+export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH=/app/run-owned-initial-admission-capability.json
+unset FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH
 
 export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
@@ -41,6 +44,7 @@ require_run_owned_compose_project
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_ENV_SCRIPT"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
+ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" reuse-only
 bash "$BUILD_JARS_SCRIPT"
 docker compose "${COMPOSE_FILES[@]}" up -d --build --remove-orphans
 docker compose "${COMPOSE_FILES[@]}" restart

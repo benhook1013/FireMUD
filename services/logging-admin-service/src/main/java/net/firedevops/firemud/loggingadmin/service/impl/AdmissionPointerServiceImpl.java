@@ -300,7 +300,8 @@ public class AdmissionPointerServiceImpl implements AdmissionPointerService {
     try {
       return UUID.fromString(value);
     } catch (IllegalArgumentException ex) {
-      throw new IllegalArgumentException(fieldName + " must be a UUID", ex);
+      throw new ResponseStatusException(
+          HttpStatus.INTERNAL_SERVER_ERROR, fieldName + " from Game Session must be a UUID", ex);
     }
   }
 

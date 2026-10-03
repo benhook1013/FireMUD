@@ -1111,9 +1111,12 @@ class LiveEvidence:
         checkpoint: evidence.Checkpoint,
         response_id: int | None,
         response_duration_seconds: int | None,
+        repo: str,
+        pr_number: int,
         captured_head: str,
         record: dict[str, Any],
         payload: dict[str, Any],
+        current_record_path: str | Path | None = None,
     ) -> dict[str, Any] | None:
         """Validate a finished-reply checkpoint when no PR review object exists.
 
@@ -1182,7 +1185,15 @@ class LiveEvidence:
             next_trigger,
         )
         finished_only = hosted.finished_reply_without_findings(
-            payload, captured_head, trigger_at, response_id, next_trigger
+            payload,
+            captured_head,
+            trigger_at,
+            response_id,
+            next_trigger,
+            record,
+            current_record_path=current_record_path,
+            repo=repo,
+            pr_number=pr_number,
         )
         if legacy_summary is None and provider_summary is None and not finished_only:
             return None
@@ -1229,9 +1240,12 @@ class LiveEvidence:
                         checkpoint,
                         state.response_id,
                         state.duration_seconds,
+                        self.repo,
+                        pr,
                         captured_head,
                         record,
                         payload,
+                        current_record_path=path,
                     )
                     or proof
                 )
@@ -1668,11 +1682,15 @@ class LiveEvidence:
                     "active_reservation": state.state in {"active", "awaiting_response"} or operational_only,
                     "reason": state.reason,
                 }
-                if state.state == "active":
+                if state.state in {"active", "awaiting_response"}:
                     anchor = record.get("anchor")
                     observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
+                    observation["posted"] = record.get("status") == "posted"
                     observation["trigger_id"] = state.trigger_comment_id
                     observation["response_id"] = state.response_id
+                    observation["state"] = state.state
+                    observation["attributable"] = state.attributed
+                    observation["terminal"] = state.terminal
                 if state.state == "ambiguous" and not operational_only:
                     terminal_observation = self._terminal_ambiguous_hosted_observation(pr, record, state, payload)
                     if terminal_observation is not None:
@@ -2647,7 +2665,10 @@ class HostedRunner:
                 except ControllerError:
                     raise
                 except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-                    raise ControllerError(f"current Hosted reservation for PR #{other_pr} cannot be verified") from exc
+                    raise ControllerError(
+                        f"current Hosted reservation for PR #{other_pr} cannot be verified "
+                        f"(phase=hosted_reservation_readback, error={type(exc).__name__})"
+                    ) from exc
                 if state.state in {"active", "awaiting_response"}:
                     raise ControllerError(f"another Hosted request is unresolved for PR #{other_pr}: {state.state}")
                 if state.state == "rate_limited":

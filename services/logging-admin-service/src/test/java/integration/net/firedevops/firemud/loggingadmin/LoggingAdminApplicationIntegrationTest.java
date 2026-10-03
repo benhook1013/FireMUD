@@ -295,8 +295,10 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
-  void v3BackfillsRetainedV2ReceiptsAndKeepsLegacyTenantLogWritesValid() {
+  void v3ThroughV5PreserveRetainedRowsAndEnforceNewReceiptAndProjectionChecks() {
     String schema = "logging_admin_migration_" + UUID.randomUUID().toString().replace("-", "");
+    UUID retainedInvalidReceiptId = UUID.fromString("30000000-0000-4000-8000-000000000002");
+    String retainedInvalidDigest = "sha256:" + "g".repeat(64);
     dsl.execute("CREATE SCHEMA " + schema);
     try {
       Flyway.configure()
@@ -329,7 +331,7 @@ class LoggingAdminApplicationIntegrationTest {
           false);
       seedV2Receipt(
           schema,
-          UUID.fromString("30000000-0000-4000-8000-000000000002"),
+          retainedInvalidReceiptId,
           "tenant",
           73L,
           "10000000-0000-4000-8000-000000000002",
@@ -351,6 +353,44 @@ class LoggingAdminApplicationIntegrationTest {
           "20000000-0000-4000-8000-000000000002",
           Instant.parse("2025-03-01T12:00:04.987654Z"),
           true);
+
+      dsl.execute(
+          "UPDATE "
+              + schema
+              + ".account_audit_receipts SET payload_digest = ? WHERE receipt_id = ?",
+          retainedInvalidDigest,
+          retainedInvalidReceiptId);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT payload_digest FROM "
+                          + schema
+                          + ".account_audit_receipts WHERE receipt_id = ?",
+                      retainedInvalidReceiptId)
+                  .get(0, String.class))
+          .isEqualTo(retainedInvalidDigest);
+
+      Flyway.configure()
+          .dataSource(dataSource)
+          .locations("classpath:db/migration")
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(Map.of("serviceSchema", schema))
+          .target(MigrationVersion.fromVersion("3"))
+          .load()
+          .migrate();
+
+      dsl.execute(
+          "INSERT INTO "
+              + schema
+              + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message, timestamp) "
+              + "VALUES ('tenant', 0, 0, '90000000-0000-4000-8000-000000000001', "
+              + "'ACCOUNT_AUDIT', 'retained zero tenant projection', TIMESTAMP '2025-03-01 15:00:00'), "
+              + "('tenant', -9, -9, '90000000-0000-4000-8000-000000000002', "
+              + "'ACCOUNT_AUDIT', 'retained negative tenant projection', TIMESTAMP '2025-03-01 15:00:01'), "
+              + "('tenant', 0, 0, NULL, 'PAYMENT', 'retained zero tenant legacy row', "
+              + "TIMESTAMP '2025-03-01 15:00:02'), "
+              + "('tenant', -9, 0, NULL, 'PAYMENT', 'retained negative tenant legacy row', "
+              + "TIMESTAMP '2025-03-01 15:00:03')");
 
       Flyway.configure()
           .dataSource(dataSource)
@@ -374,6 +414,56 @@ class LoggingAdminApplicationIntegrationTest {
                   .get(0, Long.class))
           .isEqualTo(0L);
       assertThat(
+              dsl.fetch(
+                  "SELECT tenant_id, tenant_key, audit_event_id, type, message, timestamp "
+                      + "FROM "
+                      + schema
+                      + ".log_events WHERE message IN (?, ?, ?, ?) ORDER BY message",
+                  "retained negative tenant legacy row",
+                  "retained negative tenant projection",
+                  "retained zero tenant legacy row",
+                  "retained zero tenant projection"))
+          .extracting(
+              row ->
+                  List.of(
+                      row.get("tenant_id", Long.class),
+                      row.get("tenant_key", Long.class),
+                      row.get("audit_event_id", String.class) == null
+                          ? "<null>"
+                          : row.get("audit_event_id", String.class),
+                      row.get("type", String.class),
+                      row.get("message", String.class),
+                      row.get("timestamp", LocalDateTime.class)))
+          .containsExactly(
+              List.of(
+                  -9L,
+                  0L,
+                  "<null>",
+                  "PAYMENT",
+                  "retained negative tenant legacy row",
+                  LocalDateTime.of(2025, 3, 1, 15, 0, 3)),
+              List.of(
+                  -9L,
+                  -9L,
+                  "90000000-0000-4000-8000-000000000002",
+                  "ACCOUNT_AUDIT",
+                  "retained negative tenant projection",
+                  LocalDateTime.of(2025, 3, 1, 15, 0, 1)),
+              List.of(
+                  0L,
+                  0L,
+                  "<null>",
+                  "PAYMENT",
+                  "retained zero tenant legacy row",
+                  LocalDateTime.of(2025, 3, 1, 15, 0, 2)),
+              List.of(
+                  0L,
+                  0L,
+                  "90000000-0000-4000-8000-000000000001",
+                  "ACCOUNT_AUDIT",
+                  "retained zero tenant projection",
+                  LocalDateTime.of(2025, 3, 1, 15, 0)));
+      assertThat(
               dsl.fetchSingle("SELECT COUNT(*) FROM " + schema + ".account_audit_receipts")
                   .get(0, Integer.class))
           .isEqualTo(4);
@@ -395,6 +485,7 @@ class LoggingAdminApplicationIntegrationTest {
           "10000000-0000-4000-8000-000000000001",
           "COMMITTED",
           "ACCEPTED",
+          digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)),
           "2025-03-01T12:00:01.123456");
       assertBackfilledReceipt(
           schema,
@@ -404,6 +495,7 @@ class LoggingAdminApplicationIntegrationTest {
           "10000000-0000-4000-8000-000000000002",
           "MINIMIZED",
           "NON_REPLAYABLE",
+          retainedInvalidDigest,
           "2025-03-01T12:00:02.987654");
       assertBackfilledReceipt(
           schema,
@@ -413,6 +505,7 @@ class LoggingAdminApplicationIntegrationTest {
           "20000000-0000-4000-8000-000000000001",
           "COMMITTED",
           "ACCEPTED",
+          digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)),
           "2025-03-01T12:00:03.123456");
       assertBackfilledReceipt(
           schema,
@@ -422,7 +515,116 @@ class LoggingAdminApplicationIntegrationTest {
           "20000000-0000-4000-8000-000000000002",
           "MINIMIZED",
           "NON_REPLAYABLE",
+          digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)),
           "2025-03-01T12:00:04.987654");
+
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT payload_digest FROM "
+                          + schema
+                          + ".account_audit_receipts WHERE receipt_id = ?",
+                      retainedInvalidReceiptId)
+                  .get(0, String.class))
+          .isEqualTo(retainedInvalidDigest);
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT convalidated FROM pg_constraint "
+                          + "WHERE conrelid = to_regclass(?) AND conname = ?",
+                      schema + ".account_audit_receipts",
+                      "chk_account_audit_receipt_digest_format")
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT convalidated FROM pg_constraint "
+                          + "WHERE conrelid = to_regclass(?) AND conname = ?",
+                      schema + ".log_events",
+                      "chk_log_events_tenant_audit_positive_tenant_id")
+                  .get(0, Boolean.class))
+          .isFalse();
+
+      for (String invalidDigest : List.of("sha256:" + "A".repeat(64), "sha256:" + "g".repeat(64))) {
+        assertThatThrownBy(
+                () ->
+                    dsl.execute(
+                        "UPDATE "
+                            + schema
+                            + ".account_audit_receipts SET payload_digest = ? "
+                            + "WHERE receipt_id = ?",
+                        invalidDigest,
+                        retainedInvalidReceiptId))
+            .isInstanceOf(DataIntegrityViolationException.class)
+            .hasMessageContaining("chk_account_audit_receipt_digest_format");
+      }
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT payload_digest FROM "
+                          + schema
+                          + ".account_audit_receipts WHERE receipt_id = ?",
+                      retainedInvalidReceiptId)
+                  .get(0, String.class))
+          .isEqualTo(retainedInvalidDigest);
+
+      byte[] validPayload = "{\"afterMigration\":true}".getBytes(StandardCharsets.UTF_8);
+      assertThatThrownBy(
+              () ->
+                  insertMigrationReceipt(
+                      schema,
+                      UUID.fromString("80000000-0000-4000-8000-000000000001"),
+                      "70000000-0000-4000-8000-000000000001",
+                      "sha256:" + "A".repeat(64),
+                      validPayload,
+                      "COMMITTED",
+                      "ACCEPTED"))
+          .isInstanceOf(DataIntegrityViolationException.class)
+          .hasMessageContaining("chk_account_audit_receipt_digest_format");
+      assertThatThrownBy(
+              () ->
+                  insertMigrationReceipt(
+                      schema,
+                      UUID.fromString("80000000-0000-4000-8000-000000000002"),
+                      "70000000-0000-4000-8000-000000000002",
+                      "sha256:" + "g".repeat(64),
+                      validPayload,
+                      "COMMITTED",
+                      "ACCEPTED"))
+          .isInstanceOf(DataIntegrityViolationException.class)
+          .hasMessageContaining("chk_account_audit_receipt_digest_format");
+
+      insertMigrationReceipt(
+          schema,
+          UUID.fromString("80000000-0000-4000-8000-000000000003"),
+          "70000000-0000-4000-8000-000000000003",
+          digest(validPayload),
+          validPayload,
+          "COMMITTED",
+          "ACCEPTED");
+      byte[] minimizedPayload = "retained digest evidence".getBytes(StandardCharsets.UTF_8);
+      insertMigrationReceipt(
+          schema,
+          UUID.fromString("80000000-0000-4000-8000-000000000004"),
+          "70000000-0000-4000-8000-000000000004",
+          digest(minimizedPayload),
+          null,
+          "MINIMIZED",
+          "NON_REPLAYABLE");
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT status FROM "
+                          + schema
+                          + ".account_audit_receipts WHERE receipt_id = ?",
+                      UUID.fromString("80000000-0000-4000-8000-000000000003"))
+                  .get(0, String.class))
+          .isEqualTo("COMMITTED");
+      var minimizedReceipt =
+          dsl.fetchSingle(
+              "SELECT status, outcome, payload IS NULL AS payload_is_null FROM "
+                  + schema
+                  + ".account_audit_receipts WHERE receipt_id = ?",
+              UUID.fromString("80000000-0000-4000-8000-000000000004"));
+      assertThat(minimizedReceipt.get("status", String.class)).isEqualTo("MINIMIZED");
+      assertThat(minimizedReceipt.get("outcome", String.class)).isEqualTo("NON_REPLAYABLE");
+      assertThat(minimizedReceipt.get("payload_is_null", Boolean.class)).isTrue();
 
       dsl.execute(
           "INSERT INTO "
@@ -468,6 +670,69 @@ class LoggingAdminApplicationIntegrationTest {
                   .get(0, Long.class))
           .isEqualTo(86L);
 
+      dsl.execute(
+          "INSERT INTO "
+              + schema
+              + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
+              + "VALUES ('platform', NULL, 0, '60000000-0000-4000-8000-000000000002', "
+              + "'ACCOUNT_AUDIT', 'Account audit event 60000000-0000-4000-8000-000000000002')");
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT tenant_id, tenant_key FROM "
+                          + schema
+                          + ".log_events WHERE audit_event_id = ?",
+                      "60000000-0000-4000-8000-000000000002")
+                  .intoArray())
+          .containsExactly(null, 0L);
+
+      for (long invalidTenantId : List.of(0L, -9L)) {
+        String eventId =
+            invalidTenantId == 0
+                ? "60000000-0000-4000-8000-000000000003"
+                : "60000000-0000-4000-8000-000000000004";
+        assertThatThrownBy(
+                () ->
+                    dsl.execute(
+                        "INSERT INTO "
+                            + schema
+                            + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
+                            + "VALUES ('tenant', ?, ?, ?, 'ACCOUNT_AUDIT', 'invalid tenant projection')",
+                        invalidTenantId,
+                        invalidTenantId,
+                        eventId))
+            .isInstanceOf(DataIntegrityViolationException.class)
+            .hasMessageContaining("chk_log_events_tenant_audit_positive_tenant_id");
+        assertThatThrownBy(
+                () ->
+                    dsl.execute(
+                        "UPDATE "
+                            + schema
+                            + ".log_events SET tenant_id = ?, tenant_key = ? "
+                            + "WHERE audit_event_id = ?",
+                        invalidTenantId,
+                        invalidTenantId,
+                        "60000000-0000-4000-8000-000000000001"))
+            .isInstanceOf(DataIntegrityViolationException.class)
+            .hasMessageContaining("chk_log_events_tenant_audit_positive_tenant_id");
+      }
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT tenant_id, tenant_key FROM "
+                          + schema
+                          + ".log_events WHERE audit_event_id = ?",
+                      "60000000-0000-4000-8000-000000000001")
+                  .intoArray())
+          .containsExactly(86L, 86L);
+
+      for (long legacyTenantId : List.of(0L, -9L)) {
+        dsl.execute(
+            "INSERT INTO "
+                + schema
+                + ".log_events (scope, tenant_id, tenant_key, type, message) "
+                + "VALUES ('tenant', ?, 0, 'PAYMENT', 'new non-audit legacy row')",
+            legacyTenantId);
+      }
+
       assertThatThrownBy(
               () ->
                   dsl.execute(
@@ -481,6 +746,52 @@ class LoggingAdminApplicationIntegrationTest {
     } finally {
       dsl.execute("DROP SCHEMA " + schema + " CASCADE");
     }
+  }
+
+  private void insertMigrationReceipt(
+      String schema,
+      UUID receiptId,
+      String eventId,
+      String payloadDigest,
+      byte[] payload,
+      String status,
+      String outcome) {
+    Instant occurredAt = Instant.parse("2025-03-01T14:00:00.123456Z");
+    dsl.execute(
+        "WITH projection AS ("
+            + "INSERT INTO "
+            + schema
+            + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message, timestamp) "
+            + "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id) "
+            + "INSERT INTO "
+            + schema
+            + ".account_audit_receipts (receipt_id, scope, tenant_id, tenant_key, audit_event_id, "
+            + "producer_service, event_type, occurred_at_seconds, occurred_at_nanos, schema_version, "
+            + "payload_digest_version, payload_digest, payload, status, outcome, log_event_id) "
+            + "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS BYTEA), ?, ?, projection.id "
+            + "FROM projection",
+        "tenant",
+        73L,
+        73L,
+        eventId,
+        "ACCOUNT_AUDIT",
+        "Account audit event " + eventId,
+        LocalDateTime.of(2025, 3, 1, 14, 0, 0, 123456000),
+        receiptId,
+        "tenant",
+        73L,
+        73L,
+        eventId,
+        "account-service",
+        "ACCOUNT_REGISTRATION",
+        occurredAt.getEpochSecond(),
+        occurredAt.getNano(),
+        1,
+        1,
+        payloadDigest,
+        payload,
+        status,
+        outcome);
   }
 
   private void seedV2Receipt(
@@ -525,6 +836,7 @@ class LoggingAdminApplicationIntegrationTest {
       String eventId,
       String status,
       String outcome,
+      String expectedPayloadDigest,
       String timestamp) {
     var receipt =
         dsl.fetchOne(
@@ -554,8 +866,7 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(receipt.get("occurred_at_nanos", Integer.class)).isEqualTo(occurredAt.getNano());
     assertThat(receipt.get("schema_version", Integer.class)).isEqualTo(1);
     assertThat(receipt.get("payload_digest_version", Integer.class)).isEqualTo(1);
-    assertThat(receipt.get("payload_digest", String.class))
-        .isEqualTo(digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)));
+    assertThat(receipt.get("payload_digest", String.class)).isEqualTo(expectedPayloadDigest);
     assertThat(receipt.get("status", String.class)).isEqualTo(status);
     assertThat(receipt.get("outcome", String.class)).isEqualTo(outcome);
     assertThat(receipt.get("log_event_id", Long.class))

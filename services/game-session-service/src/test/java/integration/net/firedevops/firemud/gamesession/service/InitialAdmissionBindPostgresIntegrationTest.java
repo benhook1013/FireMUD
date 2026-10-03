@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.file.Path;
+import java.util.Objects;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
@@ -33,7 +34,7 @@ class InitialAdmissionBindPostgresIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
-  void v8LedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
+  void initialAdmissionLedgerCommitsPointerAuditAndAttemptTogetherAndReadbackFailsClosed() {
     DriverManagerDataSource dataSource = dataSource();
     Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
     DSLContext dsl =
@@ -97,10 +98,12 @@ class InitialAdmissionBindPostgresIntegrationTest {
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer_event"))).isZero();
     assertThat(
-            dsl.fetchValue(
-                "SELECT status FROM gameplay_initial_admission_bind_attempt WHERE attempt_id = ?",
-                String.class,
-                attempt.attemptId()))
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT status FROM gameplay_initial_admission_bind_attempt WHERE attempt_id = ?",
+                        attempt.attemptId()),
+                    "expected retained initial-admission bind attempt after audit rollback")
+                .get("status", String.class))
         .isEqualTo("PENDING");
     dsl.execute("DROP TRIGGER reject_initial_admission_audit ON gameplay_admission_pointer_event");
     dsl.execute("DROP FUNCTION reject_initial_admission_audit()");
@@ -111,26 +114,30 @@ class InitialAdmissionBindPostgresIntegrationTest {
     assertThat(committed.pointerAuditRequestDigest()).isEqualTo(request.requestDigest());
     assertThat(committed.pointerVersion()).isEqualTo(1L);
     assertThat(
-            dsl.fetchOne(
-                    "SELECT pointer.catalog_revision AS pointer_revision, "
-                        + "event.catalog_revision AS event_revision, pointer.realm_id, "
-                        + "event.realm_id AS event_realm_id, pointer.playable_state_namespace_id, "
-                        + "event.playable_state_namespace_id AS event_namespace_id "
-                        + "FROM gameplay_initial_admission_bind_attempt attempt "
-                        + "JOIN gameplay_admission_pointer pointer ON pointer.id = attempt.pointer_id "
-                        + "JOIN gameplay_admission_pointer_event event ON event.id = attempt.audit_event_id "
-                        + "WHERE attempt.attempt_id = ?",
-                    attempt.attemptId())
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT pointer.catalog_revision AS pointer_revision, "
+                            + "event.catalog_revision AS event_revision, pointer.realm_id, "
+                            + "event.realm_id AS event_realm_id, pointer.playable_state_namespace_id, "
+                            + "event.playable_state_namespace_id AS event_namespace_id "
+                            + "FROM gameplay_initial_admission_bind_attempt attempt "
+                            + "JOIN gameplay_admission_pointer pointer ON pointer.id = attempt.pointer_id "
+                            + "JOIN gameplay_admission_pointer_event event ON event.id = attempt.audit_event_id "
+                            + "WHERE attempt.attempt_id = ?",
+                        attempt.attemptId()),
+                    "expected committed initial-admission pointer/audit row")
                 .get("pointer_revision", Long.class))
         .isEqualTo(1L);
     var evidence =
-        dsl.fetchOne(
-            "SELECT event.catalog_revision AS event_revision, event.realm_id AS event_realm_id, "
-                + "event.playable_state_namespace_id AS event_namespace_id "
-                + "FROM gameplay_initial_admission_bind_attempt attempt "
-                + "JOIN gameplay_admission_pointer_event event ON event.id = attempt.audit_event_id "
-                + "WHERE attempt.attempt_id = ?",
-            attempt.attemptId());
+        Objects.requireNonNull(
+            dsl.fetchOne(
+                "SELECT event.catalog_revision AS event_revision, event.realm_id AS event_realm_id, "
+                    + "event.playable_state_namespace_id AS event_namespace_id "
+                    + "FROM gameplay_initial_admission_bind_attempt attempt "
+                    + "JOIN gameplay_admission_pointer_event event ON event.id = attempt.audit_event_id "
+                    + "WHERE attempt.attempt_id = ?",
+                attempt.attemptId()),
+            "expected committed initial-admission audit evidence row");
     assertThat(evidence.get("event_revision", Long.class)).isEqualTo(1L);
     assertThat(evidence.get("event_realm_id", java.util.UUID.class).toString())
         .isEqualTo(catalog.realmId());
