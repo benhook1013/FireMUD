@@ -143,8 +143,10 @@ BOOTSTRAP_ACCOUNT_TRANSPORT_REQUIRED_MARKERS = (
 BOOTSTRAP_PORT_FORWARD_READINESS_REQUIRED_MARKERS = (
     'BOOTSTRAP_PORT_FORWARD_LOG=/tmp/dev-demo-gateway-port-forward.log',
     'if ! kill -0 "${BOOTSTRAP_PORT_FORWARD_PID}" >/dev/null 2>&1; then',
-    "Forwarding from 127[.]0[.]0[.]1:([0-9]+) -> 80",
-    'BOOTSTRAP_GATEWAY_PORT="$({ sed -nE',
+    "parse_bootstrap_gateway_port() {",
+    r"s/^Forwarding from 127[.]0[.]0[.]1:([0-9]{1,5}) -> 8080$/\1/p",
+    "10#$port >= 1 && 10#$port <= 65535",
+    'BOOTSTRAP_GATEWAY_PORT="$(parse_bootstrap_gateway_port "${BOOTSTRAP_PORT_FORWARD_LOG}" || true)"',
     '[[ "${BOOTSTRAP_GATEWAY_PORT}" =~ ^[0-9]+$ ]]',
     "BOOTSTRAP_GATEWAY_PORT <= 65535",
     'cat "${BOOTSTRAP_PORT_FORWARD_LOG}" || true',
