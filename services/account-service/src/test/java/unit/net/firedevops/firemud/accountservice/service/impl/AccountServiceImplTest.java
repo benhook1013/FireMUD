@@ -5007,7 +5007,7 @@ class AccountServiceImplTest {
     // with a valid signed scope retained from an earlier eligible snapshot.
     String connectScopeId =
         retainedConnectScopeForTest(
-            11L,
+            account,
             7L,
             REALM_ID,
             "demo",
@@ -5363,8 +5363,9 @@ class AccountServiceImplTest {
     if (membershipExists) {
       AccountTenantMembership nonAdmittingMembership = membership(account, 7L);
       nonAdmittingMembership.setGameplayAdmissionAllowed(false);
+      AccountTenantMembership admittingMembership = membership(account, 7L);
       when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
-          .thenReturn(Optional.of(nonAdmittingMembership));
+          .thenReturn(Optional.of(admittingMembership), Optional.of(nonAdmittingMembership));
     } else {
       when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
           .thenReturn(Optional.empty());
@@ -5462,7 +5463,7 @@ class AccountServiceImplTest {
     // with a valid signed scope retained from an earlier eligible snapshot.
     String connectScopeId =
         retainedConnectScopeForTest(
-            11L,
+            account,
             7L,
             REALM_ID,
             "demo",
@@ -5606,7 +5607,7 @@ class AccountServiceImplTest {
     // private. A missing membership must not inherit public JOIN behavior from the slug.
     String connectScopeId =
         retainedConnectScopeForTest(
-            11L,
+            account,
             7L,
             REALM_ID,
             "demo",
@@ -7756,6 +7757,45 @@ class AccountServiceImplTest {
             Map.ofEntries(
                 Map.entry("aud", "bootstrap-connect-scope"),
                 Map.entry("accountId", accountId),
+                Map.entry("tenantId", tenantId),
+                Map.entry("realmId", realmId),
+                Map.entry("worldSlug", worldSlug),
+                Map.entry("realmSlug", realmSlug),
+                Map.entry("playableStateNamespaceId", playableStateNamespaceId),
+                Map.entry("playableStateScope", playableStateScope),
+                Map.entry("gameInstanceId", gameInstanceId),
+                Map.entry("catalogRevision", catalogRevision),
+                Map.entry("pointerVersion", pointerVersion),
+                Map.entry("evaluatedAt", evaluatedAt.toString()),
+                Map.entry("connectScopeExpiresAt", expiresAt.toString())));
+  }
+
+  private String retainedConnectScopeForTest(
+      Account account,
+      long tenantId,
+      String realmId,
+      String worldSlug,
+      String realmSlug,
+      String playableStateNamespaceId,
+      String playableStateScope,
+      long gameInstanceId,
+      long catalogRevision,
+      long pointerVersion) {
+    UUID accountUuid = account.getAccountUuid();
+    if (accountUuid == null
+        || !java.util.Objects.equals(account.getId(), account.getAccountUuidSourceNumericId())) {
+      throw new IllegalArgumentException("Account fixture lacks a persisted UUID identity");
+    }
+    java.time.Instant evaluatedAt = java.time.Instant.now();
+    java.time.Instant expiresAt =
+        evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
+    return new JwtUtil(JWT_SECRET, 30000L)
+        .generateToken(
+            accountUuid.toString(),
+            tokenProperties.getConnectScopeExpirationMs(),
+            Map.ofEntries(
+                Map.entry("aud", "bootstrap-connect-scope"),
+                Map.entry("accountId", accountUuid.toString()),
                 Map.entry("tenantId", tenantId),
                 Map.entry("realmId", realmId),
                 Map.entry("worldSlug", worldSlug),

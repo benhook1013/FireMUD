@@ -287,7 +287,8 @@ class AccountAuditOutboxRepositoryTest {
     persisted.setLastAttemptAt(source.getLastAttemptAt());
     persisted.setCreatedAt(
         source.getCreatedAt() == null ? LocalDateTime.now(ZoneOffset.UTC) : source.getCreatedAt());
-    persisted.setAttemptCount(source.getAttemptCount() == null ? 0 : source.getAttemptCount());
+    persisted.setAttemptCount(
+        source.getAttemptCount() == null ? Integer.valueOf(0) : source.getAttemptCount());
     persisted.setNextAttemptAt(source.getNextAttemptAt());
     persisted.setReceiverAuditProjectionVersion(source.getReceiverAuditProjectionVersion());
     return persisted;
