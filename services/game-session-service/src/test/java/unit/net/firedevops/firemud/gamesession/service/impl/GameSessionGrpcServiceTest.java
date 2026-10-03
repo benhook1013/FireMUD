@@ -64,6 +64,7 @@ import net.firedevops.firemud.gamesession.v1.StopSessionResponse;
 import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -545,6 +546,21 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void listGameplayWorldsReturnsAuthUnavailableWhenPointerReadFails() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenThrow(new DataAccessException("pointer store unavailable"));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+
+    ListGameplayWorldsResponse response = listGameplayWorlds(service);
+
+    assertEquals("AUTH_UNAVAILABLE", response.getError().getCode());
+    assertEquals(0, response.getWorldsCount());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
+  }
+
+  @Test
   void publicGrpcDiscoveryOmitsVisiblePrivateAndPrivateOnlyRealms() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -724,6 +740,21 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void listGameplayRealmsReturnsAuthUnavailableWhenPointerReadFails() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenThrow(new DataAccessException("pointer store unavailable"));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+
+    ListGameplayRealmsResponse response = listGameplayRealms(service, "demo");
+
+    assertEquals("AUTH_UNAVAILABLE", response.getError().getCode());
+    assertEquals(0, response.getRealmsCount());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
+  }
+
+  @Test
   void publicAdmissionRejectsNonUniqueTenantGlobalPublicRealm() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
@@ -822,6 +853,23 @@ class GameSessionGrpcServiceTest {
     assertEquals(
         privateRealm.playableStateNamespaceId().toString(),
         response.getAdmissionPointer().getPlayableStateNamespaceId());
+    Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
+    Mockito.verify(pointerAuthorityService, Mockito.never())
+        .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
+  }
+
+  @Test
+  void getAdmissionPointerReturnsAuthUnavailableWhenPointerReadFails() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenThrow(new DataAccessException("pointer store unavailable"));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+
+    GetAdmissionPointerResponse response = getAdmissionPointer(service, "7", "demo", "production");
+
+    assertEquals("AUTH_UNAVAILABLE", response.getError().getCode());
+    assertFalse(response.hasAdmissionPointer());
     Mockito.verify(pointerAuthorityService, Mockito.times(1)).listPointers();
     Mockito.verify(pointerAuthorityService, Mockito.never())
         .findPointer(Mockito.anyLong(), Mockito.anyString(), Mockito.anyString());
