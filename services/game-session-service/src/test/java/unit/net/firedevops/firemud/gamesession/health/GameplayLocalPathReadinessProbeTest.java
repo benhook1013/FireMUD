@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,7 +42,7 @@ class GameplayLocalPathReadinessProbeTest {
                       PROBE_CHARACTER_ID,
                       0L,
                       "readiness-room-" + probeSequence,
-                      "readiness-probe"));
+                      null));
             });
 
     GameplayLocalPathReadinessProbe probe =
@@ -56,7 +57,38 @@ class GameplayLocalPathReadinessProbeTest {
     SessionContext savedContext = contextCaptor.getValue();
     assertTrue(savedContext.sessionId() > PROBE_SESSION_ID_BASE);
     assertTrue(savedContext.roomInstanceId().startsWith("readiness-room-"));
+    assertEquals("readiness-probe", savedContext.jwt());
     verify(sessionContextService).deleteBySessionId(0L, savedContext.sessionId());
+  }
+
+  @Test
+  void sessionContextProbeRejectsStoredSecret() {
+    SessionContextService sessionContextService = mock(SessionContextService.class);
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = mock(RedisTemplate.class);
+    when(sessionContextService.findByTenantAndSessionId(anyLong(), anyLong()))
+        .thenAnswer(
+            invocation -> {
+              long sessionId = invocation.getArgument(1, Long.class);
+              return Optional.of(
+                  new SessionContext(
+                      sessionId,
+                      0L,
+                      PROBE_ACCOUNT_ID,
+                      PROBE_CHARACTER_ID,
+                      0L,
+                      "readiness-room-" + (sessionId - PROBE_SESSION_ID_BASE),
+                      "readiness-probe"));
+            });
+
+    GameplayLocalPathReadinessProbe probe =
+        new GameplayLocalPathReadinessProbe(sessionContextService, redisTemplate);
+
+    ProbeResult result = probe.probeSessionContextStore();
+
+    assertEquals(false, result.ready());
+    assertEquals("stored session context did not round-trip", result.detail());
+    verify(sessionContextService).deleteBySessionId(eq(0L), anyLong());
   }
 
   @Test

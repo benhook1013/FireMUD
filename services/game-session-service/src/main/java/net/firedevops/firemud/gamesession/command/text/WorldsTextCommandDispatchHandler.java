@@ -211,12 +211,6 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
         request.sessionContext().orElseThrow(),
         payload.worldSelector(),
         payload.realmSelector())) {
-      case WorldsCommandHandler.CharacterBrowseResult.Success success ->
-          new TextCommandInterpretationResult(
-              net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
-              List.of(
-                  net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
-                      success.output())));
       case WorldsCommandHandler.CharacterBrowseResult.InvalidWorld ignored ->
           errorResult(
               "INVALID_ARGUMENT", "CHARS requires a valid world selector. Use WORLDS first.");
@@ -234,8 +228,7 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
       case WorldsCommandHandler.CharacterBrowseResult.Failure failure ->
           errorResult(failure.code(), characterBrowseFailureMessage(failure.code()));
       case WorldsCommandHandler.CharacterBrowseResult.Unavailable ignored ->
-          errorResult(
-              "CHARACTER_LIST_UNAVAILABLE", "Character list unavailable. Retry CHARS shortly.");
+          errorResult("CHARACTER_LIST_UNAVAILABLE", "Character browsing is currently unavailable.");
     };
   }
 

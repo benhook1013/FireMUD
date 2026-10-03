@@ -114,13 +114,27 @@ final class DirectTextOrdinalSelectionResolver {
     if (store == null) {
       return new Unavailable<>();
     }
-    return resolveRealmOrdinal(
+    return resolveRealmOrdinalWithSnapshotValidation(
         selector,
         () -> store.realmsSnapshot(caller, tenantId, world.slug(), now),
         tenantId,
         world,
         now,
         currentCatalogReader,
+        (snapshot, currentCatalog) -> {
+          if (!currentCatalog.worldSlug().equalsIgnoreCase(world.slug())) {
+            return Optional.empty();
+          }
+          return worldCatalog
+              .revalidateRealmDiscoverySnapshot(world, snapshot.ordinalTargets())
+              .filter(
+                  currentResponse ->
+                      currentResponse.worldSlug().equalsIgnoreCase(world.slug())
+                          && snapshot
+                              .catalogFingerprint()
+                              .equals(currentResponse.catalogFingerprint())
+                          && snapshot.ordinalTargets().equals(currentResponse.ordinalTargets()));
+        },
         (current, target) -> worldCatalog.resolveRealmSnapshotOrdinal(world, current, target));
   }
 
@@ -132,10 +146,32 @@ final class DirectTextOrdinalSelectionResolver {
       Instant now,
       Supplier<RealmDiscoverySnapshot> currentCatalogReader,
       BiFunction<RealmDiscoverySnapshot, RealmOrdinalTarget, Optional<T>> currentTargetResolver) {
+    return resolveRealmOrdinalWithSnapshotValidation(
+        selector,
+        snapshotReader,
+        tenantId,
+        world,
+        now,
+        currentCatalogReader,
+        (snapshot, currentCatalog) -> Optional.of(currentCatalog),
+        currentTargetResolver);
+  }
+
+  private static <T> Resolution<T> resolveRealmOrdinalWithSnapshotValidation(
+      String selector,
+      Supplier<Optional<RealmsSnapshot>> snapshotReader,
+      long tenantId,
+      WorldView world,
+      Instant now,
+      Supplier<RealmDiscoverySnapshot> currentCatalogReader,
+      BiFunction<RealmsSnapshot, RealmDiscoverySnapshot, Optional<RealmDiscoverySnapshot>>
+          currentSnapshotResolver,
+      BiFunction<RealmDiscoverySnapshot, RealmOrdinalTarget, Optional<T>> currentTargetResolver) {
     Objects.requireNonNull(snapshotReader, "snapshotReader must not be null");
     Objects.requireNonNull(world, "world must not be null");
     Objects.requireNonNull(now, "now must not be null");
     Objects.requireNonNull(currentCatalogReader, "currentCatalogReader must not be null");
+    Objects.requireNonNull(currentSnapshotResolver, "currentSnapshotResolver must not be null");
     Objects.requireNonNull(currentTargetResolver, "currentTargetResolver must not be null");
 
     Optional<RealmsSnapshot> maybeSnapshot;
@@ -158,16 +194,21 @@ final class DirectTextOrdinalSelectionResolver {
       return new SnapshotMismatch<>();
     }
 
-    RealmDiscoverySnapshot currentCatalog;
+    Optional<RealmDiscoverySnapshot> maybeCurrentResponse;
     try {
-      currentCatalog = currentCatalogReader.get();
+      RealmDiscoverySnapshot currentCatalog = currentCatalogReader.get();
+      maybeCurrentResponse = currentSnapshotResolver.apply(snapshot, currentCatalog);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return new Unavailable<>();
     } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
       return new PointerUnavailable<>();
     }
-    if (!currentCatalog.worldSlug().equalsIgnoreCase(world.slug())
-        || !snapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
+    if (maybeCurrentResponse.isEmpty()) {
+      return new SnapshotMismatch<>();
+    }
+    RealmDiscoverySnapshot currentResponse = maybeCurrentResponse.orElseThrow();
+    if (!currentResponse.worldSlug().equalsIgnoreCase(world.slug())
+        || !snapshot.catalogFingerprint().equals(currentResponse.catalogFingerprint())) {
       return new SnapshotMismatch<>();
     }
     Optional<Integer> maybeOrdinal = parseOrdinal(selector);
@@ -181,7 +222,7 @@ final class DirectTextOrdinalSelectionResolver {
     if (maybeTarget.isEmpty()) {
       return new UnboundSelector<>();
     }
-    Optional<T> selected = currentTargetResolver.apply(currentCatalog, maybeTarget.orElseThrow());
+    Optional<T> selected = currentTargetResolver.apply(currentResponse, maybeTarget.orElseThrow());
     return selected.<Resolution<T>>map(Selected::new).orElseGet(SnapshotMismatch::new);
   }
 

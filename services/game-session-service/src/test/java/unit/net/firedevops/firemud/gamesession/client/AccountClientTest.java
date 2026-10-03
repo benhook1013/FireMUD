@@ -704,13 +704,15 @@ class AccountClientTest {
     verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
-  @Test
-  void runtimeMembershipNormalizesInitialInternalWithoutRetryOrChannelRebuild() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"INTERNAL", "FAILED_PRECONDITION"})
+  void runtimeMembershipNormalizesDeniedReadWithoutRetryOrChannelRebuild(String statusName)
+      throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub stub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
-        .thenThrow(new StatusRuntimeException(Status.INTERNAL));
+        .thenThrow(new StatusRuntimeException(Status.fromCode(Status.Code.valueOf(statusName))));
     GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
     AccountClient client = newClient(stub, channelFactory);
 

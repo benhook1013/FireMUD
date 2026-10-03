@@ -73,6 +73,53 @@ class DirectTextOrdinalSelectionResolverTest {
   }
 
   @Test
+  void concreteRealmResolverKeepsNumericTargetFromExactResponseSubsetAfterReordering() {
+    RealmView preview = previewRealm(2L, 1L);
+    WorldView responseWorld = new WorldView("demo", "Demo", List.of(preview, realm));
+    DirectTextConnectScopeSessionStore store =
+        storeWithRealmResponse(responseWorld, List.of(preview));
+    WorldView currentWorld = new WorldView("demo", "Demo", List.of(realm, preview));
+    GameplayWorldCatalog currentCatalog = GameplayWorldCatalog.forWorldViews(List.of(currentWorld));
+    RealmDiscoverySnapshot publicSnapshot = currentCatalog.readRealmDiscoverySnapshot(currentWorld);
+
+    assertThat(publicSnapshot.catalogFingerprint())
+        .isNotEqualTo(
+            GameplayWorldCatalog.forWorldViews(List.of(responseWorld))
+                .realmDiscoverySnapshot(responseWorld, List.of(preview))
+                .catalogFingerprint());
+
+    var result =
+        DirectTextOrdinalSelectionResolver.resolveRealmOrdinal(
+            "1", store, caller, 22L, currentWorld, NOW, () -> publicSnapshot, currentCatalog);
+
+    assertThat(result.selectedValue()).contains(preview);
+  }
+
+  @Test
+  void concreteRealmResolverRejectsChangedTargetInExactResponseSubset() {
+    RealmView preview = previewRealm(2L, 1L);
+    WorldView responseWorld = new WorldView("demo", "Demo", List.of(preview, realm));
+    DirectTextConnectScopeSessionStore store =
+        storeWithRealmResponse(responseWorld, List.of(preview));
+    RealmView reroutedPreview = previewRealm(3L, 2L);
+    WorldView currentWorld = new WorldView("demo", "Demo", List.of(realm, reroutedPreview));
+    GameplayWorldCatalog currentCatalog = GameplayWorldCatalog.forWorldViews(List.of(currentWorld));
+
+    var result =
+        DirectTextOrdinalSelectionResolver.resolveRealmOrdinal(
+            "1",
+            store,
+            caller,
+            22L,
+            currentWorld,
+            NOW,
+            () -> currentCatalog.readRealmDiscoverySnapshot(currentWorld),
+            currentCatalog);
+
+    assertThat(result).isInstanceOf(DirectTextOrdinalSelectionResolver.SnapshotMismatch.class);
+  }
+
+  @Test
   void absentAndExpiredWorldSnapshotsRemainUnbound() {
     var absent =
         DirectTextOrdinalSelectionResolver.resolveWorldOrdinal(
@@ -303,5 +350,41 @@ class DirectTextOrdinalSelectionResolverTest {
         realms.catalogFingerprint(),
         NOW.plusSeconds(30),
         realms.ordinalTargets());
+  }
+
+  private DirectTextConnectScopeSessionStore storeWithRealmResponse(
+      WorldView responseWorld, List<RealmView> responseRealms) {
+    GameplayWorldCatalog responseCatalog =
+        GameplayWorldCatalog.forWorldViews(List.of(responseWorld));
+    RealmDiscoverySnapshot responseSnapshot =
+        responseCatalog.realmDiscoverySnapshot(responseWorld, responseRealms);
+    DirectTextConnectScopeSessionStore store = DirectTextConnectScopeSessionStore.inMemoryForTest();
+    store.replaceRealmSnapshot(
+        caller,
+        "demo",
+        22L,
+        "demo",
+        responseSnapshot.catalogFingerprint(),
+        responseSnapshot.ordinalTargets(),
+        List.of(),
+        NOW);
+    return store;
+  }
+
+  private RealmView previewRealm(long gameInstanceId, long pointerVersion) {
+    return new RealmView(
+        "preview",
+        "Preview",
+        22L,
+        gameInstanceId,
+        pointerVersion,
+        true,
+        false,
+        false,
+        "ISOLATED",
+        "ALLOW_NEW",
+        1L,
+        UUID.fromString("00000000-0000-0000-0000-000000000003"),
+        UUID.fromString("00000000-0000-0000-0000-000000000004"));
   }
 }

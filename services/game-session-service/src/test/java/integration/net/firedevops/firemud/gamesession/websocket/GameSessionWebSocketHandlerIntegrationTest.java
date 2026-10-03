@@ -106,7 +106,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
       "firemud.gameplay.catalog.worlds[1].display-name=Builder Sandbox",
       "firemud.gameplay.catalog.worlds[1].realms[0].slug=production",
       "firemud.gameplay.catalog.worlds[1].realms[0].display-name=Live Realm",
-      "firemud.gameplay.catalog.worlds[1].realms[0].tenant-id=22",
+      "firemud.gameplay.catalog.worlds[1].realms[0].tenant-id=23",
       "firemud.gameplay.catalog.worlds[1].realms[0].game-instance-id=2",
       "firemud.gameplay.catalog.worlds[1].realms[0].pointer-version=1",
       "firemud.gameplay.catalog.worlds[1].realms[0].visible=true",
@@ -186,6 +186,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     sessionContextService.deleteBySessionId(22L, 42L);
     sessionContextService.deleteBySessionId(22L, 1L);
     sessionContextService.deleteBySessionId(22L, 2L);
+    sessionContextService.deleteBySessionId(23L, 41L);
+    sessionContextService.deleteBySessionId(23L, 2L);
     resetAdmissionPointers();
     when(redisTemplate.opsForValue()).thenReturn(redisValueOperations);
     when(redisTemplate.opsForSet()).thenReturn(redisSetOperations);
@@ -262,10 +264,10 @@ class GameSessionWebSocketHandlerIntegrationTest {
             invocation ->
                 GetTenantMembershipForRuntimeResponse.newBuilder()
                     .setAccountId("123")
-                    .setTenantId("22")
+                    .setTenantId(invocation.getArgument(1))
                     .setMembershipExists(true)
-                    .setMembershipLifecycleState("ACTIVE")
                     .setGameplayAdmissionAllowed(true)
+                    .setMembershipLifecycleState("ACTIVE")
                     .setMembershipVersion(1L)
                     .setMembershipAuthorityGeneration(1L)
                     .setEvaluatedAt(java.time.Instant.now().toString())
@@ -278,7 +280,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     org.mockito.Mockito.doAnswer(
             invocation ->
                 GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                    .setTenantId("22")
+                    .setTenantId(invocation.getArgument(0))
                     .setGameplayAvailable(true)
                     .setEntitlementVersion(1L)
                     .setTenantBillingSequence(1L)
@@ -304,8 +306,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         .setTenantId("22")
                         .setAccountId("123")
                         .setName("Emberline")
-                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .setLevel(12)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
@@ -422,7 +424,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(1L);
     instance = new GameInstance();
     instance.setId(2L);
-    instance.setTenantId(22L);
+    instance.setTenantId(23L);
     instance.setOwnerAccountId(123L);
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(2L);
     when(worldManagementClient.getWorldInstanceLifecycle(
@@ -844,14 +846,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketLoginCanBrowseRealmsAndCharactersBeforePlay() throws Exception {
+  void websocketLoginCanBrowseRealmsWhileCharactersFailClosed() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client = openGameplayDriver("41")) {
       client.login("demo@example.com", "swordfish");
       client.send("REALMS demo");
       client.awaitStartsWith("OK REALMS");
       client.send("CHARS demo");
-      client.awaitStartsWith("OK CHARS");
+      client.awaitStartsWith("ERROR CHARACTER_LIST_UNAVAILABLE");
       payloads = client.responses();
     }
 
@@ -862,21 +864,32 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 payload.startsWith("OK REALMS")
                     && payload.contains("Live Realm (production) [shared, allow_new]"));
     assertThat(payloads)
-        .anyMatch(
-            payload ->
-                payload.startsWith("OK CHARS")
-                    && payload.contains("Emberline [lvl 12]")
-                    && payload.contains("Sora [lvl 7]")
-                    && payload.contains("Realm state: shared, creation: allow_new"));
+        .anyMatch(payload -> payload.startsWith("ERROR CHARACTER_LIST_UNAVAILABLE"));
     verify(commandService, never()).enqueue("41", "LOGIN demo@example.com swordfish", false);
     verify(commandService, never()).enqueue("41", "REALMS demo", false);
     verify(commandService, never()).enqueue("41", "CHARS demo", false);
-    verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    verify(accountClient)
+        .issueDirectTextConnectScope(
+            any(),
+            argThat(
+                target ->
+                    "22".equals(target.tenantId())
+                        && "demo".equals(target.worldSlug())
+                        && "production".equals(target.realmSlug())
+                        && "SHARED".equals(target.playableStateScope())
+                        && "1".equals(target.gameInstanceId())
+                        && target.catalogRevision() > 0
+                        && target.pointerVersion() == 1L));
+    verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(PlayableStateScope.class));
   }
 
   @Test
-  void websocketFirstPartyStructuredLobbyBrowseIncludesRealmAndCharacterViews() throws Exception {
+  void websocketFirstPartyStructuredLobbyBrowseFailsClosedForCharacters() throws Exception {
     List<String> payloads;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "browse-1"))) {
@@ -946,24 +959,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
             .orElseThrow();
     GameplayStructuredCommandAssertions.requireStructuredCommand(
         charsResult, "CHARS", "chars", "META", "WORLD_BROWSE", "UI");
-    assertThat(charsResult.path("accepted").asBoolean()).isTrue();
-    assertThat(charsResult.path("outputs").get(0).path("payloadType").asText())
-        .isEqualTo("characters_view");
-    assertThat(charsResult.path("outputs").get(0).path("payload").path("realmSlug").asText())
-        .isEqualTo("production");
-    assertThat(charsResult.path("outputs").get(0).path("payload").path("stateScope").asText())
-        .isEqualTo("SHARED");
-    assertThat(
-            charsResult
-                .path("outputs")
-                .get(0)
-                .path("payload")
-                .path("characterCreationPolicy")
-                .asText())
-        .isEqualTo("ALLOW_NEW");
-    assertThat(charsResult.path("outputs").get(0).path("payload").path("characters")).hasSize(2);
-    verify(entityManagementClient)
-        .listCharactersByAccount("22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+    assertThat(charsResult.path("accepted").asBoolean()).isFalse();
+    assertThat(charsResult.path("errorCode").asText()).isEqualTo("CHARACTER_LIST_UNAVAILABLE");
+    verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(PlayableStateScope.class));
   }
 
   @Test
@@ -1020,7 +1023,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyReconnectSkipsPrivateContextAndKeepsFreshLookAfterPlay()
+  void websocketFirstPartyFreshPlayDoesNotReplayPrivateContextAndPerformsFreshLook()
       throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
@@ -1085,7 +1088,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyLogoutDoesNotReplayRetainedContextForFreshReconnect() throws Exception {
+  void websocketFirstPartyLogoutRetainsButDoesNotReplayPrivateContextAfterFailClosedLogout()
+      throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -1131,7 +1135,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
           payload ->
               "player_output".equals(json(payload).path("eventType").asText())
                   && containsKind(json(payload), "VIEW"),
-          "fresh current view");
+          "fresh view output");
+      client.awaitMatching(
+          payload ->
+              "player_output".equals(json(payload).path("eventType").asText())
+                  && containsKind(json(payload), "PROMPT"),
+          "fresh prompt output");
       secondPayloads = client.responses();
     }
 
@@ -1148,6 +1157,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
             payload ->
                 "player_output".equals(json(payload).path("eventType").asText())
                     && containsKind(json(payload), "VIEW"));
+    assertThat(secondPayloads)
+        .anyMatch(
+            payload ->
+                "player_output".equals(json(payload).path("eventType").asText())
+                    && containsKind(json(payload), "PROMPT"));
     verify(screenBufferService, never()).get(22L, 1L, 123L);
   }
 
@@ -1253,22 +1267,23 @@ class GameSessionWebSocketHandlerIntegrationTest {
       assertThat(pointerAfter.catalogRevision()).isEqualTo(pointerBefore.catalogRevision());
       client.send("LOOK");
       client.awaitStartsWith("ERROR PLAY_REQUIRED");
+      clearInvocations(entityManagementClient);
       client.send("CHARS demo");
-      client.awaitStartsWith("OK CHARS");
+      client.awaitStartsWith("ERROR CHARACTER_LIST_UNAVAILABLE");
       payloads = client.responses();
     }
 
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
     assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR PLAY_REQUIRED"));
-    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK CHARS"));
-    assertThat(payloads).anyMatch(payload -> payload.contains("CutoverArrival"));
-    org.mockito.Mockito.verify(entityManagementClient)
+    assertThat(payloads)
+        .anyMatch(payload -> payload.startsWith("ERROR CHARACTER_LIST_UNAVAILABLE"));
+    verify(entityManagementClient, never())
         .listCharactersByAccount(
-            "22",
-            "123",
-            Long.toString(CUTOVER_GAME_INSTANCE_ID),
-            PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(PlayableStateScope.class));
   }
 
   @Test
@@ -1295,8 +1310,66 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "42",
             java.util.Map.of(
                 "X-Game-Instance-Id", "2",
-                "X-Tenant-Id", "22",
+                "X-Tenant-Id", "23",
                 "X-Firemud-Transport-Session-Id", "41",
+                "X-World-Slug", "sandbox",
+                "X-Realm-Slug", "production",
+                "X-Pointer-Version", "1"))) {
+      second.send("LOOK");
+      second.awaitStartsWith("ERROR LOGIN_REQUIRED");
+      second.login("demo@example.com", "swordfish");
+      second.awaitStartsWith("OK LOGIN");
+      second.send("REALMS sandbox");
+      second.awaitStartsWith("OK REALMS");
+      payloads = second.responses();
+    }
+
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("ERROR LOGIN_REQUIRED"));
+    assertThat(payloads).anyMatch(payload -> payload.startsWith("OK LOGIN"));
+    assertThat(payloads)
+        .anyMatch(
+            payload ->
+                payload.startsWith("OK REALMS") && payload.contains("Live Realm (production)"));
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEmpty();
+    assertThat(sessionContextService.findByTenantAndSessionId(23L, 41L))
+        .hasValueSatisfying(
+            context -> {
+              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.gameInstanceId()).isZero();
+              assertThat(context.characterId()).isZero();
+              assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
+              assertThat(context.worldSlug()).isEqualTo("sandbox");
+              assertThat(context.realmSlug()).isEqualTo("production");
+              assertThat(context.pointerVersion()).isEqualTo(1L);
+            });
+    assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
+  }
+
+  @Test
+  void websocketRouteChangeHidesPrivateOnlySandboxFromPublicWorldCommands() throws Exception {
+    try (GameplayWebSocketDriver first =
+        openGameplayDriver(
+            "43",
+            java.util.Map.of(
+                "X-Tenant-Id", "22",
+                "X-Firemud-Transport-Session-Id", "43",
+                "X-World-Slug", "demo",
+                "X-Realm-Slug", "production",
+                "X-Pointer-Version", "1"))) {
+      first.login("demo@example.com", "swordfish");
+      first.play("demo", "Emberline");
+      first.send("LOOK");
+      first.awaitStartsWith("OK LOOK");
+    }
+
+    List<String> payloads;
+    try (GameplayWebSocketDriver second =
+        openGameplayDriver(
+            "44",
+            java.util.Map.of(
+                "X-Game-Instance-Id", "2",
+                "X-Tenant-Id", "22",
+                "X-Firemud-Transport-Session-Id", "43",
                 "X-World-Slug", "sandbox",
                 "X-Realm-Slug", "production",
                 "X-Pointer-Version", "1"))) {
@@ -1322,7 +1395,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             payload ->
                 payload.startsWith("ERROR INVALID_ARGUMENT")
                     && payload.contains("REALMS requires a valid world selector"));
-    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 43L))
         .hasValueSatisfying(
             context -> {
               assertThat(context.accountId()).isEqualTo(123L);
@@ -1333,7 +1406,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
               assertThat(context.realmSlug()).isEqualTo("production");
               assertThat(context.pointerVersion()).isEqualTo(1L);
             });
-    assertThat(gameplayPresenceService.findConnectedBySessionId(41L)).isEmpty();
+    assertThat(gameplayPresenceService.findConnectedBySessionId(43L)).isEmpty();
   }
 
   @Test
@@ -1439,7 +1512,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     List<String> payloads;
     try (GameplayWebSocketDriver second =
-        openFirstPartyDriver("2", firstPartyClaims("sandbox", "production", "2", "1", "route-b"))) {
+        openFirstPartyDriver(
+            "2", firstPartyClaimsForTenant("23", "sandbox", "production", "2", "1", "route-b"))) {
       second.send("LOGIN");
       second.awaitMatching(
           payload -> isStructuredCommand(payload, "LOGIN"), "structured LOGIN result");
@@ -1490,7 +1564,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(realmsRejected.path("accepted").asBoolean()).isFalse();
     assertThat(realmsRejected.path("errorCode").asText()).isEqualTo("INVALID_ARGUMENT");
 
-    assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
+    assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L)).isEmpty();
+    assertThat(sessionContextService.findByTenantAndSessionId(23L, 2L))
         .hasValueSatisfying(
             context -> {
               assertThat(context.accountId()).isEqualTo(123L);
@@ -1643,11 +1718,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
       String gameInstanceId,
       String pointerVersion,
       String suffix) {
+    return firstPartyClaimsForTenant(
+        "22", worldSlug, realmSlug, gameInstanceId, pointerVersion, suffix);
+  }
+
+  private java.util.Map<String, Object> firstPartyClaimsForTenant(
+      String tenantId,
+      String worldSlug,
+      String realmSlug,
+      String gameInstanceId,
+      String pointerVersion,
+      String suffix) {
     return java.util.Map.of(
         "accountId",
         "123",
         "tenantId",
-        "22",
+        tenantId,
         "worldSlug",
         worldSlug,
         "realmSlug",
@@ -1745,7 +1831,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "Builder Sandbox",
             "production",
             "Live Realm",
-            22L,
+            23L,
             2L,
             true,
             false,

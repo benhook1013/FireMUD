@@ -90,9 +90,11 @@ import net.firedevops.firemud.common.security.JwtAuthProperties;
 import net.firedevops.firemud.common.security.JwtClaims;
 import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
+import org.jooq.exception.ConfigurationException;
+import org.jooq.exception.DataAccessException;
 import org.jooq.exception.IntegrityConstraintViolationException;
+import org.jooq.exception.MappingException;
 import org.slf4j.Logger;
-import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -1379,13 +1381,15 @@ public class AccountServiceImpl implements AccountService {
     List<net.firedevops.firemud.accountservice.entity.Subscription> subscriptions;
     try {
       subscriptions = subscriptionRepository.findByTenantId(tenantId);
-    } catch (DataAccessException ex) {
+    } catch (MappingException | ConfigurationException ex) {
+      throw ex;
+    } catch (DataAccessException | org.springframework.dao.DataAccessException ex) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is unavailable; retry later",
           ex);
     }
-    if (subscriptions.size() != 1) {
+    if (subscriptions == null || subscriptions.size() != 1) {
       throw new AuthenticationException(
           "ENTITLEMENT_UNAVAILABLE",
           "Tenant entitlement authority is missing or ambiguous; retry later");
@@ -1395,6 +1399,10 @@ public class AccountServiceImpl implements AccountService {
     boolean gameplayAvailable = isGameplayAvailableStatus(subscription.getStatus());
     boolean allowPublicJoin = isPublicJoinAllowedStatus(subscription.getStatus());
     long version = subscription.getEntitlementVersion();
+    if (version <= 0L) {
+      throw new AuthenticationException(
+          "ENTITLEMENT_UNAVAILABLE", "Tenant entitlement version is invalid; retry later");
+    }
     return new RuntimeEntitlementsDto(
         tenantId, gameplayAvailable, allowPublicJoin, version, version, Instant.now().toString());
   }

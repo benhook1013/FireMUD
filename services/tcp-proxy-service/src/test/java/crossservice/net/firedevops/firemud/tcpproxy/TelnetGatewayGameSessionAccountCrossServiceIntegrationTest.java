@@ -67,7 +67,9 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
       "stub-secret-key-for-tests-1234567890";
   private static final long TENANT_ID = 1L;
   private static final long ACCOUNT_ID = 7L;
+  private static final String SORA_EMAIL = "sora@example.com";
   private static final long SORA_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_SORA);
+  private static final String NYX_EMAIL = "nyx@example.com";
   private static final long NYX_ACCOUNT_ID = Long.parseLong(ChatTestFixtures.PLAYER_NYX);
   private static final long DEMO_WORLD_INSTANCE_ID = 1L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
@@ -175,18 +177,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             this::openTelnetClient,
             GameplayTelnetScenarios.demoAdmission(READY_LOOK_TEXT),
             client ->
-                assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
-                    .contains("ERROR JOIN_REQUIRED")
-                    .contains(
-                        "Membership is required before PLAY. "
-                            + "Run REALMS <world> first, then JOIN <world>."))) {
+                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
+                    .contains("ERROR WORLD_ACCESS_DENIED")
+                    .doesNotContain("JOIN_REQUIRED")
+                    .doesNotContain("Run REALMS <world>"))) {
       assertThat(scenario.responses())
-          .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"))
-          .anyMatch(
+          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"))
+          .noneMatch(
               response ->
-                  response.contains(
-                      "Membership is required before PLAY. "
-                          + "Run REALMS <world> first, then JOIN <world>."));
+                  response.contains("JOIN_REQUIRED") || response.contains("Run REALMS <world>"));
     }
   }
 
@@ -227,7 +226,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
                 this::openTelnetClient,
                 GameplayTelnetScenarios.demoAdmission("Emberline", READY_LOOK_TEXT));
         GameplayWebSocketDriver webSocketClient =
-            openReadyGatewayWebSocketClient("sora@example.com", "Sora", "gateway-sora")) {
+            openReadyGatewayWebSocketClient(SORA_EMAIL, "Sora", "gateway-sora")) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       telnetClient.sendLine("MOVE north");
 
@@ -497,10 +496,15 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
             this::openTelnetClient,
             READY_LOOK_TEXT,
             client ->
-                assertThat(client.readLineContaining("ERROR JOIN_REQUIRED"))
-                    .contains("ERROR JOIN_REQUIRED"))) {
+                assertThat(client.readLineContaining("ERROR WORLD_ACCESS_DENIED"))
+                    .contains("ERROR WORLD_ACCESS_DENIED")
+                    .doesNotContain("JOIN_REQUIRED")
+                    .doesNotContain("Run REALMS <world>"))) {
       assertThat(scenario.responses())
-          .anyMatch(response -> response.contains("ERROR JOIN_REQUIRED"));
+          .anyMatch(response -> response.contains("ERROR WORLD_ACCESS_DENIED"))
+          .noneMatch(
+              response ->
+                  response.contains("JOIN_REQUIRED") || response.contains("Run REALMS <world>"));
     }
   }
 
@@ -609,8 +613,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         GameplayTelnetScenarios.openReadyTrio(
             this::openTelnetClient,
             characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
-            characterAdmission("sora@example.com", "Sora"),
-            characterAdmission("nyx@example.com", "Nyx"))) {
+            characterAdmission(SORA_EMAIL, "Sora"),
+            characterAdmission(NYX_EMAIL, "Nyx"))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -656,7 +660,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         GameplayTelnetScenarios.openReadyPair(
             this::openTelnetClient,
             characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
-            characterAdmission("sora@example.com", "Sora"))) {
+            characterAdmission(SORA_EMAIL, "Sora"))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -689,7 +693,7 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
         GameplayTelnetScenarios.openReadyPair(
             this::openTelnetClient,
             characterAdmission(GameplayTelnetScenarios.DEMO_LOGIN_EMAIL, "Emberline"),
-            characterAdmission("sora@example.com", "Sora"))) {
+            characterAdmission(SORA_EMAIL, "Sora"))) {
       SessionContextService sessionContextService = gameSession().bean(SessionContextService.class);
       ActiveTransportSessionRegistry sessionRegistry =
           gameSession().bean(ActiveTransportSessionRegistry.class);
@@ -723,8 +727,8 @@ class TelnetGatewayGameSessionAccountCrossServiceIntegrationTest {
     try {
       stack =
           GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID)
-              .mapAccountId("sora@example.com", SORA_ACCOUNT_ID)
-              .mapAccountId("nyx@example.com", NYX_ACCOUNT_ID)
+              .mapAccountId(SORA_EMAIL, SORA_ACCOUNT_ID)
+              .mapAccountId(NYX_EMAIL, NYX_ACCOUNT_ID)
               .withSocialEnabled(true)
               .withGameLogicProps(
                   Map.of(

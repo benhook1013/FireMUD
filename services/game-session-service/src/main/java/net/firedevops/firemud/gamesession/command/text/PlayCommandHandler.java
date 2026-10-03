@@ -437,6 +437,24 @@ public class PlayCommandHandler {
           return characterIdentityUnavailableFailure(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), character, ex);
         }
+        boolean retainedTargetMatchesSelection =
+            context.hasGameplayIdentity()
+                && context.tenantId() == selectedRealm.tenantId()
+                && context.gameInstanceId() == selectedRealm.gameInstanceId()
+                && (!StringUtils.hasText(context.worldSlug())
+                    || sameSlug(context.worldSlug(), selectedWorld.slug()))
+                && (!StringUtils.hasText(context.realmSlug())
+                    || sameSlug(context.realmSlug(), selectedRealm.slug()));
+        if (!StringUtils.hasText(character)
+            && retainedTargetMatchesSelection
+            && context.characterId() != resolvedCharacter.id()) {
+          return characterIdentityUnavailableFailure(
+              selectedTenantTag,
+              Long.toString(selectedRealm.gameInstanceId()),
+              Long.toString(context.characterId()),
+              new IllegalStateException(
+                  "Current persisted roster no longer contains the retained actor"));
+        }
         String characterName = resolvedCharacter.name();
         Optional<PlayCommandHandlingResult> moderationFailure =
             validateModerationPolicy(context, selectedRealm, selectedTenantTag);
@@ -646,6 +664,9 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.RealmView selectedRealm,
       String requestedCharacter) {
     PlayableStateScope playableStateScope = toPlayableStateScope(selectedRealm);
+    if (playableStateScope == PlayableStateScope.PLAYABLE_STATE_SCOPE_UNSPECIFIED) {
+      throw new IllegalStateException("Selected realm has no playable-state scope");
+    }
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(selectedRealm.tenantId()),
@@ -669,7 +690,6 @@ public class PlayCommandHandler {
             "Malformed or unauthorized character roster for selected gameplay target");
       }
     }
-
     Character selected;
     if (StringUtils.hasText(requestedCharacter)) {
       List<Character> matches =
@@ -804,6 +824,14 @@ public class PlayCommandHandler {
       String tenantTag,
       long requestedCharacterId) {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
+    // This is only a denial-cleanup hint for an already bound runtime, never actor admission.
+    long denialCleanupCharacterId =
+        context.accountId() > 0L
+                && context.tenantId() == selectedRealm.tenantId()
+                && context.gameInstanceId() == selectedRealm.gameInstanceId()
+                && context.characterId() > 0L
+            ? context.characterId()
+            : requestedCharacterId > 0L ? requestedCharacterId : 0L;
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
             Long.toString(context.accountId()), Long.toString(selectedRealm.tenantId()), requestId);
@@ -814,7 +842,7 @@ public class PlayCommandHandler {
             tenantTag,
             selectedWorld,
             selectedRealm,
-            requestedCharacterId,
+            denialCleanupCharacterId,
             requestId);
     if (membershipFailure.isPresent()) {
       return membershipFailure;
@@ -829,7 +857,7 @@ public class PlayCommandHandler {
         tenantTag,
         selectedWorld,
         selectedRealm,
-        requestedCharacterId);
+        denialCleanupCharacterId);
   }
 
   private long requireResolvedCharacterId(String characterId) {
@@ -909,6 +937,7 @@ public class PlayCommandHandler {
         }
         recordResumeDeniedIfApplicable(
             context,
+            selectedRealm.tenantId(),
             selectedWorld.slug(),
             selectedRealm.slug(),
             selectedRealm.pointerVersion(),
@@ -968,6 +997,7 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     recordResumeDeniedIfApplicable(
         context,
+        selectedRealm.tenantId(),
         selectedWorld.slug(),
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
@@ -999,6 +1029,7 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     recordResumeDeniedIfApplicable(
         context,
+        selectedRealm.tenantId(),
         selectedWorld.slug(),
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
@@ -1026,7 +1057,10 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     Optional<ErrorDetail> maybeError = extractError(response.getError());
     if (maybeError.isPresent()) {
-      if (isEntitlementUnavailable(maybeError.get())) {
+      if (isEntitlementUnavailable(maybeError.get())
+          || "FAILED_PRECONDITION".equalsIgnoreCase(maybeError.get().getCode())) {
+        // Account uses FAILED_PRECONDITION when this request cannot prove its caller/target
+        // binding; that is unavailable authority, not a gameplay-policy denial.
         return Optional.of(
             entitlementUnavailableFailure(
                 tenantTag, Long.toString(selectedRealm.gameInstanceId()), requestedCharacterId));
@@ -1061,6 +1095,7 @@ public class PlayCommandHandler {
       long requestedCharacterId) {
     recordResumeDeniedIfApplicable(
         context,
+        selectedRealm.tenantId(),
         selectedWorld.slug(),
         selectedRealm.slug(),
         selectedRealm.pointerVersion(),
@@ -1177,6 +1212,14 @@ public class PlayCommandHandler {
       GetTenantEntitlementsForRuntimeResponse response, GameplayWorldCatalog.RealmView realm) {
     return AccountAuthorityEvidence.isValidEntitlement(
         response, realm.tenantId(), authorityEvaluationClock);
+  }
+
+  private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
+    try {
+      return Long.parseLong(tenantId) == expectedTenantId;
+    } catch (NumberFormatException ex) {
+      return false;
+    }
   }
 
   private boolean maybeRecordFreshEntryFallback(
@@ -1383,9 +1426,7 @@ public class PlayCommandHandler {
       GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
     return "Selection required. Use "
         + playUsage(selectedWorld, selectedRealm)
-        + " or browse "
-        + charsUsage(selectedWorld, selectedRealm)
-        + " first.";
+        + " with a known character; character browsing is currently unavailable.";
   }
 
   private PlayCommandHandlingResult characterSelectionRequiredFailure(
@@ -1396,15 +1437,7 @@ public class PlayCommandHandler {
         GameplayStageCommandConstants.PLAY_SELECTION_REQUIRED_CODE,
         characterSelectionMessage(selectedWorld, selectedRealm),
         "error.play.character-selection-required",
-        Map.of(
-            "worldSlug",
-            selectedWorld.slug(),
-            "realmSlug",
-            selectedRealm.slug(),
-            "playUsage",
-            playUsage(selectedWorld, selectedRealm),
-            "charsUsage",
-            charsUsage(selectedWorld, selectedRealm)),
+        Map.of("playUsage", playUsage(selectedWorld, selectedRealm)),
         tenantTag,
         Long.toString(selectedRealm.gameInstanceId()),
         null,
@@ -1431,13 +1464,6 @@ public class PlayCommandHandler {
         + " <character>";
   }
 
-  private String charsUsage(
-      GameplayWorldCatalog.WorldView selectedWorld, GameplayWorldCatalog.RealmView selectedRealm) {
-    return "CHARS "
-        + selectedWorld.slug()
-        + (selectedRealm.publicProductionRealm() ? "" : " " + selectedRealm.slug());
-  }
-
   private record ResolvedPlaySelection(
       String worldSelector, String explicitRealmSelector, String characterSelector) {}
 
@@ -1453,6 +1479,7 @@ public class PlayCommandHandler {
 
   private void recordResumeDeniedIfApplicable(
       SessionContext context,
+      long requestedTenantId,
       String requestedWorldSlug,
       String requestedRealmSlug,
       long requestedPointerVersion,
@@ -1460,17 +1487,27 @@ public class PlayCommandHandler {
       long requestedCharacterId,
       String tenantTag,
       String reason) {
+    boolean selectedTenantMatchesContext =
+        requestedTenantId > 0L
+            && context.tenantId() > 0L
+            && requestedTenantId == context.tenantId()
+            && hasMatchingTenantId(tenantTag, context.tenantId());
+    boolean sameRuntimeTarget =
+        selectedTenantMatchesContext
+            && requestedGameInstanceId > 0L
+            && context.gameInstanceId() > 0L
+            && context.gameInstanceId() == requestedGameInstanceId;
     boolean sameGameplayIdentity =
-        Long.toString(context.tenantId()).equals(tenantTag)
-            && context.gameInstanceId() == requestedGameInstanceId
-            && (requestedCharacterId > 0
-                ? context.characterId() == requestedCharacterId
-                : context.hasGameplayBinding());
+        sameRuntimeTarget
+            && context.accountId() > 0L
+            && context.characterId() > 0L
+            && requestedCharacterId > 0
+            && context.characterId() == requestedCharacterId;
     boolean sameVisibleRealm =
-        Long.toString(context.tenantId()).equals(tenantTag)
+        sameRuntimeTarget
             && sameSlug(context.worldSlug(), requestedWorldSlug)
             && sameSlug(context.realmSlug(), requestedRealmSlug);
-    if (!sameGameplayIdentity && !sameVisibleRealm) {
+    if (!sameGameplayIdentity && !sameVisibleRealm && !sameRuntimeTarget) {
       return;
     }
     meterRegistry.counter(RESUME_DENIED_METRIC, "reason", reason).increment();
