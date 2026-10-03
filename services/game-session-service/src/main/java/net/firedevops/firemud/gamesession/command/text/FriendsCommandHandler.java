@@ -210,7 +210,7 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleAdd(
       SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
-    if (Long.toString(target.friendAccountId()).equals(context.accountId())) {
+    if (target.friendAccountId() == numericAccountId(context)) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
     }
@@ -234,7 +234,7 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleRemove(
       SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
-    if (Long.toString(target.friendAccountId()).equals(context.accountId())) {
+    if (target.friendAccountId() == numericAccountId(context)) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
     }

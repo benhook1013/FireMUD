@@ -911,26 +911,33 @@ class FriendsCommandHandlerTest {
   }
 
   @Test
-  void friendsMutationRejectsSelfLink() {
+  void friendsAddAndRemoveRejectSelfLinkForEquivalentNumericAccountText() {
     SocialGroupsClient socialGroupsClient = Mockito.mock(SocialGroupsClient.class);
     EntityManagementClient entityManagementClient = Mockito.mock(EntityManagementClient.class);
+    ScriptEventPublisher scriptEventPublisher = Mockito.mock(ScriptEventPublisher.class);
     FriendsCommandHandler handler =
-        newHandler(
-            socialGroupsClient, entityManagementClient, Mockito.mock(ScriptEventPublisher.class));
+        newHandler(socialGroupsClient, entityManagementClient, scriptEventPublisher);
 
-    TextCommandInterpretationResult result =
-        handler.handle(
-            new TextCommand(
-                TextCommandType.FRIENDS, java.util.List.of("ADD", "41"), "FRIENDS ADD 41"),
-            GAMEPLAY_CONTEXT);
+    for (String accountIdText : List.of("41", "041", "+41")) {
+      SessionContext context = gameplayContextWithAccountId(accountIdText);
+      for (String action : List.of("ADD", "REMOVE")) {
+        TextCommandInterpretationResult result =
+            handler.handle(
+                new TextCommand(
+                    TextCommandType.FRIENDS, List.of(action, "41"), "FRIENDS " + action + " 41"),
+                context);
 
-    assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_SELF_LINK_FORBIDDEN");
-    assertThat(result.outputs())
-        .singleElement()
-        .extracting(PlayerOutput::text)
-        .isEqualTo(
-            "ERROR FRIEND_SELF_LINK_FORBIDDEN Cannot add or remove your own account as a friend");
+        assertThat(result.commandResult().accepted()).isFalse();
+        assertThat(result.commandResult().errorCode()).isEqualTo("FRIEND_SELF_LINK_FORBIDDEN");
+        assertThat(result.outputs())
+            .singleElement()
+            .extracting(PlayerOutput::text)
+            .isEqualTo(
+                "ERROR FRIEND_SELF_LINK_FORBIDDEN Cannot add or remove your own account as a friend");
+      }
+    }
+
+    Mockito.verifyNoInteractions(socialGroupsClient, entityManagementClient, scriptEventPublisher);
   }
 
   @Test
