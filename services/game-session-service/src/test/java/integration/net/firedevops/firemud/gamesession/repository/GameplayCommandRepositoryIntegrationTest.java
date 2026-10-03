@@ -530,6 +530,7 @@ class GameplayCommandRepositoryIntegrationTest {
         .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
         .containsExactly(712L, accountUuid);
 
+    saved.setAccountUuid(null);
     saved.setAttemptCount(1);
     GameplayCommand updated = repository.save(saved);
 
@@ -537,6 +538,21 @@ class GameplayCommandRepositoryIntegrationTest {
         .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
         .containsExactly(712L, accountUuid);
     assertThat(updated.getAttemptCount()).isEqualTo(1);
+
+    UUID attemptedReplacement = UUID.fromString("3317ade3-c0e6-437a-ae8d-af77d1ec497d");
+    updated.setAccountUuid(attemptedReplacement);
+    updated.setAttemptCount(2);
+    GameplayCommand replacementAttempt = repository.save(updated);
+
+    assertThat(replacementAttempt)
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(712L, accountUuid);
+    assertThat(replacementAttempt.getAttemptCount()).isEqualTo(2);
+    assertThat(
+            repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "account-uuid-command"))
+        .get()
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(712L, accountUuid);
   }
 
   @Test
@@ -548,6 +564,19 @@ class GameplayCommandRepositoryIntegrationTest {
     GameplayCommand saved = repository.save(command);
 
     assertThat(saved)
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(908L, null);
+    assertThat(
+            repository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "legacy-account-command"))
+        .get()
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(908L, null);
+
+    saved.setAccountUuid(UUID.fromString("4317ade3-c0e6-437a-ae8d-af77d1ec497d"));
+    GameplayCommand updated = repository.save(saved);
+
+    assertThat(updated)
         .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
         .containsExactly(908L, null);
     assertThat(

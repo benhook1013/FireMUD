@@ -355,7 +355,6 @@ public class GameplayCommandRepository {
             .set(GAMEPLAY_COMMAND.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(GAMEPLAY_COMMAND.SESSION_ID, entity.getSessionId())
             .set(GAMEPLAY_COMMAND.ACCOUNT_ID, entity.getAccountId())
-            .set(GAMEPLAY_COMMAND.ACCOUNT_UUID, entity.getAccountUuid())
             .set(GAMEPLAY_COMMAND.CHARACTER_ID, entity.getCharacterId())
             .set(GAMEPLAY_COMMAND.COMMAND_NAME, entity.getCommandName())
             .set(GAMEPLAY_COMMAND.COMMAND_TEXT, entity.getCommandText())
