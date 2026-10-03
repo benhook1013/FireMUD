@@ -1,6 +1,7 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -26,6 +27,9 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       "Moderation actions are unavailable until the shared mutation gate is implemented";
   private static final String FEATURE_FLAG_TOGGLE_UNAVAILABLE_MESSAGE =
       "Feature-flag toggles are unavailable until the shared mutation gate is implemented";
+  private static final String ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE =
+      "Account audit receipt receiver is unavailable until the immutable receipt contract is "
+          + "implemented";
   private static final Set<String> MODERATION_POLICY_CALLERS =
       Set.of("game-session-service", "social-groups-service");
 
@@ -175,18 +179,12 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      var dto =
-          logEventService.createLogEvent(
-              new net.firedevops.firemud.loggingadmin.dto.CreateLogEventRequest(
-                  RequestIdValidation.requirePositiveLong(request.getTenantId(), "tenantId"),
-                  RequestIdValidation.parseOptionalPositiveLong(
-                      request.getAccountId(), "accountId"),
-                  request.getType(),
-                  request.getMessage()));
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder().setLogEventId(String.valueOf(dto.id())).build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      GrpcAppErrors.error(
+          meterRegistry,
+          logger,
+          "CreateLogEvent",
+          "UNAVAILABLE",
+          ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE);
     } catch (AdminAuthorizationException ex) {
       CreateLogEventResponse response =
           CreateLogEventResponse.newBuilder()
@@ -200,15 +198,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
-    } catch (IllegalArgumentException ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry, logger, "CreateLogEvent", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      return;
     } catch (Exception ex) {
       CreateLogEventResponse response =
           CreateLogEventResponse.newBuilder()
@@ -216,7 +206,12 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+      return;
     }
+    responseObserver.onError(
+        Status.UNAVAILABLE
+            .withDescription(ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE)
+            .asRuntimeException());
   }
 
   @Override

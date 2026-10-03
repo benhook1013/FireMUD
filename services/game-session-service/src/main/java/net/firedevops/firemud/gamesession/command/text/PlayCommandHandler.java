@@ -215,6 +215,10 @@ public class PlayCommandHandler {
 
       GameplayWorldCatalog.RealmView selectedRealm = maybeRealm.orElseThrow();
       String selectedTenantTag = Long.toString(selectedRealm.tenantId());
+      if (!gameplayWorldCatalog.hasValidPublicProductionRealm(selectedRealm.tenantId())) {
+        return admissionPointerUnavailableFailure(
+            selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()));
+      }
       try (GameplayLoggingContext worldContext =
           GameplayLoggingContext.open(
               selectedTenantTag, Long.toString(selectedRealm.gameInstanceId()), null, null)) {
@@ -833,6 +837,19 @@ public class PlayCommandHandler {
         tenantTag,
         gameInstanceTag,
         Long.toString(requestedCharacterId),
+        null);
+  }
+
+  private PlayCommandHandlingResult admissionPointerUnavailableFailure(
+      String tenantTag, String gameInstanceTag) {
+    return failure(
+        GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE,
+        GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_MESSAGE,
+        "error.play.admission-pointer-unavailable",
+        Map.of(),
+        tenantTag,
+        gameInstanceTag,
+        null,
         null);
   }
 

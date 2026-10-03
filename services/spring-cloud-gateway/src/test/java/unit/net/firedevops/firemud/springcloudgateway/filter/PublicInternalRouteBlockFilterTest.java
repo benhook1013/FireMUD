@@ -339,6 +339,37 @@ class PublicInternalRouteBlockFilterTest {
   }
 
   @Test
+  void blocksPublicBootstrapJoinRoute() {
+    assertBlockedPost("/api/account/auth/bootstrap/join");
+  }
+
+  @Test
+  void blocksPublicBootstrapJoinRouteAfterPathCanonicalization() {
+    assertBlockedPost("/api/account//auth/bootstrap/join/");
+    assertBlockedPost("/api/account/auth/bootstrap/join;probe=true");
+    assertBlockedPost("/api/account/auth/bootstrap/../bootstrap/join");
+    assertBlockedPost("/api%252Faccount/auth/bootstrap/join");
+    assertBlockedPost("/api/account/auth/bootstrap/%256Aoin");
+  }
+
+  @Test
+  void blocksBootstrapJoinWhenMalformedSuffixFollowsSuccessfullyDecodedSegment() {
+    assertBlockedPost("/api/account/auth/bootstrap/%6Aoin;x=%25ZZ");
+  }
+
+  @Test
+  void handlesMalformedPercentEncodingRemainingAfterMaximumDecodePasses() {
+    assertAllowed(HttpMethod.POST, "/api/account/auth/bootstrap/%2525252525252525");
+  }
+
+  @Test
+  void allowsOtherAccountAuthRoutesAndNonPostJoinPath() {
+    assertAllowed(HttpMethod.POST, "/api/account/auth/player-bootstrap");
+    assertAllowed(HttpMethod.POST, "/api/account/auth/connect-token");
+    assertAllowed(HttpMethod.GET, "/api/account/auth/bootstrap/join");
+  }
+
+  @Test
   void allowsSiblingPathsOfBlockedServiceLocalRoots() {
     assertAllowedPath("/api/account/internalized/runtime");
     assertAllowedPath("/api/account/actuatorial/health");
@@ -363,6 +394,17 @@ class PublicInternalRouteBlockFilterTest {
     };
   }
 
+  private void assertBlockedPost(String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(MockServerHttpRequest.post(path).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).as(path).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
   private void assertBlockedPath(String path) {
     MockServerWebExchange exchange =
         MockServerWebExchange.from(
@@ -371,8 +413,19 @@ class PublicInternalRouteBlockFilterTest {
 
     filter.filter(exchange, chain(chainCalled)).block();
 
-    assertThat(chainCalled).isFalse();
-    assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    assertThat(chainCalled).as(path).isFalse();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.NOT_FOUND);
+  }
+
+  private void assertAllowed(HttpMethod method, String path) {
+    MockServerWebExchange exchange =
+        MockServerWebExchange.from(MockServerHttpRequest.method(method, path).build());
+    AtomicBoolean chainCalled = new AtomicBoolean(false);
+
+    filter.filter(exchange, chain(chainCalled)).block();
+
+    assertThat(chainCalled).as(path).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isNull();
   }
 
   private void assertAllowedPath(String path) {
@@ -383,7 +436,7 @@ class PublicInternalRouteBlockFilterTest {
 
     filter.filter(exchange, chain(chainCalled)).block();
 
-    assertThat(chainCalled).isTrue();
-    assertThat(exchange.getResponse().getStatusCode()).isNull();
+    assertThat(chainCalled).as(path).isTrue();
+    assertThat(exchange.getResponse().getStatusCode()).as(path).isNull();
   }
 }

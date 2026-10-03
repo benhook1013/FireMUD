@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package shared.v1;
+
+option java_package = "net.firedevops.firemud.shared.v1";
+option java_multiple_files = true;
+
+// Unsigned player scope carried only by an authenticated, allowlisted gameplay workload.
+// Receivers validate the required subset and equality with their own authoritative target.
+message PlayerExecutionContext {
+  string account_id = 1;
+  string tenant_id = 2;
+  string playable_state_namespace_id = 3;
+  string game_instance_id = 4;
+  string character_id = 5;
+  string session_id = 6;
+  string realm_id = 7;
+  string request_id = 8;
+  string playable_state_scope = 9;
+}

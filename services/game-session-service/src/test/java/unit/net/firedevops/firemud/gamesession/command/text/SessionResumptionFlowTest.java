@@ -145,11 +145,11 @@ class SessionResumptionFlowTest {
     sessionContextService.save(bootstrapShell(1L, 1L));
     sessionContextService.save(bootstrapShell(2L, 1L));
     gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+        List.of(world("demo", 22L, 1L, false, true), world("sandbox", 22L, 2L, true, false)));
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L, true)));
     when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L)));
+        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L, false)));
     when(instanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -525,7 +525,7 @@ class SessionResumptionFlowTest {
     assertTrue(firstLook.commandResult().accepted());
 
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 2L, true)));
 
     TextCommandInterpretationResult lookAfterCutover =
         interpreter.interpret("1", LOOK_PAYLOAD, false);
@@ -573,7 +573,11 @@ class SessionResumptionFlowTest {
   }
 
   private static GameplayCatalogProperties.World world(
-      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+      String slug,
+      long tenantId,
+      long gameInstanceId,
+      boolean requiresCharacterSelection,
+      boolean publicProductionRealm) {
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
     world.setSlug(slug);
     world.setDisplayName(slug);
@@ -583,14 +587,19 @@ class SessionResumptionFlowTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
-    realm.setPublicProductionRealm("demo".equals(slug));
+    realm.setPublicProductionRealm(publicProductionRealm);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     world.setRealms(List.of(realm));
     return world;
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
-      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean publicProductionRealm) {
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldSlug,
@@ -600,7 +609,7 @@ class SessionResumptionFlowTest {
         gameInstanceId,
         pointerVersion,
         true,
-        "demo".equals(worldSlug) && "production".equals(realmSlug),
+        publicProductionRealm,
         false,
         "SHARED",
         "ALLOW_NEW",

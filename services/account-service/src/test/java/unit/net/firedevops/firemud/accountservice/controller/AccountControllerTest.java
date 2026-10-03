@@ -66,8 +66,7 @@ class AccountControllerTest {
 
   @Test
   void createAccountReturnsDto() throws Exception {
-    CreateAccountRequest request =
-        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
     AccountDto response = new AccountDto(1L, "demo", "demo@example.com", "player", true);
     when(accountService.createAccount(request)).thenReturn(response);
 
@@ -83,8 +82,7 @@ class AccountControllerTest {
 
   @Test
   void createAccountConflictUsesCanonicalEnvelope() throws Exception {
-    CreateAccountRequest request =
-        new CreateAccountRequest(7L, "demo", "demo@example.com", "password");
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "password");
     when(accountService.createAccount(request))
         .thenThrow(new AccountAlreadyExistsException(new RuntimeException("duplicate")));
 
@@ -100,26 +98,8 @@ class AccountControllerTest {
   }
 
   @Test
-  void createAccountRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    CreateAccountRequest request =
-        new CreateAccountRequest(0L, "demo", "demo@example.com", "password");
-
-    mockMvc
-        .perform(
-            post("/accounts")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request)))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("tenantId must be positive"));
-
-    verifyNoInteractions(accountService);
-  }
-
-  @Test
   void createAccountRetainsMinimumPasswordLength() throws Exception {
-    CreateAccountRequest request =
-        new CreateAccountRequest(7L, "demo", "demo@example.com", "12345");
+    CreateAccountRequest request = new CreateAccountRequest("demo", "demo@example.com", "12345");
 
     mockMvc
         .perform(
