@@ -16,19 +16,28 @@ from contextlib import contextmanager
 from pathlib import Path
 
 SPECS = {
-    "kubectl": ("KUBECTL", "kubectl", "https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256"),
-    "helm": ("HELM", "helm-v{v}-linux-amd64.tar.gz", "https://get.helm.sh/helm-v{v}-linux-amd64.tar.gz.sha256sum"),
     "gh": ("GH", "gh_{v}_linux_amd64.tar.gz", "https://github.com/cli/cli/releases/download/v{v}/gh_{v}_checksums.txt"),
     "buf": ("BUF", "buf-Linux-x86_64", "https://github.com/bufbuild/buf/releases/download/v{v}/sha256.txt"),
-    "kubeconform": ("KUBECONFORM", "kubeconform-linux-amd64.tar.gz", "https://github.com/yannh/kubeconform/releases/download/v{v}/CHECKSUMS"),
-    "velero": ("VELERO", "velero-v{v}-linux-amd64.tar.gz", "https://github.com/vmware-tanzu/velero/releases/download/v{v}/CHECKSUM"),
-    "trivy": ("TRIVY", "trivy_{v}_Linux-64bit.tar.gz", "https://github.com/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt"),
-    "lychee": ("LYCHEE", "lychee-x86_64-unknown-linux-musl.tar.gz", "https://github.com/lycheeverse/lychee/releases/download/lychee-v{v}/lychee-x86_64-unknown-linux-musl.tar.gz.sha256"),
+    "kubeconform": (
+        "KUBECONFORM",
+        "kubeconform-linux-amd64.tar.gz",
+        "https://github.com/yannh/kubeconform/releases/download/v{v}/CHECKSUMS",
+    ),
+    "trivy": (
+        "TRIVY",
+        "trivy_{v}_Linux-64bit.tar.gz",
+        "https://github.com/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt",
+    ),
+    "lychee": (
+        "LYCHEE",
+        "lychee-x86_64-unknown-linux-musl.tar.gz",
+        "https://github.com/lycheeverse/lychee/releases/download/lychee-v{v}/lychee-x86_64-unknown-linux-musl.tar.gz.sha256",
+    ),
 }
 CHECKSUM_STEMS = {
-    "KUBECTL": "KUBECTL_LINUX_AMD64",
-    "HELM": "HELM_LINUX_AMD64", "GH": "GH_LINUX_AMD64", "BUF": "BUF_LINUX_X86_64",
-    "KUBECONFORM": "KUBECONFORM_LINUX_AMD64", "VELERO": "VELERO_LINUX_AMD64",
+    "GH": "GH_LINUX_AMD64",
+    "BUF": "BUF_LINUX_X86_64",
+    "KUBECONFORM": "KUBECONFORM_LINUX_AMD64",
     "TRIVY": "TRIVY_LINUX_AMD64",
     "LYCHEE": "LYCHEE_LINUX_X86_64_MUSL",
 }
@@ -43,154 +52,6 @@ def replace(text: str, key: str, value: str) -> str:
     updated, count = re.subn(rf"^{re.escape(key)}=.*$", f"{key}={value}", text, flags=re.MULTILINE)
     if count != 1:
         raise SystemExit(f"expected exactly one {key} assignment")
-    return updated
-
-
-def read_velero_projection(path: Path, projection_type: str) -> str:
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise SystemExit(
-            f"could not read Velero {projection_type} projection {path} as UTF-8: {exc}"
-        ) from exc
-
-
-HCL_HEREDOC_INTRODUCER = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_-]*)")
-
-
-def skip_hcl_heredoc(
-    text: str, introducer_end: int, marker: str, allow_indentation: bool
-) -> int | None:
-    """Return the offset after a heredoc, or None when its terminator is absent."""
-
-    line_end = text.find("\n", introducer_end)
-    if line_end == -1:
-        return None
-    line_start = line_end + 1
-    while line_start <= len(text):
-        line_end = text.find("\n", line_start)
-        if line_end == -1:
-            line_end = len(text)
-        line = text[line_start:line_end].rstrip("\r")
-        candidate = line.lstrip(" \t") if allow_indentation else line
-        if candidate == marker:
-            return line_end if line_end == len(text) else line_end + 1
-        if line_end == len(text):
-            break
-        line_start = line_end + 1
-    return None
-
-
-def find_hcl_block_span(text: str, header: str) -> tuple[int, int] | None:
-    """Find one exact HCL block, preserving comment and string boundaries."""
-
-    header_pattern = r"\s+".join(re.escape(part) for part in header.split())
-    match = re.search(rf'(?m)^{header_pattern}\s*\{{', text)
-    if match is None:
-        return None
-    opening_brace = text.find("{", match.start(), match.end())
-    depth = 0
-    in_string = False
-    escaped = False
-    line_comment = False
-    block_comment = False
-    index = opening_brace
-    while index < len(text):
-        char = text[index]
-        next_char = text[index + 1] if index + 1 < len(text) else ""
-        if line_comment:
-            if char == "\n":
-                line_comment = False
-        elif block_comment:
-            if char == "*" and next_char == "/":
-                block_comment = False
-                index += 1
-        elif in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-        elif char == "#" or (char == "/" and next_char == "/"):
-            line_comment = True
-            if char == "/":
-                index += 1
-        elif char == "/" and next_char == "*":
-            block_comment = True
-            index += 1
-        elif char == "<" and next_char == "<":
-            heredoc = HCL_HEREDOC_INTRODUCER.match(text, index)
-            if heredoc is not None:
-                heredoc_end = skip_hcl_heredoc(
-                    text,
-                    heredoc.end(),
-                    heredoc.group(2),
-                    heredoc.group(1) == "-",
-                )
-                if heredoc_end is None:
-                    return None
-                index = heredoc_end
-                continue
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return match.start(), index + 1
-        index += 1
-    return None
-
-
-def replace_velero_terraform_projection(
-    text: str, chart_version: str, velero_version: str, image_digest: str
-) -> str:
-    release_span = find_hcl_block_span(text, 'resource "helm_release" "velero"')
-    if release_span is None:
-        if re.search(r'(?m)^resource\s+"helm_release"\s+"velero"\s*\{', text):
-            raise SystemExit("Velero Terraform helm_release projection has an unterminated block")
-        raise SystemExit("expected one Velero Terraform helm_release projection")
-    release_start, release_end = release_span
-
-    release = text[release_start:release_end]
-    release, chart_count = re.subn(
-        r'(?m)^(\s*version\s*=\s*)"[^"]+"$',
-        rf'\g<1>"{chart_version}"',
-        release,
-    )
-    release, tag_count = re.subn(
-        r'(?ms)^(\s*set\s*\{\s*\n\s*name\s*=\s*"image\.tag"\s*\n\s*value\s*=\s*)"[^"]+"',
-        rf'\g<1>"v{velero_version}"',
-        release,
-    )
-    release, digest_count = re.subn(
-        r'(?ms)^(\s*set\s*\{\s*\n\s*name\s*=\s*"image\.digest"\s*\n\s*value\s*=\s*)"[^"]+"',
-        rf'\g<1>"{image_digest}"',
-        release,
-    )
-    if chart_count != 1:
-        raise SystemExit("expected exactly one Velero Terraform chart version projection")
-    if tag_count != 1:
-        raise SystemExit("expected exactly one Velero Terraform image tag projection")
-    if digest_count != 1:
-        raise SystemExit("expected exactly one Velero Terraform image digest projection")
-    return text[:release_start] + release + text[release_end:]
-
-
-def replace_velero_dockerfile_projection(
-    text: str, velero_version: str, image_digest: str
-) -> str:
-    """Update the independently built verifier image's pinned Velero stage."""
-
-    updated, count = re.subn(
-        r"(?m)^FROM velero/velero:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}(\s+AS\s+velero-cli)$",
-        rf"FROM velero/velero:v{velero_version}@{image_digest}\g<1>",
-        text,
-    )
-    if count != 1:
-        raise SystemExit("expected exactly one Velero verifier Dockerfile projection")
     return updated
 
 
@@ -256,20 +117,20 @@ def recovery_journal_path(authority: Path) -> Path:
 
 
 def recovery_payload(state: str, originals: dict[Path, str]) -> str:
-    return json.dumps(
-        {
-            "schema": RECOVERY_SCHEMA,
-            "version": RECOVERY_VERSION,
-            "state": state,
-            "targets": [
-                {"path": str(path), "contents": originals[path]}
-                for path in sorted(originals, key=str)
-            ],
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "schema": RECOVERY_SCHEMA,
+                "version": RECOVERY_VERSION,
+                "state": state,
+                "targets": [{"path": str(path), "contents": originals[path]} for path in sorted(originals, key=str)],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -281,9 +142,7 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, ob
     return result
 
 
-def read_recovery_journal(
-    path: Path, allowed_target_sets: list[frozenset[Path]]
-) -> tuple[str, dict[Path, str]]:
+def read_recovery_journal(path: Path, allowed_target_sets: list[frozenset[Path]]) -> tuple[str, dict[Path, str]]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_reject_duplicate_json_keys)
     except (OSError, UnicodeError, ValueError) as exc:
@@ -322,9 +181,7 @@ def read_recovery_journal(
             raise OSError(f"invalid workflow updater recovery target path in {path}")
         originals[target] = contents
 
-    resolved_allowed = {
-        frozenset(target.resolve() for target in target_set) for target_set in allowed_target_sets
-    }
+    resolved_allowed = {frozenset(target.resolve() for target in target_set) for target_set in allowed_target_sets}
     if frozenset(originals) not in resolved_allowed:
         raise OSError(f"workflow updater recovery target set does not match transaction in {path}")
     return payload["state"], originals
@@ -381,13 +238,9 @@ def ensure_prepared_recovery_journal(
         try:
             state, journal_originals = read_recovery_journal(path, allowed_target_sets)
         except OSError as verify_exc:
-            raise OSError(
-                f"could not preserve prepared workflow updater recovery journal {path}"
-            ) from verify_exc
+            raise OSError(f"could not preserve prepared workflow updater recovery journal {path}") from verify_exc
         if state != "prepared" or journal_originals != originals:
-            raise OSError(
-                f"workflow updater recovery journal is not prepared for rollback: {path}"
-            ) from exc
+            raise OSError(f"workflow updater recovery journal is not prepared for rollback: {path}") from exc
 
 
 def transactional_write(updates: list[tuple[Path, str]], authority: Path | None = None) -> None:
@@ -436,65 +289,6 @@ def transactional_write(updates: list[tuple[Path, str]], authority: Path | None 
             temporary.unlink(missing_ok=True)
 
 
-def dockerhub_digest(repository: str, tag: str) -> str:
-    token_url = (
-        "https://auth.docker.io/token?service=registry.docker.io&scope="
-        f"repository:{repository}:pull"
-    )
-    try:
-        with urllib.request.urlopen(token_url, timeout=30) as response:
-            token = json.load(response)["token"]
-        request = urllib.request.Request(
-            f"https://registry-1.docker.io/v2/{repository}/manifests/{tag}",
-            method="HEAD",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            digest = response.headers.get("Docker-Content-Digest", "")
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as exc:
-        raise SystemExit(
-            f"could not resolve Docker Hub digest for {repository}:{tag}: {exc}"
-        ) from exc
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
-        raise SystemExit("registry did not return a valid Velero image digest")
-    return digest
-
-
-def velero_image_digest_from_evidence(path: Path, version: str) -> str:
-    try:
-        evidence = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        raise SystemExit(f"could not read Velero image evidence file {path}: {exc}") from exc
-
-    lines = evidence.splitlines()
-    if len(lines) != 1 or not lines[0].strip():
-        raise SystemExit("Velero image evidence must contain exactly one immutable image reference")
-
-    reference = lines[0].strip()
-    match = re.fullmatch(
-        r"(?P<repository>[^:\s]+/[^:\s]+):(?P<tag>[^@\s]+)@(?P<digest>sha256:[0-9a-f]{64})",
-        reference,
-    )
-    if match is None:
-        raise SystemExit(
-            "Velero image evidence must be a full immutable image reference with a lowercase SHA-256"
-        )
-    if match.group("repository") != "velero/velero":
-        raise SystemExit("Velero image evidence must reference the exact repository velero/velero")
-    if match.group("tag") != f"v{version}":
-        raise SystemExit(f"Velero image evidence must reference the exact tag v{version}")
-    evidence_digest = match.group("digest")
-    resolved_digest = dockerhub_digest("velero/velero", f"v{version}")
-    if evidence_digest != resolved_digest:
-        raise SystemExit(
-            f"Velero image evidence digest does not match Docker Hub tag v{version}"
-        )
-    return evidence_digest
-
-
 def checksum_text_from_evidence(path: Path, version: str) -> str:
     """Read an offline checksum manifest with its requested version attestation."""
 
@@ -506,8 +300,7 @@ def checksum_text_from_evidence(path: Path, version: str) -> str:
     lines = evidence.splitlines()
     if not lines or not lines[0].startswith(CHECKSUM_EVIDENCE_VERSION_PREFIX):
         raise SystemExit(
-            "checksum evidence must begin with exact version metadata: "
-            f"{CHECKSUM_EVIDENCE_VERSION_PREFIX}{version}"
+            f"checksum evidence must begin with exact version metadata: {CHECKSUM_EVIDENCE_VERSION_PREFIX}{version}"
         )
     if lines[0] != f"{CHECKSUM_EVIDENCE_VERSION_PREFIX}{version}":
         raise SystemExit(f"checksum evidence version does not match requested version {version}")
@@ -536,59 +329,18 @@ def main() -> None:
         "--checksum-file",
         type=Path,
         help=(
-            "offline checksum evidence beginning with version=<version>, followed by the "
-            "publisher checksum manifest"
+            "offline checksum evidence beginning with version=<version>, followed by the publisher checksum manifest"
         ),
     )
     parser.add_argument("--authority", type=Path, default=REPOSITORY_ROOT / "config/workflow-tool-versions.env")
-    parser.add_argument(
-        "--velero-dockerfile",
-        type=Path,
-        default=REPOSITORY_ROOT / "docker/backup-verifier.Dockerfile",
-    )
-    parser.add_argument(
-        "--terraform-file", type=Path, default=REPOSITORY_ROOT / "k8s/terraform-production/main.tf"
-    )
-    parser.add_argument(
-        "--velero-chart-version",
-        help="required exact VMware Tanzu Velero Helm chart version for Velero updates",
-    )
-    parser.add_argument(
-        "--image-evidence-file",
-        type=Path,
-        help=(
-            "required for Velero; image evidence must contain one full immutable image reference, "
-            "verified against the exact Docker Hub tag"
-        ),
-    )
     args = parser.parse_args()
     if not re.fullmatch(r"\d+\.\d+\.\d+", args.version):
         parser.error("version must have exactly three numeric parts")
-    if args.image_evidence_file is not None and args.tool != "velero":
-        parser.error("--image-evidence-file is only valid for velero")
-    if args.tool == "velero" and args.image_evidence_file is None:
-        parser.error("--image-evidence-file is required for velero updates")
-    if args.velero_chart_version is not None and args.tool != "velero":
-        parser.error("--velero-chart-version is only valid for velero")
-    if args.tool == "velero" and args.velero_chart_version is None:
-        parser.error("--velero-chart-version is required for velero updates")
-    if args.velero_chart_version is not None and not re.fullmatch(r"\d+\.\d+\.\d+", args.velero_chart_version):
-        parser.error("Velero chart version must have exactly three numeric parts")
 
     resolved_authority = args.authority.resolve()
-    resolved_velero_dockerfile = args.velero_dockerfile.resolve()
-    resolved_terraform_file = args.terraform_file.resolve()
-    allowed_target_sets = [
-        frozenset((resolved_authority,)),
-        frozenset((resolved_authority, resolved_velero_dockerfile)),
-        frozenset((resolved_authority, resolved_velero_dockerfile, resolved_terraform_file)),
-    ]
+    allowed_target_sets = [frozenset((resolved_authority,))]
     with authority_lock(args.authority):
         reconcile_recovery_journal(args.authority, allowed_target_sets)
-
-    image_digest = None
-    if args.tool == "velero" and args.image_evidence_file is not None:
-        image_digest = velero_image_digest_from_evidence(args.image_evidence_file, args.version)
 
     prefix, asset_template, url_template = SPECS[args.tool]
     asset = asset_template.format(v=args.version)
@@ -596,15 +348,7 @@ def main() -> None:
         checksum_text = checksum_text_from_evidence(args.checksum_file, args.version)
     else:
         checksum_text = download_checksum_manifest(url_template.format(v=args.version))
-    if args.tool == "kubectl":
-        checksum_lines = checksum_text.splitlines()
-        matches = (
-            [checksum_lines[0].strip()]
-            if len(checksum_lines) == 1 and re.fullmatch(r"[0-9a-f]{64}", checksum_lines[0].strip())
-            else []
-        )
-    else:
-        matches = checksum_matches(checksum_text, asset)
+    matches = checksum_matches(checksum_text, asset)
     if len(matches) != 1:
         raise SystemExit(f"could not identify exactly one checksum for {asset}")
 
@@ -616,27 +360,7 @@ def main() -> None:
         stem = CHECKSUM_STEMS[prefix]
         authority = replace(authority, f"{stem}_CHECKSUM_VERSION", args.version)
         authority = replace(authority, f"{stem}_SHA256", matches[0])
-        dockerfile = None
-        terraform = None
-        if args.tool == "velero":
-            if image_digest is None:
-                raise SystemExit("Velero image digest could not be resolved")
-            authority = replace(authority, "VELERO_CHART_VERSION", args.velero_chart_version)
-            authority = replace(authority, "VELERO_IMAGE_DIGEST", image_digest)
-            dockerfile = read_velero_projection(args.velero_dockerfile, "Dockerfile")
-            dockerfile = replace_velero_dockerfile_projection(
-                dockerfile, args.version, image_digest
-            )
-            terraform = read_velero_projection(args.terraform_file, "Terraform")
-            terraform = replace_velero_terraform_projection(
-                terraform, args.velero_chart_version, args.version, image_digest
-            )
-        updates = [(args.authority, authority)]
-        if dockerfile is not None:
-            updates.append((args.velero_dockerfile, dockerfile))
-        if terraform is not None:
-            updates.append((args.terraform_file, terraform))
-        transactional_write(updates, authority=args.authority)
+        transactional_write([(args.authority, authority)], authority=args.authority)
 
 
 if __name__ == "__main__":

@@ -79,7 +79,9 @@ components:
           type: string
           example: refreshed
         error:
-          $ref: '#/components/schemas/ErrorDetail'
+          oneOf:
+            - $ref: '#/components/schemas/ErrorDetail'
+            - type: 'null'
 paths:
   /ping:
     get:

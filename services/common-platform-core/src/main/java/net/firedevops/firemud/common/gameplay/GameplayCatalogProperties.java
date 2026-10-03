@@ -12,7 +12,7 @@ public class GameplayCatalogProperties {
       new ArrayList<>(
           List.of(
               defaultWorld("demo", "Demo World", 1L, 1L, false),
-              defaultWorld("sandbox", "Builder Sandbox", 1L, 2L, true)));
+              defaultWorld("sandbox", "Builder Sandbox", 2L, 2L, true)));
 
   private static World defaultWorld(
       String slug,

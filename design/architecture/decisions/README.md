@@ -171,7 +171,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0072](./adr-0072-class-specific-timer-durability-and-recovery.md) | Accepted | `AS-1.4` | `GR-1.2`, `GR-2.3`, `AS-1.5`, `SF-1.4` | Class-specific timer durability and recovery |
 | [ADR 0073](./adr-0073-evidence-calibrated-tick-budgets-and-lock-ttls.md) | Accepted | `SF-1.4` | `GR-1.2`, `GR-1.3`, `PO-4.2`, `AR-2.3` | Evidence-calibrated tick budgets and lock TTLs |
 | [ADR 0074](./adr-0074-one-entity-lock-per-redis-script.md) | Accepted | `GR-1.3` | `SF-2.2`, `GR-4.1`, `PO-4.4` | One entity lock per Redis script |
-| [ADR 0075](./adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md) | Accepted | `GR-4.1` | `GR-1.2`, `AS-1.2`, `PO-4.2` | Depth, cost, and count bounds for generated effect chains |
+| [ADR 0075](./adr-0075-depth-cost-and-count-bounds-for-generated-effect-chains.md) | Accepted | `GR-4.1` | `GR-1.2`, `AS-1.2`, `PO-4.2` | Depth, cost, and count bounds with replay-stable owner-defined child identity and lineage |
 | [ADR 0076](./adr-0076-failure-class-specific-durable-tick-retries.md) | Accepted | `GR-1.2` | `PO-2.4`, `PO-4.2`, `SF-2.3` | Failure-class-specific durable tick retries |
 | [ADR 0077](./adr-0077-durable-global-effect-fanout-and-lightweight-idle-ticks.md) | Accepted | `GR-1.2` | `GR-2.1`, `AS-1.4`, `SF-1.4`, `PO-4.2` | Durable global-effect fan-out and lightweight idle ticks |
 | [ADR 0078](./adr-0078-digest-bound-workflow-and-step-retry-identities.md) | Accepted | `SF-2.3` | `SF-2.4`, `SF-1.2` | Digest-bound workflow and step retry identities |
@@ -277,7 +277,7 @@ Validation precedence is fixed: first parse every checked queue row and validate
 | [ADR 0180](./adr-0180-account-owned-hosted-terms-acceptance-gate.md) | Accepted | `AA-1.3` | `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `PO-1.3`, `SF-2.3` | Account-owned hosted-terms catalog, acceptance evidence, and official-hosted creator mutation gate |
 | [ADR 0181](./adr-0181-changed-hosted-terms-decline-and-existing-content-continuity.md) | Accepted | `PO-1.3` | `AA-1.3`, `AA-1.4`, `AA-1.5`, `AR-1.1`, `AR-1.4`, `AR-1.5`, `EA-3.2`, `SF-2.3` | Changed hosted-terms decline, prior-terms continuity, lifecycle-reducing access, and finite transition |
 | [ADR 0182](./adr-0182-separated-hosted-runtime-and-certificate-identity-lifecycles.md) | Accepted | `PO-3.2` | `PO-3.1`, `PO-4.4`, `SF-1.3`, `PO-1.1` | Separated hosted runtime and certificate-identity lifecycles |
-| [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) | Proposed - Pending Human Review | `GR-1.2` | `GR-1.4`, `GR-4.1`, `AS-1.2`, `AS-1.4`, `SF-1.4`, `SF-2.3`, `PO-4.2` | Pending deterministic command-plan and generated-child EffectId allocation and replay binding |
+| [ADR 0183](./adr-0183-deterministic-effect-id-allocation-and-replay-binding.md) | Proposed - Pending Human Review | `GR-1.2` | `GR-1.4`, `GR-4.1`, `AS-1.2`, `AS-1.4`, `SF-1.4`, `SF-2.3`, `PO-4.2` | Pending command-plan ordering, `planOrdinal`, command-root allocation, UUIDv7 scalar, canonical serialization, and additional child/fan-out allocation mechanics |
 | [ADR 0184](./adr-0184-emergency-tcp-proxy-identity-withdrawal.md) | Accepted | `SF-1.3` | `PO-2.1`, `PO-2.2`, `PO-3.2`, `PO-4.4` | Emergency trust cutoff for a withdrawn TCP Proxy bridge identity |
 
 Capability identifiers are defined in the [FireMUD Product Capability Taxonomy](../../product/capability-taxonomy.md).
