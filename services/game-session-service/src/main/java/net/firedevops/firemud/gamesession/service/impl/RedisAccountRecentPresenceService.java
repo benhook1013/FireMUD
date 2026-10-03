@@ -15,7 +15,9 @@ import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
@@ -23,6 +25,7 @@ import org.springframework.stereotype.Service;
 @Service
 public final class RedisAccountRecentPresenceService implements AccountRecentPresenceService {
   private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%s";
+  private static final int MAX_WRITE_RETRIES = 8;
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
@@ -128,19 +131,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
       return;
     }
     String key = key(snapshot.tenantId(), snapshot.accountId());
-    // Best-effort retention check: this adds a Redis read but is not atomic with the write below;
-    // a concurrent writer can replace the value after this check.
-    try {
-      Object retained = valueOps.get(key);
-      if (retained != null && !(retained instanceof AccountRecentPresenceState)) {
-        return;
-      }
-    } catch (SerializationException | ClassCastException ex) {
-      // Preserve an unreadable retained value instead of overwriting its evidence.
-      return;
-    }
-    valueOps.set(
-        key,
+    AccountRecentPresenceState state =
         new AccountRecentPresenceState(
             snapshot.tenantId(),
             snapshot.accountId(),
@@ -150,8 +141,38 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
             snapshot.realmSlug(),
             snapshot.pointerVersion(),
             timestampMs,
-            disposition),
-        ttl);
+            disposition);
+    for (int attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+      WriteAttemptResult result =
+          redisTemplate.execute(
+              new SessionCallback<>() {
+                @Override
+                public WriteAttemptResult execute(RedisOperations operations) {
+                  operations.watch(key);
+                  Object retained;
+                  try {
+                    retained = operations.opsForValue().get(key);
+                  } catch (SerializationException | ClassCastException ex) {
+                    operations.unwatch();
+                    return WriteAttemptResult.PRESERVED;
+                  }
+                  if (retained != null && !(retained instanceof AccountRecentPresenceState)) {
+                    operations.unwatch();
+                    return WriteAttemptResult.PRESERVED;
+                  }
+                  operations.multi();
+                  operations.opsForValue().set(key, state, ttl);
+                  return operations.exec() == null
+                      ? WriteAttemptResult.RETRY
+                      : WriteAttemptResult.COMMITTED;
+                }
+              });
+      if (result == WriteAttemptResult.COMMITTED || result == WriteAttemptResult.PRESERVED) {
+        return;
+      }
+    }
+    throw new IllegalStateException(
+        "Failed to write recent account presence after concurrent retries");
   }
 
   private RoutingSnapshot routingSnapshot(SessionContext context, GameplayPresence presence) {
@@ -209,4 +230,10 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
       String worldSlug,
       String realmSlug,
       Long pointerVersion) {}
+
+  private enum WriteAttemptResult {
+    COMMITTED,
+    RETRY,
+    PRESERVED
+  }
 }

@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 class EntityManagementClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, null, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L,
+          41L, 22L, "20", "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L,
           "SHARED");
 
   @Test

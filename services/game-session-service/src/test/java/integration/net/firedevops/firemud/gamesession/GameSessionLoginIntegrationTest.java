@@ -34,6 +34,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SuppressWarnings({"removal"})
@@ -63,8 +66,7 @@ class GameSessionLoginIntegrationTest {
   @MockitoBean
   private org.springframework.data.redis.connection.RedisConnectionFactory redisConnectionFactory;
 
-  @MockitoBean
-  private org.springframework.data.redis.core.RedisTemplate<String, Object> redisTemplate;
+  @MockitoBean private RedisTemplate<String, Object> redisTemplate;
 
   @MockitoBean
   private org.springframework.data.redis.core.ValueOperations<String, Object> redisValueOperations;
@@ -96,6 +98,7 @@ class GameSessionLoginIntegrationTest {
             })
         .when(redisTemplate)
         .delete(anyString());
+    stubTransactionExecution(redisTemplate);
     when(accountClient.authenticate(anyString(), anyString()))
         .thenReturn(
             AuthenticateResponse.newBuilder().setAuthToken("stub-token").setAccountId("7").build());
@@ -140,7 +143,19 @@ class GameSessionLoginIntegrationTest {
 
     assertThat(payloads).anyMatch(s -> s.startsWith("OK LOGIN"));
     assertThat(sessionContextService.findByTenantAndSessionId(42L, 1L)).isPresent();
+    assertThat(redisValueStore).containsKey("accountrecentpresence:42:7");
 
     verify(accountClient).authenticate(eq("demo@example.com"), eq("swordfish"));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void stubTransactionExecution(RedisTemplate<String, Object> redisTemplate) {
+    when(redisTemplate.execute(org.mockito.Mockito.any(SessionCallback.class)))
+        .thenAnswer(
+            invocation -> {
+              SessionCallback<?> callback = invocation.getArgument(0);
+              return callback.execute((RedisOperations<String, Object>) redisTemplate);
+            });
+    when(redisTemplate.exec()).thenReturn(List.of("OK"));
   }
 }
