@@ -1,6 +1,8 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +17,7 @@ import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 
 @SuppressWarnings("unchecked")
 class RedisSessionContextServiceTest {
@@ -40,7 +43,7 @@ class RedisSessionContextServiceTest {
 
   @Test
   void saveStoresContextInSessionAndIdentityKeys() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
+    SessionContext context = new SessionContext(1L, 10L, "20", 30L, 40L, "jwt");
 
     service.save(context);
 
@@ -52,8 +55,8 @@ class RedisSessionContextServiceTest {
 
   @Test
   void saveRemovesStaleSessionKeyBeforeWritingNewIdentityBinding() {
-    SessionContext existing = new SessionContext(1L, 10L, 20L, 30L, 40L, "old-jwt");
-    SessionContext replacement = new SessionContext(2L, 10L, 20L, 30L, 40L, "new-jwt");
+    SessionContext existing = new SessionContext(1L, 10L, "20", 30L, 40L, "old-jwt");
+    SessionContext replacement = new SessionContext(2L, 10L, "20", 30L, 40L, "new-jwt");
     when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(existing);
 
     service.save(replacement);
@@ -65,7 +68,7 @@ class RedisSessionContextServiceTest {
 
   @Test
   void findByTenantAndSessionIdReturnsPersistedContext() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
+    SessionContext context = new SessionContext(1L, 10L, "20", 30L, 40L, "jwt");
     when(valueOperations.get("sessionctx:10:1:context")).thenReturn(context);
 
     Optional<SessionContext> result = service.findByTenantAndSessionId(10L, 1L);
@@ -75,7 +78,7 @@ class RedisSessionContextServiceTest {
 
   @Test
   void findByGameplayIdentityReturnsPersistedContext() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
+    SessionContext context = new SessionContext(1L, 10L, "20", 30L, 40L, "jwt");
     when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(context);
 
     Optional<SessionContext> result = service.findByGameplayIdentity(10L, 40L, 30L);
@@ -84,8 +87,48 @@ class RedisSessionContextServiceTest {
   }
 
   @Test
+  void unreadableRetainedContextFailsClosedAndDoesNotBlockFreshReauthentication() {
+    String retainedKey = "sessionctx:10:1:context";
+    when(valueOperations.get(retainedKey))
+        .thenThrow(new SerializationException("old SessionContext record shape"));
+
+    assertEquals(Optional.empty(), service.findByTenantAndSessionId(10L, 1L));
+    assertThrows(
+        SerializationException.class,
+        () -> service.deleteBySessionId(10L, 1L),
+        "unreadable retained state must stop cleanup before its evidence can be deleted");
+
+    SessionContext reauthenticated =
+        new SessionContext(2L, 10L, "77", "demo@example.com", 0L, null, 0L, null, "fresh-jwt");
+    service.save(reauthenticated);
+
+    verify(valueOperations).set("sessionctx:10:2:context", reauthenticated, TTL);
+    verify(valueOperations).set("sessionctx:session:2:context", reauthenticated, TTL);
+    verify(redisTemplate, never()).delete(retainedKey);
+    verify(redisTemplate, never()).delete("sessionctx:1");
+  }
+
+  @Test
+  void unreadableSessionAliasIsNotOverwrittenOrDeletedWhenTenantContextIsAbsent() {
+    when(valueOperations.get("sessionctx:10:1:context")).thenReturn(null);
+    when(valueOperations.get("sessionctx:session:1:context"))
+        .thenThrow(new SerializationException("old session alias record shape"));
+
+    assertThrows(SerializationException.class, () -> service.deleteBySessionId(10L, 1L));
+    assertThrows(
+        SerializationException.class,
+        () -> service.save(new SessionContext(1L, 10L, "77", null, 0L, null, 0L, null, null)));
+
+    verify(redisTemplate, never()).multi();
+    verify(redisTemplate, never()).exec();
+    verify(redisTemplate, never()).delete("sessionctx:session:1:context");
+    verify(valueOperations, never())
+        .set(Mockito.anyString(), Mockito.any(), Mockito.any(Duration.class));
+  }
+
+  @Test
   void deleteBySessionIdRemovesBothKeys() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
+    SessionContext context = new SessionContext(1L, 10L, "20", 30L, 40L, "jwt");
     when(valueOperations.get("sessionctx:10:1:context")).thenReturn(context);
 
     service.deleteBySessionId(10L, 1L);
@@ -99,7 +142,7 @@ class RedisSessionContextServiceTest {
   @Test
   void savePreservesLocaleTagInStoredContext() {
     SessionContext context =
-        new SessionContext(1L, 10L, 20L, null, 30L, null, 40L, "R-1", "jwt", "fr", 40L);
+        new SessionContext(1L, 10L, "20", null, 30L, null, 40L, "R-1", "jwt", "fr", 40L);
 
     service.save(context);
 

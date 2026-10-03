@@ -43,7 +43,7 @@ class CommunicationCommandHandlerTest {
       new SessionContext(
           1L,
           22L,
-          123L,
+          "123",
           "emberline@example.com",
           911L,
           "Emberline",
@@ -164,7 +164,7 @@ class CommunicationCommandHandlerTest {
   void tellFailsClosedWhenTargetGameplayBindingNormalizesAway() {
     SessionContext normalizedTarget =
         new SessionContext(
-            77L, 22L, 700L, "sora@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            77L, 22L, "700", "sora@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
     when(entityManagementClient.findCharacterByName(
             sessionContext, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED, "Sora"))
         .thenReturn(

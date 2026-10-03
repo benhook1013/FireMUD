@@ -8,6 +8,7 @@ import net.firedevops.firemud.gamesession.service.FirstPartyConnectContext;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -29,17 +30,37 @@ public final class RedisFirstPartyConnectContextRegistry
 
   @Override
   public void register(long sessionId, FirstPartyConnectContext connectContext) {
-    valueOperations().set(key(sessionId), connectContext, ttl);
+    String key = key(sessionId);
+    try {
+      Object retained = valueOperations().get(key);
+      if (retained != null && !(retained instanceof FirstPartyConnectContext)) {
+        return;
+      }
+    } catch (SerializationException | ClassCastException ex) {
+      return;
+    }
+    valueOperations().set(key, connectContext, ttl);
   }
 
   @Override
   public Optional<FirstPartyConnectContext> find(long sessionId) {
-    return Optional.ofNullable((FirstPartyConnectContext) valueOperations().get(key(sessionId)));
+    try {
+      return Optional.ofNullable((FirstPartyConnectContext) valueOperations().get(key(sessionId)));
+    } catch (SerializationException | ClassCastException ex) {
+      return Optional.empty();
+    }
   }
 
   @Override
   public void unregister(long sessionId) {
-    redisTemplate.delete(key(sessionId));
+    String key = key(sessionId);
+    try {
+      if (valueOperations().get(key) instanceof FirstPartyConnectContext) {
+        redisTemplate.delete(key);
+      }
+    } catch (SerializationException | ClassCastException ex) {
+      // Retain unreadable evidence instead of treating it as an absent context.
+    }
   }
 
   private ValueOperations<String, Object> valueOperations() {

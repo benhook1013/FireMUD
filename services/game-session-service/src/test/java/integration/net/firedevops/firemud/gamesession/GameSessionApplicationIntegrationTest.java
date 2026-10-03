@@ -296,7 +296,7 @@ class GameSessionApplicationIntegrationTest {
         new SessionContext(
             999L,
             42L,
-            100L,
+            "100",
             "player@example.com",
             55L,
             "Player",

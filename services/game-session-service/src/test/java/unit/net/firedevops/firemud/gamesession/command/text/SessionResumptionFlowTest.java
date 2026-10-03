@@ -626,7 +626,7 @@ class SessionResumptionFlowTest {
     return new SessionContext(
         sessionId,
         22L,
-        0L,
+        null,
         null,
         0L,
         null,

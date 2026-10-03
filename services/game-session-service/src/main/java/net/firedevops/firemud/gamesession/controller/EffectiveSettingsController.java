@@ -152,7 +152,7 @@ public class EffectiveSettingsController {
         new SessionContext(
             0L,
             resolvedTenantId,
-            0L,
+            null,
             null,
             0L,
             null,

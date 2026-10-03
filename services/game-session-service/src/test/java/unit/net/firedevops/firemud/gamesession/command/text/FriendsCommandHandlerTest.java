@@ -40,7 +40,7 @@ class FriendsCommandHandlerTest {
       new SessionContext(
           7L,
           1L,
-          41L,
+          "41",
           "demo@example.com",
           99L,
           "Emberline",

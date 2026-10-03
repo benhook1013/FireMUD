@@ -815,7 +815,7 @@ class TextCommandInterpreterTest {
   @Test
   void bootstrapContextWithoutAuthenticatedAccountStillRequiresLogin() {
     ((InMemorySessionContextService) sessionContextService)
-        .save(new SessionContext(55L, 22L, 0L, null, 0L, null, 77L, null, null));
+        .save(new SessionContext(55L, 22L, null, null, 0L, null, 77L, null, null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("55", "LOOK", false);
 
@@ -852,7 +852,7 @@ class TextCommandInterpreterTest {
   @Test
   void gameplayWithRoomOnlyPartialShellStillReturnsPlayRequired() {
     ((InMemorySessionContextService) sessionContextService)
-        .save(new SessionContext(56L, 22L, 123L, "demo@example.com", 0L, null, 0L, "R-7", null));
+        .save(new SessionContext(56L, 22L, "123", "demo@example.com", 0L, null, 0L, "R-7", null));
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("56", "LOOK", false);
 
@@ -1104,7 +1104,7 @@ class TextCommandInterpreterTest {
     return new SessionContext(
         sessionId,
         22L,
-        0L,
+        null,
         null,
         0L,
         null,

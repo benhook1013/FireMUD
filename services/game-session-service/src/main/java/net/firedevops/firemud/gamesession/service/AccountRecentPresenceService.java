@@ -11,6 +11,6 @@ public interface AccountRecentPresenceService {
 
   void recordDisconnect(long sessionId, AccountRecentPresenceDisposition disposition);
 
-  Map<Long, AccountRecentPresenceState> findByAccountIds(
-      long tenantId, Collection<Long> accountIds);
+  Map<String, AccountRecentPresenceState> findByAccountIds(
+      long tenantId, Collection<String> accountIds);
 }

@@ -41,7 +41,7 @@ import org.mockito.ArgumentCaptor;
 class GameLogicClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, 0L, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L, 22L, "0", "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
 
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {

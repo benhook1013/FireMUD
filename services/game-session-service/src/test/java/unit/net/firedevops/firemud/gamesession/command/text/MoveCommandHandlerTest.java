@@ -58,7 +58,7 @@ class MoveCommandHandlerTest {
             meterRegistry);
     context =
         new SessionContext(
-            42L, 22L, 123L, "emberline@example.com", 911L, "Emberline", 7L, "R-1021", "jwt-token");
+            42L, 22L, "123", "emberline@example.com", 911L, "Emberline", 7L, "R-1021", "jwt-token");
   }
 
   @Test

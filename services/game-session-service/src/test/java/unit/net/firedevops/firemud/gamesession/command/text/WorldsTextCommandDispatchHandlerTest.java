@@ -36,7 +36,7 @@ class WorldsTextCommandDispatchHandlerTest {
   void publishesCommandEventForGameplayScopedWorldsBrowse() {
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -67,7 +67,7 @@ class WorldsTextCommandDispatchHandlerTest {
     gameplayCatalogProperties.setWorlds(List.of(world("demo", 22L, 41L, false)));
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(
@@ -110,7 +110,7 @@ class WorldsTextCommandDispatchHandlerTest {
                 .build());
     SessionContext context =
         new SessionContext(
-            7L, 22L, 123L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, "123", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(

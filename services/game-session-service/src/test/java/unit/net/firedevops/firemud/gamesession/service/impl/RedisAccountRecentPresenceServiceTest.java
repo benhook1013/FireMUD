@@ -3,11 +3,16 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.config.PresenceProperties;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceDisposition;
@@ -22,6 +27,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 
 class RedisAccountRecentPresenceServiceTest {
 
@@ -43,7 +49,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "Emberline",
@@ -65,7 +71,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            123L,
+            "123",
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -95,7 +101,7 @@ class RedisAccountRecentPresenceServiceTest {
     AccountRecentPresenceState state =
         assertInstanceOf(AccountRecentPresenceState.class, stateCaptor.getValue());
     assertEquals(22L, state.tenantId());
-    assertEquals(123L, state.accountId());
+    assertEquals("123", state.accountId());
     assertEquals(101L, state.gameInstanceId());
     assertEquals("demo", state.worldSlug());
     assertEquals("production", state.realmSlug());
@@ -122,7 +128,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             0L,
             null,
@@ -144,7 +150,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            123L,
+            "123",
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -198,7 +204,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             0L,
             null,
@@ -220,7 +226,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             "production",
             17L,
-            123L,
+            "123",
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -274,7 +280,7 @@ class RedisAccountRecentPresenceServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "Emberline",
@@ -296,7 +302,7 @@ class RedisAccountRecentPresenceServiceTest {
             "demo",
             null,
             17L,
-            123L,
+            "123",
             7001L,
             "Emberline",
             GameplayPresenceRole.PLAYER,
@@ -331,5 +337,35 @@ class RedisAccountRecentPresenceServiceTest {
     assertEquals("fallback-world", state.worldSlug());
     assertEquals("fallback-realm", state.realmSlug());
     assertEquals(3L, state.pointerVersion());
+  }
+
+  @Test
+  void unreadableRecentPresenceFailsClosedWithoutOverwritingRetainedEvidence() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    when(valueOperations.get("accountrecentpresence:22:123"))
+        .thenThrow(new SerializationException("old AccountRecentPresenceState record shape"));
+
+    GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
+    when(gameplayPresenceService.findConnectedBySessionId(41L)).thenReturn(Optional.empty());
+    PresenceProperties presenceProperties = new PresenceProperties();
+    presenceProperties.setRecentPresenceTtlMs(Duration.ofMinutes(5).toMillis());
+    RedisAccountRecentPresenceService service =
+        new RedisAccountRecentPresenceService(
+            redisTemplate,
+            Mockito.mock(SessionRoutingNormalizationService.class),
+            gameplayPresenceService,
+            presenceProperties,
+            () -> 1_700_000_000_000L);
+    SessionContext context =
+        new SessionContext(41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt");
+
+    assertEquals(Map.of(), service.findByAccountIds(22L, List.of("123")));
+    service.recordConnected(context);
+
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
   }
 }

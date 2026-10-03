@@ -156,7 +156,7 @@ class WebSocketOutputProjectorTest {
                 GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
     SessionContext context =
         new SessionContext(
-            7L, 22L, 41L, "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+            7L, 22L, "41", "emberline@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
     AdmittedTextCommandRegistryResolver admittedResolver =
         mock(AdmittedTextCommandRegistryResolver.class);
     when(admittedResolver.resolveMetadata(context, "wave", "wave"))

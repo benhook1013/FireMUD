@@ -37,7 +37,7 @@ class GameplayLocalPathReadinessProbeTest {
                   new SessionContext(
                       sessionId,
                       0L,
-                      PROBE_ACCOUNT_ID,
+                      Long.toString(PROBE_ACCOUNT_ID),
                       PROBE_CHARACTER_ID,
                       0L,
                       "readiness-room-" + probeSequence,

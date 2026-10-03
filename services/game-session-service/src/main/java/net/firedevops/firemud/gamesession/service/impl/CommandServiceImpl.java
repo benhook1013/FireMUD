@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -199,7 +200,7 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setSessionId(sessionId);
     sessionContext
         .map(SessionContext::accountId)
-        .filter(id -> id > 0)
+        .flatMap(id -> PositiveLongParsing.requireOptionalText(id, "accountId"))
         .ifPresent(gameplayCommand::setAccountId);
     sessionContext
         .map(SessionContext::characterId)

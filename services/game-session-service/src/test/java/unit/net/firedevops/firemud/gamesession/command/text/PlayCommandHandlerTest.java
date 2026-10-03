@@ -161,7 +161,7 @@ class PlayCommandHandlerTest {
   @Test
   void playPromotesSessionIntoGameplay() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
@@ -176,7 +176,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -194,7 +194,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -212,7 +212,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -231,7 +231,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -270,7 +270,7 @@ class PlayCommandHandlerTest {
         .getFirst()
         .setPublicProductionRealm(true);
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult ambiguousDefaultResult =
@@ -301,7 +301,7 @@ class PlayCommandHandlerTest {
         .getFirst()
         .setPublicProductionRealm(false);
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -353,7 +353,7 @@ class PlayCommandHandlerTest {
                 "Maintenance World",
                 List.of(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false))));
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
@@ -388,7 +388,7 @@ class PlayCommandHandlerTest {
                 "Other Public World",
                 List.of(realm("production", "Live Realm", 23L, 99L, true, false))));
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -406,7 +406,7 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsModerationPolicyDeniedAdmission() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(moderationPolicyClient.evaluateGameplayAdmission(22L, 123L))
         .thenReturn(
@@ -428,7 +428,7 @@ class PlayCommandHandlerTest {
   @Test
   void playUsesPersistedAccountRosterCharacterForSelectedTarget() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 2L, 9007L))
         .thenReturn(Optional.empty());
@@ -447,7 +447,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 9007L,
                 "Emberline",
@@ -465,7 +465,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 9007L,
                 "Emberline",
@@ -485,7 +485,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 9007L,
                 "Emberline",
@@ -505,7 +505,7 @@ class PlayCommandHandlerTest {
   @Test
   void playWithoutCharacterSelectorShowsPersistedRosterCharacterName() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
@@ -525,7 +525,7 @@ class PlayCommandHandlerTest {
   @Test
   void playWithCaseVariedCharacterSelectorShowsPersistedRosterCharacterName() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
@@ -548,7 +548,7 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsMalformedPersistedRosterCharacterId() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "2", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -580,7 +580,7 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsCharacterRosterFromAnotherAccountBeforeBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -599,7 +599,7 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsCharacterRosterFromAnotherTenantBeforeBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -618,7 +618,7 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsDuplicatePersistedCharacterIdsBeforeBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     ListCharactersByAccountResponse roster =
         characterRoster("8008", "demo", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -647,7 +647,7 @@ class PlayCommandHandlerTest {
   @Test
   void playWithAmbiguousCharacterNameReturnsSelectionGuidanceBeforeBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     ListCharactersByAccountResponse roster =
         characterRoster("8008", "demo", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -675,7 +675,7 @@ class PlayCommandHandlerTest {
   @Test
   void playWithEmptyCharacterRosterReturnsSelectionGuidanceBeforeBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -691,7 +691,7 @@ class PlayCommandHandlerTest {
   @Test
   void playWithoutCharacterSelectorReturnsSelectionGuidanceForMultipleCharacters() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     ListCharactersByAccountResponse roster =
         characterRoster("8008", "demo", "22", "123", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
@@ -719,7 +719,7 @@ class PlayCommandHandlerTest {
   @Test
   void playWithUnmatchedCharacterSelectorReturnsGuidanceBeforeBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -734,7 +734,7 @@ class PlayCommandHandlerTest {
   @Test
   void playRejectsUnavailableCharacterRosterBeforeBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "1", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED))
@@ -760,7 +760,7 @@ class PlayCommandHandlerTest {
         new SessionContext(
             1L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "Emberline",
@@ -798,9 +798,9 @@ class PlayCommandHandlerTest {
   @Test
   void playIgnoresStaleExistingBindingAfterNormalization() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     SessionContext clearedExisting =
-        new SessionContext(9L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "old-jwt", 1L);
+        new SessionContext(9L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "old-jwt", 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.of(clearedExisting));
@@ -815,7 +815,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -837,12 +837,12 @@ class PlayCommandHandlerTest {
   @Test
   void playIgnoresExistingBindingWithoutRoomRegion() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     SessionContext existingWithoutRoom =
         new SessionContext(
             9L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "demo",
@@ -869,7 +869,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -890,13 +890,13 @@ class PlayCommandHandlerTest {
   @Test
   void firstPartyPlayRejectsMismatchedConnectScope() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
+        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 41L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L,
+                    "123",
                     22L,
                     "demo",
                     "production",
@@ -922,13 +922,13 @@ class PlayCommandHandlerTest {
   @Test
   void firstPartyPlayRejectsMismatchedWorldSlug() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 1L);
+        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L,
+                    "123",
                     22L,
                     "sandbox",
                     "production",
@@ -950,13 +950,22 @@ class PlayCommandHandlerTest {
   void firstPartyPlayRejectsStalePointerVersion() {
     gameplayCatalogProperties.getWorlds().get(0).getRealms().get(0).setPointerVersion(9L);
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 1L);
+        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "demo", "production", 1L, 8L, "scope-1", "jti-1", "req-1", "gw-1")));
+                    "123",
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    8L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gw-1")));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -968,13 +977,13 @@ class PlayCommandHandlerTest {
   @Test
   void firstPartyPlayRejectsConnectContextMissingRealmSlug() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 1L);
+        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "demo", null, 1L, 1L, "scope-1", "jti-1", "req-1", "gw-1")));
+                    "123", 22L, "demo", null, 1L, 1L, "scope-1", "jti-1", "req-1", "gw-1")));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -988,13 +997,13 @@ class PlayCommandHandlerTest {
   @Test
   void firstPartyPlayRejectsConnectContextMissingConnectScope() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 1L);
+        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "demo", "production", 1L, 1L, "", "jti-1", "req-1", "gw-1")));
+                    "123", 22L, "demo", "production", 1L, 1L, "", "jti-1", "req-1", "gw-1")));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1006,13 +1015,13 @@ class PlayCommandHandlerTest {
   @Test
   void firstPartyPlayRejectsConnectContextMissingConnectRequest() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 1L);
+        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 1L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "demo", "production", 1L, 1L, "scope-1", "jti-1", "", "gw-1")));
+                    "123", 22L, "demo", "production", 1L, 1L, "scope-1", "jti-1", "", "gw-1")));
 
     PlayCommandHandlingResult result =
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
@@ -1034,7 +1043,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void playWithoutArgumentsReturnsInvalidArgument() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, "123", 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -1046,7 +1055,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void unknownWorldReturnsSelectionGuidance() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, "123", 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -1095,7 +1104,7 @@ class PlayCommandHandlerTest {
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
             meterRegistry);
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, "123", 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -1150,7 +1159,7 @@ class PlayCommandHandlerTest {
             scriptEventPublisher,
             meterRegistry);
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -1168,7 +1177,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void sandboxWithoutCharacterReturnsSelectionRequired() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, "123", 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -1189,7 +1198,7 @@ class PlayCommandHandlerTest {
 
   @Test
   void explicitRealmWithoutCharacterReturnsCharacterSelectionGuidance() {
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, "123", 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -1219,7 +1228,7 @@ class PlayCommandHandlerTest {
         .getRealms()
         .get(1)
         .setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.COPIED_ONLY);
-    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    SessionContext context = new SessionContext(1L, 22L, "123", 0L, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
 
     PlayCommandHandlingResult result =
@@ -1242,13 +1251,13 @@ class PlayCommandHandlerTest {
         .get(1)
         .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "first-party:123", 0L, null, 0L, null, null, 41L);
+        new SessionContext(1L, 22L, "123", "first-party:123", 0L, null, 0L, null, null, 41L);
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(firstPartyConnectContextRegistry.find(1L))
         .thenReturn(
             Optional.of(
                 new FirstPartyConnectContext(
-                    123L, 22L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
+                    "123", 22L, "sandbox", "preview", 41L, 1L, "scope-1", "jti-1", "req-1",
                     "gw-1")));
     when(entityManagementClient.listCharactersByAccount(
             "22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_ISOLATED))
@@ -1281,7 +1290,7 @@ class PlayCommandHandlerTest {
         new SessionContext(
             1L,
             22L,
-            123L,
+            "123",
             "first-party:123",
             0L,
             null,
@@ -1325,7 +1334,7 @@ class PlayCommandHandlerTest {
         new SessionContext(
             1L,
             22L,
-            123L,
+            "123",
             "first-party:123",
             0L,
             null,
@@ -1360,7 +1369,8 @@ class PlayCommandHandlerTest {
   @Test
   void playDeniedByMembershipReturnsWorldAccessDenied() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1398,7 +1408,7 @@ class PlayCommandHandlerTest {
         new SessionContext(
             1L,
             23L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "demo",
@@ -1441,7 +1451,8 @@ class PlayCommandHandlerTest {
   @Test
   void playNonPublicRealmRequiresExistingAdmissibleMembership() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1604,7 +1615,8 @@ class PlayCommandHandlerTest {
   @ValueSource(strings = {"NOT_FOUND", "PERMISSION_DENIED"})
   void playNonAuthorityMembershipErrorReturnsAccessDeniedAndClearsBinding(String errorCode) {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1630,7 +1642,8 @@ class PlayCommandHandlerTest {
   @Test
   void playRequiresExplicitJoinWhenPublicProductionMembershipIsMissing() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1659,7 +1672,8 @@ class PlayCommandHandlerTest {
   @Test
   void playRequiresExplicitJoinWhenPublicProductionMembershipIsInactive() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1687,7 +1701,8 @@ class PlayCommandHandlerTest {
   @Test
   void playWhenMembershipAuthorityTimestampIsMalformedFailsClosed() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1719,7 +1734,8 @@ class PlayCommandHandlerTest {
   @Test
   void playBlockedByEntitlementsReturnsBillingBlocked() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1748,7 +1764,8 @@ class PlayCommandHandlerTest {
   @Test
   void playMapsNonAuthorityEntitlementFailureToBillingBlocked() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1779,7 +1796,8 @@ class PlayCommandHandlerTest {
   @Test
   void playWhenMembershipAuthorityUnavailableFailsClosed() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
@@ -1810,7 +1828,8 @@ class PlayCommandHandlerTest {
   @Test
   void playWhenEntitlementAuthorityUnavailablePreservesExistingBinding() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
+        new SessionContext(
+            1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -1840,7 +1859,7 @@ class PlayCommandHandlerTest {
   @Test
   void staleContextCharacterIsReplacedByPersistedRosterActorBeforeFreshEntry() {
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, null, "jwt-token");
+        new SessionContext(1L, 22L, "123", "demo@example.com", 123L, "demo", 1L, null, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
     when(sessionAuthenticationService.resolveByGameplayIdentity(22L, 1L, 7001L))
         .thenReturn(Optional.empty());
@@ -1855,7 +1874,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -1881,7 +1900,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -1900,7 +1919,7 @@ class PlayCommandHandlerTest {
             new SessionContext(
                 1L,
                 22L,
-                123L,
+                "123",
                 "demo@example.com",
                 7001L,
                 "demo",
@@ -1933,7 +1952,7 @@ class PlayCommandHandlerTest {
     return new SessionContext(
         1L,
         22L,
-        123L,
+        "123",
         "demo@example.com",
         123L,
         "Emberline",

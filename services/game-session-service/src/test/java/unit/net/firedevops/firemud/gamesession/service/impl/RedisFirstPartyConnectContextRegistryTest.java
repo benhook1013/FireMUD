@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 
 @SuppressWarnings("unchecked")
 class RedisFirstPartyConnectContextRegistryTest {
@@ -56,7 +58,7 @@ class RedisFirstPartyConnectContextRegistryTest {
   void registerStoresContextWithShortTtl() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            77L, 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
 
     registry.register(91L, context);
 
@@ -73,12 +75,48 @@ class RedisFirstPartyConnectContextRegistryTest {
   void unregisterRemovesStoredContext() {
     FirstPartyConnectContext context =
         new FirstPartyConnectContext(
-            77L, 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
+            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-1", "req-1", "gateway-1");
     registry.register(91L, context);
 
     registry.unregister(91L);
 
     assertEquals(Optional.empty(), registry.find(91L));
     verify(redisTemplate).delete("sessionctx:first-party:91:connect-context");
+  }
+
+  @Test
+  void unreadableRetainedContextFailsClosedWithoutDeletingOrOverwritingEvidence() {
+    String key = "sessionctx:first-party:91:connect-context";
+    when(valueOperations.get(key)).thenThrow(new SerializationException("old record shape"));
+
+    assertEquals(Optional.empty(), registry.find(91L));
+
+    registry.register(
+        91L,
+        new FirstPartyConnectContext(
+            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-2", "req-2", "gateway-1"));
+    registry.unregister(91L);
+
+    verify(redisTemplate, never()).delete(key);
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
+  }
+
+  @Test
+  void wrongRetainedValueFailsClosedWithoutOverwritingEvidence() {
+    String key = "sessionctx:first-party:91:connect-context";
+    Object retainedEvidence = "serialized record from an incompatible shape";
+    store.put(key, retainedEvidence);
+
+    assertEquals(Optional.empty(), registry.find(91L));
+
+    registry.register(
+        91L,
+        new FirstPartyConnectContext(
+            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-2", "req-2", "gateway-1"));
+    registry.unregister(91L);
+
+    assertEquals(retainedEvidence, store.get(key));
+    verify(redisTemplate, never()).delete(key);
+    verify(valueOperations, never()).set(anyString(), any(), any(Duration.class));
   }
 }

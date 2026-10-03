@@ -340,7 +340,9 @@ public class PlayCommandHandler {
       SessionContext context, GameplayWorldCatalog.RealmView selectedRealm, String tenantTag) {
     var decision =
         moderationPolicyClient.evaluateGameplayAdmission(
-            selectedRealm.tenantId(), context.accountId());
+            selectedRealm.tenantId(),
+            PositiveLongParsing.requireOptionalText(context.accountId(), "accountId")
+                .orElseThrow(() -> new IllegalArgumentException("accountId must be positive")));
     if (decision.hasError()
         && decision.getError().getCode() != null
         && !decision.getError().getCode().isBlank()) {
@@ -460,7 +462,7 @@ public class PlayCommandHandler {
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(selectedRealm.tenantId()),
-            Long.toString(context.accountId()),
+            context.accountId(),
             Long.toString(selectedRealm.gameInstanceId()),
             playableStateScope);
     if (response == null || response.hasError()) {
@@ -472,7 +474,7 @@ public class PlayCommandHandler {
     for (Character character : roster) {
       long characterId = requireResolvedCharacterId(character.getId());
       if (!Long.toString(selectedRealm.tenantId()).equals(character.getTenantId())
-          || !Long.toString(context.accountId()).equals(character.getAccountId())
+          || !context.accountId().equals(character.getAccountId())
           || character.getPlayableStateScope() != playableStateScope
           || !StringUtils.hasText(character.getName())
           || !characterIds.add(characterId)) {
@@ -617,7 +619,7 @@ public class PlayCommandHandler {
     String requestId = context.sessionId() + ":" + UUID.randomUUID();
     GetTenantMembershipForRuntimeResponse membershipResponse =
         accountClient.getTenantMembershipForRuntime(
-            Long.toString(context.accountId()), Long.toString(selectedRealm.tenantId()), requestId);
+            context.accountId(), Long.toString(selectedRealm.tenantId()), requestId);
     Optional<PlayCommandHandlingResult> membershipFailure =
         validateMembershipResponse(
             membershipResponse,
@@ -723,7 +725,7 @@ public class PlayCommandHandler {
     if (!isPublicProductionRealm(selectedRealm)) {
       GetRealmAccessGrantForRuntimeResponse grantResponse =
           accountClient.getRealmAccessGrantForRuntime(
-              Long.toString(context.accountId()),
+              context.accountId(),
               Long.toString(selectedRealm.tenantId()),
               selectedWorld.slug(),
               selectedRealm.slug(),
@@ -910,11 +912,12 @@ public class PlayCommandHandler {
     }
     try {
       Instant.parse(response.getEvaluatedAt());
-      if (Long.parseLong(response.getAccountId()) != context.accountId()
+      if (!PositiveLongParsing.requireOptionalText(response.getAccountId(), "accountId")
+              .equals(PositiveLongParsing.requireOptionalText(context.accountId(), "accountId"))
           || Long.parseLong(response.getTenantId()) != selectedRealm.tenantId()) {
         return false;
       }
-    } catch (DateTimeParseException | NumberFormatException ex) {
+    } catch (DateTimeParseException | IllegalArgumentException ex) {
       return false;
     }
     return response.getMembershipExists()
@@ -1104,7 +1107,7 @@ public class PlayCommandHandler {
         new SessionContext(
             context.sessionId(),
             context.tenantId(),
-            0L,
+            null,
             null,
             0L,
             null,

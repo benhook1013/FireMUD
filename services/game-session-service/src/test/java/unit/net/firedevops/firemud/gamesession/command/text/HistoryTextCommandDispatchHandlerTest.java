@@ -31,7 +31,7 @@ class HistoryTextCommandDispatchHandlerTest {
     Mockito.when(historyStorageService.findRecent(7L, 9L, 7001L, 2))
         .thenReturn(List.of("LOOK", "SAY hi"));
     SessionContext context =
-        new SessionContext(22L, 7L, 99L, "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
+        new SessionContext(22L, 7L, "99", "demo@example.com", 7001L, "Emberline", 9L, "R-1", "jwt");
 
     TextCommandInterpretationResult result =
         handler.handle(

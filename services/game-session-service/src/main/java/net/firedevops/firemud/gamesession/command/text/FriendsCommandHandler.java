@@ -109,11 +109,11 @@ public class FriendsCommandHandler {
       SessionContext context, FriendListFilter filter, String rawCommandText) {
     ListFriendsResponse response =
         filter == FriendListFilter.ALL
-            ? socialGroupsClient.listFriends(context.tenantId(), context.accountId())
+            ? socialGroupsClient.listFriends(context.tenantId(), numericAccountId(context))
             : socialGroupsClient.listFriends(
-                context.tenantId(), context.accountId(), mapRosterFilter(filter));
+                context.tenantId(), numericAccountId(context), mapRosterFilter(filter));
     if (response == null && filter != FriendListFilter.ALL) {
-      response = socialGroupsClient.listFriends(context.tenantId(), context.accountId());
+      response = socialGroupsClient.listFriends(context.tenantId(), numericAccountId(context));
     }
     if (response.hasError()) {
       String message =
@@ -137,13 +137,13 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleAdd(
       SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
-    if (target.friendAccountId() == context.accountId()) {
+    if (Long.toString(target.friendAccountId()).equals(context.accountId())) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
     }
     AddFriendResponse response =
         socialGroupsClient.addFriend(
-            context.tenantId(), context.accountId(), target.friendAccountId());
+            context.tenantId(), numericAccountId(context), target.friendAccountId());
     if (response.hasError() || !response.getSuccess()) {
       String message =
           response.hasError() && !response.getError().getMessage().isBlank()
@@ -161,13 +161,13 @@ public class FriendsCommandHandler {
 
   private TextCommandInterpretationResult handleRemove(
       SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
-    if (target.friendAccountId() == context.accountId()) {
+    if (Long.toString(target.friendAccountId()).equals(context.accountId())) {
       return friendTargetError(
           "FRIEND_SELF_LINK_FORBIDDEN", "Cannot add or remove your own account as a friend");
     }
     RemoveFriendResponse response =
         socialGroupsClient.removeFriend(
-            context.tenantId(), context.accountId(), target.friendAccountId());
+            context.tenantId(), numericAccountId(context), target.friendAccountId());
     if (response.hasError() || !response.getSuccess()) {
       String message =
           response.hasError() && !response.getError().getMessage().isBlank()
@@ -187,7 +187,7 @@ public class FriendsCommandHandler {
       SessionContext context, ResolvedFriendTarget target, String rawCommandText) {
     GetFriendResponse response =
         socialGroupsClient.getFriend(
-            context.tenantId(), context.accountId(), target.friendAccountId());
+            context.tenantId(), numericAccountId(context), target.friendAccountId());
     if (response.hasError()) {
       String code =
           "NOT_FOUND".equalsIgnoreCase(response.getError().getCode())
@@ -221,7 +221,8 @@ public class FriendsCommandHandler {
       return invalidUsage("FRIENDS SHOW <friendAccountId|characterName|#entryNumber>");
     }
     GetFriendByOrdinalResponse response =
-        socialGroupsClient.getFriendByOrdinal(context.tenantId(), context.accountId(), ordinal);
+        socialGroupsClient.getFriendByOrdinal(
+            context.tenantId(), numericAccountId(context), ordinal);
     if (response.hasError()) {
       String code =
           "NOT_FOUND".equalsIgnoreCase(response.getError().getCode())
@@ -251,7 +252,7 @@ public class FriendsCommandHandler {
   private TextCommandInterpretationResult handleSummary(
       SessionContext context, String rawCommandText) {
     GetFriendRosterSummaryResponse response =
-        socialGroupsClient.getFriendRosterSummary(context.tenantId(), context.accountId());
+        socialGroupsClient.getFriendRosterSummary(context.tenantId(), numericAccountId(context));
     if (response.hasError()) {
       String message =
           response.getError().getMessage().isBlank()
@@ -284,7 +285,7 @@ public class FriendsCommandHandler {
   private TextCommandInterpretationResult handleVisibilityView(
       SessionContext context, String rawCommandText) {
     GetFriendPresencePolicyResponse response =
-        socialGroupsClient.getFriendPresencePolicy(context.tenantId(), context.accountId());
+        socialGroupsClient.getFriendPresencePolicy(context.tenantId(), numericAccountId(context));
     if (response.hasError()) {
       String code =
           response.getError().getCode().isBlank()
@@ -318,7 +319,7 @@ public class FriendsCommandHandler {
     }
     UpdateFriendPresencePolicyResponse response =
         socialGroupsClient.updateFriendPresencePolicy(
-            context.tenantId(), context.accountId(), visibilityPolicy);
+            context.tenantId(), numericAccountId(context), visibilityPolicy);
     if (response.hasError() || !response.getSuccess()) {
       String code =
           response.hasError() && !response.getError().getCode().isBlank()
@@ -349,7 +350,8 @@ public class FriendsCommandHandler {
       return invalidUsage("FRIENDS REMOVE <friendAccountId|characterName|#entryNumber>");
     }
     RemoveFriendByOrdinalResponse response =
-        socialGroupsClient.removeFriendByOrdinal(context.tenantId(), context.accountId(), ordinal);
+        socialGroupsClient.removeFriendByOrdinal(
+            context.tenantId(), numericAccountId(context), ordinal);
     if (response.hasError() || !response.getSuccess()) {
       String code =
           response.hasError() && "NOT_FOUND".equalsIgnoreCase(response.getError().getCode())
@@ -481,6 +483,11 @@ public class FriendsCommandHandler {
       throw new IllegalStateException(
           "Malformed friend roster friendAccountId: " + ex.getMessage(), ex);
     }
+  }
+
+  private long numericAccountId(SessionContext context) {
+    return PositiveLongParsing.requireOptionalText(context.accountId(), "accountId")
+        .orElseThrow(() -> new IllegalArgumentException("accountId must be positive"));
   }
 
   private Long parseOptionalLong(String value) {

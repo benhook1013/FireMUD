@@ -653,7 +653,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of("123")))
+        .containsKey("123");
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
@@ -1104,7 +1105,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of("123")))
+        .containsKey("123");
 
     java.util.List<String> secondPayloads;
     try (GameplayWebSocketDriver client =
@@ -1301,7 +1303,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.accountId()).isEqualTo("123");
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
@@ -1469,7 +1471,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.accountId()).isEqualTo("123");
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
@@ -1562,7 +1564,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.accountId()).isEqualTo("123");
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(1L);

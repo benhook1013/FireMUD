@@ -17,8 +17,8 @@ public interface GameplayPresenceService {
 
   List<GameplayPresence> listConnectedByGameInstance(long tenantId, long gameInstanceId);
 
-  Map<Long, List<GameplayPresence>> listConnectedByAccountIds(
-      long tenantId, Collection<Long> accountIds);
+  Map<String, List<GameplayPresence>> listConnectedByAccountIds(
+      long tenantId, Collection<String> accountIds);
 
   Optional<GameplayPresence> findConnectedBySessionId(long sessionId);
 }

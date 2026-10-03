@@ -17,11 +17,12 @@ import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationSer
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 
 @Service
 public final class RedisAccountRecentPresenceService implements AccountRecentPresenceService {
-  private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%d";
+  private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%s";
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
@@ -58,7 +59,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   @Override
   public void recordConnected(SessionContext context) {
-    if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
+    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
       return;
     }
     GameplayPresence presence =
@@ -99,18 +100,22 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   @Override
-  public Map<Long, AccountRecentPresenceState> findByAccountIds(
-      long tenantId, Collection<Long> accountIds) {
+  public Map<String, AccountRecentPresenceState> findByAccountIds(
+      long tenantId, Collection<String> accountIds) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    LinkedHashMap<Long, AccountRecentPresenceState> results = new LinkedHashMap<>();
-    for (Long accountId : accountIds) {
-      if (accountId == null || accountId <= 0 || valueOps == null) {
+    LinkedHashMap<String, AccountRecentPresenceState> results = new LinkedHashMap<>();
+    for (String accountId : accountIds) {
+      if (accountId == null || accountId.isBlank() || valueOps == null) {
         continue;
       }
-      AccountRecentPresenceState state =
-          (AccountRecentPresenceState) valueOps.get(key(tenantId, accountId));
-      if (state != null) {
-        results.put(accountId, state);
+      try {
+        AccountRecentPresenceState state =
+            (AccountRecentPresenceState) valueOps.get(key(tenantId, accountId));
+        if (state != null) {
+          results.put(accountId, state);
+        }
+      } catch (SerializationException | ClassCastException ex) {
+        // Retain unreadable evidence; it must not be treated as an absent value for cleanup.
       }
     }
     return Map.copyOf(results);
@@ -122,8 +127,18 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     if (valueOps == null || snapshot == null) {
       return;
     }
+    String key = key(snapshot.tenantId(), snapshot.accountId());
+    try {
+      Object retained = valueOps.get(key);
+      if (retained != null && !(retained instanceof AccountRecentPresenceState)) {
+        return;
+      }
+    } catch (SerializationException | ClassCastException ex) {
+      // Preserve an unreadable retained value instead of overwriting its evidence.
+      return;
+    }
     valueOps.set(
-        key(snapshot.tenantId(), snapshot.accountId()),
+        key,
         new AccountRecentPresenceState(
             snapshot.tenantId(),
             snapshot.accountId(),
@@ -138,7 +153,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   private RoutingSnapshot routingSnapshot(SessionContext context, GameplayPresence presence) {
-    if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
+    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
       return null;
     }
     GameplayPresence effectivePresence =
@@ -180,13 +195,13 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     return null;
   }
 
-  private String key(long tenantId, long accountId) {
+  private String key(long tenantId, String accountId) {
     return String.format(RECENT_PRESENCE_KEY_TEMPLATE, tenantId, accountId);
   }
 
   private record RoutingSnapshot(
       long tenantId,
-      long accountId,
+      String accountId,
       Long gameInstanceId,
       String playableStateScope,
       String worldSlug,

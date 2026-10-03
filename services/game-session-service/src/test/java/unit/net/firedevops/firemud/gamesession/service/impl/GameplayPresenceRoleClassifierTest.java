@@ -22,7 +22,7 @@ class GameplayPresenceRoleClassifierTest {
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(
-                1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", "boom-token"),
+                1L, 22L, "102", "player@example.com", 202L, "Ben", 7L, "R-1", "boom-token"),
             jwtUtil,
             logger);
 
@@ -43,7 +43,7 @@ class GameplayPresenceRoleClassifierTest {
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -59,7 +59,7 @@ class GameplayPresenceRoleClassifierTest {
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -80,7 +80,7 @@ class GameplayPresenceRoleClassifierTest {
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -103,7 +103,7 @@ class GameplayPresenceRoleClassifierTest {
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
@@ -118,7 +118,7 @@ class GameplayPresenceRoleClassifierTest {
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(1L, 22L, "202", "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
             JWT_UTIL,
             logger);
 
