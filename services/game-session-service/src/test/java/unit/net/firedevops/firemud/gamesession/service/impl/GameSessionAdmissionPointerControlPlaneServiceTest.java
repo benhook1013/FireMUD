@@ -2,6 +2,8 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -10,33 +12,32 @@ import static org.mockito.Mockito.when;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
-import java.util.Optional;
+import java.util.Map;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
-import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
-import net.firedevops.firemud.gamesession.service.VersionUpgradePreparationService;
 import org.junit.jupiter.api.Test;
 
 class GameSessionAdmissionPointerControlPlaneServiceTest {
   @Test
-  void listQueriesTenantScopeBeforeCheckingLatestAudit() {
+  void listQueriesTenantScopeBeforeBatchingExactLatestAuditKeys() {
     GameplayAdmissionPointerAuthorityService authorityService =
         mock(GameplayAdmissionPointerAuthorityService.class);
-    GameplayAdmissionPointerSnapshot tenantB = pointer(2L, "tenant-b");
-    when(authorityService.listPointersForTenants(List.of(2L))).thenReturn(List.of(tenantB));
-    when(authorityService.findLatestPointerAudit(2L, "tenant-b", "production"))
-        .thenReturn(Optional.of(audit(tenantB)));
+    GameplayAdmissionPointerSnapshot tenantA = pointer(1L, "demo");
+    GameplayAdmissionPointerSnapshot tenantB = pointer(2L, "demo");
+    PointerAuditKey tenantBKey = new PointerAuditKey(2L, "demo", "production");
+    when(authorityService.listPointersForTenants(List.of(2L)))
+        .thenReturn(List.of(tenantA, tenantB));
+    when(authorityService.findLatestPointerAudits(List.of(tenantBKey)))
+        .thenReturn(Map.of(tenantBKey, audit(tenantB)));
     GameSessionAdmissionPointerControlPlaneService controlPlaneService =
-        new GameSessionAdmissionPointerControlPlaneService(
-            mock(GameInstanceRepository.class),
-            authorityService,
-            mock(VersionUpgradePreparationService.class));
+        new GameSessionAdmissionPointerControlPlaneService(authorityService);
 
     var response = controlPlaneService.listAdmissionPointers(List.of(2L));
 
@@ -44,8 +45,54 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
     assertEquals("2", response.getPointers(0).getTenantId());
     verify(authorityService).listPointersForTenants(List.of(2L));
     verify(authorityService, never()).listPointers();
-    verify(authorityService).findLatestPointerAudit(2L, "tenant-b", "production");
-    verify(authorityService, never()).findLatestPointerAudit(1L, "tenant-a", "production");
+    verify(authorityService).findLatestPointerAudits(List.of(tenantBKey));
+    verify(authorityService, never()).findLatestPointerAudit(anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void listBatchesMixedTenantAuditKeysWithSameWorldSlug() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot tenantA = pointer(1L, "demo");
+    GameplayAdmissionPointerSnapshot tenantB = pointer(2L, "demo");
+    PointerAuditKey tenantAKey = new PointerAuditKey(1L, "demo", "production");
+    PointerAuditKey tenantBKey = new PointerAuditKey(2L, "demo", "production");
+    when(authorityService.listPointers()).thenReturn(List.of(tenantA, tenantB));
+    when(authorityService.findLatestPointerAudits(List.of(tenantAKey, tenantBKey)))
+        .thenReturn(Map.of(tenantAKey, audit(tenantA), tenantBKey, audit(tenantB)));
+    GameSessionAdmissionPointerControlPlaneService controlPlaneService =
+        new GameSessionAdmissionPointerControlPlaneService(authorityService);
+
+    var response = controlPlaneService.listAdmissionPointers(List.of());
+
+    assertEquals(2, response.getPointersCount());
+    assertEquals("1", response.getPointers(0).getTenantId());
+    assertEquals("2", response.getPointers(1).getTenantId());
+    verify(authorityService).findLatestPointerAudits(List.of(tenantAKey, tenantBKey));
+    verify(authorityService, never()).findLatestPointerAudit(anyLong(), anyString(), anyString());
+  }
+
+  @Test
+  void listFailsClosedWhenBatchAuditIsMissingOrDoesNotMatchCurrentPointer() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        mock(GameplayAdmissionPointerAuthorityService.class);
+    GameplayAdmissionPointerSnapshot currentPointer = pointer(2L, "tenant-b");
+    PointerAuditKey key = new PointerAuditKey(2L, "tenant-b", "production");
+    when(authorityService.listPointers()).thenReturn(List.of(currentPointer));
+    GameSessionAdmissionPointerControlPlaneService controlPlaneService =
+        new GameSessionAdmissionPointerControlPlaneService(authorityService);
+
+    when(authorityService.findLatestPointerAudits(List.of(key))).thenReturn(Map.of());
+    assertThrows(
+        AdmissionPointerAuditUnavailableException.class,
+        () -> controlPlaneService.listAdmissionPointers(List.of()));
+
+    when(authorityService.findLatestPointerAudits(List.of(key)))
+        .thenReturn(Map.of(key, audit(currentPointer, currentPointer.pointerVersion() + 1L)));
+    assertThrows(
+        AdmissionPointerAuditUnavailableException.class,
+        () -> controlPlaneService.listAdmissionPointers(List.of()));
+    verify(authorityService, never()).findLatestPointerAudit(anyLong(), anyString(), anyString());
   }
 
   @Test
@@ -95,16 +142,14 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
 
     when(pointerRepository.findAllByOrderByWorldSlugAscRealmSlugAsc())
         .thenReturn(List.of(currentPointer));
-    when(eventRepository.findLatestByTenantIdAndWorldSlugAndRealmSlug(1L, "demo", "production"))
-        .thenReturn(Optional.of(retainedPreV7Event));
+    when(eventRepository.findLatestByPointerKeys(
+            List.of(new PointerAuditKey(1L, "demo", "production"))))
+        .thenReturn(List.of(retainedPreV7Event));
 
     DatabaseGameplayAdmissionPointerAuthorityService authorityService =
         new DatabaseGameplayAdmissionPointerAuthorityService(pointerRepository, eventRepository);
     GameSessionAdmissionPointerControlPlaneService controlPlaneService =
-        new GameSessionAdmissionPointerControlPlaneService(
-            mock(GameInstanceRepository.class),
-            authorityService,
-            mock(VersionUpgradePreparationService.class));
+        new GameSessionAdmissionPointerControlPlaneService(authorityService);
 
     assertThrows(
         AdmissionPointerAuditUnavailableException.class,
@@ -135,6 +180,11 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
 
   private static GameplayAdmissionPointerAuditEntry audit(
       GameplayAdmissionPointerSnapshot pointer) {
+    return audit(pointer, pointer.pointerVersion());
+  }
+
+  private static GameplayAdmissionPointerAuditEntry audit(
+      GameplayAdmissionPointerSnapshot pointer, long pointerVersion) {
     return new GameplayAdmissionPointerAuditEntry(
         pointer.worldSlug(),
         pointer.realmSlug(),
@@ -142,7 +192,7 @@ class GameSessionAdmissionPointerControlPlaneServiceTest {
         pointer.realmDisplayName(),
         pointer.tenantId(),
         pointer.gameInstanceId(),
-        pointer.pointerVersion(),
+        pointerVersion,
         pointer.catalogRevision(),
         pointer.realmId(),
         pointer.playableStateNamespaceId(),

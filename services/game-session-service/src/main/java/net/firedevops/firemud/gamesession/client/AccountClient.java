@@ -215,7 +215,7 @@ public final class AccountClient
           .issueDirectTextConnectScope(request);
     } catch (StatusRuntimeException ex) {
       logger.warn("Account direct-text scope issuance failed", ex);
-      return scopeIssueError(accountAuthorityErrorCode(ex), "Account authority unavailable");
+      return scopeIssueError("AUTH_UNAVAILABLE", "Account authority unavailable");
     } catch (Exception ex) {
       logger.warn("Account direct-text scope issuance did not complete", ex);
       return scopeIssueError("AUTH_UNAVAILABLE", "Account authority unavailable");
@@ -303,13 +303,6 @@ public final class AccountClient
     } catch (NumberFormatException ignored) {
       return false;
     }
-  }
-
-  private String accountAuthorityErrorCode(StatusRuntimeException exception) {
-    Status.Code statusCode = exception.getStatus().getCode();
-    return statusCode == Status.Code.UNAVAILABLE || statusCode == Status.Code.DEADLINE_EXCEEDED
-        ? "AUTH_UNAVAILABLE"
-        : statusCode.name();
   }
 
   private IssueDirectTextConnectScopeResponse scopeIssueError(String code, String message) {

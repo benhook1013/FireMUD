@@ -11,7 +11,6 @@ runs:
       shell: bash
       env:
         KUBECTL_VERSION: ${{ steps.versions.outputs.kubectl-version }}
-        KUBECTL_SHA256: ${{ steps.versions.outputs.kubectl-linux-amd64-sha256 }}
       run: |
         set -euo pipefail
         if [[ "${RUNNER_OS:-}" != Linux || "${RUNNER_ARCH:-}" != X64 ]]; then
@@ -19,7 +18,6 @@ runs:
           exit 1
         fi
         kubectl_version="${KUBECTL_VERSION:?}"
-        kubectl_sha256="${KUBECTL_SHA256:?}"
         kubectl_root="${RUNNER_TEMP:?}/firemud-kubectl"
         installation_directory="$kubectl_root/$kubectl_version"
         installed_binary="$installation_directory/kubectl"
@@ -32,14 +30,19 @@ runs:
         }
         trap cleanup EXIT
         temporary_binary="$temporary_directory/kubectl"
+        temporary_checksum="$temporary_directory/kubectl.sha256"
         staged_binary="$temporary_directory/kubectl.staged"
 
         curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
           --connect-timeout 10 --max-time 60 \
           "https://dl.k8s.io/release/v${kubectl_version}/bin/linux/amd64/kubectl" \
           -o "$temporary_binary"
-        printf '%s  %s\n' "$kubectl_sha256" "$temporary_binary" \
-          | sha256sum --check --status
+        curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30 \
+          --connect-timeout 10 --max-time 60 \
+          "https://dl.k8s.io/release/v${kubectl_version}/bin/linux/amd64/kubectl.sha256" \
+          -o "$temporary_checksum"
+        dev-tools/maintenance/verify-publisher-checksum.sh \
+          digest "$temporary_checksum" "$temporary_binary" kubectl
         install -m 0755 "$temporary_binary" "$staged_binary"
         mv -fT -- "$staged_binary" "$installed_binary"
         echo "$installation_directory" >> "$GITHUB_PATH"

@@ -4,12 +4,14 @@ import static net.firedevops.firemud.worldmanagement.jooq.tables.Room.ROOM;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import net.firedevops.firemud.worldmanagement.entity.Room;
 import net.firedevops.firemud.worldmanagement.jooq.tables.records.RoomRecord;
 import org.jooq.DSLContext;
 import org.jooq.Record;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 @Repository
 @SuppressFBWarnings(
@@ -87,6 +89,43 @@ public class RoomRepository {
     return findById(entity.getId()).orElseThrow();
   }
 
+  @Transactional
+  public Room saveSeededWithExplicitId(Room entity) {
+    if (entity.getId() == null || entity.getId() <= 0) {
+      throw new IllegalArgumentException("SEED_ROOM_ID_INVALID: a positive room id is required");
+    }
+    if (entity.getTenantId() == null
+        || entity.getVersionId() == null
+        || entity.getZone() == null
+        || entity.getZone().getId() == null
+        || entity.getName() == null) {
+      throw new IllegalArgumentException(
+          "SEED_ROOM_ID_INVALID: room template identity is required");
+    }
+
+    // Serialize explicit fixture inserts with ordinary room inserts before checking the PK or
+    // advancing the BIGSERIAL sequence. This is limited to the opt-in demo template seeder.
+    dsl.execute("LOCK TABLE room IN SHARE ROW EXCLUSIVE MODE");
+    Room existing = findById(entity.getId()).orElse(null);
+    if (existing != null && !sameSeededTemplateIdentity(existing, entity)) {
+      throw new IllegalStateException(
+          "SEED_ROOM_ID_CONFLICT: room id "
+              + entity.getId()
+              + " belongs to a different tenant, version, zone, or template room");
+    }
+
+    if (existing == null) {
+      RoomRecord record = dsl.newRecord(ROOM);
+      record.setId(entity.getId());
+      populate(record, entity);
+      record.insert();
+    } else {
+      save(entity);
+    }
+    advanceRoomIdSequence();
+    return findById(entity.getId()).orElseThrow();
+  }
+
   public void delete(Room entity) {
     dsl.deleteFrom(ROOM).where(ROOM.ID.eq(entity.getId())).execute();
   }
@@ -107,6 +146,42 @@ public class RoomRepository {
     record.setNameLocalizedVariantsJson(entity.getNameLocalizedVariantsJson());
     record.setDescriptionLocalizedVariantsJson(entity.getDescriptionLocalizedVariantsJson());
     record.setVersionId(entity.getVersionId());
+  }
+
+  private boolean sameSeededTemplateIdentity(Room existing, Room requested) {
+    return Objects.equals(existing.getTenantId(), requested.getTenantId())
+        && Objects.equals(existing.getVersionId(), requested.getVersionId())
+        && existing.getZone() != null
+        && Objects.equals(existing.getZone().getId(), requested.getZone().getId())
+        && Objects.equals(existing.getName(), requested.getName());
+  }
+
+  private void advanceRoomIdSequence() {
+    Record sequenceRecord = dsl.fetchOne("SELECT pg_catalog.pg_get_serial_sequence('room', 'id')");
+    String sequenceName = sequenceRecord == null ? null : sequenceRecord.get(0, String.class);
+    if (sequenceName == null) {
+      throw new IllegalStateException("Room ID sequence could not be resolved");
+    }
+    Record quotedSequenceRecord =
+        dsl.fetchOne(
+            "SELECT pg_catalog.format('%I.%I', sequence_namespace.nspname, sequence_class.relname) "
+                + "FROM pg_catalog.pg_class AS sequence_class "
+                + "JOIN pg_catalog.pg_namespace AS sequence_namespace "
+                + "ON sequence_namespace.oid = sequence_class.relnamespace "
+                + "WHERE sequence_class.oid = ?::pg_catalog.regclass",
+            sequenceName);
+    String quotedSequenceName =
+        quotedSequenceRecord == null ? null : quotedSequenceRecord.get(0, String.class);
+    if (quotedSequenceName == null) {
+      throw new IllegalStateException("Resolved Room ID sequence name is invalid");
+    }
+    dsl.fetchOne(
+        "SELECT pg_catalog.setval(?::pg_catalog.regclass, "
+            + "GREATEST(COALESCE((SELECT MAX(id) FROM room), 1), "
+            + "COALESCE((SELECT last_value FROM "
+            + quotedSequenceName
+            + "), 1)), true)",
+        sequenceName);
   }
 
   private Room toEntity(Record record) {

@@ -6,9 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
@@ -47,6 +49,105 @@ class GameplayAdmissionPointerEventRepositoryTest {
       assertEquals(realmId, events.get(1).getRealmId());
       assertEquals(namespaceId, events.get(1).getPlayableStateNamespaceId());
     }
+  }
+
+  @Test
+  void findsLatestAuditByIdForExactMixedTenantPointerKeys() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-event-latest-batch;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerEventRepository repository =
+          new GameplayAdmissionPointerEventRepository(dsl);
+
+      GameplayAdmissionPointerEvent newestTenantNine = event("2026-09-10T00:00:00Z");
+      repository.save(newestTenantNine);
+      GameplayAdmissionPointerEvent tenantTen = event("2026-09-08T00:00:00Z");
+      tenantTen.setTenantId(10L);
+      repository.save(tenantTen);
+      GameplayAdmissionPointerEvent otherRealm = event("2026-09-07T00:00:00Z");
+      otherRealm.setRealmSlug("playtest");
+      repository.save(otherRealm);
+      GameplayAdmissionPointerEvent latestById = event("2026-09-01T00:00:00Z");
+      repository.save(latestById);
+      GameplayAdmissionPointerEvent outsideSelection = event("2026-09-11T00:00:00Z");
+      outsideSelection.setTenantId(11L);
+      repository.save(outsideSelection);
+
+      List<GameplayAdmissionPointerEvent> latest =
+          repository.findLatestByPointerKeys(
+              List.of(
+                  new PointerAuditKey(9L, "demo", "production"),
+                  new PointerAuditKey(10L, "demo", "production"),
+                  new PointerAuditKey(9L, "demo", "playtest")));
+      var byKey =
+          latest.stream()
+              .collect(
+                  java.util.stream.Collectors.toMap(
+                      audit ->
+                          new PointerAuditKey(
+                              audit.getTenantId(), audit.getWorldSlug(), audit.getRealmSlug()),
+                      GameplayAdmissionPointerEvent::getControlPlaneRequestId));
+
+      assertEquals(3, latest.size());
+      assertEquals(
+          "request-2026-09-01T00:00:00Z", byKey.get(new PointerAuditKey(9L, "demo", "production")));
+      assertEquals(
+          "request-2026-09-08T00:00:00Z",
+          byKey.get(new PointerAuditKey(10L, "demo", "production")));
+      assertEquals(
+          "request-2026-09-07T00:00:00Z", byKey.get(new PointerAuditKey(9L, "demo", "playtest")));
+    }
+  }
+
+  @Test
+  void chunksLargePointerKeySelectionsAndGloballyOrdersUniqueLatestEvents() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-event-latest-chunks;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerEventRepository repository =
+          new GameplayAdmissionPointerEventRepository(dsl);
+
+      List<PointerAuditKey> keys = new ArrayList<>();
+      for (int index = 0; index <= 500; index++) {
+        keys.add(new PointerAuditKey(9L, "world-" + index, "realm"));
+      }
+      keys.add(keys.get(0));
+
+      GameplayAdmissionPointerEvent secondChunkFirstId =
+          repository.save(eventForKey(keys.get(500), "2026-09-10T00:00:00Z"));
+      repository.save(eventForKey(keys.get(0), "2026-09-12T00:00:00Z"));
+      GameplayAdmissionPointerEvent lastKeyInFirstChunk =
+          repository.save(eventForKey(keys.get(499), "2026-09-11T00:00:00Z"));
+      GameplayAdmissionPointerEvent latestFirstKey =
+          repository.save(eventForKey(keys.get(0), "2026-09-01T00:00:00Z"));
+      GameplayAdmissionPointerEvent unselectedTenant = event("2026-09-13T00:00:00Z");
+      unselectedTenant.setTenantId(11L);
+      unselectedTenant.setWorldSlug("world-0");
+      unselectedTenant.setRealmSlug("realm");
+      repository.save(unselectedTenant);
+
+      List<GameplayAdmissionPointerEvent> latest = repository.findLatestByPointerKeys(keys);
+
+      assertEquals(3, latest.size());
+      assertEquals(
+          List.of(secondChunkFirstId.getId(), lastKeyInFirstChunk.getId(), latestFirstKey.getId()),
+          latest.stream().map(GameplayAdmissionPointerEvent::getId).toList());
+      assertEquals(
+          List.of("world-500", "world-499", "world-0"),
+          latest.stream().map(GameplayAdmissionPointerEvent::getWorldSlug).toList());
+    }
+  }
+
+  private static GameplayAdmissionPointerEvent eventForKey(PointerAuditKey key, String occurredAt) {
+    GameplayAdmissionPointerEvent event = event(occurredAt);
+    event.setTenantId(key.tenantId());
+    event.setWorldSlug(key.worldSlug());
+    event.setRealmSlug(key.realmSlug());
+    return event;
   }
 
   private static GameplayAdmissionPointerEvent event(String occurredAt) {

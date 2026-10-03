@@ -507,18 +507,51 @@ class LoggingAdminGrpcServiceAuthTest {
   @Test
   void createLogEventReturnsUnavailableBeforeEnvelopeValidation() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    LoggingAdminGrpcService service = newService(logEventService);
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            logEventService,
+            moderationService,
+            new SimpleMeterRegistry(),
+            "firemud");
 
     AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
+    java.util.concurrent.atomic.AtomicBoolean completed =
+        new java.util.concurrent.atomic.AtomicBoolean();
     CreateLogEventRequest request =
         validCreateRequest().toBuilder().setPayloadDigestVersion(2).build();
     invokeWithPeer(
-        "account-service", () -> service.createLogEvent(request, responseObserver(ref, error)));
+        "account-service",
+        () ->
+            service.createLogEvent(
+                request,
+                new StreamObserver<>() {
+                  @Override
+                  public void onNext(CreateLogEventResponse value) {
+                    ref.set(value);
+                  }
 
+                  @Override
+                  public void onError(Throwable value) {
+                    error.set(value);
+                  }
+
+                  @Override
+                  public void onCompleted() {
+                    completed.set(true);
+                  }
+                }));
+
+    assertNotNull(error.get());
     assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
     assertNull(ref.get());
-    verifyNoInteractions(logEventService);
+    String description = Status.fromThrowable(error.get()).getDescription();
+    assertEquals("Account audit ingress is unavailable", description);
+    assertTrue(description.length() <= 128);
+    assertFalse(completed.get());
+    verifyNoInteractions(logEventService, moderationService);
   }
 
   @Test

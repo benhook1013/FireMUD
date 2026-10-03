@@ -5,7 +5,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +46,7 @@ import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -98,14 +101,8 @@ class PlayCommandHandlerTest {
                 List.of(
                     realm("production", "Live Realm", 22L, 2L, true, true),
                     realm("preview", "Preview Realm", 22L, 41L, true, true)))));
-    // The catalogue contract permits one public-production realm per tenant. Keep the sandbox
-    // production realm non-public so these tests can exercise its explicit non-public path.
-    gameplayCatalogProperties
-        .getWorlds()
-        .get(1)
-        .getRealms()
-        .getFirst()
-        .setPublicProductionRealm(false);
+    // Demo is this tenant's sole public-production realm; sandbox remains explicitly selectable.
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0).setPublicProductionRealm(false);
     handler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -455,6 +452,131 @@ class PlayCommandHandlerTest {
         entityManagementClient,
         moderationPolicyClient,
         firstPartyConnectContextRegistry,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
+  @Test
+  void numericWorldSelectorUsesInjectedAuthorityClockForSnapshotLookup() {
+    Instant authorityNow = Instant.parse("2000-01-02T03:04:05Z");
+    Clock authorityClock = Clock.fixed(authorityNow, ZoneOffset.UTC);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayWorldCatalog.DiscoverySnapshot snapshot = worldCatalog.readDiscoverySnapshot();
+    DirectTextConnectScopeSessionStore scopeStore =
+        Mockito.spy(DirectTextConnectScopeSessionStore.inMemoryForTest());
+    scopeStore.replaceWorldSnapshot(
+        context.sessionId(),
+        context.accountId(),
+        snapshot.catalogFingerprint(),
+        snapshot.ordinalTargets(),
+        authorityNow);
+    PlayCommandHandler clockHandler = handlerWithClock(authorityClock, scopeStore);
+
+    PlayCommandHandlingResult result =
+        clockHandler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("1"), "PLAY 1"));
+
+    assertThat(result.commandResult().errorCode()).isNotEqualTo("CONNECT_SCOPE_MISMATCH");
+    Mockito.verify(scopeStore).worldsSnapshot(context, authorityNow);
+  }
+
+  @Test
+  void numericRealmSelectorUsesInjectedAuthorityClockForSnapshotLookup() {
+    Instant authorityNow = Instant.parse("2000-01-02T03:04:05Z");
+    Clock authorityClock = Clock.fixed(authorityNow, ZoneOffset.UTC);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayWorldCatalog.WorldView world = worldCatalog.resolveWorld("demo").orElseThrow();
+    GameplayWorldCatalog.RealmDiscoverySnapshot snapshot =
+        worldCatalog.readRealmDiscoverySnapshot(world);
+    DirectTextConnectScopeSessionStore scopeStore =
+        Mockito.spy(DirectTextConnectScopeSessionStore.inMemoryForTest());
+    scopeStore.replaceRealmSnapshot(
+        context,
+        "demo",
+        22L,
+        "demo",
+        snapshot.catalogFingerprint(),
+        snapshot.ordinalTargets(),
+        List.of(),
+        authorityNow);
+    PlayCommandHandler clockHandler = handlerWithClock(authorityClock, scopeStore);
+
+    clockHandler.handle(
+        "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "999"), "PLAY demo 999"));
+
+    Mockito.verify(scopeStore).realmsSnapshot(context, 22L, "demo", authorityNow);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"read-unavailable", "malformed"})
+  void numericRealmSelectorMapsPointerExceptionsToTypedFailures(String pointerFailure) {
+    Instant authorityNow = Instant.parse("2030-05-06T07:08:09Z");
+    Clock authorityClock = Clock.fixed(authorityNow, ZoneOffset.UTC);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayWorldCatalog baseCatalog = worldCatalog;
+    GameplayWorldCatalog.DiscoverySnapshot worldSnapshot = baseCatalog.readDiscoverySnapshot();
+    GameplayWorldCatalog.WorldView world = baseCatalog.resolveWorld("demo").orElseThrow();
+    GameplayWorldCatalog.RealmDiscoverySnapshot realmSnapshot =
+        baseCatalog.readRealmDiscoverySnapshot(world);
+    DirectTextConnectScopeSessionStore scopeStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
+    scopeStore.replaceRealmSnapshot(
+        context,
+        "demo",
+        22L,
+        "demo",
+        realmSnapshot.catalogFingerprint(),
+        realmSnapshot.ordinalTargets(),
+        List.of(),
+        authorityNow);
+    GameplayWorldCatalog catalog = Mockito.spy(baseCatalog);
+    Mockito.doReturn(worldSnapshot).when(catalog).readDiscoverySnapshot();
+    if ("read-unavailable".equals(pointerFailure)) {
+      Mockito.doThrow(
+              new GameplayWorldCatalog.AuthorityPointerReadUnavailableException("read failed"))
+          .when(catalog)
+          .readRealmDiscoverySnapshot(Mockito.any(GameplayWorldCatalog.WorldView.class));
+    } else {
+      Mockito.doThrow(new GameplayWorldCatalog.AuthorityPointerUnavailableException("malformed"))
+          .when(catalog)
+          .readRealmDiscoverySnapshot(Mockito.any(GameplayWorldCatalog.WorldView.class));
+    }
+    PlayCommandHandler pointerFailureHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            catalog,
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            scopeStore,
+            authorityClock);
+
+    PlayCommandHandlingResult result =
+        pointerFailureHandler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "1"), "PLAY demo 1"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(
+            "read-unavailable".equals(pointerFailure)
+                ? GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE
+                : "ADMISSION_POINTER_UNAVAILABLE");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
         sessionContextService,
         gameplayPresenceLifecycleService,
         scriptEventPublisher);
@@ -868,7 +990,8 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE);
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 
@@ -891,7 +1014,34 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE);
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
+    ErrorOutput errorOutput = (ErrorOutput) result.outputs().getFirst().payload();
+    assertThat(errorOutput.messageKey()).isEqualTo("error.play.admission-pointer-unavailable");
+
+    TextPlayerOutputRenderer englishRenderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+    assertThat(englishRenderer.render(result.outputs().getFirst()))
+        .isEqualTo(
+            "ERROR ADMISSION_POINTER_UNAVAILABLE Gameplay admission pointer is temporarily unavailable. Retry PLAY shortly.");
+
+    TextPlayerOutputRenderer frenchRenderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+    assertThat(frenchRenderer.render(result.outputs().getFirst()))
+        .isEqualTo(
+            "ERROR ADMISSION_POINTER_UNAVAILABLE Le pointeur d’admission au jeu est temporairement indisponible. Réessayez PLAY sous peu.");
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 
@@ -902,10 +1052,13 @@ class PlayCommandHandlerTest {
     GameplayAdmissionPointerSnapshot pointerA = admissionPointer(1L);
     GameplayAdmissionPointerSnapshot pointerB = admissionPointer(2L);
     AtomicInteger pointerReads = new AtomicInteger();
-    when(authorityService.listPointers())
+    when(authorityService.listPointers()).thenReturn(List.of(pointerA));
+    when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
-            invocation ->
-                pointerReads.getAndIncrement() == 0 ? List.of(pointerA) : List.of(pointerB));
+            invocation -> {
+              pointerReads.incrementAndGet();
+              return List.of(pointerB);
+            });
     GameplayWorldCatalog authorityBackedCatalog = new GameplayWorldCatalog(authorityService);
     PlayCommandHandler authorityBackedHandler =
         new PlayCommandHandler(
@@ -932,7 +1085,7 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
-    assertThat(pointerReads).hasValue(2);
+    assertThat(pointerReads).hasValue(1);
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -949,14 +1102,13 @@ class PlayCommandHandlerTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     AtomicInteger pointerReads = new AtomicInteger();
-    when(authorityService.listPointers())
+    when(authorityService.listPointers()).thenReturn(List.of(admissionPointer(1L)));
+    when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
             invocation -> {
-              if (pointerReads.getAndIncrement() == 0) {
-                return List.of(admissionPointer(1L));
-              }
+              pointerReads.incrementAndGet();
               if ("throw".equals(failureMode)) {
-                throw new IllegalStateException("authority down on final read");
+                throw new DataAccessException("authority down on final read");
               }
               return null;
             });
@@ -990,7 +1142,7 @@ class PlayCommandHandlerTest {
         .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_MESSAGE);
     assertThat(((ErrorOutput) result.outputs().getFirst().payload()).messageKey())
         .isEqualTo("error.play.authority-unavailable");
-    assertThat(pointerReads).hasValue(2);
+    assertThat(pointerReads).hasValue(1);
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -1007,7 +1159,7 @@ class PlayCommandHandlerTest {
   void playMapsPointerAuthorityReadFailureBeforeAccountOrEntityAdmissionReads() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    when(authorityService.listPointers()).thenThrow(new IllegalStateException("authority down"));
+    when(authorityService.listPointers()).thenThrow(new DataAccessException("authority down"));
     PlayCommandHandler authorityBackedHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -1043,6 +1195,64 @@ class PlayCommandHandlerTest {
         scriptEventPublisher);
   }
 
+  @Test
+  void playMapsMalformedDiscoveryPointerToAdmissionPointerUnavailableWithoutSideEffects() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authorityService.listPointers())
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    0L,
+                    11L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    1L,
+                    UUID.randomUUID(),
+                    UUID.randomUUID())));
+    PlayCommandHandler authorityBackedHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            new GameplayWorldCatalog(authorityService),
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            connectScopeSessionStore);
+    SessionContext context = new SessionContext(1L, 22L, 123L, 0L, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+
+    PlayCommandHandlingResult result =
+        authorityBackedHandler.handle(
+            "1",
+            new TextCommand(
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"throw", "null"})
   void playMapsDefaultRealmPointerReadFailureToAuthUnavailableWithoutAdmissionSideEffects(
@@ -1057,7 +1267,7 @@ class PlayCommandHandlerTest {
                 return List.of(admissionPointer(1L));
               }
               if ("throw".equals(failureMode)) {
-                throw new IllegalStateException("authority down during default realm resolution");
+                throw new DataAccessException("authority down during default realm resolution");
               }
               return null;
             });
@@ -1103,12 +1313,15 @@ class PlayCommandHandlerTest {
   }
 
   @Test
-  void playUsesSelectedTenantAuthorityWhenAnotherTenantInWorldHasNoPublicProductionRealm() {
+  void playUsesSelectedTenantAuthorityWhenAnotherTenantHasNoPublicProductionRealm() {
+    gameplayCatalogProperties.setWorlds(new ArrayList<>(gameplayCatalogProperties.getWorlds()));
     gameplayCatalogProperties
         .getWorlds()
-        .getFirst()
-        .getRealms()
-        .add(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false));
+        .add(
+            world(
+                "maintenance",
+                "Maintenance World",
+                List.of(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false))));
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1134,7 +1347,16 @@ class PlayCommandHandlerTest {
         .getWorlds()
         .getFirst()
         .getRealms()
-        .add(realm("maintenance", "Maintenance Realm", 23L, 99L, true, false));
+        .getFirst()
+        .setPublicProductionRealm(false);
+    gameplayCatalogProperties.setWorlds(new ArrayList<>(gameplayCatalogProperties.getWorlds()));
+    gameplayCatalogProperties
+        .getWorlds()
+        .add(
+            world(
+                "other-public",
+                "Other Public World",
+                List.of(realm("production", "Live Realm", 23L, 99L, true, false))));
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
     when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
@@ -1143,10 +1365,11 @@ class PlayCommandHandlerTest {
         handler.handle(
             "1",
             new TextCommand(
-                TextCommandType.PLAY, List.of("demo", "maintenance"), "PLAY demo maintenance"));
+                TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE);
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 
@@ -2871,6 +3094,92 @@ class PlayCommandHandlerTest {
   }
 
   @Test
+  void playAuthorityFreshnessUsesInjectedClockAtExactInclusiveBoundaries() {
+    Instant authorityNow = Instant.parse("2030-05-06T07:08:09Z");
+    handler = handlerWithClock(Clock.fixed(authorityNow, ZoneOffset.UTC));
+    List<String> evaluatedAtValues =
+        List.of(
+            authorityNow.toString(),
+            authorityNow.minusSeconds(15).toString(),
+            authorityNow.minusSeconds(15).minusNanos(1).toString(),
+            authorityNow.plusNanos(1).toString());
+    SessionContext unboundContext =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(unboundContext));
+
+    for (int index = 0; index < evaluatedAtValues.size(); index++) {
+      String evaluatedAt = evaluatedAtValues.get(index);
+      Mockito.doReturn(missingMembershipAt(evaluatedAt))
+          .when(accountClient)
+          .getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+      Mockito.doReturn(publicEntitlement(true, authorityNow.toString()))
+          .when(accountClient)
+          .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+
+      PlayCommandHandlingResult result =
+          handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+      assertThat(result.commandResult().errorCode())
+          .isEqualTo(
+              index < 2
+                  ? GameplayStageCommandConstants.JOIN_REQUIRED_CODE
+                  : GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+    }
+
+    for (int index = 0; index < evaluatedAtValues.size(); index++) {
+      String evaluatedAt = evaluatedAtValues.get(index);
+      Mockito.doReturn(missingMembershipAt(authorityNow.toString()))
+          .when(accountClient)
+          .getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+      Mockito.doReturn(publicEntitlement(true, evaluatedAt))
+          .when(accountClient)
+          .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+
+      PlayCommandHandlingResult result =
+          handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+      assertThat(result.commandResult().errorCode())
+          .isEqualTo(
+              index < 2
+                  ? GameplayStageCommandConstants.JOIN_REQUIRED_CODE
+                  : GameplayStageCommandConstants.ENTITLEMENT_UNAVAILABLE_CODE);
+    }
+
+    when(sessionAuthenticationService.resolveSessionContext("1"))
+        .thenReturn(Optional.of(previewRealmContext()));
+    Mockito.doReturn(publicEntitlement(true, authorityNow.toString()))
+        .when(accountClient)
+        .getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString());
+    for (int index = 0; index < evaluatedAtValues.size(); index++) {
+      String evaluatedAt = evaluatedAtValues.get(index);
+      Mockito.doReturn(activeMembershipAt(authorityNow.toString()))
+          .when(accountClient)
+          .getTenantMembershipForRuntime(
+              Mockito.anyString(), Mockito.anyString(), Mockito.anyString());
+      Mockito.doReturn(validGrant().toBuilder().setEvaluatedAt(evaluatedAt).build())
+          .when(accountClient)
+          .getRealmAccessGrantForRuntime(
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString(),
+              Mockito.anyString());
+
+      PlayCommandHandlingResult result = handler.handle("1", previewRealmPlayCommand());
+
+      if (index < 2) {
+        assertThat(result.commandResult()).isEqualTo(CommandEnqueueResult.success());
+      } else {
+        assertThat(result.commandResult().errorCode())
+            .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
+      }
+    }
+  }
+
+  @Test
   void playWhenMembershipAuthorityTimestampIsMalformedFailsClosed() {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
@@ -2905,7 +3214,16 @@ class PlayCommandHandlerTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"stale", "future", "wrong-account", "missing-generation"})
+  @ValueSource(
+      strings = {
+        "stale",
+        "future",
+        "wrong-account",
+        "wrong-tenant",
+        "unknown-lifecycle",
+        "inactive-admitting",
+        "missing-generation"
+      })
   void playRejectsInvalidPositiveMembershipAuthority(String invalidEvidence) {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
@@ -2923,6 +3241,9 @@ class PlayCommandHandlerTest {
       case "stale" -> response.setEvaluatedAt(Instant.now().minusSeconds(16).toString());
       case "future" -> response.setEvaluatedAt(Instant.now().plusSeconds(1).toString());
       case "wrong-account" -> response.setAccountId("999");
+      case "wrong-tenant" -> response.setTenantId("23");
+      case "unknown-lifecycle" -> response.setMembershipLifecycleState("UNKNOWN");
+      case "inactive-admitting" -> response.setMembershipLifecycleState("INACTIVE");
       case "missing-generation" -> response.setMembershipAuthorityGeneration(0L);
       default -> throw new IllegalArgumentException(invalidEvidence);
     }
@@ -3338,6 +3659,55 @@ class PlayCommandHandlerTest {
     return Instant.now().toString();
   }
 
+  private PlayCommandHandler handlerWithClock(Clock clock) {
+    return handlerWithClock(clock, connectScopeSessionStore);
+  }
+
+  private PlayCommandHandler handlerWithClock(
+      Clock clock, DirectTextConnectScopeSessionStore scopeStore) {
+    return new PlayCommandHandler(
+        sessionAuthenticationService,
+        sessionContextService,
+        sessionRoutingNormalizationService,
+        worldCatalog,
+        gameLogicProperties,
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        firstPartyConnectContextRegistry,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher,
+        meterRegistry,
+        scopeStore,
+        clock);
+  }
+
+  private static GetTenantMembershipForRuntimeResponse missingMembershipAt(String evaluatedAt) {
+    return GetTenantMembershipForRuntimeResponse.newBuilder()
+        .setAccountId("123")
+        .setTenantId("22")
+        .setMembershipExists(false)
+        .setGameplayAdmissionAllowed(false)
+        .setMembershipLifecycleState("MISSING")
+        .setMembershipVersion(0L)
+        .setMembershipAuthorityGeneration(0L)
+        .setEvaluatedAt(evaluatedAt)
+        .build();
+  }
+
+  private static GetTenantMembershipForRuntimeResponse activeMembershipAt(String evaluatedAt) {
+    return GetTenantMembershipForRuntimeResponse.newBuilder()
+        .setAccountId("123")
+        .setTenantId("22")
+        .setMembershipExists(true)
+        .setGameplayAdmissionAllowed(true)
+        .setMembershipLifecycleState("ACTIVE")
+        .setMembershipVersion(1L)
+        .setMembershipAuthorityGeneration(1L)
+        .setEvaluatedAt(evaluatedAt)
+        .build();
+  }
+
   private static GetRealmAccessGrantForRuntimeResponse validGrant() {
     return validGrant("123", "22", "sandbox", "preview");
   }
@@ -3365,6 +3735,11 @@ class PlayCommandHandlerTest {
         .setTenantBillingSequence(1L)
         .setEvaluatedAt(evaluatedAtNow())
         .build();
+  }
+
+  private static GetTenantEntitlementsForRuntimeResponse publicEntitlement(
+      boolean allowPublicJoin, String evaluatedAt) {
+    return publicEntitlement(allowPublicJoin).toBuilder().setEvaluatedAt(evaluatedAt).build();
   }
 
   private void markPreviewRealmInvisible() {
@@ -3704,6 +4079,7 @@ class PlayCommandHandlerTest {
         gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0);
     selectedRealm.setTenantId(23L);
     selectedRealm.setPublicProductionRealm(true);
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setTenantId(23L);
     SessionContext context =
         new SessionContext(
             1L,
