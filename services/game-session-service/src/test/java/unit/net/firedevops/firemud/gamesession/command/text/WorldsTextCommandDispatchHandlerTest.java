@@ -29,6 +29,7 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -86,7 +87,7 @@ class WorldsTextCommandDispatchHandlerTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("pointer authority unavailable"))
+        .thenThrow(new DataAccessException("pointer authority unavailable"))
         .thenReturn(
             List.of(
                 new GameplayAdmissionPointerSnapshot(

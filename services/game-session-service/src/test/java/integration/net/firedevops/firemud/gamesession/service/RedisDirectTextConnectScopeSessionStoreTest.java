@@ -147,7 +147,7 @@ class RedisDirectTextConnectScopeSessionStoreTest {
       assertThat(requestIds).containsOnly(requestIds.getFirst());
 
       DirectTextConnectScopeSessionStore replacement = replacementInstances.getLast();
-      replacement.clearWorldScopes(caller, 22L, "demo-world");
+      replacement.clearWorldScopes(caller, 22L, "demo-world", Instant.now());
       assertThat(
               firstInstance.publicProductionScopeForJoin(
                   caller, "1", 22L, "demo-world", Instant.now()))

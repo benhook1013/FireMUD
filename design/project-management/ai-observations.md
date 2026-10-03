@@ -195,3 +195,9 @@ Entry format:
   - Expected pattern: retain an existing native process wait in its launching agent. For delegated external waits, let the sentinel launch its own canonical read-only waiter for the exact durable trigger or CI run; never retry the evidence-producing operation merely because a handle is unavailable in another agent.
   - Current status: the launching Gameplay agent retained the live CLI wait. Whether cross-agent process handles are supported in other execution environments is unverified.
   - Reconsideration trigger: revisit if a future harness requires cross-platform handle portability or a canonical watcher fix is verified.
+
+- `2026-10-03`: A merge preview needs positive conflict evidence, not a marker-only filter
+  - Context: a read-only parent-forwarding inventory used this checkout's older three-argument `git merge-tree` and searched only for standard conflict markers.
+  - Observation: the inventory incorrectly called the merge clean; the actual isolated no-commit merge reported six documentation conflicts. The preview's `changed in both` records and command outcome had not been inspected.
+  - Expected pattern: verify the installed command's supported mode, inspect its complete conflict records and exit outcome, and treat an isolated actual merge as authoritative. Missing matches from a marker filter do not prove a conflict-free merge.
+  - Outcome: the claim was retracted before publication, and the documentation intersections are being resolved explicitly while both unique patches remain preserved.
