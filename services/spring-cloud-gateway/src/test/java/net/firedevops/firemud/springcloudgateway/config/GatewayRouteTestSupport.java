@@ -69,9 +69,7 @@ final class GatewayRouteTestSupport {
     assertThat(configuredPaths).doesNotContain(path);
     if (isConcretePath(path)) {
       assertThat(configuredPaths)
-          .noneMatch(
-              configuredPath ->
-                  PATH_PATTERN_PARSER.parse(configuredPath).matches(PathContainer.parsePath(path)));
+          .noneMatch(configuredPath -> pathPatternMatches(configuredPath, path));
     }
   }
 

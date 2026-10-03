@@ -91,7 +91,9 @@ class VirtualCurrencyGrpcServiceTest {
       }
 
       @Override
-      public void onError(Throwable t) {}
+      public void onError(Throwable error) {
+        throw new AssertionError("Expected an application-level fail-closed response", error);
+      }
 
       @Override
       public void onCompleted() {}

@@ -3,6 +3,7 @@ package net.firedevops.firemud.accountservice.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -12,9 +13,15 @@ import org.junit.jupiter.api.Test;
 
 class AccountMigrationVersionTest {
   @Test
-  void accountMigrationsHaveDistinctFlywayVersionsWithoutRequiringDocker() throws IOException {
+  void accountMigrationsHaveDistinctFlywayVersionsWithoutRequiringDocker()
+      throws IOException, URISyntaxException {
     List<String> migrations;
-    try (var files = Files.list(Path.of("src/main/resources/db/migration"))) {
+    var migrationDirectory =
+        Path.of(
+            Objects.requireNonNull(
+                    AccountMigrationVersionTest.class.getClassLoader().getResource("db/migration"))
+                .toURI());
+    try (var files = Files.list(migrationDirectory)) {
       migrations =
           files
               .map(path -> Objects.requireNonNull(path.getFileName()).toString())
