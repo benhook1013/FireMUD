@@ -23,6 +23,7 @@
     "npm",
     "pip_requirements",
     "pyenv",
+    "terraform",
     "custom.regex"
   ],
   "customManagers": [
@@ -39,7 +40,7 @@
     },
     {
       "customType": "regex",
-      "description": "Signal kubectl releases; checksum updates remain updater-gated",
+      "description": "Update the exact kubectl version; installation verifies the matching publisher checksum",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
       "matchStrings": ["# renovate-version: datasource=github-releases depName=kubernetes/kubernetes extractVersion=\\^v(?<version>.*)\\$\\nKUBECTL_VERSION=(?<currentValue>\\S+)"],
       "datasourceTemplate": "github-releases",
@@ -50,7 +51,7 @@
     },
     {
       "customType": "regex",
-      "description": "Signal Helm releases; checksum updates remain updater-gated",
+      "description": "Update the exact Helm version; installation verifies the matching publisher checksum",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
       "matchStrings": ["# renovate-version: datasource=github-releases depName=helm/helm extractVersion=\\^v(?<version>.*)\\$\\nHELM_VERSION=(?<currentValue>\\S+)"],
       "datasourceTemplate": "github-releases",
@@ -116,25 +117,23 @@
     },
     {
       "customType": "regex",
-      "description": "Signal Velero chart releases while preserving transactional projections",
+      "description": "Update the exact Velero CLI version from the runtime image release",
       "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-chart: datasource=helm depName=velero registryUrl=https://vmware-tanzu\\.github\\.io/helm-charts\\nVELERO_CHART_VERSION=(?<currentValue>\\S+)"],
-      "datasourceTemplate": "helm",
-      "depNameTemplate": "velero",
-      "registryUrlTemplate": "https://vmware-tanzu.github.io/helm-charts",
-      "versioningTemplate": "semver",
-      "currentValueTemplate": "{{{currentValue}}}"
-    },
-    {
-      "customType": "regex",
-      "description": "Signal Velero image releases while preserving the CLI checksum authority",
-      "managerFilePatterns": ["/^config/workflow-tool-versions\\.env$/"],
-      "matchStrings": ["# renovate-image: datasource=docker depName=velero/velero\\nVELERO_VERSION=(?<currentValue>\\S+)\\nVELERO_IMAGE_DIGEST=(?<currentDigest>sha256:[0-9a-f]{64})"],
+      "matchStrings": ["# renovate-version: datasource=docker depName=velero/velero\\nVELERO_VERSION=(?<currentValue>\\S+)"],
       "depNameTemplate": "velero/velero",
       "datasourceTemplate": "docker",
       "versioningTemplate": "docker",
       "currentValueTemplate": "v{{{currentValue}}}",
-      "autoReplaceStringTemplate": "# renovate-image: datasource=docker depName=velero/velero\nVELERO_VERSION={{{replace '^v' '' newValue}}}\nVELERO_IMAGE_DIGEST={{{newDigest}}}"
+      "autoReplaceStringTemplate": "# renovate-version: datasource=docker depName=velero/velero\nVELERO_VERSION={{{replace '^v' '' newValue}}}"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the digest-pinned Velero image projection in Terraform",
+      "managerFilePatterns": ["/^k8s/terraform-production/main\\.tf$/"],
+      "matchStrings": ["name\\s*=\\s*\"image\\.tag\"\\s+value\\s*=\\s*\"(?<currentValue>v[^\"]+)\"\\s+}\\s+set\\s*{\\s+name\\s*=\\s*\"image\\.digest\"\\s+value\\s*=\\s*\"(?<currentDigest>sha256:[0-9a-f]{64})\""],
+      "depNameTemplate": "velero/velero",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
     },
     {
       "customType": "regex",
@@ -149,6 +148,13 @@
   "prHourlyLimit": 2,
   "prConcurrentLimit": 10,
   "packageRules": [
+    {
+      "description": "Keep hashed Python requirement locks current with their base branch",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "rebaseWhen": "behind-base-branch"
+    },
     {
       "matchManagers": [
         "gradle"
@@ -216,20 +222,7 @@
       "platformAutomerge": false
     },
     {
-      "description": "Velero Renovate PRs require a transactional verifier Dockerfile update",
-      "matchManagers": [
-        "custom.regex"
-      ],
-      "matchPackageNames": [
-        "velero",
-        "velero/velero"
-      ],
-      "prBodyNotes": [
-        "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --terraform-file <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, Terraform projection, and CLI archive checksum are verified and updated together."
-      ]
-    },
-    {
-      "description": "Kubectl Renovate PRs require a checksum-authority refresh",
+      "description": "Keep kubectl compatible with the hosted Kubernetes cluster",
       "matchManagers": [
         "custom.regex"
       ],
@@ -238,35 +231,23 @@
       ],
       "allowedVersions": "<1.36.0",
       "prBodyNotes": [
-        "FireMUD's Kubernetes 1.34 cluster currently supports kubectl releases below 1.36. Run `python3 dev-tools/maintenance/update-workflow-tool.py kubectl <version>` before merging so KUBECTL_VERSION, KUBECTL_LINUX_AMD64_CHECKSUM_VERSION, and KUBECTL_LINUX_AMD64_SHA256 are refreshed as one authority tuple. CI remains fail-closed until the version and checksum authority match. Advance the `<1.36.0` Renovate cap only with the corresponding cluster-version upgrade."
+        "FireMUD's Kubernetes 1.34 cluster currently supports kubectl releases below 1.36. The installer downloads the exact-version publisher checksum and verifies the binary before installation. Advance the `<1.36.0` Renovate cap only with the corresponding cluster-version upgrade."
       ]
     },
     {
-      "description": "Helm Renovate PRs require a checksum-authority refresh",
+      "description": "Group Velero CLI, verifier image, server image, and chart updates",
       "matchManagers": [
-        "custom.regex"
+        "custom.regex",
+        "dockerfile",
+        "terraform"
       ],
       "matchPackageNames": [
-        "helm/helm"
-      ],
-      "prBodyNotes": [
-        "Run `python3 dev-tools/maintenance/update-workflow-tool.py helm <version>` before merging so HELM_VERSION, HELM_LINUX_AMD64_CHECKSUM_VERSION, and HELM_LINUX_AMD64_SHA256 are refreshed as one authority tuple. CI remains fail-closed until the version and checksum authority match."
-      ]
-    },
-    {
-      "description": "Velero verifier image changes require promotion evidence",
-      "matchManagers": [
-        "dockerfile"
-      ],
-      "matchFileNames": [
-        "docker/backup-verifier.Dockerfile"
-      ],
-      "matchPackageNames": [
+        "velero",
         "velero/velero"
       ],
-      "pinDigests": false,
-      "automerge": false,
-      "enabled": false
+      "groupName": "Velero runtime and chart",
+      "pinDigests": true,
+      "automerge": false
     }
   ],
   "lockFileMaintenance": {

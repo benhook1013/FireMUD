@@ -69,7 +69,7 @@ resource "helm_release" "redis" {
   name       = "redis"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "redis"
-  version    = "20.13.4"
+  version    = "28.3.1"
   namespace  = kubernetes_namespace.firemud.metadata[0].name
   values     = [file("${path.module}/redis-values.yaml")]
 }

@@ -697,9 +697,9 @@ class LegacyEvidenceTransition:
 class ReviewAllocation:
     """A durable one-result allocation or explicit channel-stop decision.
 
-    The allocation is bound to the complete stack identity observed when an
-    operator made the promise. The controller may consume it only after a
-    completed result for that identity. New stop decisions record the exact
+    Human allowances retain available observed identity facts; unavailable
+    Git facts remain null. Request admission and attributable completion
+    checks remain separate from recording the human policy. New stop decisions record the exact
     optional reviewed checkpoint and available live audit context separately; legacy handoff
     fields remain readable for state migration and are never newly issued.
     """
@@ -741,13 +741,13 @@ class ReviewAllocation:
             raise StateError("review allocation channel must be hosted or cli")
         for name in ("head", "parent_head", "merge_base"):
             value = getattr(self, name)
-            if name == "merge_base" and value is None and self.stop_basis == "direct_human":
+            if name == "merge_base" and value is None:
                 continue
             if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
                 raise StateError(f"review allocation {name} must be an exact SHA")
         for name in ("parent_identity", "patch_id", "reason"):
             value = getattr(self, name)
-            if name == "patch_id" and value is None and self.stop_basis == "direct_human":
+            if name == "patch_id" and value is None:
                 continue
             if not isinstance(value, str) or not value.strip():
                 raise StateError(f"review allocation {name} must be a non-empty string")
