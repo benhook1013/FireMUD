@@ -29,6 +29,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import javax.sql.DataSource;
@@ -447,13 +452,29 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
     assertThat(absentReadback.outboxCheckpoints()).isEqualTo(absent.outboxCheckpoints());
     assertThat(absentReadback.outboxSourceEvidence()).isEqualTo(absent.outboxSourceEvidence());
 
-    dsl.execute(
-        "UPDATE account_authority_generations SET generation = generation + 1, "
-            + "source_version = source_version + 1 WHERE scope_kind = 'ISSUER' AND issuer_id = ?",
-        AccountServiceImpl.ACCOUNT_JWT_ISSUER);
-    assertThatThrownBy(() -> readRuntimeMembershipSnapshot(fixture))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("Current issuer source event differs from its generation");
+    new TransactionTemplate(transactionManager)
+        .execute(
+            status -> {
+              dsl.execute(
+                  "UPDATE account_authority_generations SET generation = generation + 1, "
+                      + "source_version = source_version + 1 "
+                      + "WHERE scope_kind = 'ISSUER' AND issuer_id = ?",
+                  AccountServiceImpl.ACCOUNT_JWT_ISSUER);
+              assertThatThrownBy(() -> readRuntimeMembershipSnapshot(fixture))
+                  .isInstanceOf(IllegalStateException.class)
+                  .hasMessageContaining("Current issuer source event differs from its generation");
+              status.setRollbackOnly();
+              return null;
+            });
+    RuntimeMembershipSnapshotDto afterRollback = readRuntimeMembershipSnapshot(fixture);
+    assertThat(afterRollback.membershipBaseline()).isEqualTo(before.membershipBaseline());
+    assertThat(afterRollback.roles()).isEqualTo(before.roles());
+    assertThat(afterRollback.authorityTuple()).isEqualTo(before.authorityTuple());
+    assertThat(afterRollback.issuanceFence()).isEqualTo(before.issuanceFence());
+    assertThat(afterRollback.outboxCheckpoints()).isEqualTo(before.outboxCheckpoints());
+    assertThat(afterRollback.outboxSourceEvidence()).isEqualTo(before.outboxSourceEvidence());
+    assertThat(afterRollback.sourceEvent().canonicalJsonUtf8())
+        .containsExactly(before.sourceEvent().canonicalJsonUtf8());
     assertThat(membershipEventBytes(fixture)).containsExactly(immutableMembershipBytes);
   }
 
@@ -822,6 +843,235 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
   }
 
   @Test
+  void concurrentCaptureWaitsForAccountOwnerAdvanceAndBindsTheNewFence() throws Exception {
+    JoinFixture fixture = fixture();
+    assertThat(join(fixture).success()).isTrue();
+    AccountConnectTokenIssuanceIdentity identity = connectIdentity(fixture);
+    byte[] requestDigest = digest(141);
+    ClaimResult claim =
+        ownerTransaction(() -> connectIssuanceRepository.claim(identity, requestDigest));
+    RuntimeMembershipSnapshotDto membershipBefore = readRuntimeMembershipSnapshot(fixture);
+    List<List<String>> membershipSourceBefore = membershipAuthoritySourceFingerprint(fixture);
+    byte[] membershipEventBefore = membershipEventBytes(fixture);
+    long fenceBefore = accountIssuanceFence(fixture);
+    long fenceSourceVersionBefore = accountIssuanceFenceSourceVersion(fixture);
+    ScopeState expectedAccountState = readAccountAuthority(fixture.accountUuid());
+    Account account = readAccount(fixture.accountId());
+    UUID logoutRequestId = UUID.randomUUID();
+    String presentedTokenHash = "d".repeat(64);
+    String logoutDigest =
+        AccountLogoutRequestDigest.accountLogoutAll(
+            fixture.accountUuid(), "control-ui", presentedTokenHash);
+    CountDownLatch authorityRowLocked = new CountDownLatch(1);
+    CountDownLatch releaseAuthorityRow = new CountDownLatch(1);
+    CountDownLatch captureTransactionStarted = new CountDownLatch(1);
+    AtomicInteger authorityHolderPid = new AtomicInteger();
+    AtomicInteger captureWaiterPid = new AtomicInteger();
+    ExecutorService executor = Executors.newFixedThreadPool(3);
+
+    try {
+      Future<?> authorityHolder =
+          executor.submit(
+              () ->
+                  ownerTransaction(
+                      () -> {
+                        authorityGenerationRepository.read(
+                            AuthorityScope.account(fixture.accountUuid()));
+                        authorityHolderPid.set(currentBackendPid());
+                        authorityRowLocked.countDown();
+                        awaitLatch(releaseAuthorityRow);
+                        return null;
+                      }));
+      assertThat(authorityRowLocked.await(20, TimeUnit.SECONDS)).isTrue();
+
+      Future<AccountLogoutAllAuthorityEventProducer.LogoutAllResult> advance =
+          executor.submit(
+              () ->
+                  logoutProducer()
+                      .commit(
+                          logoutRequestId,
+                          1,
+                          logoutDigest,
+                          "control-ui",
+                          presentedTokenHash,
+                          account,
+                          expectedAccountState));
+      int advancePid =
+          awaitAccountAdvanceBlockedOnGeneration(
+              dsl, authorityHolderPid.get(), Duration.ofSeconds(10));
+      assertThat(advancePid)
+          .as("the real logout-all owner already holds its Account row while waiting on authority")
+          .isPositive();
+
+      Future<AccountConnectIssuanceFenceEvidence> capture =
+          executor.submit(
+              () ->
+                  ownerTransaction(
+                      () -> {
+                        captureWaiterPid.set(currentBackendPid());
+                        captureTransactionStarted.countDown();
+                        return captureService().capture(claim, requestDigest);
+                      }));
+      assertThat(captureTransactionStarted.await(20, TimeUnit.SECONDS)).isTrue();
+      assertThat(
+              awaitDatabaseBlock(
+                  dsl, captureWaiterPid.get(), advancePid, "%accounts%", Duration.ofSeconds(10)))
+          .as("capture blocks on the logout-all transaction's Account row lock")
+          .isTrue();
+
+      releaseAuthorityRow.countDown();
+      assertThat(advance.get(45, TimeUnit.SECONDS))
+          .isEqualTo(AccountLogoutAllAuthorityEventProducer.LogoutAllResult.LOGOUT_ALL_COMMITTED);
+      authorityHolder.get(45, TimeUnit.SECONDS);
+      AccountConnectIssuanceFenceEvidence captured = capture.get(45, TimeUnit.SECONDS);
+
+      RuntimeMembershipSnapshotDto membershipAfter = readRuntimeMembershipSnapshot(fixture);
+      assertThat(membershipAfter.authorityTuple().accountAuthorityGeneration())
+          .isEqualTo(Long.toString(expectedAccountState.generation() + 1L));
+      assertThat(membershipAfter.issuanceFence()).isEqualTo(Long.toString(fenceBefore + 1L));
+      assertThat(membershipAfter.membershipBaseline())
+          .isEqualTo(membershipBefore.membershipBaseline());
+      assertThat(membershipAfter.roles()).isEqualTo(membershipBefore.roles());
+      assertThat(membershipAfter.membershipBaseline().membershipLifecycleState())
+          .isEqualTo("ACTIVE");
+      assertThat(membershipAfter.roles()).contains("player");
+      assertThat(captured.issuanceFence()).isEqualTo(fenceBefore + 1L);
+      assertThat(captured.fenceSourceVersion()).isEqualTo(fenceSourceVersionBefore + 1L);
+      assertThat(captured.fenceSourceVersion())
+          .isEqualTo(accountIssuanceFenceSourceVersion(fixture));
+      assertThat(
+              ownerTransaction(
+                  () ->
+                      connectIssuanceRepository
+                          .readIssuanceFenceCapture(identity, requestDigest)
+                          .orElseThrow()))
+          .isEqualTo(captured);
+      assertThat(countConnectEnvelopes(identity)).isZero();
+      assertThat(membershipAuthoritySourceFingerprint(fixture)).isEqualTo(membershipSourceBefore);
+      assertThat(membershipEventBytes(fixture)).containsExactly(membershipEventBefore);
+    } finally {
+      releaseAuthorityRow.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(20, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
+  void concurrentCurrentAuthorityReadWaitsForAdvanceThenRejectsOriginalSource() throws Exception {
+    JoinFixture fixture = fixture();
+    assertThat(join(fixture).success()).isTrue();
+    ComposedConnectSourceFixture source = createCryptographicConnectSource(fixture, true);
+    UUID operationId = source.claim().operation().operationId();
+    String operationBefore = operationFingerprint(operationId);
+    String envelopeBefore = envelopeFingerprint(operationId);
+    List<List<String>> membershipSourceBefore = membershipAuthoritySourceFingerprint(fixture);
+    byte[] membershipEventBefore = membershipEventBytes(fixture);
+    ScopeState expectedAccountState = readAccountAuthority(fixture.accountUuid());
+    Account account = readAccount(fixture.accountId());
+    long fenceBefore = accountIssuanceFence(fixture);
+    UUID logoutRequestId = UUID.randomUUID();
+    String presentedTokenHash = "e".repeat(64);
+    String logoutDigest =
+        AccountLogoutRequestDigest.accountLogoutAll(
+            fixture.accountUuid(), "control-ui", presentedTokenHash);
+    CountDownLatch authorityRowLocked = new CountDownLatch(1);
+    CountDownLatch releaseAuthorityRow = new CountDownLatch(1);
+    CountDownLatch readTransactionStarted = new CountDownLatch(1);
+    AtomicInteger authorityHolderPid = new AtomicInteger();
+    AtomicInteger readWaiterPid = new AtomicInteger();
+    ExecutorService executor = Executors.newFixedThreadPool(3);
+
+    try {
+      Future<?> authorityHolder =
+          executor.submit(
+              () ->
+                  ownerTransaction(
+                      () -> {
+                        authorityGenerationRepository.read(
+                            AuthorityScope.account(fixture.accountUuid()));
+                        authorityHolderPid.set(currentBackendPid());
+                        authorityRowLocked.countDown();
+                        awaitLatch(releaseAuthorityRow);
+                        return null;
+                      }));
+      assertThat(authorityRowLocked.await(20, TimeUnit.SECONDS)).isTrue();
+
+      Future<AccountLogoutAllAuthorityEventProducer.LogoutAllResult> advance =
+          executor.submit(
+              () ->
+                  logoutProducer()
+                      .commit(
+                          logoutRequestId,
+                          1,
+                          logoutDigest,
+                          "control-ui",
+                          presentedTokenHash,
+                          account,
+                          expectedAccountState));
+      int advancePid =
+          awaitAccountAdvanceBlockedOnGeneration(
+              dsl, authorityHolderPid.get(), Duration.ofSeconds(10));
+      assertThat(advancePid)
+          .as("the real logout-all owner already holds its Account row while waiting on authority")
+          .isPositive();
+
+      Future<?> currentRead =
+          executor.submit(
+              () ->
+                  withGameSessionPeer(
+                      () ->
+                          ownerTransaction(
+                              () -> {
+                                readWaiterPid.set(currentBackendPid());
+                                readTransactionStarted.countDown();
+                                return source
+                                    .reader()
+                                    .read(
+                                        source.identity(),
+                                        source.requestDigest(),
+                                        source.signedGatewayContext());
+                              })));
+      assertThat(readTransactionStarted.await(20, TimeUnit.SECONDS)).isTrue();
+      assertThat(
+              awaitDatabaseBlock(
+                  dsl, readWaiterPid.get(), advancePid, "%accounts%", Duration.ofSeconds(10)))
+          .as("the original-source reader blocks on the logout-all Account row lock")
+          .isTrue();
+
+      releaseAuthorityRow.countDown();
+      assertThat(advance.get(45, TimeUnit.SECONDS))
+          .isEqualTo(AccountLogoutAllAuthorityEventProducer.LogoutAllResult.LOGOUT_ALL_COMMITTED);
+      authorityHolder.get(45, TimeUnit.SECONDS);
+      assertThatThrownBy(() -> currentRead.get(45, TimeUnit.SECONDS))
+          .hasCauseInstanceOf(IllegalStateException.class)
+          .hasMessageContaining(
+              "Committed gameplay-connect source differs from current Account authority");
+
+      RuntimeMembershipSnapshotDto membershipAfter = readRuntimeMembershipSnapshot(fixture);
+      assertThat(membershipAfter.authorityTuple().accountAuthorityGeneration())
+          .isEqualTo(Long.toString(expectedAccountState.generation() + 1L));
+      assertThat(membershipAfter.issuanceFence()).isEqualTo(Long.toString(fenceBefore + 1L));
+      assertThat(membershipAfter.membershipBaseline().membershipLifecycleState())
+          .isEqualTo("ACTIVE");
+      assertThat(operationFingerprint(operationId)).isEqualTo(operationBefore);
+      assertThat(envelopeFingerprint(operationId)).isEqualTo(envelopeBefore);
+      assertThat(
+              ownerTransaction(
+                  () ->
+                      connectIssuanceRepository
+                          .readIssuanceFenceCapture(source.identity(), source.requestDigest())
+                          .orElseThrow()))
+          .isEqualTo(source.capture());
+      assertThat(membershipAuthoritySourceFingerprint(fixture)).isEqualTo(membershipSourceBefore);
+      assertThat(membershipEventBytes(fixture)).containsExactly(membershipEventBefore);
+    } finally {
+      releaseAuthorityRow.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(20, TimeUnit.SECONDS)).isTrue();
+    }
+  }
+
+  @Test
   void captureRollbackLeavesNeitherCaptureNorPartialCommittedSource() {
     JoinFixture fixture = fixture();
     assertThat(join(fixture).success()).isTrue();
@@ -998,7 +1248,7 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
             dsl.resultQuery(
                     "INSERT INTO accounts (username, email, password_hash) "
                         + "VALUES (?, ?, ?) RETURNING id",
-                    "capture-foreign-" + UUID.randomUUID(),
+                    "capture-f-" + UUID.randomUUID(),
                     "capture-foreign-" + UUID.randomUUID() + "@example.com",
                     "test-hash")
                 .fetchOne(0, Long.class));
@@ -1783,6 +2033,75 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
 
   private <T> T ownerTransaction(Supplier<T> operation) {
     return new TransactionTemplate(transactionManager).execute(status -> operation.get());
+  }
+
+  private int currentBackendPid() {
+    return Objects.requireNonNull(
+        dsl.resultQuery("SELECT pg_backend_pid()").fetchOne(0, Integer.class),
+        "PostgreSQL did not return the owner transaction backend PID");
+  }
+
+  private int awaitAccountAdvanceBlockedOnGeneration(
+      DSLContext observer, int authorityHolderPid, Duration timeout) throws InterruptedException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    while (System.nanoTime() < deadline) {
+      Integer waitingPid =
+          observer
+              .resultQuery(
+                  "SELECT waiting.pid FROM pg_stat_activity waiting "
+                      + "WHERE waiting.wait_event_type = 'Lock' "
+                      + "AND waiting.query ILIKE '%account_authority_generations%' "
+                      + "AND ? = ANY(pg_blocking_pids(waiting.pid)) "
+                      + "AND EXISTS (SELECT 1 FROM pg_locks held "
+                      + "WHERE held.pid = waiting.pid AND held.locktype = 'relation' "
+                      + "AND held.relation = 'accounts'::regclass "
+                      + "AND held.mode = 'RowShareLock' AND held.granted) "
+                      + "ORDER BY waiting.query_start DESC LIMIT 1",
+                  authorityHolderPid)
+              .fetchOne(0, Integer.class);
+      if (waitingPid != null) {
+        return waitingPid;
+      }
+      Thread.sleep(10L);
+    }
+    throw new AssertionError(
+        "PostgreSQL did not show the Account logout-all owner blocked after acquiring its Account row");
+  }
+
+  private boolean awaitDatabaseBlock(
+      DSLContext observer, int waitingPid, int blockingPid, String queryPattern, Duration timeout)
+      throws InterruptedException {
+    long deadline = System.nanoTime() + timeout.toNanos();
+    while (System.nanoTime() < deadline) {
+      Boolean blocked =
+          observer
+              .resultQuery(
+                  "SELECT EXISTS (SELECT 1 FROM pg_stat_activity waiting "
+                      + "WHERE waiting.pid = ? AND waiting.wait_event_type = 'Lock' "
+                      + "AND waiting.query ILIKE ? "
+                      + "AND ? = ANY(pg_blocking_pids(waiting.pid)))",
+                  waitingPid,
+                  queryPattern,
+                  blockingPid)
+              .fetchOne(0, Boolean.class);
+      if (Boolean.TRUE.equals(blocked)) {
+        return true;
+      }
+      Thread.sleep(10L);
+    }
+    return false;
+  }
+
+  private void awaitLatch(CountDownLatch latch) {
+    try {
+      if (!latch.await(20, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Concurrent Account source fixture barrier timed out");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(
+          "Concurrent Account source fixture was interrupted", interrupted);
+    }
   }
 
   private JoinFixture fixture() {
