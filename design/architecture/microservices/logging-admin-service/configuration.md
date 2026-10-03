@@ -25,6 +25,7 @@ The Logging & Admin Service does **not** connect to Redis at runtime. It consume
 | `FIREMUD_AUTH_JWT_EXPIRATION_MS` | Lifetime of issued JWTs in milliseconds | `3600000` |
 | `FIREMUD_SERVICES_ACCOUNT_SERVICE` | gRPC endpoint (host:port) for the Account Service | *(none)* |
 | `FIREMUD_SERVICES_GAME_SESSION_SERVICE` | gRPC endpoint (host:port) for the Game Session Service | *(none)* |
+| `FIREMUD_GRPC_WORKLOAD_NAMESPACE` | Deployment namespace used to require the exact Account workload certificate identity for audit ingress and receipt readback; it must match the namespace in the Account certificate's SPIFFE URI | *(none; audit RPC authentication fails closed when blank or mismatched)* |
 
 The Account audit `CreateLogEvent` RPC currently returns gRPC `UNAVAILABLE` after exact Account workload authentication and before receipt or payload storage. There is no configuration, profile, or environment-variable switch that enables live writes before the retention/cleanup gates in [Account Audit Ingress and Receipt](./api-contracts.md#account-audit-ingress-and-receipt) are implemented and proved. `ReadLogEventReceipt` remains available to the exact Account workload.
 
