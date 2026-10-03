@@ -40,7 +40,7 @@ resource "helm_release" "redis_coord" {
   name       = "redis-coord"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "redis"
-  version    = "20.13.4"
+  version    = "28.3.1"
   namespace  = var.namespace
   values     = [file("${path.module}/redis-coord-values.yaml")]
 }
@@ -49,7 +49,7 @@ resource "helm_release" "redis_cache" {
   name       = "redis-cache"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "redis"
-  version    = "20.13.4"
+  version    = "28.3.1"
   namespace  = var.namespace
   values     = [file("${path.module}/redis-cache-values.yaml")]
 }
