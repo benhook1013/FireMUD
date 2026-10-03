@@ -463,9 +463,7 @@ public class TextPlayerOutputRenderer {
     if (output.friends().isEmpty()) {
       return "Friends "
           + output.filter().toUpperCase(java.util.Locale.ROOT)
-          + " [0/"
-          + output.totalCount()
-          + "]: no matching friends.";
+          + ": no matching friends.";
     }
     String body =
         output.friends().stream()
@@ -484,14 +482,7 @@ public class TextPlayerOutputRenderer {
     if ("ALL".equalsIgnoreCase(output.filter())) {
       return body;
     }
-    return "Friends "
-        + output.filter().toUpperCase(java.util.Locale.ROOT)
-        + " ["
-        + output.matchCount()
-        + "/"
-        + output.totalCount()
-        + "]:\n"
-        + body;
+    return "Friends " + output.filter().toUpperCase(java.util.Locale.ROOT) + ":\n" + body;
   }
 
   private String renderFriendDetailView(FriendDetailViewOutput output) {
@@ -541,31 +532,7 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendRosterSummaryView(FriendRosterSummaryViewOutput output) {
-    return "Friend roster summary:"
-        + "\nLinked: "
-        + output.totalCount()
-        + "\nOnline: "
-        + output.onlineCount()
-        + "\nOffline: "
-        + output.offlineCount()
-        + "\nRecent offline: "
-        + output.recentCount()
-        + "\nVisibility public: "
-        + output.publicCount()
-        + "\nVisibility friends-only: "
-        + output.friendsOnlyCount()
-        + "\nVisibility private: "
-        + output.privateCount()
-        + "\nVisibility hidden-staff: "
-        + output.hiddenStaffCount()
-        + "\nVisibility unspecified: "
-        + output.unspecifiedVisibilityCount()
-        + "\nScope shared: "
-        + output.sharedCount()
-        + "\nScope isolated: "
-        + output.isolatedCount()
-        + "\nScope unspecified: "
-        + output.unspecifiedScopeCount();
+    return "Friend roster summary:" + "\nLinked: " + output.totalCount();
   }
 
   private String renderFriendPresencePolicyView(FriendPresencePolicyViewOutput output) {
@@ -596,7 +563,10 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendStatus(FriendPresenceViewOutput.Entry entry) {
-    if (entry.online()) {
+    if (isRedactedFriendPresence(entry)) {
+      return "presence unavailable";
+    }
+    if (Boolean.TRUE.equals(entry.online())) {
       StringBuilder line = new StringBuilder("online");
       String location = renderFriendLocation(entry);
       if (StringUtils.hasText(location)) {
@@ -615,16 +585,23 @@ public class TextPlayerOutputRenderer {
       return line.toString();
     }
     if (entry.lastSeenAtEpochMs() != null) {
-      String qualifier =
-          switch (entry.recentDisposition()) {
-            case "LOGOUT" -> "logged out";
-            case "TAKEOVER" -> "replaced session";
-            case "TRANSPORT_LOSS" -> "connection lost";
-            default -> "last seen";
-          };
-      return qualifier + " " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
+      return "last seen " + java.time.Instant.ofEpochMilli(entry.lastSeenAtEpochMs());
     }
     return "offline";
+  }
+
+  private boolean isRedactedFriendPresence(FriendPresenceViewOutput.Entry entry) {
+    return !StringUtils.hasText(entry.visibilityPolicy())
+        && !Boolean.TRUE.equals(entry.online())
+        && entry.lastSeenAtEpochMs() == null
+        && !StringUtils.hasText(entry.worldSlug())
+        && !StringUtils.hasText(entry.worldDisplayName())
+        && !StringUtils.hasText(entry.realmSlug())
+        && !StringUtils.hasText(entry.realmDisplayName())
+        && !StringUtils.hasText(entry.characterName())
+        && !StringUtils.hasText(entry.playableStateScope())
+        && entry.pointerVersion() == null
+        && !StringUtils.hasText(entry.activityState());
   }
 
   private String renderFriendLocation(FriendPresenceViewOutput.Entry entry) {
@@ -639,6 +616,9 @@ public class TextPlayerOutputRenderer {
   }
 
   private String renderFriendActivity(String activityState) {
+    if (!StringUtils.hasText(activityState)) {
+      return null;
+    }
     return switch (activityState) {
       case "AUTO_AFK" -> "idle";
       case "EXPLICIT_AFK" -> "AFK";

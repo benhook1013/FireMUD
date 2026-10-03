@@ -43,6 +43,7 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
   void healthReturnsOutOfServiceWhenGatewayAdmissionPathIsDown() {
     TelnetServer telnetServer = mock(TelnetServer.class);
     when(telnetServer.isRunning()).thenReturn(true);
+    when(telnetServer.isTlsMaterialHealthy()).thenReturn(true);
     GatewayGameplayReadinessProbe probe = mock(GatewayGameplayReadinessProbe.class);
     when(probe.isReady()).thenReturn(false);
     when(probe.readinessUri())
@@ -65,9 +66,33 @@ class TcpProxyTrafficReadinessHealthIndicatorTest {
   }
 
   @Test
+  void healthReturnsOutOfServiceWhenTelnetTlsWatcherIsUnhealthy() {
+    TelnetServer telnetServer = mock(TelnetServer.class);
+    when(telnetServer.isRunning()).thenReturn(true);
+    when(telnetServer.isTlsMaterialHealthy()).thenReturn(false);
+    GatewayGameplayReadinessProbe probe = mock(GatewayGameplayReadinessProbe.class);
+    when(probe.isReady()).thenReturn(true);
+    TcpProxyTrafficReadinessHealthIndicator indicator =
+        new TcpProxyTrafficReadinessHealthIndicator(providerFor(telnetServer), probe, tracker());
+
+    Health health = indicator.health();
+    @SuppressWarnings("unchecked")
+    Map<String, Map<String, Object>> dependencies =
+        (Map<String, Map<String, Object>>)
+            Objects.requireNonNull(health.getDetails().get("dependencies"));
+
+    assertEquals(Status.OUT_OF_SERVICE, health.getStatus());
+    assertEquals("telnetTlsMaterial", health.getDetails().get("failingDependency"));
+    assertEquals("UP", dependencies.get("telnetListener").get("status"));
+    assertEquals("DOWN", dependencies.get("telnetTlsMaterial").get("status"));
+    assertEquals("tlsReload", dependencies.get("telnetTlsMaterial").get("check"));
+  }
+
+  @Test
   void healthReturnsUpWhenListenerAndGatewayPathAreReady() {
     TelnetServer telnetServer = mock(TelnetServer.class);
     when(telnetServer.isRunning()).thenReturn(true);
+    when(telnetServer.isTlsMaterialHealthy()).thenReturn(true);
     GatewayGameplayReadinessProbe probe = mock(GatewayGameplayReadinessProbe.class);
     when(probe.isReady()).thenReturn(true);
     when(probe.readinessUri())

@@ -229,18 +229,21 @@ class CommunicationWebSocketCrossServiceTest {
 
     List<String> responses =
         runCommunicationSequence(
-            sessionId,
-            "FRIENDS",
-            "Sora [acct #" + SORA_ACCOUNT_ID + "] - online in Demo World / Live Realm (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)");
 
     assertThat(responses).hasSizeGreaterThanOrEqualTo(3);
     assertThat(responses)
         .anyMatch(
+            response -> response.contains("Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)"));
+    assertThat(responses)
+        .noneMatch(
             response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_ID
-                        + "] - online in Demo World / Live Realm (idle)"));
+                response.contains("private-playtest")
+                    || response.contains("Private Playtest World")
+                    || response.contains("staff-preview")
+                    || response.contains("Staff Preview Realm")
+                    || response.contains("shared")
+                    || response.contains("Pointer version"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(), Long.toString(TENANT_ID), Long.toString(ACCOUNT_ID));
   }
@@ -254,19 +257,14 @@ class CommunicationWebSocketCrossServiceTest {
         runCommunicationSequence(
             sessionId,
             "FRIENDS ONLINE",
-            "Friends ONLINE [1/1]:\n"
-                + "1) Sora [acct #"
-                + SORA_ACCOUNT_ID
-                + "] - online in Demo World / Live Realm (idle)");
+            "Friends ONLINE:\n" + "1) Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
             response ->
-                response.contains("Friends ONLINE [1/1]:")
+                response.contains("Friends ONLINE:\n")
                     && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_ID
-                            + "] - online in Demo World / Live Realm (idle)"));
+                        "1) Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)"));
     GameplaySocialAssertions.assertListFriendsRequest(
         socialStub().lastFriendsRequest(),
         Long.toString(TENANT_ID),
@@ -275,32 +273,25 @@ class CommunicationWebSocketCrossServiceTest {
   }
 
   @Test
-  void websocketFriendsSharedFiltersCanonicalRoster() throws Exception {
+  void websocketLocationScopeFiltersFailClosedWithoutSocialQuery() throws Exception {
     ensureTestServicesStarted();
     long sessionId = prepareGameInstance();
 
-    List<String> responses =
-        runCommunicationSequence(
-            sessionId,
-            "FRIENDS SHARED",
-            "Friends SHARED [1/1]:\n"
-                + "1) Sora [acct #"
-                + SORA_ACCOUNT_ID
-                + "] - online in Demo World / Live Realm (idle)");
+    for (String filter : List.of("SHARED", "ISOLATED")) {
+      List<String> responses =
+          runCommunicationSequence(
+              sessionId,
+              "FRIENDS " + filter,
+              "ERROR FRIEND_PRESENCE_UNAVAILABLE Friend presence unavailable");
 
-    assertThat(responses)
-        .anyMatch(
-            response ->
-                response.contains("Friends SHARED [1/1]:")
-                    && response.contains(
-                        "1) Sora [acct #"
-                            + SORA_ACCOUNT_ID
-                            + "] - online in Demo World / Live Realm (idle)"));
-    GameplaySocialAssertions.assertListFriendsRequest(
-        socialStub().lastFriendsRequest(),
-        Long.toString(TENANT_ID),
-        Long.toString(ACCOUNT_ID),
-        net.firedevops.firemud.socialgroups.v1.FriendRosterFilter.FRIEND_ROSTER_FILTER_SHARED);
+      assertThat(responses)
+          .anyMatch(
+              response ->
+                  response.contains(
+                      "ERROR FRIEND_PRESENCE_UNAVAILABLE Friend presence unavailable"));
+      assertThat(responses).noneMatch(response -> response.contains("Friends " + filter + ":"));
+    }
+    assertThat(socialStub().lastFriendsRequest()).isEmpty();
   }
 
   @Test
@@ -312,17 +303,76 @@ class CommunicationWebSocketCrossServiceTest {
     sessionId = prepareGameInstance();
     List<String> responses =
         runCommunicationSequence(
-            sessionId,
-            "FRIENDS",
-            "Sora [acct #" + SORA_ACCOUNT_ID + "] - online in Demo World / Live Realm (idle)");
+            sessionId, "FRIENDS", "Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)");
 
     assertThat(responses)
         .anyMatch(
-            response ->
-                response.contains(
-                    "Sora [acct #"
-                        + SORA_ACCOUNT_ID
-                        + "] - online in Demo World / Live Realm (idle)"));
+            response -> response.contains("Sora [acct #" + SORA_ACCOUNT_ID + "] - online (idle)"));
+  }
+
+  @Test
+  void websocketFriendsMissingPolicyRedactsPresenceWithoutDisconnecting() throws Exception {
+    ensureTestServicesStarted();
+    long sessionId = prepareGameInstance();
+    FriendPresenceEntry missingPolicyPresence =
+        FriendPresenceEntry.newBuilder()
+            .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+            .setOnline(true)
+            .setCharacterId(ChatTestFixtures.PLAYER_SORA)
+            .setCharacterName("Sora")
+            .setPlayableStateScope(
+                net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                    .PLAYABLE_STATE_SCOPE_SHARED)
+            .setWorldSlug("demo")
+            .setWorldDisplayName("Demo World")
+            .setRealmSlug("production")
+            .setRealmDisplayName("Live Realm")
+            .setActivityState(FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+            .build();
+    socialStub().setFriendPresenceEntries(List.of(missingPolicyPresence));
+
+    try (GameplayWebSocketDriver client =
+        openFirstPartyGameplayClient("friends-missing-policy-first-party")) {
+      int baseline = client.responses().size();
+      client.send("FRIENDS");
+      JsonNode friends = awaitStructuredCommand(client, baseline, "FRIENDS");
+      JsonNode friendsPayload = requirePayload(friends, "friends_view");
+      assertThat(friendsPayload.path("friends")).hasSize(1);
+      JsonNode entry = friendsPayload.path("friends").get(0);
+      assertThat(entry.path("friendAccountId").asLong()).isEqualTo(SORA_ACCOUNT_ID);
+      assertThat(entry.path("displayName").asText()).isEqualTo("Friend #" + SORA_ACCOUNT_ID);
+      for (String field :
+          List.of(
+              "online",
+              "worldSlug",
+              "worldDisplayName",
+              "realmSlug",
+              "realmDisplayName",
+              "characterName",
+              "playableStateScope",
+              "pointerVersion",
+              "activityState",
+              "lastSeenAtEpochMs",
+              "recentDisposition",
+              "visibilityPolicy")) {
+        assertThat(entry.has(field)).as("redacted field %s", field).isFalse();
+      }
+    }
+
+    sessionId = prepareGameInstance();
+    socialStub().setFriendPresenceEntries(List.of(missingPolicyPresence));
+    try (GameplayWebSocketDriver client =
+        openReadySessionClient(sessionId, "friends-missing-policy-detail")) {
+      int baseline = client.responses().size();
+      client.send("FRIENDS SHOW #1");
+      client.awaitContains("Presence: presence unavailable");
+      assertThat(client.responses().subList(baseline, client.responses().size()))
+          .noneMatch(
+              response ->
+                  response.contains("Sora")
+                      || response.contains("Demo World")
+                      || response.contains("Live Realm"));
+    }
   }
 
   @Test
@@ -400,10 +450,20 @@ class CommunicationWebSocketCrossServiceTest {
 
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-show-detail-conn")) {
+      int baseline = client.responses().size();
       client.send("FRIENDS SHOW #1");
       client.awaitContains("Friend Sora [acct #" + SORA_ACCOUNT_ID + "]");
-      client.awaitContains("Presence: online in Demo World / Live Realm (idle)");
+      client.awaitContains("Presence: online (idle)");
       client.awaitContains("Roster entry: #1");
+      assertThat(client.responses().subList(baseline, client.responses().size()))
+          .noneMatch(
+              response ->
+                  response.contains("private-playtest")
+                      || response.contains("Private Playtest World")
+                      || response.contains("staff-preview")
+                      || response.contains("Staff Preview Realm")
+                      || response.contains("shared")
+                      || response.contains("Pointer version"));
     }
 
     GameplaySocialAssertions.assertGetFriendByOrdinalRequest(
@@ -421,11 +481,13 @@ class CommunicationWebSocketCrossServiceTest {
     try (GameplayWebSocketDriver client =
         openReadySessionClient(sessionId, "friends-summary-conn")) {
       client.send("FRIENDS SUMMARY");
-      client.awaitContains("Friend roster summary:");
-      client.awaitContains("Linked: 1");
-      client.awaitContains("Online: 1");
-      client.awaitContains("Offline: 0");
-      client.awaitContains("Recent offline: 0");
+      String summary =
+          client.awaitResponseMatching(
+              response -> response.contains("Friend roster summary:"),
+              "friend roster summary response");
+      assertThat(summary)
+          .contains("Linked: 1")
+          .doesNotContain("Online:", "Offline:", "Recent offline:");
     }
 
     GameplaySocialAssertions.assertFriendRosterSummaryRequest(
@@ -499,10 +561,25 @@ class CommunicationWebSocketCrossServiceTest {
       JsonNode friendsPayload = requirePayload(friends, "friends_view");
       assertThat(friends.path("accepted").asBoolean()).isTrue();
       assertThat(friendsPayload.path("filter").asText()).isEqualTo("ALL");
-      assertThat(friendsPayload.path("friends").get(0).path("friendAccountId").asLong())
-          .isEqualTo(SORA_ACCOUNT_ID);
-      assertThat(friendsPayload.path("friends").get(0).path("playableStateScope").asText())
-          .isEqualTo("SHARED");
+      JsonNode friendEntry = friendsPayload.path("friends").get(0);
+      assertThat(friendEntry.path("friendAccountId").asLong()).isEqualTo(SORA_ACCOUNT_ID);
+      assertThat(friendEntry.path("online").asBoolean()).isTrue();
+      assertThat(friendEntry.path("characterName").asText()).isEqualTo("Sora");
+      assertThat(friendEntry.path("activityState").asText()).isEqualTo("AUTO_AFK");
+      assertThat(friendEntry.path("visibilityPolicy").asText()).isEqualTo("FRIENDS_ONLY");
+      for (String field :
+          List.of(
+              "worldSlug",
+              "worldDisplayName",
+              "realmSlug",
+              "realmDisplayName",
+              "playableStateScope",
+              "pointerVersion")) {
+        assertThat(friendEntry.has(field)).as("location evidence %s", field).isFalse();
+      }
+      assertThat(friends.toString())
+          .doesNotContain(
+              "private-playtest", "Private Playtest World", "staff-preview", "Staff Preview Realm");
 
       baseline = client.responses().size();
       client.send("FRIENDS SHOW #1");
@@ -511,14 +588,101 @@ class CommunicationWebSocketCrossServiceTest {
       assertThat(detailPayload.path("friend").path("ordinal").asInt()).isEqualTo(1);
       assertThat(detailPayload.path("friend").path("friendAccountId").asLong())
           .isEqualTo(SORA_ACCOUNT_ID);
+      assertThat(detailPayload.path("friend").path("online").asBoolean()).isTrue();
+      for (String field :
+          List.of(
+              "worldSlug",
+              "worldDisplayName",
+              "realmSlug",
+              "realmDisplayName",
+              "playableStateScope",
+              "pointerVersion")) {
+        assertThat(detailPayload.path("friend").has(field))
+            .as("location evidence %s", field)
+            .isFalse();
+      }
+      assertThat(detail.toString())
+          .doesNotContain(
+              "private-playtest", "Private Playtest World", "staff-preview", "Staff Preview Realm");
 
       baseline = client.responses().size();
       client.send("FRIENDS SUMMARY");
       JsonNode summary = awaitStructuredCommand(client, baseline, "FRIENDS");
       JsonNode summaryPayload = requirePayload(summary, "friend_roster_summary_view");
       assertThat(summaryPayload.path("totalCount").asInt()).isEqualTo(1);
-      assertThat(summaryPayload.path("onlineCount").asInt()).isEqualTo(1);
-      assertThat(summaryPayload.path("sharedCount").asInt()).isEqualTo(1);
+      assertThat(summaryPayload.fieldNames()).toIterable().containsExactly("totalCount");
+    }
+  }
+
+  @Test
+  void websocketFirstPartyFriendsPublicPresenceOmitsUndiscoverableLocationEvidence()
+      throws Exception {
+    ensureTestServicesStarted();
+    prepareGameInstance();
+    socialStub()
+        .setFriendPresenceEntries(
+            List.of(
+                FriendPresenceEntry.newBuilder()
+                    .setFriendAccountId(Long.toString(SORA_ACCOUNT_ID))
+                    .setOnline(true)
+                    .setCharacterId(ChatTestFixtures.PLAYER_SORA)
+                    .setCharacterName("Sora")
+                    .setWorldSlug("private-playtest")
+                    .setWorldDisplayName("Private Playtest World")
+                    .setRealmSlug("staff-preview")
+                    .setRealmDisplayName("Staff Preview Realm")
+                    .setPlayableStateScope(
+                        net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
+                            .PLAYABLE_STATE_SCOPE_SHARED)
+                    .setPointerVersion(947L)
+                    .setActivityState(
+                        FriendPresenceActivityState.FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)
+                    .setVisibilityPolicy(
+                        FriendPresenceVisibilityPolicy.FRIEND_PRESENCE_VISIBILITY_POLICY_PUBLIC)
+                    .build()));
+
+    try (GameplayWebSocketDriver client =
+        openFirstPartyGameplayClient("friends-public-private-location")) {
+      int baseline = client.responses().size();
+      client.send("FRIENDS");
+      JsonNode friends = awaitStructuredCommand(client, baseline, "FRIENDS");
+      JsonNode entry = requirePayload(friends, "friends_view").path("friends").get(0);
+      assertThat(entry.path("online").asBoolean()).isTrue();
+      assertThat(entry.path("characterName").asText()).isEqualTo("Sora");
+      assertThat(entry.path("activityState").asText()).isEqualTo("AUTO_AFK");
+      assertThat(entry.path("visibilityPolicy").asText()).isEqualTo("PUBLIC");
+      for (String field :
+          List.of(
+              "worldSlug",
+              "worldDisplayName",
+              "realmSlug",
+              "realmDisplayName",
+              "playableStateScope",
+              "pointerVersion")) {
+        assertThat(entry.has(field)).as("location evidence %s", field).isFalse();
+      }
+      assertThat(friends.toString())
+          .doesNotContain(
+              "private-playtest", "Private Playtest World", "staff-preview", "Staff Preview Realm");
+
+      baseline = client.responses().size();
+      client.send("FRIENDS SHOW #1");
+      JsonNode detail = awaitStructuredCommand(client, baseline, "FRIENDS");
+      JsonNode detailFriend = requirePayload(detail, "friend_detail_view").path("friend");
+      assertThat(detailFriend.path("online").asBoolean()).isTrue();
+      for (String field :
+          List.of(
+              "worldSlug",
+              "worldDisplayName",
+              "realmSlug",
+              "realmDisplayName",
+              "playableStateScope",
+              "pointerVersion")) {
+        assertThat(detailFriend.has(field)).as("location evidence %s", field).isFalse();
+      }
+      assertThat(detail.toString())
+          .doesNotContain(
+              "private-playtest", "Private Playtest World", "staff-preview", "Staff Preview Realm");
     }
   }
 
@@ -927,10 +1091,14 @@ class CommunicationWebSocketCrossServiceTest {
                               .setPlayableStateScope(
                                   net.firedevops.firemud.entitymanagement.v1.PlayableStateScope
                                       .PLAYABLE_STATE_SCOPE_SHARED)
-                              .setWorldSlug("demo")
-                              .setWorldDisplayName("Demo World")
-                              .setRealmSlug("production")
-                              .setRealmDisplayName("Live Realm")
+                              .setVisibilityPolicy(
+                                  FriendPresenceVisibilityPolicy
+                                      .FRIEND_PRESENCE_VISIBILITY_POLICY_FRIENDS_ONLY)
+                              .setWorldSlug("private-playtest")
+                              .setWorldDisplayName("Private Playtest World")
+                              .setRealmSlug("staff-preview")
+                              .setRealmDisplayName("Staff Preview Realm")
+                              .setPointerVersion(941L)
                               .setActivityState(
                                   FriendPresenceActivityState
                                       .FRIEND_PRESENCE_ACTIVITY_STATE_AUTO_AFK)

@@ -91,7 +91,7 @@ class RedisGameplayPresenceServiceTest {
                 "accountId",
                 "102",
                 "scopedRoles",
-                Map.of("22", List.of("tenantAdmin", "moderator"))));
+                Map.of("22", List.of("tenantAdmin", "moderator", "god"))));
     SessionContext context =
         new SessionContext(
             1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", tenantAdminJwt);

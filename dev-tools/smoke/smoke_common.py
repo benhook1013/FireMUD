@@ -20,11 +20,28 @@ class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
     """A startup-time upstream error that a bounded smoke retry may retry."""
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, _request, _response, _code, _message, _headers, _url):
+        return None
+
+
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
 INVALID_COMMAND_LINE_ERROR = "commands must not contain embedded CR or LF"
 PLAINTEXT_TELNET_HOST_ERROR = (
     "tls_enabled=False requires a localhost-equivalent Telnet host"
 )
+LOOK_ROOM_ID_RE = re.compile(r"(?m)^Room: .+ \(ID: ([A-Za-z0-9._:-]{1,128})\)\r?$")
+ANSI_SGR_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def telnet_look_room_id(response):
+    """Extract the authoritative room ID from the rendered LOOK view."""
+    if not isinstance(response, str):
+        raise ProbeOperationalFailure("Telnet LOOK response is not text")
+    match = LOOK_ROOM_ID_RE.search(ANSI_SGR_RE.sub("", response))
+    if match is None:
+        raise ProbeOperationalFailure("Telnet LOOK response has no canonical room ID")
+    return match.group(1)
 
 
 def is_localhost_equivalent(host):
@@ -168,10 +185,13 @@ def wait_for_account_schema(startup_wait_seconds, timeout_seconds):
 
 def http_readiness_up(readiness_url, timeout_seconds):
     try:
-        with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
-            body = response.read().decode("utf-8", errors="ignore")
-            return response.status < 500 and "\"status\":\"UP\"" in body.replace(" ", "")
-    except (urllib.error.URLError, OSError):
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(readiness_url, timeout=timeout_seconds) as response:
+            if not 200 <= response.status < 300:
+                return False
+            body = json.loads(response.read().decode("utf-8"))
+            return isinstance(body, dict) and body.get("status") == "UP"
+    except (urllib.error.URLError, OSError, UnicodeError, ValueError):
         return False
 
 
