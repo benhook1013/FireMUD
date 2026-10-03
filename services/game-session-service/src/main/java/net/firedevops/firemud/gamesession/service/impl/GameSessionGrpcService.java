@@ -72,6 +72,8 @@ import org.springframework.grpc.server.service.GrpcService;
 public final class GameSessionGrpcService
     extends GameSessionServiceGrpc.GameSessionServiceImplBase {
   private static final Logger LOG = LoggerFactory.getLogger(GameSessionGrpcService.class);
+  private static final String SESSION_REPLACEMENT_UNAVAILABLE_MESSAGE =
+      "Replacing an active session is not supported";
   private final PingService pingService;
   private final GameInstanceService gameInstanceService;
   private final FeatureFlagService featureFlagService;
@@ -147,10 +149,22 @@ public final class GameSessionGrpcService
           gameInstanceRepository
               .findFirstByTenantIdAndOwnerAccountIdAndStatus(tenantId, ownerAccountId, "RUNNING")
               .orElse(null);
+      if (existingRunningSession != null) {
+        StartSessionResponse response =
+            StartSessionResponse.newBuilder()
+                .setError(
+                    GrpcAppErrors.error(
+                        meterRegistry,
+                        "SESSION_REPLACEMENT_UNAVAILABLE",
+                        SESSION_REPLACEMENT_UNAVAILABLE_MESSAGE))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       if (clientIp != null
           && !clientIp.isBlank()
-          && !ipConnectionLimiter.canAccept(
-              clientIp, existingRunningSession != null ? existingRunningSession.getId() : null)) {
+          && !ipConnectionLimiter.canAccept(clientIp, null)) {
         StartSessionResponse response =
             StartSessionResponse.newBuilder()
                 .setError(
@@ -165,13 +179,8 @@ public final class GameSessionGrpcService
           new StartSessionRequest(
               tenantId, gameTemplateId, request.getControlPlaneRequestId(), ownerAccountId);
       GameInstanceDto instance = gameInstanceService.startSession(dto, false);
-      boolean transferredRegistration = false;
       if (clientIp != null && !clientIp.isBlank()) {
-        transferredRegistration =
-            existingRunningSession != null
-                && ipConnectionLimiter.transferRegistration(
-                    clientIp, existingRunningSession.getId(), instance.id());
-        if (!transferredRegistration && !ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
+        if (!ipConnectionLimiter.tryRegister(clientIp, instance.id())) {
           gameInstanceService.stopSession(instance.id());
           StartSessionResponse response =
               StartSessionResponse.newBuilder()
@@ -182,20 +191,6 @@ public final class GameSessionGrpcService
           responseObserver.onNext(response);
           responseObserver.onCompleted();
           return;
-        }
-      }
-      if (existingRunningSession != null) {
-        if (!transferredRegistration) {
-          ipConnectionLimiter.release(existingRunningSession.getId());
-        }
-        try {
-          gameInstanceService.stopSession(existingRunningSession.getId());
-        } catch (IllegalStateException ex) {
-          LOG.warn(
-              "Replacement session {} admitted, but teardown of previous session {} failed",
-              instance.id(),
-              existingRunningSession.getId(),
-              ex);
         }
       }
       StartSessionResponse response =
