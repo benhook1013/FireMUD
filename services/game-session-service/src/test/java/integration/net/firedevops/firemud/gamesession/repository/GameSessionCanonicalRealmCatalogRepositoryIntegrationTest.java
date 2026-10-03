@@ -220,6 +220,12 @@ class GameSessionCanonicalRealmCatalogRepositoryIntegrationTest {
         .hasStackTraceContaining("evidence is immutable");
     assertThatThrownBy(() -> fixture.dsl.execute("TRUNCATE game_session_canonical_realm_catalog"))
         .isInstanceOf(DataAccessException.class)
+        .hasStackTraceContaining("cannot truncate a table referenced in a foreign key constraint");
+    // The disposable schema's CASCADE form reaches the statement immutability guards after
+    // PostgreSQL's separate catalog/pointer foreign-key precondition has been satisfied.
+    assertThatThrownBy(
+            () -> fixture.dsl.execute("TRUNCATE game_session_canonical_realm_catalog CASCADE"))
+        .isInstanceOf(DataAccessException.class)
         .hasStackTraceContaining("evidence is immutable");
     assertThatThrownBy(
             () ->
