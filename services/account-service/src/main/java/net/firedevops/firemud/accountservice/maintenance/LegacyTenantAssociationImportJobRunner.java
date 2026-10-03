@@ -1,10 +1,15 @@
 package net.firedevops.firemud.accountservice.maintenance;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.SQLException;
+import javax.sql.DataSource;
 import net.firedevops.firemud.accountservice.service.impl.LegacyTenantAssociationImportService;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import org.slf4j.Logger;
@@ -30,14 +35,20 @@ public class LegacyTenantAssociationImportJobRunner implements ApplicationRunner
   private final Environment environment;
   private final LegacyTenantAssociationImportService importService;
   private final ObjectProvider<ScheduledAnnotationBeanPostProcessor> schedulingPostProcessor;
+  private final DataSource dataSource;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected Spring collaborators are internal to the migration Job.")
   public LegacyTenantAssociationImportJobRunner(
       Environment environment,
       LegacyTenantAssociationImportService importService,
-      ObjectProvider<ScheduledAnnotationBeanPostProcessor> schedulingPostProcessor) {
+      ObjectProvider<ScheduledAnnotationBeanPostProcessor> schedulingPostProcessor,
+      DataSource dataSource) {
     this.environment = environment;
     this.importService = importService;
     this.schedulingPostProcessor = schedulingPostProcessor;
+    this.dataSource = dataSource;
   }
 
   @Override
@@ -51,6 +62,11 @@ public class LegacyTenantAssociationImportJobRunner implements ApplicationRunner
         || environment.getProperty("spring.grpc.server.enabled", Boolean.class, true)) {
       throw new IllegalStateException("Account tenant migration must not start listeners");
     }
+    String mode = required("firemud.account-tenant-migration.mode");
+    requireDatabaseAuthority(
+        mode,
+        connectedDatabaseUsername(),
+        environment.getProperty("spring.flyway.enabled", Boolean.class, true));
     String podNamespace = required("firemud.account-tenant-migration.pod-namespace");
     String targetNamespace = required("firemud.account-tenant-migration.target-namespace");
     if (!podNamespace.equals(targetNamespace)
@@ -65,7 +81,6 @@ public class LegacyTenantAssociationImportJobRunner implements ApplicationRunner
     if (legacyTenantId <= 0) {
       throw new IllegalArgumentException("legacy Account tenant key must be positive");
     }
-    String mode = required("firemud.account-tenant-migration.mode");
     if ("evidence".equals(mode)) {
       LOG.info(
           "Account tenant evidence legacyTenantId={} digest={} namespace={}",
@@ -84,6 +99,42 @@ public class LegacyTenantAssociationImportJobRunner implements ApplicationRunner
           targetNamespace);
     } else {
       throw new IllegalArgumentException("unsupported Account tenant migration Job mode");
+    }
+  }
+
+  static void requireDatabaseAuthority(String mode, String username, boolean flywayEnabled) {
+    if (flywayEnabled) {
+      throw new IllegalStateException("Account tenant migration requires Flyway to be disabled");
+    }
+    String requiredUsername =
+        switch (mode) {
+          case "evidence" -> "firemud_account_tenant_evidence";
+          case "import" -> "firemud_account_tenant_import";
+          default ->
+              throw new IllegalArgumentException("unsupported Account tenant migration mode");
+        };
+    if (!requiredUsername.equals(username)) {
+      throw new IllegalStateException(
+          "Account tenant migration DB credential does not match the mode");
+    }
+  }
+
+  String connectedDatabaseUsername() {
+    try (Connection connection = dataSource.getConnection()) {
+      DatabaseMetaData metadata = connection == null ? null : connection.getMetaData();
+      if (metadata == null) {
+        throw new IllegalStateException("Account tenant migration DB connection is unverifiable");
+      }
+      String username = metadata.getUserName();
+      if (username == null || username.isBlank()) {
+        throw new IllegalStateException(
+            "Account tenant migration DB connection did not identify its user");
+      }
+      return username;
+    } catch (SQLException failure) {
+      // Avoid surfacing driver diagnostics that can echo the configured database username.
+      throw new IllegalStateException(
+          "Account tenant migration DB connection could not be verified");
     }
   }
 

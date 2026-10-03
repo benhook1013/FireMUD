@@ -4,12 +4,17 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.SQLException;
 import java.util.Map;
+import javax.sql.DataSource;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.maintenance.TenantAssociationManifest.Signed;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService;
@@ -35,14 +40,20 @@ public class TenantAssociationManifestJobRunner implements ApplicationRunner {
   private final Environment environment;
   private final ObjectMapper objectMapper;
   private final TenantAssociationMigrationService migrationService;
+  private final DataSource dataSource;
 
+  @SuppressFBWarnings(
+      value = "EI_EXPOSE_REP2",
+      justification = "Injected Spring collaborators are internal to the migration Job.")
   public TenantAssociationManifestJobRunner(
       Environment environment,
       ObjectMapper objectMapper,
-      TenantAssociationMigrationService migrationService) {
+      TenantAssociationMigrationService migrationService,
+      DataSource dataSource) {
     this.environment = environment;
     this.objectMapper = objectMapper.copy();
     this.migrationService = migrationService;
+    this.dataSource = dataSource;
   }
 
   @Override
@@ -53,6 +64,11 @@ public class TenantAssociationManifestJobRunner implements ApplicationRunner {
         || environment.getProperty("firemud.temporal.enabled", Boolean.class, true)) {
       throw new IllegalStateException("tenant migration must not start listeners or workers");
     }
+    String mode = required("firemud.tenant-association-migration.mode");
+    requireDatabaseAuthority(
+        mode,
+        connectedDatabaseUsername(),
+        environment.getProperty("spring.flyway.enabled", Boolean.class, true));
     String podNamespace = required("firemud.tenant-association-migration.pod-namespace");
     String targetNamespace = required("firemud.tenant-association-migration.target-namespace");
     if (!podNamespace.equals(targetNamespace)
@@ -78,7 +94,6 @@ public class TenantAssociationManifestJobRunner implements ApplicationRunner {
     if (!targetNamespace.equals(verified.manifest().targetNamespace())) {
       throw new IllegalStateException("signed tenant manifest targets a different namespace");
     }
-    String mode = required("firemud.tenant-association-migration.mode");
     if ("preflight".equals(mode)) {
       LOG.info(
           "Tenant association preflight operationId={} manifestDigest={} entries={} namespace={}",
@@ -96,6 +111,38 @@ public class TenantAssociationManifestJobRunner implements ApplicationRunner {
           targetNamespace);
     } else {
       throw new IllegalArgumentException("unsupported tenant migration Job mode");
+    }
+  }
+
+  static void requireDatabaseAuthority(String mode, String username, boolean flywayEnabled) {
+    if (flywayEnabled) {
+      throw new IllegalStateException("tenant migration requires Flyway to be disabled");
+    }
+    String requiredUsername =
+        switch (mode) {
+          case "preflight" -> "firemud_game_design_tenant_preflight";
+          case "apply" -> "firemud_game_design_tenant_apply";
+          default -> throw new IllegalArgumentException("unsupported tenant migration Job mode");
+        };
+    if (!requiredUsername.equals(username)) {
+      throw new IllegalStateException("tenant migration DB credential does not match the mode");
+    }
+  }
+
+  String connectedDatabaseUsername() {
+    try (Connection connection = dataSource.getConnection()) {
+      DatabaseMetaData metadata = connection == null ? null : connection.getMetaData();
+      if (metadata == null) {
+        throw new IllegalStateException("tenant migration DB connection is unverifiable");
+      }
+      String username = metadata.getUserName();
+      if (username == null || username.isBlank()) {
+        throw new IllegalStateException("tenant migration DB connection did not identify its user");
+      }
+      return username;
+    } catch (SQLException failure) {
+      // Avoid surfacing driver diagnostics that can echo the configured database username.
+      throw new IllegalStateException("tenant migration DB connection could not be verified");
     }
   }
 
