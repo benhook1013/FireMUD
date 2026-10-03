@@ -934,6 +934,55 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
 
         self.assertEqual(0, self.fake_kubectl.reads)
 
+    def test_safe_source_read_preserves_exact_bytes(self) -> None:
+        expected = self.source_path.read_bytes()
+
+        self.assertEqual(expected, MATERIALIZER.read_protected_source_record(self.source_path))
+
+    def test_source_read_rejects_platform_without_no_follow_support(self) -> None:
+        with patch.object(MATERIALIZER.os, "O_NOFOLLOW", None):
+            with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "cannot enforce protected source custody"):
+                self.run_materializer()
+
+        self.assertEqual(0, self.fake_kubectl.reads)
+        self.assertEqual([], self.fake_kubectl.mutations)
+
+    def test_source_read_rejects_symlink_source(self) -> None:
+        target = self.source_path.with_name("source-record-target.json")
+        target.write_bytes(self.source_path.read_bytes())
+        os.chmod(target, 0o600)
+        self.source_path.unlink()
+        self.source_path.symlink_to(target)
+
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "regular owner-only file"):
+            self.run_materializer()
+
+        self.assertEqual(0, self.fake_kubectl.reads)
+
+    def test_source_read_rejects_unprotected_or_unowned_directory(self) -> None:
+        custody_directory = self.source_path.parent
+        os.chmod(custody_directory, 0o750)
+        try:
+            with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "mode 0700"):
+                self.run_materializer()
+        finally:
+            os.chmod(custody_directory, 0o700)
+
+        with patch.object(MATERIALIZER.os, "getuid", return_value=os.getuid() + 1):
+            with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "directory must be owned"):
+                self.run_materializer()
+
+        with patch.object(
+            MATERIALIZER.os,
+            "getuid",
+            side_effect=(os.getuid(), os.getuid() + 1),
+        ):
+            with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "source record must be owned"):
+                self.run_materializer()
+
+        self.assertEqual(0, self.fake_kubectl.reads)
+        self.assertEqual([], self.fake_kubectl.mutations)
+
     def test_cli_uses_protected_source_record_without_printing_material(self) -> None:
         current_time = dt.datetime.now(dt.timezone.utc)
         self.write_source_record(

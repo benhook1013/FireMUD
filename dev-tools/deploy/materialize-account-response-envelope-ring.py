@@ -40,6 +40,7 @@ SECRET_NAME = "account-response-envelope-key-ring"
 SECRET_KEY = "manifest.v1"
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_SOURCE_RECORD_BYTES = 2 * MAX_MANIFEST_BYTES
+OWNER_DIRECTORY_MODE = 0o700
 MAX_RECEIPT_BYTES = 64 * 1024
 KUBECTL_TIMEOUT_SECONDS = 30
 RECEIPT_VERSION = 1
@@ -243,24 +244,76 @@ def validate_materializer_username(value: str, namespace: str) -> str:
     return value
 
 
-def read_protected_source_record(path: Path) -> bytes:
+def _is_within(path: Path, directory: Path) -> bool:
     try:
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        return os.path.commonpath((str(path), str(directory))) == str(directory)
+    except ValueError:
+        return False
+
+
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def read_protected_source_record(path: Path) -> bytes:
+    path = Path(path)
+    if not path.is_absolute():
+        raise MaterializationError("source record path must be absolute")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    if nofollow is None or nofollow == 0 or directory_flag is None or directory_flag == 0:
+        raise MaterializationError("platform cannot enforce protected source custody")
+    try:
+        source_metadata = os.lstat(path)
+        if not stat.S_ISREG(source_metadata.st_mode):
+            raise MaterializationError("source record must be a regular owner-only file")
+        resolved_path = path.resolve(strict=True)
+        resolved_repository = _repository_root().resolve(strict=True)
     except OSError as exc:
         raise MaterializationError("source record is missing or unreadable") from exc
+    if _is_within(resolved_path, resolved_repository):
+        raise MaterializationError("source record must be outside the repository")
+    if not hasattr(os, "getuid"):
+        raise MaterializationError("platform cannot verify operator ownership")
+
+    directory_fd: int | None = None
+    descriptor: int | None = None
     try:
+        directory_fd = os.open(
+            resolved_path.parent,
+            os.O_RDONLY | directory_flag | nofollow | getattr(os, "O_CLOEXEC", 0),
+        )
+        directory_metadata = os.fstat(directory_fd)
+        if not stat.S_ISDIR(directory_metadata.st_mode):
+            raise MaterializationError("source directory must be an owner-only directory")
+        if stat.S_IMODE(directory_metadata.st_mode) != OWNER_DIRECTORY_MODE:
+            raise MaterializationError("source directory must be owner-only mode 0700")
+        if directory_metadata.st_uid != os.getuid():
+            raise MaterializationError("source directory must be owned by the operator")
+        descriptor = os.open(
+            resolved_path.name,
+            os.O_RDONLY | nofollow | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=directory_fd,
+        )
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
             raise MaterializationError("source record must be a regular file with owner-only permissions")
+        if metadata.st_uid != os.getuid():
+            raise MaterializationError("source record must be owned by the operator")
         with os.fdopen(descriptor, "rb", closefd=False) as source:
             source_record = source.read(MAX_SOURCE_RECORD_BYTES + 1)
         if not source_record or len(source_record) > MAX_SOURCE_RECORD_BYTES:
             raise MaterializationError("source record is empty or exceeds the format size limit")
         return source_record
+    except MaterializationError:
+        raise
     except OSError as exc:
         raise MaterializationError("source record is missing or unreadable") from exc
     finally:
-        os.close(descriptor)
+        if descriptor is not None:
+            os.close(descriptor)
+        if directory_fd is not None:
+            os.close(directory_fd)
 
 
 def _unique_json_members(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
