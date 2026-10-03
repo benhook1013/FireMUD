@@ -59,6 +59,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.GenericContainer;
@@ -310,6 +311,8 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
     JoinFixture fixture = freshFixture(true, 9L);
     MapSnapshot before = pairSnapshot(fixture);
     String streamKey = membershipStreamKey(fixture.account().accountUuid(), fixture.tenantUuid());
+    AccountAuthorityOutboxRepository authorityOutboxTarget =
+        AopTestUtils.getUltimateTargetObject(authorityOutboxSpy);
     doAnswer(
             invocation -> {
               Event exact = (Event) invocation.callRealMethod();
@@ -321,7 +324,7 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
                   "sha256:" + "e".repeat(64),
                   exact.payload());
             })
-        .when(authorityOutboxSpy)
+        .when(authorityOutboxTarget)
         .findEvent(eq(streamKey), eq(fixture.requestId()));
 
     assertThatThrownBy(() -> publishWithMembershipWrite(fixture))
@@ -339,12 +342,14 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
     JoinFixture fixture = freshFixture(true, 9L);
     MapSnapshot before = pairSnapshot(fixture);
     String streamKey = membershipStreamKey(fixture.account().accountUuid(), fixture.tenantUuid());
+    AccountMembershipPairAuthorityRepository pairAuthorityTarget =
+        AopTestUtils.getUltimateTargetObject(pairAuthoritySpy);
     doAnswer(
             invocation -> {
               invocation.callRealMethod();
               throw new IllegalStateException("simulated failure after pair advance");
             })
-        .when(pairAuthoritySpy)
+        .when(pairAuthorityTarget)
         .commitTransition(any(PairAuthority.class), any(PairTransition.class));
 
     assertThatThrownBy(() -> publishWithMembershipWrite(fixture))
