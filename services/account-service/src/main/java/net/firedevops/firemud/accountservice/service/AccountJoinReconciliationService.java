@@ -14,11 +14,14 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
+import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository.JoinAuditEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
+import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository.JoinMembershipProof;
 import org.slf4j.Logger;
@@ -51,6 +54,7 @@ public class AccountJoinReconciliationService {
   private final AccountJoinOperationRepository joinOperationRepository;
   private final AccountConnectScopeRepository connectScopeRepository;
   private final AccountTenantMembershipRepository membershipRepository;
+  private final AccountMembershipTransitionReceiptRepository transitionReceiptRepository;
   private final AccountAuditOutboxRepository auditOutboxRepository;
   private final TransactionTemplate joinTransactionTemplate;
   private final int batchSize;
@@ -65,6 +69,7 @@ public class AccountJoinReconciliationService {
       AccountJoinOperationRepository joinOperationRepository,
       AccountConnectScopeRepository connectScopeRepository,
       AccountTenantMembershipRepository membershipRepository,
+      AccountMembershipTransitionReceiptRepository transitionReceiptRepository,
       AccountAuditOutboxRepository auditOutboxRepository,
       MeterRegistry meterRegistry,
       PlatformTransactionManager transactionManager,
@@ -86,6 +91,7 @@ public class AccountJoinReconciliationService {
     this.joinOperationRepository = joinOperationRepository;
     this.connectScopeRepository = connectScopeRepository;
     this.membershipRepository = membershipRepository;
+    this.transitionReceiptRepository = transitionReceiptRepository;
     this.auditOutboxRepository = auditOutboxRepository;
     this.batchSize = batchSize;
     this.maxAttempts = maxAttempts;
@@ -173,6 +179,8 @@ public class AccountJoinReconciliationService {
 
     JoinMembershipProof membership = null;
     JoinAuditEvidence auditEvidence = null;
+    MembershipTransitionReceipt transitionReceipt = null;
+    String outcome = null;
     if (unresolvedReason == null) {
       membership =
           membershipRepository
@@ -186,17 +194,43 @@ public class AccountJoinReconciliationService {
     }
 
     if (unresolvedReason == null) {
-      auditEvidence =
-          auditOutboxRepository
-              .findJoinEnvelopeForUpdate(
-                  joinAuditEventId(operation.requestId()), operation.tenantId())
-              .orElse(null);
-      if (auditEvidence == null) {
-        unresolvedReason = "JOIN_AUDIT_ENVELOPE_ABSENT";
-      } else if (!auditEnvelopeMatches(operation, membership, auditEvidence.envelope())) {
-        unresolvedReason = "JOIN_AUDIT_ENVELOPE_UNCLEAR";
-      } else if (!verifiedJoinAuditDelivery(auditEvidence)) {
-        unresolvedReason = "JOIN_AUDIT_RECEIPT_UNVERIFIED";
+      try {
+        transitionReceipt =
+            transitionReceiptRepository
+                .findLatestReceipt(operation.accountId(), operation.tenantId())
+                .orElse(null);
+      } catch (RuntimeException ex) {
+        unresolvedReason = "MEMBERSHIP_TRANSITION_RECEIPT_UNAVAILABLE";
+      }
+      if (unresolvedReason == null && transitionReceipt == null) {
+        unresolvedReason = "MEMBERSHIP_TRANSITION_RECEIPT_ABSENT";
+      } else if (unresolvedReason == null) {
+        auditEvidence =
+            auditOutboxRepository
+                .findJoinEnvelopeForUpdate(
+                    joinAuditEventId(operation.requestId()), operation.tenantId())
+                .orElse(null);
+        if (Objects.equals(operation.requestId(), transitionReceipt.requestId())) {
+          if (!transitionReceiptMatches(operation, membership, transitionReceipt)) {
+            unresolvedReason = "MEMBERSHIP_TRANSITION_RECEIPT_MISMATCH";
+          } else if (auditEvidence == null) {
+            unresolvedReason = "JOIN_AUDIT_ENVELOPE_ABSENT";
+          } else if (!auditEnvelopeMatches(operation, membership, auditEvidence.envelope())) {
+            unresolvedReason = "JOIN_AUDIT_ENVELOPE_UNCLEAR";
+          } else if (!verifiedJoinAuditDelivery(auditEvidence)) {
+            unresolvedReason = "JOIN_AUDIT_RECEIPT_UNVERIFIED";
+          } else {
+            outcome = "JOINED";
+          }
+        } else if (!existingMembershipHistoryMatches(operation, membership, transitionReceipt)) {
+          unresolvedReason = "MEMBERSHIP_TRANSITION_RECEIPT_MISMATCH";
+        } else if (auditEvidence != null) {
+          // A request-specific audit without its matching transition receipt is contradictory.
+          unresolvedReason = "JOIN_AUDIT_ENVELOPE_UNCLEAR";
+        } else {
+          // Existing active membership/history proves ALREADY_ACTIVE; this path writes no events.
+          outcome = "ALREADY_ACTIVE";
+        }
       }
     }
 
@@ -207,7 +241,7 @@ public class AccountJoinReconciliationService {
     joinOperationRepository.finish(
         operation.requestId(),
         "COMMITTED",
-        "JOINED",
+        outcome,
         membership.membershipId(),
         membership.membershipVersion(),
         membership.membershipAuthorityGeneration());
@@ -329,6 +363,41 @@ public class AccountJoinReconciliationService {
         && Objects.equals(payload.realmSlug(), operation.realmSlug())
         && payload.membershipVersion() == membership.membershipVersion()
         && Objects.equals(payload.requestId(), operation.requestId());
+  }
+
+  private static boolean transitionReceiptMatches(
+      JoinOperation operation,
+      JoinMembershipProof membership,
+      MembershipTransitionReceipt receipt) {
+    return MembershipTransitionReceiptDigest.EVIDENCE_STATUS.equals(receipt.evidenceStatus())
+        && MembershipTransitionReceiptDigest.receiptStreamKey(
+                operation.accountId(), operation.tenantId())
+            .equals(receipt.receiptStreamKey())
+        && receipt.receiptSequence() > 0L
+        && MembershipTransitionReceiptDigest.receiptIdForRequest(operation.requestId())
+            .equals(receipt.receiptId())
+        && Objects.equals(receipt.requestId(), operation.requestId())
+        && receipt.membershipId() == membership.membershipId()
+        && ("MEMBERSHIP_JOINED".equals(receipt.transitionType())
+            || "MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()));
+  }
+
+  private static boolean existingMembershipHistoryMatches(
+      JoinOperation operation,
+      JoinMembershipProof membership,
+      MembershipTransitionReceipt receipt) {
+    return !Objects.equals(operation.requestId(), receipt.requestId())
+        && MembershipTransitionReceiptDigest.EVIDENCE_STATUS.equals(receipt.evidenceStatus())
+        && MembershipTransitionReceiptDigest.receiptStreamKey(
+                operation.accountId(), operation.tenantId())
+            .equals(receipt.receiptStreamKey())
+        && receipt.receiptSequence() > 0L
+        && receipt.requestId() != null
+        && MembershipTransitionReceiptDigest.receiptIdForRequest(receipt.requestId())
+            .equals(receipt.receiptId())
+        && receipt.membershipId() == membership.membershipId()
+        && ("MEMBERSHIP_JOINED".equals(receipt.transitionType())
+            || "MEMBERSHIP_REACTIVATED".equals(receipt.transitionType()));
   }
 
   private static boolean verifiedJoinAuditDelivery(JoinAuditEvidence evidence) {

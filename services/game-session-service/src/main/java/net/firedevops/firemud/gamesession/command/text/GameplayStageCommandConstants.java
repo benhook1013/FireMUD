@@ -24,9 +24,19 @@ public final class GameplayStageCommandConstants {
   public static final String JOIN_REQUIRED_CODE = "JOIN_REQUIRED";
   public static final String JOIN_REQUIRED_MESSAGE =
       "Membership is required before PLAY. Run REALMS <world> first, then JOIN <world>.";
+  public static final String NON_PUBLIC_ENROLLMENT_REQUIRED_CODE = "NON_PUBLIC_ENROLLMENT_REQUIRED";
+  public static final String NON_PUBLIC_ENROLLMENT_REQUIRED_MESSAGE =
+      "Existing game membership is required for this non-public realm.";
+  public static final String REALM_ACCESS_DENIED_CODE = "REALM_ACCESS_DENIED";
+  public static final String REALM_ACCESS_DENIED_MESSAGE =
+      "This non-public realm is not available to your account.";
   public static final String TENANT_BILLING_BLOCKED_CODE = "TENANT_BILLING_BLOCKED";
   public static final String TENANT_BILLING_BLOCKED_MESSAGE =
       "That world is temporarily unavailable for gameplay.";
+  public static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_CODE =
+      "PUBLIC_PRODUCTION_ADMISSION_DENIED";
+  public static final String PUBLIC_PRODUCTION_ADMISSION_DENIED_MESSAGE =
+      "Public entry to that world is currently unavailable.";
   public static final String AUTH_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
   public static final String AUTH_UNAVAILABLE_MESSAGE =
       "Gameplay authority is temporarily unavailable. Retry PLAY shortly.";
