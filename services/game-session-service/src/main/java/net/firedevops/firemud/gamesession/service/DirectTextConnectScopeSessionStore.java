@@ -1132,28 +1132,6 @@ public final class DirectTextConnectScopeSessionStore {
           realmsByWorld);
     }
 
-    private LobbyRecord withWorldSnapshotFrom(LobbyRecord other) {
-      return new LobbyRecord(
-          sessionId,
-          accountId,
-          other.worldsExpiresAtEpochMs(),
-          other.catalogFingerprint(),
-          other.ordinalTargets(),
-          scopesByWorld,
-          realmsByWorld);
-    }
-
-    private LobbyRecord withAccountId(long updatedAccountId) {
-      return new LobbyRecord(
-          sessionId,
-          updatedAccountId,
-          worldsExpiresAtEpochMs,
-          catalogFingerprint,
-          ordinalTargets,
-          scopesByWorld,
-          realmsByWorld);
-    }
-
     private LobbyRecord withScopes(Map<String, List<StoredScopedRealm>> updatedScopes) {
       return new LobbyRecord(
           sessionId,
