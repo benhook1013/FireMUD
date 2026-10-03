@@ -316,7 +316,7 @@ public final class GatewayConnectContextCodec {
     validateAuthorityTuple(tuple, tenantId, claims, lifecycleId);
     Map<String, Object> membershipVersion =
         requireObject(claims.get("membershipVersion"), "membershipVersion");
-    requireSingleTenantCounter(membershipVersion, tenantId, "membershipVersion");
+    requireSingleTenantPositiveDecimalString(membershipVersion, tenantId, "membershipVersion");
     requirePositiveInteger(claims, "replayAdmissionFence");
 
     BigInteger issuedAt = requirePositiveInteger(claims, "issuedAt");
@@ -472,7 +472,7 @@ public final class GatewayConnectContextCodec {
         tenantId,
         source,
         lifecycleId);
-    requireSingleTenantCounter(
+    requireSingleTenantPositiveDecimalString(
         requireObject(source.get("membershipVersion"), "membershipVersion"),
         tenantId,
         "membershipVersion");
@@ -529,6 +529,26 @@ public final class GatewayConnectContextCodec {
       return value;
     }
     throw invalid("Account gameplay-connect claims contain a non-JSON or non-integral value");
+  }
+
+  private static void requireSingleTenantPositiveDecimalString(
+      Map<String, Object> values, String tenantId, String field) {
+    if (values.size() != 1 || !values.containsKey(tenantId)) {
+      throw invalid(field + " must contain exactly the selected tenant");
+    }
+    Object value = values.get(tenantId);
+    if (!(value instanceof String decimal)
+        || decimal.isEmpty()
+        || decimal.charAt(0) < '1'
+        || decimal.charAt(0) > '9') {
+      throw invalid(field + " must be a canonical positive decimal string");
+    }
+    for (int index = 1; index < decimal.length(); index++) {
+      char digit = decimal.charAt(index);
+      if (digit < '0' || digit > '9') {
+        throw invalid(field + " must be a canonical positive decimal string");
+      }
+    }
   }
 
   private static void requireSingleTenantCounter(

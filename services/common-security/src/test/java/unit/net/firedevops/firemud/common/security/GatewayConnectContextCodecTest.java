@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
@@ -55,6 +56,12 @@ class GatewayConnectContextCodecTest {
     assertEquals(source.get("tenantId"), context.text("tenantId"));
     assertEquals(source.get("requestId"), context.text("connectRequestId"));
     assertEquals(source.get("jti"), context.text("connectTokenJti"));
+    assertEquals(
+        SelectedTargetConnectContextTestVectors.LARGE_COUNTER.toString(),
+        nestedString(
+            context.claims(),
+            "membershipVersion",
+            SelectedTargetConnectContextTestVectors.TENANT_ID));
     assertEquals(source.get("iat"), context.integer("issuedAt"));
     long sourceDeadline =
         GatewayConnectContextCodec.requireGatewayDeadline(
@@ -178,6 +185,64 @@ class GatewayConnectContextCodecTest {
     Map<String, Object> missingMembership = validContext();
     missingMembership.put("membershipVersion", Map.of());
     assertRejected(missingMembership);
+
+    for (Object malformedVersion :
+        List.of(
+            BigInteger.ONE,
+            new BigDecimal("1.0"),
+            new BigDecimal("1E2"),
+            "0",
+            "00",
+            "+1",
+            "-1",
+            " 1",
+            "1 ",
+            "1e2",
+            "1.0",
+            Boolean.TRUE)) {
+      Map<String, Object> malformedMembership = validContext();
+      malformedMembership.put(
+          "membershipVersion",
+          Map.of(SelectedTargetConnectContextTestVectors.TENANT_ID, malformedVersion));
+      assertRejected(malformedMembership);
+    }
+
+    Map<String, Object> nullMembership = validContext();
+    nullMembership.put(
+        "membershipVersion",
+        java.util.Collections.singletonMap(
+            SelectedTargetConnectContextTestVectors.TENANT_ID, null));
+    assertRejected(nullMembership);
+
+    Map<String, Object> extraMembership = validContext();
+    extraMembership.put(
+        "membershipVersion",
+        Map.of(
+            SelectedTargetConnectContextTestVectors.TENANT_ID,
+            "1",
+            "018f8f0a-8c1d-7f9a-ad6a-bf4a312c0d8e",
+            "2"));
+    assertRejected(extraMembership);
+
+    Map<String, Object> wrongMembershipTenant = validContext();
+    wrongMembershipTenant.put(
+        "membershipVersion", Map.of("018f8f0a-8c1d-7f9a-ad6a-bf4a312c0d8e", "1"));
+    assertRejected(wrongMembershipTenant);
+
+    Map<String, Object> sourceWithNumericMembership =
+        SelectedTargetConnectContextTestVectors.sourceConnectTokenClaims();
+    sourceWithNumericMembership.put(
+        "membershipVersion",
+        Map.of(
+            SelectedTargetConnectContextTestVectors.TENANT_ID,
+            SelectedTargetConnectContextTestVectors.LARGE_COUNTER));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GatewayConnectContextCodec.projectVerifiedAccountGameplayConnectClaims(
+                sourceWithNumericMembership,
+                SelectedTargetConnectContextTestVectors.GATEWAY_VERIFIED_AT,
+                "gateway-request-42"));
 
     Map<String, Object> malformedAuthority = validContext();
     @SuppressWarnings("unchecked")
@@ -557,6 +622,12 @@ class GatewayConnectContextCodecTest {
     @SuppressWarnings("unchecked")
     Map<String, Object> second = (Map<String, Object>) first.get(nestedObject);
     return (BigInteger) second.get(key);
+  }
+
+  private static String nestedString(Map<String, Object> claims, String object, String key) {
+    @SuppressWarnings("unchecked")
+    Map<String, Object> nested = (Map<String, Object>) claims.get(object);
+    return (String) nested.get(key);
   }
 
   private static Map<String, Object> validContext() {
