@@ -220,7 +220,10 @@ public class WorldsCommandHandler {
     }
     try {
       connectScopeSessionStore.clearWorldScopes(
-          sessionContext, worldTenantId(world), world.slug(), clock.instant());
+          sessionContext,
+          DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+          world.slug(),
+          clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
@@ -232,7 +235,7 @@ public class WorldsCommandHandler {
       connectScopeSessionStore.replaceRealmSnapshot(
           sessionContext,
           worldSelector,
-          worldTenantId(world),
+          DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
           world.slug(),
           realmSnapshot.catalogFingerprint(),
           realmSnapshot.ordinalTargets(),
@@ -258,40 +261,21 @@ public class WorldsCommandHandler {
           .<WorldSelectorResolution>map(WorldSelectorResolution.Selected::new)
           .orElseGet(WorldSelectorResolution.Invalid::new);
     }
-    if (connectScopeSessionStore == null) {
-      return new WorldSelectorResolution.Unavailable();
+    DirectTextOrdinalSelectionResolver.Resolution<GameplayWorldCatalog.WorldView> resolution =
+        DirectTextOrdinalSelectionResolver.resolveWorldOrdinal(
+            selector,
+            connectScopeSessionStore,
+            caller,
+            clock.instant(),
+            currentCatalog,
+            worldCatalog);
+    Optional<GameplayWorldCatalog.WorldView> selected = resolution.selectedValue();
+    if (selected.isPresent()) {
+      return new WorldSelectorResolution.Selected(selected.orElseThrow());
     }
-    Optional<DirectTextConnectScopeSessionStore.WorldsSnapshot> maybeSnapshot;
-    try {
-      maybeSnapshot = connectScopeSessionStore.worldsSnapshot(caller, clock.instant());
-    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
-        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
-      return new WorldSelectorResolution.Unavailable();
-    }
-    if (maybeSnapshot.isEmpty()) {
-      return new WorldSelectorResolution.Stale();
-    }
-    DirectTextConnectScopeSessionStore.WorldsSnapshot worldsSnapshot = maybeSnapshot.orElseThrow();
-    if (!worldsSnapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
-      return new WorldSelectorResolution.Stale();
-    }
-    int ordinal;
-    try {
-      ordinal = Integer.parseInt(selector.trim());
-    } catch (NumberFormatException ex) {
-      return new WorldSelectorResolution.Stale();
-    }
-    Optional<DirectTextConnectScopeSessionStore.WorldOrdinalTarget> maybeTarget =
-        worldsSnapshot.ordinalTargets().stream()
-            .filter(target -> target.ordinal() == ordinal)
-            .findFirst();
-    if (maybeTarget.isEmpty()) {
-      return new WorldSelectorResolution.Stale();
-    }
-    return worldCatalog
-        .resolveSnapshotOrdinal(currentCatalog, maybeTarget.orElseThrow())
-        .<WorldSelectorResolution>map(WorldSelectorResolution.Selected::new)
-        .orElseGet(WorldSelectorResolution.Stale::new);
+    return resolution instanceof DirectTextOrdinalSelectionResolver.Unavailable<?>
+        ? new WorldSelectorResolution.Unavailable()
+        : new WorldSelectorResolution.Stale();
   }
 
   private static OptionalLong parseTransportSessionId(String sessionId) {
@@ -331,43 +315,26 @@ public class WorldsCommandHandler {
           .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
           .orElseGet(RealmSelectorResolution.Invalid::new);
     }
-    if (connectScopeSessionStore == null) {
+    DirectTextOrdinalSelectionResolver.Resolution<GameplayWorldCatalog.RealmView> resolution =
+        DirectTextOrdinalSelectionResolver.resolveRealmOrdinal(
+            selector,
+            connectScopeSessionStore,
+            caller,
+            DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+            world,
+            clock.instant(),
+            () -> currentCatalog,
+            worldCatalog);
+    Optional<GameplayWorldCatalog.RealmView> selected = resolution.selectedValue();
+    if (selected.isPresent()) {
+      return new RealmSelectorResolution.Selected(selected.orElseThrow());
+    }
+    if (resolution instanceof DirectTextOrdinalSelectionResolver.Unavailable<?>) {
       return new RealmSelectorResolution.Unavailable();
     }
-    Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeSnapshot;
-    try {
-      maybeSnapshot =
-          connectScopeSessionStore.realmsSnapshot(
-              caller, worldTenantId(world), world.slug(), clock.instant());
-    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
-        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
-      return new RealmSelectorResolution.Unavailable();
-    }
-    if (maybeSnapshot.isEmpty()) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR);
-    }
-    DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
-    if (!snapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
-    }
-    int ordinal;
-    try {
-      ordinal = Integer.parseInt(selector.trim());
-    } catch (NumberFormatException ex) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR);
-    }
-    Optional<DirectTextConnectScopeSessionStore.RealmOrdinalTarget> maybeTarget =
-        snapshot.ordinalTargets().stream()
-            .filter(target -> target.ordinal() == ordinal)
-            .findFirst();
-    if (maybeTarget.isEmpty()) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR);
-    }
-    return worldCatalog
-        .resolveRealmSnapshotOrdinal(world, currentCatalog, maybeTarget.orElseThrow())
-        .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
-        .orElseGet(
-            () -> new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH));
+    return resolution instanceof DirectTextOrdinalSelectionResolver.UnboundSelector<?>
+        ? new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR)
+        : new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
   }
 
   private RealmSelectorResolution resolveOmittedLobbyRealm(
@@ -382,7 +349,10 @@ public class WorldsCommandHandler {
     try {
       maybeSnapshot =
           connectScopeSessionStore.realmsSnapshot(
-              caller, worldTenantId(world), world.slug(), clock.instant());
+              caller,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return new RealmSelectorResolution.Unavailable();
@@ -390,7 +360,7 @@ public class WorldsCommandHandler {
     if (maybeSnapshot.isPresent()) {
       DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
       if (!snapshot.worldSlug().equalsIgnoreCase(world.slug())
-          || snapshot.tenantId() != worldTenantId(world)
+          || snapshot.tenantId() != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)
           || !snapshot.catalogFingerprint().equals(currentRealmCatalog.catalogFingerprint())) {
         return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
       }
@@ -435,7 +405,10 @@ public class WorldsCommandHandler {
     try {
       maybeSnapshot =
           connectScopeSessionStore.realmsSnapshot(
-              caller, worldTenantId(world), world.slug(), clock.instant());
+              caller,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return false;
@@ -445,7 +418,7 @@ public class WorldsCommandHandler {
     }
     DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
     if (!snapshot.worldSlug().equalsIgnoreCase(world.slug())
-        || snapshot.tenantId() != worldTenantId(world)
+        || snapshot.tenantId() != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)
         || !snapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
       return false;
     }
@@ -550,7 +523,10 @@ public class WorldsCommandHandler {
     try {
       maybeRealmSnapshot =
           connectScopeSessionStore.realmsSnapshot(
-              sessionContext, worldTenantId(world), world.slug(), clock.instant());
+              sessionContext,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
@@ -568,7 +544,11 @@ public class WorldsCommandHandler {
     try {
       maybeJoinScope =
           connectScopeSessionStore.publicProductionScopeForJoin(
-              sessionContext, worldSelector, worldTenantId(world), world.slug(), clock.instant());
+              sessionContext,
+              worldSelector,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
@@ -584,7 +564,7 @@ public class WorldsCommandHandler {
     } catch (NumberFormatException ex) {
       return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
-    if (tenantId != worldTenantId(world)) {
+    if (tenantId != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     boolean hasPublicProductionRealm;
@@ -604,12 +584,6 @@ public class WorldsCommandHandler {
     return JoinMembershipResult.response(
         accountClient.joinPublicProductionMembership(
             playerContext, scope.connectScopeId(), requestId, scope.expiresAt()));
-  }
-
-  private static long worldTenantId(GameplayWorldCatalog.WorldView world) {
-    List<Long> tenantIds =
-        world.realms().stream().map(GameplayWorldCatalog.RealmView::tenantId).distinct().toList();
-    return tenantIds.size() == 1 ? tenantIds.getFirst() : -1L;
   }
 
   private static String normalizeSelector(String selector) {

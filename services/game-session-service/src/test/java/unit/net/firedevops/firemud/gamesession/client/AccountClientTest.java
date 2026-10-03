@@ -48,6 +48,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
@@ -98,6 +99,69 @@ class AccountClientTest {
     assertThat(captor.getValue().getGameInstanceId()).isEqualTo("9");
     assertThat(captor.getValue().getCatalogRevision()).isEqualTo(7L);
     assertThat(captor.getValue().getPointerVersion()).isEqualTo(4L);
+  }
+
+  @ParameterizedTest
+  @EnumSource(Status.Code.class)
+  void directTextScopeNormalizesEveryGrpcTransportStatusToAuthUnavailable(Status.Code statusCode)
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.issueDirectTextConnectScope(any(IssueDirectTextConnectScopeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.fromCode(statusCode)));
+    AccountClient client = newClient(stub);
+    DirectTextConnectScopeTarget target =
+        new DirectTextConnectScopeTarget(
+            "22",
+            "demo-world",
+            "production",
+            "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
+            "42d234a2-7487-4dda-a7e5-a3831214328e",
+            "SHARED",
+            "9",
+            7L,
+            4L);
+
+    IssueDirectTextConnectScopeResponse response =
+        client.issueDirectTextConnectScope(directTextContext("request-unused"), target);
+
+    assertThat(response.hasError()).isTrue();
+    assertThat(response.getError().getCode()).isEqualTo("AUTH_UNAVAILABLE");
+  }
+
+  @Test
+  void directTextScopePreservesCanonicalApplicationErrorCode() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    IssueDirectTextConnectScopeResponse expected =
+        IssueDirectTextConnectScopeResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("CONNECT_SCOPE_MISMATCH")
+                    .setMessage("The selected scope no longer matches the target."))
+            .build();
+    when(stub.issueDirectTextConnectScope(any(IssueDirectTextConnectScopeRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = newClient(stub);
+    DirectTextConnectScopeTarget target =
+        new DirectTextConnectScopeTarget(
+            "22",
+            "demo-world",
+            "production",
+            "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
+            "42d234a2-7487-4dda-a7e5-a3831214328e",
+            "SHARED",
+            "9",
+            7L,
+            4L);
+
+    IssueDirectTextConnectScopeResponse response =
+        client.issueDirectTextConnectScope(directTextContext("request-unused"), target);
+
+    assertThat(response).isEqualTo(expected);
+    assertThat(response.getError().getCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
   }
 
   @Test
