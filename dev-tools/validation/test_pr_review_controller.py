@@ -1364,6 +1364,203 @@ class ControllerTests(unittest.TestCase):
         self.assertNotEqual(result["channels"]["hosted"], "COMPLETE")
         self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
 
+    def test_exact_allocation_reserves_posted_awaiting_hosted_trigger_until_completion(self):
+        for action in ("grant", "renew"):
+            with self.subTest(action=action):
+                timeline = self.scope_timeline_evidence()
+                evidence = {
+                    (1, "hosted"): [self.allocation_evidence(checkpoint="allocation-baseline"), timeline]
+                }
+                controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+                if action == "renew":
+                    controller.decide_allocation(
+                        action="grant",
+                        pr=1,
+                        channel="hosted",
+                        head=HEAD_1,
+                        exact_additional_completed=2,
+                        reason="initial two-result cap",
+                    )
+
+                pending = {
+                    "pr": 1,
+                    "channel": "hosted",
+                    "head": HEAD_1,
+                    "checkpoint": "trigger:123",
+                    "trigger_id": 123,
+                    "response_id": None,
+                    "state": "awaiting_response",
+                    "posted": True,
+                    "active_reservation": True,
+                    "held": True,
+                    "unstable": False,
+                    "reason": "no attributable terminal response",
+                    "attributable": True,
+                    "terminal": False,
+                    "anchor": hosted_anchor(),
+                }
+                evidence[(1, "hosted")].append(pending)
+
+                result = controller.decide_allocation(
+                    action=action,
+                    pr=1,
+                    channel="hosted",
+                    head=HEAD_1,
+                    exact_additional_completed=1,
+                    reason="reserve the exact posted request already awaiting its response",
+                )
+
+                self.assertEqual(result["progress"]["used"], 0)
+                self.assertEqual(result["progress"]["in_flight"], 1)
+                self.assertNotIn("trigger:123", result["allocation"]["baseline_checkpoints"])
+
+                evidence[(1, "hosted")] = [
+                    timeline,
+                    self.allocation_evidence(
+                        checkpoint="5847200187",
+                        channel="hosted",
+                        raw=0,
+                    )
+                ]
+                completed = controller.status()["prs"][0]["allocations"]["hosted"]
+                self.assertEqual(completed["completed_count"], 1)
+                self.assertEqual(completed["in_flight"], 0)
+
+    def test_exact_awaiting_hosted_allocation_does_not_consume_failures_or_rate_limits(self):
+        for label, terminal in (
+            ("failure", {"completed": False, "attributable": False, "failed": True}),
+            ("rate limit", {"completed": False, "attributable": False, "rate_limited": True}),
+        ):
+            with self.subTest(result=label):
+                timeline = self.scope_timeline_evidence()
+                pending = {
+                    "pr": 1,
+                    "channel": "hosted",
+                    "head": HEAD_1,
+                    "checkpoint": "trigger:123",
+                    "trigger_id": 123,
+                    "response_id": None,
+                    "state": "awaiting_response",
+                    "posted": True,
+                    "active_reservation": True,
+                    "held": True,
+                    "unstable": False,
+                    "reason": "no attributable terminal response",
+                    "attributable": True,
+                    "terminal": False,
+                    "anchor": hosted_anchor(),
+                }
+                evidence = {(1, "hosted"): [pending, timeline]}
+                controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+                controller.decide_allocation(
+                    action="grant",
+                    pr=1,
+                    channel="hosted",
+                    head=HEAD_1,
+                    exact_additional_completed=1,
+                    reason="reserve one completion from the posted request",
+                )
+                evidence[(1, "hosted")] = [
+                    timeline,
+                    {
+                        **self.allocation_evidence(
+                            checkpoint="trigger:123",
+                            channel="hosted",
+                            anchored=False,
+                            **terminal,
+                        ),
+                        "rate_limited": terminal.get("rate_limited", False),
+                    }
+                ]
+
+                progress = controller.status()["prs"][0]["allocations"]["hosted"]
+
+                self.assertEqual(progress["completed_count"], 0)
+                self.assertEqual(progress["remaining"], 1)
+
+    def test_exact_allocation_keeps_unsafe_or_ambiguous_awaiting_hosted_evidence_held(self):
+        valid = {
+            "pr": 1,
+            "channel": "hosted",
+            "head": HEAD_1,
+            "checkpoint": "trigger:123",
+            "trigger_id": 123,
+            "response_id": None,
+            "state": "awaiting_response",
+            "posted": True,
+            "active_reservation": True,
+            "held": True,
+            "unstable": False,
+            "reason": "no attributable terminal response",
+            "attributable": True,
+            "terminal": False,
+            "anchor": hosted_anchor(),
+        }
+        cases = (
+            ("missing anchor", {key: value for key, value in valid.items() if key != "anchor"}),
+            ("unverified posted state", {**valid, "posted": False}),
+            ("incomplete anchor", {**valid, "anchor": {**hosted_anchor(), "patch_id": None}}),
+            ("mismatched head", {**valid, "head": HEAD_2}),
+            ("malformed trigger ID", {**valid, "trigger_id": "123"}),
+            ("response already present", {**valid, "response_id": 124}),
+            (
+                "pre-POST reservation",
+                {
+                    **valid,
+                    "checkpoint": "trigger:pending",
+                    "trigger_id": None,
+                    "state": "ambiguous",
+                    "reason": "trigger posting boundary is not verified",
+                    "attributable": False,
+                    "unstable": True,
+                },
+            ),
+            (
+                "ambiguous response",
+                {
+                    **valid,
+                    "state": "ambiguous",
+                    "reason": "response attribution is ambiguous",
+                    "attributable": False,
+                    "terminal": True,
+                    "unstable": True,
+                },
+            ),
+            ("rate-limited", {**valid, "rate_limited": True}),
+        )
+        for label, observation in cases:
+            with self.subTest(evidence=label):
+                timeline = self.scope_timeline_evidence()
+                evidence = {(1, "hosted"): [observation, timeline]}
+                controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
+                controller.set_stack([1])
+
+                result = controller.decide_allocation(
+                    action="grant",
+                    pr=1,
+                    channel="hosted",
+                    head=HEAD_1,
+                    exact_additional_completed=1,
+                    reason="record allowance without accepting unsupported in-flight proof",
+                )
+
+                self.assertIn(observation["checkpoint"], result["allocation"]["baseline_checkpoints"])
+                self.assertEqual(result["progress"]["in_flight"], 0)
+                snapshot = controller._bounded_allocation_evidence(
+                    controller._state().allocations["1:hosted"], evidence[(1, "hosted")]
+                )
+                self.assertEqual(snapshot["in_flight"], 0)
+                expected_error = (
+                    "an in-flight review has an incomplete or changed stack anchor"
+                    if label in {"missing anchor", "incomplete anchor", "mismatched head"}
+                    else "an awaiting Hosted request lacks verified posted identity"
+                )
+                self.assertEqual(snapshot["error"], expected_error)
+                self.assertEqual(evidence[(1, "hosted")], [observation, timeline])
+                self.assertNotEqual(controller._target("hosted", expected_pr=1).status, ReviewStatus.READY)
+
     def test_default_one_result_allocation_requeues_completed_taper_without_resetting_it(self):
         history = [
             self.allocation_evidence(
