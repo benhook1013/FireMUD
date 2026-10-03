@@ -955,6 +955,52 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
             game-design-service
 
+      - name: Run Game Design authored-source launch descriptor PostgreSQL and socket mTLS proof
+        if: ${{ matrix.module == 'game-design-service' }}
+        run: |
+          ./gradlew :game-design-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          ./gradlew :game-design-service:test \
+            --tests net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \
+            --require-suite net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#resolvesPersistedSourceAndReplaysOriginalDescriptorAfterDefaultsAndVersionChange()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#concurrentExactRetriesPersistOneOriginalDescriptor()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#deterministicFailureIsFrozenAcrossDependencyChangeAndConcurrentExactRetries()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#corruptFailureReadbackRollsBackTheOutcomeInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#concurrentSuccessAndFailureCandidatesPersistOnlyTheFirstOutcome()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#rolledBackDescriptorInsertLeavesNoCanonicalOrPrivateRequestClaim()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#v35MigrationPreservesRetainedUnboundDescriptorAndCanonicalResolveDeniesIt()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#exactGameSessionPeerResolvesAndEchoesTheFullCanonicalDescriptor()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#gameSessionAndWorldPeersReadExactDescriptorAndEchoReadRequestIdentity()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#worldPeerCannotResolveBeforeDescriptorProducerAccess()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#missingClientCertificateFailsWithTlsHandshakeEvidenceBeforeProducerAccess()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#jwtOnlyCallerWithoutClientCertificateFailsWithTlsHandshakeEvidence()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#wrongServiceCertificateCannotResolveOrReadEvenWithBearerMetadata()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#wrongNamespaceCertificateCannotResolveOrReadEvenWithBearerMetadata()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedCertificateWithoutWorkloadUriCannotResolveOrRead()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#malformedAndUnknownClosedRequestsFailBeforeDescriptorProducerAccess()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#bothProductionProfilesKeepOnlyExactLaunchDescriptorMethodsInGameDesignJwtBypass()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedClientResolvesAndReadsExactDescriptorOverPhysicalMtlsSocket(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedClientRejectsWrongGameDesignServerWorkloadAndNamespaceBeforeReturningEvidence(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedClientCodecRejectsChangedDescriptorReadEchoAndDigestOverPhysicalSocket(Path)' \
+            game-design-service
+
+      - name: Upload Game Design authored-source launch descriptor proof results
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-authored-source-launch-descriptor-proof-${{ github.sha }}
+          path: |
+            services/game-design-service/build/test-results/integrationTest/TEST-*LaunchDescriptorServiceIntegrationTest.xml
+            services/game-design-service/build/test-results/test/TEST-*AuthoredWorldLaunchDescriptorMtlsTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run Game Session authored-world intake PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}
         run: |

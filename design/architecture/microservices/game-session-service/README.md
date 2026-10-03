@@ -32,6 +32,8 @@ Target state makes Game Session the authoritative owner of region/tick coordinat
 
 First-party context admission currently fails closed. The complete codec is a component boundary, not an enabled bare-`LOGIN` exchange or first-party gameplay proof; independent Gateway keys, canonical identity mapping, and Account producer/consumer proof remain required in [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md).
 
+The source-bound launch candidate also denies the legacy numeric `StartSession` preflight and numeric cutover compatibility lookup before owner resolution or mutation. Those requests cannot supply the [canonical authored-source descriptor binding](../game-design-service/api-contracts.md#authored-source-bound-launch-descriptor-and-exact-readback); neither retained Game Session associations nor the private Game Design key establishes a World association. Retained-instance stop, restart and lifecycle reads remain separate behavior. Their local proof is not successful canonical launch, replacement, World `PREPARING`, or activation proof; the canonical Game Session/World handoff remains required owner work.
+
 Current seams are narrower: patch/request convergence reads, instance-scoped pause/resume, region-epoch fencing, and existing version-fence paths do not yet prove complete `scriptPinEpoch` propagation, final-effect enforcement, or Game-Session-owned append-only history. Track those implementation and proof gaps in the [Game Session runtime and tick coordination tracker](../../../project-management/implementation-tracking/game-session-runtime-and-tick-coordination.md#active-gaps).
 
 ## Terminology
