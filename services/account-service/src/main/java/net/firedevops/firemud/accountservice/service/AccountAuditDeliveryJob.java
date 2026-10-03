@@ -1,14 +1,14 @@
 package net.firedevops.firemud.accountservice.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Instant;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** At-least-once delivery of Account's immutable audit outbox envelopes. */
+/** Offline-fixture-callable delivery logic for Account's immutable audit outbox envelopes. */
 @Component
 @SuppressFBWarnings(
     value = "EI_EXPOSE_REP2",
@@ -24,9 +24,9 @@ public class AccountAuditDeliveryJob {
     this.loggingAdminClient = loggingAdminClient;
   }
 
-  @Scheduled(fixedDelayString = "${firemud.account.audit-delivery-delay-ms:5000}")
   public void deliverPending() {
-    for (var envelope : outbox.pending(50)) {
+    Instant capturedNow = Instant.now();
+    for (var envelope : outbox.pending(50, capturedNow)) {
       try {
         var receipt = loggingAdminClient.deliver(envelope);
         outbox.markDelivered(
@@ -35,7 +35,12 @@ public class AccountAuditDeliveryJob {
             receipt.logEventId(),
             receipt.minimized());
       } catch (RuntimeException ex) {
-        outbox.recordAttempt(envelope.auditEventId());
+        try {
+          outbox.recordAttempt(envelope.auditEventId());
+        } catch (RuntimeException bookkeepingFailure) {
+          logger.warn(
+              "Failed to record Account audit attempt for event {}", envelope.auditEventId());
+        }
         logger.warn("Account audit delivery remains pending for event {}", envelope.auditEventId());
       }
     }

@@ -1,6 +1,8 @@
 apply plugin: 'com.google.protobuf'
 
 def libs = project.extensions.getByName('libs')
+def protobufConfigurationCacheIncompatibilityReason =
+    "protobuf-gradle-plugin ${libs.plugins.protobuf.get().version.requiredVersion} retains Gradle Project and SourceDirectorySet state with Gradle ${gradle.gradleVersion}"
 
 // Define proto source directory before configuring the protobuf plugin so that
 // the plugin wires the generate tasks and compile dependencies correctly.
@@ -30,9 +32,7 @@ protobuf {
     }
     generateProtoTasks {
         all().configureEach { task ->
-            task.notCompatibleWithConfigurationCache(
-                "protobuf-gradle-plugin ${libs.plugins.protobuf.get().version.requiredVersion} retains Gradle Project and SourceDirectorySet state with Gradle ${gradle.gradleVersion}"
-            )
+            task.notCompatibleWithConfigurationCache(protobufConfigurationCacheIncompatibilityReason)
         }
         ofSourceSet('main').each { task ->
             task.doNotTrackState("Generated protobuf outputs are rewritten opportunistically and Gradle 9 output snapshotting can observe transiently missing files.")
@@ -41,6 +41,14 @@ protobuf {
             }
         }
     }
+}
+
+// Protobuf extraction tasks retain the same non-serializable plugin state as
+// generation tasks, so keep them out of the configuration cache as well.
+def protobufExtractTaskClass = plugins.getPlugin('com.google.protobuf').class.classLoader
+    .loadClass('com.google.protobuf.gradle.ProtobufExtract')
+tasks.withType(protobufExtractTaskClass).configureEach { task ->
+    task.notCompatibleWithConfigurationCache(protobufConfigurationCacheIncompatibilityReason)
 }
 
 // Ensure that the Java compilation runs after Protobuf code generation.

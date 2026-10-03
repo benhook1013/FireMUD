@@ -12,19 +12,21 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
 import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
-import net.firedevops.firemud.common.security.JwtUtil;
 import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomResponse;
 import net.firedevops.firemud.entitymanagement.v1.EquipmentItem;
@@ -64,6 +66,7 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -88,6 +91,7 @@ import org.mockito.Mockito;
 @SuppressWarnings("unchecked")
 class TextCommandInterpreterTest {
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+  private static final String PLAY_DEMO_PRODUCTION = "PLAY demo production";
   private final CommandService commandService = Mockito.mock(CommandService.class);
   private final GameLogicClient gameLogicClient = Mockito.mock(GameLogicClient.class);
   private final EntityManagementClient entityManagementClient =
@@ -139,8 +143,7 @@ class TextCommandInterpreterTest {
               PresentationProperties.ColorMode.NONE,
               false,
               new PresentationProperties.Prompt(true, true, 150L)));
-  private final GameplayPresenceService gameplayPresenceService =
-      new FakeGameplayPresenceService(new JwtUtil("testsecretkeytestsecretkeytest1234", 60_000L));
+  private final GameplayPresenceService gameplayPresenceService = new FakeGameplayPresenceService();
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService =
       new DefaultGameplayPresenceLifecycleService(
           gameplayPresenceService,
@@ -163,6 +166,15 @@ class TextCommandInterpreterTest {
             AuthenticateResponse.newBuilder()
                 .setAuthToken("auth-token")
                 .setAccountId("123")
+                .build());
+    when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTH_UNAVAILABLE")
+                        .setMessage("scope authority unavailable")
+                        .build())
                 .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
@@ -194,6 +206,7 @@ class TextCommandInterpreterTest {
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
                 .setTenantId("22")
                 .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
                 .setEvaluatedAt(Instant.now().toString())
@@ -331,9 +344,9 @@ class TextCommandInterpreterTest {
     when(commandService.enqueue(anyString(), anyString(), anyBoolean()))
         .thenReturn(CommandEnqueueResult.success());
     when(pointerAuthorityService.listByRuntimeTarget(22L, 1L))
-        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L)));
+        .thenReturn(List.of(pointer("demo", "production", 22L, 1L, 1L, true)));
     when(pointerAuthorityService.listByRuntimeTarget(22L, 2L))
-        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L)));
+        .thenReturn(List.of(pointer("sandbox", "production", 22L, 2L, 1L, false)));
     when(gameInstanceRepository.findById(Mockito.anyLong()))
         .thenAnswer(
             invocation -> {
@@ -353,7 +366,7 @@ class TextCommandInterpreterTest {
             gameplayPresenceLifecycleService);
     GameplayCatalogProperties gameplayCatalogProperties = new GameplayCatalogProperties();
     gameplayCatalogProperties.setWorlds(
-        List.of(world("demo", 22L, 1L, false), world("sandbox", 22L, 2L, true)));
+        List.of(world("demo", 22L, 1L, true, false), world("sandbox", 22L, 2L, false, true)));
     GameplayWorldCatalog worldCatalog =
         TestGameplayWorldCatalogs.fromProperties(gameplayCatalogProperties);
     LoginCommandHandler loginHandler =
@@ -367,6 +380,8 @@ class TextCommandInterpreterTest {
             pointerAuthorityService,
             gameplayPresenceLifecycleService,
             meterRegistry);
+    DirectTextConnectScopeSessionStore connectScopeSessionStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -380,7 +395,8 @@ class TextCommandInterpreterTest {
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
-            meterRegistry);
+            meterRegistry,
+            connectScopeSessionStore);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     WhoCommandHandler whoHandler =
@@ -411,13 +427,14 @@ class TextCommandInterpreterTest {
                         .setId("7001")
                         .setTenantId("22")
                         .setAccountId("123")
-                        .setName("Emberline")
+                        .setName("demo")
                         .setLevel(12)
                         .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
     WorldsCommandHandler worldsHandler =
-        new WorldsCommandHandler(worldCatalog, entityManagementClient);
+        new WorldsCommandHandler(
+            worldCatalog, accountClient, DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -468,14 +485,7 @@ class TextCommandInterpreterTest {
             commandService,
             lookHandler,
             loginHandler,
-            new LogoutCommandHandler(
-                sessionAuthenticationService,
-                sessionContextService,
-                gameInstanceService,
-                pointerAuthorityService,
-                gameplayPresenceLifecycleService,
-                firstPartyConnectContextRegistry,
-                scriptEventPublisher),
+            new LogoutCommandHandler(sessionContextService),
             playHandler,
             moveHandler,
             afkHandler,
@@ -524,7 +534,44 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void realmsFailClosedWhenAccountScopeIssuerIsUnavailable() {
+  void logoutAliasDispatchesBeforeStaleBindingNormalization() {
+    SessionContext staleBinding =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "jwt-token",
+            null,
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    sessionContextService.save(staleBinding);
+    gameplayPresenceService.registerConnected(staleBinding);
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L)).thenReturn(List.of());
+    Mockito.clearInvocations(pointerAuthorityService);
+
+    TextCommandInterpretationResult result = interpreter.interpret("1", "QUIT", false);
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("LOGOUT_UNAVAILABLE");
+    assertThat(sessionContextService.findBySessionId(1L)).hasValue(staleBinding);
+    assertThat(gameplayPresenceService.findConnectedBySessionId(1L))
+        .hasValueSatisfying(
+            presence -> {
+              assertThat(presence.accountId()).isEqualTo(staleBinding.accountId());
+              assertThat(presence.gameInstanceId()).isEqualTo(staleBinding.gameInstanceId());
+            });
+    Mockito.verify(pointerAuthorityService, never()).listByRuntimeTarget(22L, 1L);
+  }
+
+  @Test
+  void realmsBrowseFailsClosedWhenScopeAuthorityIsUnavailable() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
@@ -532,10 +579,11 @@ class TextCommandInterpreterTest {
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("AUTH_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertFalse(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
   }
 
   @Test
-  void charsAreUnavailableUntilTypedEntityRosterProofExists() {
+  void charsAreNotDisclosedWithoutTypedEntityRosterProof() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
@@ -543,12 +591,10 @@ class TextCommandInterpreterTest {
 
     assertFalse(interpretation.commandResult().accepted());
     assertEquals("CHARACTER_LIST_UNAVAILABLE", interpretation.commandResult().errorCode());
-    verify(entityManagementClient, never())
-        .listCharactersByAccount(
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.anyString(),
-            Mockito.any(PlayableStateScope.class));
+    assertFalse(renderedResponse("CHARS demo", interpretation).contains("Live Realm"));
+    assertFalse(
+        renderedResponse("CHARS demo", interpretation)
+            .contains("Realm state: shared, creation: allow_new"));
   }
 
   @Test
@@ -580,13 +626,13 @@ class TextCommandInterpreterTest {
   @Test
   void whoAfterPlayShowsCurrentPlayerList() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("1", "WHO", false);
 
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(
-        "OK WHO\nGods [0]: \nPlayers [1]: Emberline\n\n" + "Emberline> ",
+        "OK WHO\nGods [0]: \nPlayers [1]: demo\n\n" + "demo> ",
         renderedResponse("WHO", interpretation));
     assertFalse(interpretation.meaningfulGameplayActivity());
   }
@@ -604,7 +650,7 @@ class TextCommandInterpreterTest {
   @Test
   void inventoryIsVisibleAfterPlay() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("1", "INVENTORY", false);
 
@@ -613,7 +659,7 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "Emberline> ",
+        "OK INVENTORY\n" + "Inventory:\n" + "- Torch x2 (A small torch)\n\n" + "demo> ",
         renderedResponse("INVENTORY", interpretation));
     assertTrue(interpretation.meaningfulGameplayActivity());
   }
@@ -631,7 +677,7 @@ class TextCommandInterpreterTest {
   @Test
   void equipmentIsVisibleAfterPlay() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("1", "EQ", false);
 
@@ -640,14 +686,14 @@ class TextCommandInterpreterTest {
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
     assertEquals(
-        "OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Torch (A small torch)\n\n" + "Emberline> ",
+        "OK EQUIPMENT\n" + "Equipment:\n" + "- HEAD: Torch (A small torch)\n\n" + "demo> ",
         renderedResponse("EQ", interpretation));
   }
 
   @Test
   void containerIsVisibleAfterPlay() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "CONTAINER Torch", false);
@@ -683,7 +729,7 @@ class TextCommandInterpreterTest {
   @Test
   void wearAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "WEAR Torch", false);
@@ -692,7 +738,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("Emberline> ", renderedResponse("WEAR Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("WEAR Torch", interpretation));
     verify(commandService).enqueue("1", "WEAR Torch", false);
     verify(gameLogicClient, never())
         .wearEquipment(Mockito.any(SessionContext.class), Mockito.anyString(), Mockito.anyString());
@@ -701,7 +747,7 @@ class TextCommandInterpreterTest {
   @Test
   void removeAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "REMOVE Torch", false);
@@ -710,7 +756,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("Emberline> ", renderedResponse("REMOVE Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("REMOVE Torch", interpretation));
     verify(commandService).enqueue("1", "REMOVE Torch", false);
     verify(gameLogicClient, never())
         .removeEquipment(Mockito.any(SessionContext.class), Mockito.anyString());
@@ -719,7 +765,7 @@ class TextCommandInterpreterTest {
   @Test
   void getAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation = interpreter.interpret("1", "GET Torch", false);
 
@@ -727,7 +773,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("Emberline> ", renderedResponse("GET Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("GET Torch", interpretation));
     verify(commandService).enqueue("1", "GET Torch", false);
     verify(gameLogicClient, never())
         .pickupItemFromRoom(
@@ -743,7 +789,7 @@ class TextCommandInterpreterTest {
   @Test
   void dropAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "DROP Torch", false);
@@ -752,7 +798,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("Emberline> ", renderedResponse("DROP Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("DROP Torch", interpretation));
     verify(commandService).enqueue("1", "DROP Torch", false);
     verify(gameLogicClient, never())
         .dropItemToRoom(
@@ -768,7 +814,7 @@ class TextCommandInterpreterTest {
   @Test
   void putAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "PUT Ration INTO Torch", false);
@@ -777,7 +823,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("Emberline> ", renderedResponse("PUT Ration INTO Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("PUT Ration INTO Torch", interpretation));
     verify(commandService).enqueue("1", "PUT Ration INTO Torch", false);
     verify(gameLogicClient, never())
         .putItemIntoContainer(
@@ -792,7 +838,7 @@ class TextCommandInterpreterTest {
   @Test
   void takeAfterPlayEnqueuesDurableMutation() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "TAKE Ration FROM Torch", false);
@@ -801,7 +847,7 @@ class TextCommandInterpreterTest {
     assertEquals(
         List.of(PlayerOutputKind.PROMPT),
         interpretation.outputs().stream().map(PlayerOutput::kind).toList());
-    assertEquals("Emberline> ", renderedResponse("TAKE Ration FROM Torch", interpretation));
+    assertEquals("demo> ", renderedResponse("TAKE Ration FROM Torch", interpretation));
     verify(commandService).enqueue("1", "TAKE Ration FROM Torch", false);
     verify(gameLogicClient, never())
         .takeItemFromContainer(
@@ -878,7 +924,7 @@ class TextCommandInterpreterTest {
   @Test
   void lookAfterPlayAppendsPromptOutput() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult look = interpreter.interpret("1", "LOOK", false);
 
@@ -889,13 +935,13 @@ class TextCommandInterpreterTest {
     LookViewOutput payload = (LookViewOutput) look.outputs().get(0).payload();
     assertEquals("Login Hall", payload.roomName());
     assertTrue(payload.includeLongDescription());
-    assertEquals("Emberline> ", look.outputs().get(1).text());
+    assertEquals("demo> ", look.outputs().get(1).text());
   }
 
   @Test
   void quickLookAfterPlayUsesShortVariantAndAppendsPrompt() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     TextCommandInterpretationResult quickLook = interpreter.interpret("1", "QUICKLOOK", false);
 
@@ -906,7 +952,7 @@ class TextCommandInterpreterTest {
     LookViewOutput payload = (LookViewOutput) quickLook.outputs().get(0).payload();
     assertEquals("Login Hall", payload.roomName());
     assertFalse(payload.includeLongDescription());
-    assertEquals("Emberline> ", quickLook.outputs().get(1).text());
+    assertEquals("demo> ", quickLook.outputs().get(1).text());
   }
 
   @Test
@@ -937,7 +983,7 @@ class TextCommandInterpreterTest {
   @Test
   void directionalAliasAfterPlayDelegatesToMoveHandler() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     when(commandService.enqueue("1", "s", false))
         .thenReturn(CommandEnqueueResult.success("cmd-77"));
@@ -954,7 +1000,7 @@ class TextCommandInterpreterTest {
   @Test
   void malformedMovementAfterPlayReturnsInvalidArgumentWithoutEnqueueing() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
     Mockito.clearInvocations(commandService);
 
     for (String rawLine : List.of("north extra", "go west extra", "move sideways")) {
@@ -974,12 +1020,14 @@ class TextCommandInterpreterTest {
   void loginPlayAndLookFlowWorks() {
     TextCommandInterpretationResult login =
         interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    TextCommandInterpretationResult play = interpreter.interpret("1", "PLAY demo", false);
+    TextCommandInterpretationResult play = interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
     TextCommandInterpretationResult look = interpreter.interpret("1", "LOOK", false);
 
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
-    assertEquals("OK PLAY Entered world: demo\nEmberline> ", renderedResponse("PLAY demo", play));
+    assertEquals(
+        "OK PLAY Entered world: demo as demo\ndemo> ",
+        renderedResponse(PLAY_DEMO_PRODUCTION, play));
     assertTrue(look.commandResult().accepted());
     assertEquals(
         List.of(PlayerOutputKind.VIEW, PlayerOutputKind.PROMPT),
@@ -993,7 +1041,7 @@ class TextCommandInterpreterTest {
   void sayAfterPlayDelegatesToHandler() {
     TextCommandInterpretationResult login =
         interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    TextCommandInterpretationResult play = interpreter.interpret("1", "PLAY demo", false);
+    TextCommandInterpretationResult play = interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
     assertTrue(login.commandResult().accepted());
     assertTrue(play.commandResult().accepted());
 
@@ -1013,7 +1061,7 @@ class TextCommandInterpreterTest {
   @Test
   void moveAfterPlayReturnsStructuredViewAndPrompt() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
-    interpreter.interpret("1", "PLAY demo", false);
+    interpreter.interpret("1", PLAY_DEMO_PRODUCTION, false);
 
     when(commandService.enqueue("1", "MOVE north", false))
         .thenReturn(CommandEnqueueResult.success("cmd-move-1"));
@@ -1024,7 +1072,7 @@ class TextCommandInterpreterTest {
     assertTrue(interpretation.commandResult().accepted());
     assertEquals(1, interpretation.outputs().size());
     assertEquals(PlayerOutputKind.PROMPT, interpretation.outputs().get(0).kind());
-    assertEquals("Emberline> ", interpretation.outputs().get(0).text());
+    assertEquals("demo> ", interpretation.outputs().get(0).text());
     verify(commandService).enqueue("1", "MOVE north", false);
   }
 
@@ -1037,7 +1085,11 @@ class TextCommandInterpreterTest {
   }
 
   private static GameplayCatalogProperties.World world(
-      String slug, long tenantId, long gameInstanceId, boolean requiresCharacterSelection) {
+      String slug,
+      long tenantId,
+      long gameInstanceId,
+      boolean publicProductionRealm,
+      boolean requiresCharacterSelection) {
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
     world.setSlug(slug);
     world.setDisplayName(
@@ -1052,14 +1104,27 @@ class TextCommandInterpreterTest {
     realm.setTenantId(tenantId);
     realm.setGameInstanceId(gameInstanceId);
     realm.setVisible(true);
-    realm.setPublicProductionRealm(true);
+    realm.setPublicProductionRealm(publicProductionRealm);
     realm.setRequiresCharacterSelection(requiresCharacterSelection);
     world.setRealms(List.of(realm));
     return world;
   }
 
   private static GameplayAdmissionPointerSnapshot pointer(
-      String worldSlug, String realmSlug, long tenantId, long gameInstanceId, long pointerVersion) {
+      String worldSlug,
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean publicProductionRealm) {
+    java.util.UUID realmId =
+        switch (worldSlug) {
+          case "demo" -> java.util.UUID.fromString("f67fd9ec-c8e0-48d0-b238-d0c0a57fb8d9");
+          case "sandbox" -> java.util.UUID.fromString("e4d17ea7-c544-4ec1-a6d7-c756b1dc2c0b");
+          default ->
+              java.util.UUID.nameUUIDFromBytes(
+                  (worldSlug + ":" + realmSlug).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        };
     return new GameplayAdmissionPointerSnapshot(
         worldSlug,
         worldSlug,
@@ -1069,10 +1134,17 @@ class TextCommandInterpreterTest {
         gameInstanceId,
         pointerVersion,
         true,
-        true,
+        publicProductionRealm,
         false,
         "SHARED",
-        "ALLOW_NEW");
+        "ALLOW_NEW",
+        1L,
+        realmId,
+        stableUuid("shared-namespace:" + tenantId));
+  }
+
+  private static UUID stableUuid(String value) {
+    return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
   }
 
   private static SessionContext bootstrapShell(long sessionId, long bootstrapGameInstanceId) {
@@ -1174,5 +1246,33 @@ class TextCommandInterpreterTest {
     private boolean hasGameplayIdentity(SessionContext context) {
       return context.gameInstanceId() > 0 && context.characterId() > 0;
     }
+  }
+
+  @Test
+  void charsAreUnavailableUntilTypedEntityRosterProofExists() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "CHARS demo", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("CHARACTER_LIST_UNAVAILABLE", interpretation.commandResult().errorCode());
+    verify(entityManagementClient, never())
+        .listCharactersByAccount(
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.anyString(),
+            Mockito.any(PlayableStateScope.class));
+  }
+
+  @Test
+  void realmsFailClosedWhenAccountScopeIssuerIsUnavailable() {
+    interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
+
+    TextCommandInterpretationResult interpretation =
+        interpreter.interpret("1", "REALMS demo", false);
+
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", interpretation.commandResult().errorCode());
   }
 }

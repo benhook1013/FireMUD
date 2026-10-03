@@ -172,6 +172,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       materialRequests.add(
           new RoleMaterialRequest(
               HostedIdentityContract.GRPC_GAME_SESSION_ROLE, materialization::grpcGameSession));
+      materialRequests.add(
+          new RoleMaterialRequest(
+              HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE, materialization::grpcSocialGroups));
       List<RoleMaterialBinding> rolePipeline = new ArrayList<>();
       for (RoleMaterialRequest request : materialRequests) {
         CertificateMaterialService.RoleMaterial material = request.material().get();
@@ -201,6 +204,10 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
           roleMaterials.material(HostedIdentityContract.GRPC_ROLE);
       CertificateMaterialService.RoleMaterial grpcAccount =
           roleMaterials.material(HostedIdentityContract.GRPC_ACCOUNT_ROLE);
+      CertificateMaterialService.RoleMaterial grpcGameSession =
+          roleMaterials.material(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+      CertificateMaterialService.RoleMaterial grpcSocialGroups =
+          roleMaterials.material(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
       validateDistinctIdentities(
           rolePipeline.stream()
               .map(RoleMaterialBinding::material)
@@ -245,6 +252,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       workloadIdentityRevisions.put(
           HostedIdentityContract.GRPC_GAME_SESSION_ROLE,
           projections.get(HostedIdentityContract.GRPC_GAME_SESSION_ROLE).revision());
+      workloadIdentityRevisions.put(
+          HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE,
+          projections.get(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE).revision());
       DeploymentRolloutService.RolloutResult rollout =
           deploymentRolloutService.sync(
               client,
@@ -272,7 +282,9 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
                 bridgeMaterial,
                 gatewayInternalWs.summary().certificateFingerprint(),
                 grpc.source(),
-                grpcAccount.summary().certificateFingerprint());
+                grpcAccount.summary().certificateFingerprint(),
+                grpcGameSession.summary().certificateFingerprint(),
+                grpcSocialGroups.summary().certificateFingerprint());
       } else {
         probes = new ServedEnvironmentProbe.ProbeResult(false, "rollout-pending");
       }
@@ -537,13 +549,10 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
     private boolean workloadIdentityEvidenceComplete() {
       return HostedIdentityContract.GRPC_PUBLICATION_WORKLOADS.stream()
               .map(HostedIdentityContract::grpcPublicationRole)
-              .allMatch(
-                  role -> {
-                    CertificateMaterialService.RoleMaterial material = materialsByRole.get(role);
-                    return material != null && material.ready();
-                  })
+              .allMatch(this::roleReady)
           && roleReady(HostedIdentityContract.GRPC_ACCOUNT_ROLE)
-          && roleReady(HostedIdentityContract.GRPC_GAME_SESSION_ROLE);
+          && roleReady(HostedIdentityContract.GRPC_GAME_SESSION_ROLE)
+          && roleReady(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE);
     }
 
     private boolean roleReady(String role) {
@@ -1050,7 +1059,7 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       phase = HostedEnvironmentIdentityStatus.Phase.Verifying;
       reason = "WorkloadIdentityEvidenceIncomplete";
       message =
-          "all five protected publication projections and the exact Account and Game Session workload identities are required for readiness; readiness does not authorize publication methods";
+          "all five protected publication projections and the exact Account, Game Session, and Social Groups workload identities are required for readiness; readiness does not authorize publication methods";
     }
     HostedEnvironmentIdentityStatus updatedStatus =
         statusService.status(
@@ -1083,6 +1092,10 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
         roleStatus(
             materials.material(HostedIdentityContract.GRPC_GAME_SESSION_ROLE),
             previousRole(resource, HostedIdentityContract.GRPC_GAME_SESSION_ROLE)));
+    updatedStatus.setGrpcSocialGroupsService(
+        roleStatus(
+            materials.material(HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE),
+            previousRole(resource, HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE)));
     updatedStatus.setGrpcPublication(publicationRoleStatus(resource, materials));
     resource.setStatus(updatedStatus);
     return UpdateControl.patchStatus(resource).rescheduleAfter(properties.getReconcileInterval());
@@ -1147,6 +1160,8 @@ public class HostedIdentityReconciler implements Reconciler<HostedEnvironmentIde
       case HostedIdentityContract.GRPC_ACCOUNT_ROLE -> resource.getStatus().getGrpcAccountService();
       case HostedIdentityContract.GRPC_GAME_SESSION_ROLE ->
           resource.getStatus().getGrpcGameSessionService();
+      case HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE ->
+          resource.getStatus().getGrpcSocialGroupsService();
       default -> throw new IllegalArgumentException("unsupported identity role: " + role);
     };
   }

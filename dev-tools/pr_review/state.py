@@ -35,8 +35,7 @@ def _fingerprint_value(value: Any) -> Any:
         return _fingerprint_value(dataclasses.asdict(value))
     if isinstance(value, Mapping):
         return {
-            str(key): _fingerprint_value(item)
-            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+            str(key): _fingerprint_value(item) for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         }
     if isinstance(value, (list, tuple)):
         return [_fingerprint_value(item) for item in value]
@@ -49,8 +48,14 @@ def observation_fingerprint(value: Any) -> str:
     """Hash one immutable evidence observation for a legacy transition."""
 
     try:
+        normalized = _fingerprint_value(value)
+        # Historical two-count checkpoints had no routed field. Runtime
+        # projections expose that unknown count as None; keep their identity
+        # stable while retaining explicit modern routed counts in the hash.
+        if isinstance(normalized, dict) and "routed" in normalized and normalized["routed"] is None:
+            normalized.pop("routed")
         encoded = json.dumps(
-            _fingerprint_value(value),
+            normalized,
             ensure_ascii=True,
             sort_keys=True,
             separators=(",", ":"),
@@ -179,9 +184,13 @@ class SummaryFindingDisposition:
         elif self.corrected_head is not None:
             raise StateError("only accepted-fixed summary dispositions may set a corrected head")
         if self.decision == "routed":
-            if not isinstance(self.route_ids, tuple) or not self.route_ids or any(
-                not isinstance(route_id, str) or not re.fullmatch(r"[0-9a-f]{24}", route_id)
-                for route_id in self.route_ids
+            if (
+                not isinstance(self.route_ids, tuple)
+                or not self.route_ids
+                or any(
+                    not isinstance(route_id, str) or not re.fullmatch(r"[0-9a-f]{24}", route_id)
+                    for route_id in self.route_ids
+                )
             ):
                 raise StateError("routed summary disposition requires stable route IDs")
         elif self.route_ids:
@@ -305,8 +314,17 @@ class FindingRoute:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> FindingRoute:
         allowed = {
-            "route_id", "source_pr", "source_channel", "source_review", "source_finding", "observations",
-            "target_pr", "status", "disposition", "proof", "target_history",
+            "route_id",
+            "source_pr",
+            "source_channel",
+            "source_review",
+            "source_finding",
+            "observations",
+            "target_pr",
+            "status",
+            "disposition",
+            "proof",
+            "target_history",
         }
         target_history = value.get("target_history", [])
         if (
@@ -369,11 +387,7 @@ def _summary_route_matches_disposition(
     if reference.startswith("ref:"):
         return bool(reference[4:].strip())
     legacy = re.fullmatch(r"(?P<count>[1-9][0-9]*):(?P<reference>.+)", reference)
-    return bool(
-        legacy
-        and int(legacy.group("count")) == disposition.count
-        and legacy.group("reference").strip()
-    )
+    return bool(legacy and int(legacy.group("count")) == disposition.count and legacy.group("reference").strip())
 
 
 def adjudicate_summary_findings(
@@ -683,10 +697,10 @@ class LegacyEvidenceTransition:
 class ReviewAllocation:
     """A durable one-result allocation or explicit channel-stop decision.
 
-    The allocation is bound to the complete stack identity observed when an
-    operator made the promise. The controller may consume it only after a
-    completed result for that identity. New stop decisions record the exact
-    reviewed checkpoint and the current live anchor separately; legacy handoff
+    Human allowances retain available observed identity facts; unavailable
+    Git facts remain null. Request admission and attributable completion
+    checks remain separate from recording the human policy. New stop decisions record the exact
+    optional reviewed checkpoint and available live audit context separately; legacy handoff
     fields remain readable for state migration and are never newly issued.
     """
 
@@ -695,8 +709,8 @@ class ReviewAllocation:
     head: str
     parent_identity: str
     parent_head: str
-    merge_base: str
-    patch_id: str
+    merge_base: str | None
+    patch_id: str | None
     baseline_checkpoints: tuple[str, ...]
     reason: str
     handoff_checkpoint: str | None = None
@@ -727,10 +741,14 @@ class ReviewAllocation:
             raise StateError("review allocation channel must be hosted or cli")
         for name in ("head", "parent_head", "merge_base"):
             value = getattr(self, name)
+            if name == "merge_base" and value is None:
+                continue
             if not isinstance(value, str) or not EXACT_SHA.fullmatch(value):
                 raise StateError(f"review allocation {name} must be an exact SHA")
         for name in ("parent_identity", "patch_id", "reason"):
             value = getattr(self, name)
+            if name == "patch_id" and value is None:
+                continue
             if not isinstance(value, str) or not value.strip():
                 raise StateError(f"review allocation {name} must be a non-empty string")
         if not isinstance(self.baseline_checkpoints, tuple):
@@ -756,8 +774,10 @@ class ReviewAllocation:
         if self.min_additional_completed is None and self.max_additional_completed is None:
             if self.baseline_checkpoint is not None:
                 raise StateError("a bounded review allocation requires a minimum or maximum")
-        elif self.min_additional_completed is not None and self.max_additional_completed is not None and (
-            self.min_additional_completed > self.max_additional_completed
+        elif (
+            self.min_additional_completed is not None
+            and self.max_additional_completed is not None
+            and (self.min_additional_completed > self.max_additional_completed)
         ):
             raise StateError("minimum additional completed reviews cannot exceed the maximum")
         if self.baseline_checkpoint is not None and (
@@ -791,9 +811,27 @@ class ReviewAllocation:
         else:
             if self.stop_basis not in {"allocated", "direct_human"}:
                 raise StateError("review allocation stop basis must be allocated or direct_human")
-            if not all(isinstance(value, str) and value.strip() for value in stop_values):
+            reviewed_values = stop_values[:3]
+            no_reviewed_checkpoint = self.stop_basis == "direct_human" and all(
+                value is None for value in reviewed_values
+            )
+            required_stop_values = (self.stop_head, self.stop_parent_identity, self.stop_parent_head, self.stop_reason)
+            if self.stop_basis == "allocated":
+                required_stop_values += (self.stop_merge_base, self.stop_patch_id)
+            if not all(isinstance(value, str) and value.strip() for value in required_stop_values) or (
+                not no_reviewed_checkpoint
+                and not all(isinstance(value, str) and value.strip() for value in reviewed_values)
+            ):
                 raise StateError("review allocation stop proof must be complete")
+            if self.stop_patch_id is not None and (
+                not isinstance(self.stop_patch_id, str) or not self.stop_patch_id.strip()
+            ):
+                raise StateError("review allocation stop patch identity must be a non-empty string")
             for name in ("stop_reviewed_head", "stop_head", "stop_parent_head", "stop_merge_base"):
+                if name == "stop_reviewed_head" and no_reviewed_checkpoint:
+                    continue
+                if name == "stop_merge_base" and self.stop_basis == "direct_human" and self.stop_merge_base is None:
+                    continue
                 if not EXACT_SHA.fullmatch(getattr(self, name) or ""):
                     raise StateError(f"review allocation {name} must be an exact SHA")
             if len(self.stop_reason or "") > 500 or any(ord(character) < 0x20 for character in self.stop_reason or ""):
@@ -909,9 +947,7 @@ class ReviewAllocation:
         raw_retained_fingerprints = value.get("retained_ambiguous_fingerprints")
         legacy_retained_fingerprint = value.get("retained_ambiguous_fingerprint")
         if raw_retained_fingerprints is None:
-            raw_retained_fingerprints = (
-                () if legacy_retained_fingerprint is None else (legacy_retained_fingerprint,)
-            )
+            raw_retained_fingerprints = () if legacy_retained_fingerprint is None else (legacy_retained_fingerprint,)
         elif isinstance(raw_retained_fingerprints, list):
             raw_retained_fingerprints = tuple(raw_retained_fingerprints)
         else:
@@ -1155,8 +1191,7 @@ class StateStore:
             if isinstance(cutover, dict) and cutover.get("format") == "firemud-pr-review-sqlite-cutover":
                 database = cutover.get("database")
                 raise StateError(
-                    "review-stack JSON was migrated to SQLite"
-                    + (f": {database}" if isinstance(database, str) else "")
+                    "review-stack JSON was migrated to SQLite" + (f": {database}" if isinstance(database, str) else "")
                 )
             raise StateError("review-stack state path is a directory")
         try:
@@ -1177,6 +1212,8 @@ class StateStore:
             self._save_unlocked(state)
 
     def _save_unlocked(self, state: ReviewState) -> None:
+        if any(allocation.stop_basis == "direct_human" for allocation in state.allocations.values()):
+            raise StateError("direct-human stop state requires compatible SQLite review state")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False
@@ -1264,16 +1301,22 @@ def _cutover_sqlite_store(path: Path) -> tuple[Any, dict[str, Any]]:
     expected_values = {
         "sqlite_schema_version": status.get("schema_version"),
         "state_schema_version": status.get("data_model_version"),
-        "min_writer_build": status.get("min_writer_build"),
     }
     for key, expected_value in expected_values.items():
         marker_value = marker.get(key)
-        if (
-            isinstance(marker_value, bool)
-            or not isinstance(marker_value, int)
-            or marker_value != expected_value
-        ):
+        if isinstance(marker_value, bool) or not isinstance(marker_value, int) or marker_value != expected_value:
             raise StateError("SQLite cutover marker does not match database metadata")
+    marker_writer_build = marker.get("min_writer_build")
+    database_writer_build = status.get("min_writer_build")
+    if (
+        isinstance(marker_writer_build, bool)
+        or not isinstance(marker_writer_build, int)
+        or marker_writer_build <= 0
+        or isinstance(database_writer_build, bool)
+        or not isinstance(database_writer_build, int)
+        or marker_writer_build > database_writer_build
+    ):
+        raise StateError("SQLite cutover marker does not match database metadata")
     if marker.get("sqlite_schema_version") != SQLITE_SCHEMA_VERSION:
         raise StateError("SQLite cutover marker has an unsupported schema version")
     return store, status

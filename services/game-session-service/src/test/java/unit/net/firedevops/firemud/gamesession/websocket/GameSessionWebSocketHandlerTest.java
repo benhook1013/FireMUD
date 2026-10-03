@@ -9,9 +9,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
 import net.firedevops.firemud.gamesession.command.text.LookCommandHandler;
@@ -142,7 +144,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -242,7 +244,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -290,7 +292,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -330,7 +332,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -343,7 +345,7 @@ class GameSessionWebSocketHandlerTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW"),
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "preview",
@@ -393,7 +395,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -406,7 +408,7 @@ class GameSessionWebSocketHandlerTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW"),
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "preview",
@@ -450,7 +452,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -531,7 +533,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -625,7 +627,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -689,7 +691,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -702,7 +704,7 @@ class GameSessionWebSocketHandlerTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW"),
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "preview",
@@ -732,6 +734,23 @@ class GameSessionWebSocketHandlerTest {
                         && context.worldSlug() == null
                         && context.realmSlug() == null
                         && context.pointerVersion() == 0L));
+  }
+
+  @Test
+  void missingTransportSessionIdRejectsMalformedCommandBeforeParsing() throws Exception {
+    when(session.getAttributes()).thenReturn(Map.of());
+    when(parser.parse("GET 2147483648 Torch")).thenThrow(new NumberFormatException("overflow"));
+
+    handler.handleMessage(session, new TextMessage("GET 2147483648 Torch"));
+
+    verify(session)
+        .sendMessage(
+            argThat(
+                message ->
+                    "ERROR INVALID_ARGUMENT sessionId header required"
+                        .equals(message.getPayload())));
+    verify(session).close(CloseStatus.BAD_DATA);
+    verify(parser, never()).parse(any());
   }
 
   @Test
@@ -1080,11 +1099,20 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
-  void resumedPlayRefreshesLookWhenNoRetainedBufferExists() throws Exception {
+  void genericReconnectPlayEmitsFreshLookAndConfiguredPromptWithoutRetainedBufferReads()
+      throws Exception {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext binding =
         new SessionContext(
             41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+    PresentationProperties presentation =
+        new PresentationProperties(
+            "en-NZ",
+            PresentationProperties.ColorMode.NONE,
+            false,
+            new PresentationProperties.Prompt(true, true, 150L));
+    PlayerOutput freshLook = PlayerOutput.message("Fresh room view");
+    PlayerOutput prompt = PlayerOutput.prompt("fresh prompt");
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1100,10 +1128,21 @@ class GameSessionWebSocketHandlerTest {
             any(TextCommandInterpretationResult.class),
             eq(List.of()),
             eq("en-NZ"),
-            any(PresentationProperties.class),
+            eq(presentation),
             any()))
         .thenReturn("OK PLAY");
-    when(screenBufferService.get(22L, 7L, 7001L)).thenReturn(Optional.empty());
+    when(settingsResolver.presentation(binding)).thenReturn(presentation);
+    when(lookHandler.describePlayerOutput(
+            "41",
+            true,
+            net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
+                .RECONNECT_REFRESH))
+        .thenReturn(freshLook);
+    when(promptComposer.compose(binding)).thenReturn(Optional.of(prompt));
+    when(outputProjector.projectPlayerOutput(session, freshLook, "en-NZ", presentation))
+        .thenReturn("Fresh room view");
+    when(outputProjector.projectPlayerOutput(session, prompt, "en-NZ", presentation))
+        .thenReturn("fresh prompt");
 
     handler.handleMessage(session, new TextMessage("PLAY demo"));
 
@@ -1113,6 +1152,13 @@ class GameSessionWebSocketHandlerTest {
             true,
             net.firedevops.firemud.gamesession.presentation.LookViewOutput.RefreshReason
                 .RECONNECT_REFRESH);
+    verify(outputProjector).projectPlayerOutput(session, freshLook, "en-NZ", presentation);
+    verify(promptComposer).compose(binding);
+    verify(outputProjector).projectPlayerOutput(session, prompt, "en-NZ", presentation);
+    verify(promptBurstCoordinator).recordPromptEmission("41");
+    verify(session).sendMessage(new TextMessage("Fresh room view"));
+    verify(session).sendMessage(new TextMessage("fresh prompt"));
+    Mockito.verifyNoInteractions(screenBufferService);
   }
 
   @ParameterizedTest
@@ -1298,7 +1344,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -1429,7 +1475,7 @@ class GameSessionWebSocketHandlerTest {
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
             List.of(
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "production",
@@ -1442,7 +1488,7 @@ class GameSessionWebSocketHandlerTest {
                     false,
                     "SHARED",
                     "ALLOW_NEW"),
-                new GameplayAdmissionPointerSnapshot(
+                pointer(
                     "demo",
                     "Demo",
                     "preview",
@@ -1483,5 +1529,44 @@ class GameSessionWebSocketHandlerTest {
                         && context.worldSlug() == null
                         && context.realmSlug() == null
                         && context.pointerVersion() == 0L));
+  }
+
+  private static GameplayAdmissionPointerSnapshot pointer(
+      String worldSlug,
+      String worldDisplayName,
+      String realmSlug,
+      String realmDisplayName,
+      long tenantId,
+      long gameInstanceId,
+      long pointerVersion,
+      boolean visible,
+      boolean publicProductionRealm,
+      boolean requiresCharacterSelection,
+      String stateScope,
+      String characterCreationPolicy) {
+    String namespaceIdentity =
+        "SHARED".equals(stateScope)
+            ? "shared-namespace:" + tenantId
+            : "isolated-namespace:" + tenantId + ":" + worldSlug + ":" + realmSlug;
+    return new GameplayAdmissionPointerSnapshot(
+        worldSlug,
+        worldDisplayName,
+        realmSlug,
+        realmDisplayName,
+        tenantId,
+        gameInstanceId,
+        pointerVersion,
+        visible,
+        publicProductionRealm,
+        requiresCharacterSelection,
+        stateScope,
+        characterCreationPolicy,
+        1L,
+        stableUuid("realm:" + tenantId + ":" + worldSlug + ":" + realmSlug),
+        stableUuid(namespaceIdentity));
+  }
+
+  private static UUID stableUuid(String value) {
+    return UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
   }
 }

@@ -1437,8 +1437,12 @@ jobs:
           room_id="$(jq -er '.lookRoomId | select(type == "string" and length > 0)' "$TELNET_SEMANTIC_OUT")"
           python3 ./dev-tools/hosted/shared/hosted-websocket-playable-smoke.py \
             --gateway-base "https://${PREVIEW_HOSTNAME}" \
+            --auth-base "https://${PREVIEW_HOSTNAME}" \
+            --auth-prefix "/api/account" \
             --websocket-url "wss://${PREVIEW_HOSTNAME}/ws/game" \
             --origin "https://${PREVIEW_HOSTNAME}" \
+            --readiness-url "" \
+            --revoke-url "" \
             --username "$HOSTED_PLAYABLE_EMAIL" \
             --password "$HOSTED_PLAYABLE_PASSWORD" \
             --world "$HOSTED_PLAYABLE_WORLD" \
@@ -1447,7 +1451,7 @@ jobs:
             --expected-room-id "$room_id" \
             --reconnect > "$WSS_SEMANTIC_OUT"
           jq -e --arg expected "$room_id" \
-            '.transport == "first-party-wss" and .classification == "diagnostic-operator-smoke" and .lookRoomId == $expected and .sessions == 2 and .logout == true and .reconnect == true' \
+            '.transport == "first-party-wss" and .classification == "diagnostic-operator-smoke" and .steps == ["LOGIN", "PLAY", "LOOK"] and .lookRoomId == $expected and .sessions == 2 and .logout == false and .reconnect == true and .replayRejected == true' \
             "$WSS_SEMANTIC_OUT" >/dev/null
 
       - name: Revalidate exact source binding and runtime Namespace UID before diagnostics
@@ -1603,7 +1607,6 @@ jobs:
               `${process.env.GITHUB_WORKSPACE}/dev-tools/hosted/preview/publish-preview-comment.js`
             );
             let namespaceJson = "";
-            let kubectlError = null;
             try {
               namespaceJson = execFileSync(
                 "kubectl",
@@ -1617,43 +1620,67 @@ jobs:
                 ],
                 { encoding: "utf8" },
               );
-            } catch (error) {
-              kubectlError = error;
-            }
-            if (kubectlError) {
+            } catch {
               core.warning(
-                `Unable to compare the current preview Namespace UID before failure publication; preserving failure reporting: ${kubectlError.message}`,
+                "Skipping stale preview verification failure publication because the current Namespace could not be read.",
               );
-            } else if (namespaceJson.trim()) {
-              let observedUid = "";
-              try {
-                const namespace = JSON.parse(namespaceJson);
-                observedUid =
-                  typeof namespace?.metadata?.uid === "string"
-                    ? namespace.metadata.uid
-                    : "";
-              } catch (error) {
-                core.warning(
-                  `Current preview Namespace JSON was malformed before failure publication; preserving failure reporting: ${error.message}`,
-                );
-              }
-              if (
-                observedUid &&
-                process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID &&
-                observedUid !== process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID
-              ) {
-                core.notice(
-                  `Skipping stale preview verification failure publication because current Namespace UID ${observedUid} differs from this deploy's UID ${process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID}.`,
-                );
-                return;
-              }
+              return;
+            }
+            if (!namespaceJson.trim()) {
+              core.notice(
+                "Skipping stale preview verification failure publication because the current Namespace is absent.",
+              );
+              return;
+            }
+            let namespace;
+            try {
+              namespace = JSON.parse(namespaceJson);
+            } catch {
+              core.warning(
+                "Skipping stale preview verification failure publication because current Namespace JSON is malformed.",
+              );
+              return;
+            }
+            const metadata = namespace?.metadata;
+            const labels = metadata?.labels;
+            const annotations = metadata?.annotations;
+            const expectedTuple = {
+              "firemud.dev/requested-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+              "firemud.dev/requested-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+              "firemud.dev/requested-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+              "firemud.dev/requested-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+              "firemud.dev/last-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+              "firemud.dev/last-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+              "firemud.dev/last-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+              "firemud.dev/last-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+            };
+            const expectedNamespace = `pr-${process.env.PREVIEW_PR_NUMBER}`;
+            const expectedUid = process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID;
+            if (
+              process.env.RUNTIME_NAMESPACE !== expectedNamespace ||
+              metadata?.name !== expectedNamespace ||
+              typeof metadata?.uid !== "string" ||
+              metadata.uid.length === 0 ||
+              !expectedUid ||
+              metadata.uid !== expectedUid ||
+              labels?.["firemud.dev/preview"] !== "true" ||
+              labels?.["firemud.dev/pr-number"] !== process.env.PREVIEW_PR_NUMBER ||
+              Object.values(expectedTuple).some((value) => typeof value !== "string" || !value) ||
+              Object.entries(expectedTuple).some(
+                ([key, value]) => annotations?.[key] !== value,
+              )
+            ) {
+              core.notice(
+                "Skipping stale preview verification failure publication because the current Namespace UID or requested/deployed source tuple no longer matches this deploy.",
+              );
+              return;
             }
             await publishPreviewComment({
               github,
               context,
               core,
               mode: "failure",
-              markerPolicy: "replace",
+              markerPolicy: "preserve-reclaimed",
               statePolicy: "expected-open",
               telnetPort: "unavailable",
               failureStage: "verify-runtime",
@@ -1828,6 +1855,7 @@ jobs:
           PREVIEW_IMAGE_TAG: ${{ needs.validate-target.outputs.image_tag }}
           PREVIEW_HOSTNAME: ${{ needs.validate-target.outputs.hostname }}
           PREVIEW_EXPOSURE_MODE: ${{ needs.validate-target.outputs.exposure_mode }}
+          RUNTIME_NAMESPACE: ${{ needs.validate-target.outputs.namespace }}
           EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID: ${{ needs.deploy-runtime.outputs.runtime_namespace_uid }}
         with:
           script: |
@@ -1842,41 +1870,74 @@ jobs:
                 [
                   "get",
                   "namespace",
-                  `pr-${process.env.PREVIEW_PR_NUMBER}`,
+                  process.env.RUNTIME_NAMESPACE,
                   "--ignore-not-found",
                   "-o",
                   "json",
                 ],
                 { encoding: "utf8" },
               );
-            } catch (error) {
+            } catch {
               core.warning(
-                `Unable to compare the current preview Namespace UID before proof-failure publication; preserving failure reporting: ${error.message}`,
+                "Skipping stale preview proof failure publication because the current Namespace could not be read.",
               );
+              return;
             }
-            if (namespaceJson.trim()) {
-              try {
-                const namespace = JSON.parse(namespaceJson);
-                const observedUid = namespace?.metadata?.uid;
-                const expectedUid = process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID;
-                if (observedUid && expectedUid && observedUid !== expectedUid) {
-                  core.notice(
-                    `Skipping stale preview proof failure publication because current Namespace UID ${observedUid} differs from this deploy's UID ${expectedUid}.`,
-                  );
-                  return;
-                }
-              } catch (error) {
-                core.warning(
-                  `Current preview Namespace JSON was malformed before proof-failure publication; preserving failure reporting: ${error.message}`,
-                );
-              }
+            if (!namespaceJson.trim()) {
+              core.notice(
+                "Skipping stale preview proof failure publication because the current Namespace is absent.",
+              );
+              return;
+            }
+            let namespace;
+            try {
+              namespace = JSON.parse(namespaceJson);
+            } catch {
+              core.warning(
+                "Skipping stale preview proof failure publication because current Namespace JSON is malformed.",
+              );
+              return;
+            }
+            const metadata = namespace?.metadata;
+            const labels = metadata?.labels;
+            const annotations = metadata?.annotations;
+            const expectedTuple = {
+              "firemud.dev/requested-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+              "firemud.dev/requested-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+              "firemud.dev/requested-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+              "firemud.dev/requested-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+              "firemud.dev/last-preview-base-sha": process.env.PREVIEW_BASE_SHA,
+              "firemud.dev/last-preview-head-sha": process.env.PREVIEW_HEAD_SHA,
+              "firemud.dev/last-preview-merge-sha": process.env.PREVIEW_MERGE_SHA,
+              "firemud.dev/last-preview-image-tag": process.env.PREVIEW_IMAGE_TAG,
+            };
+            const expectedNamespace = `pr-${process.env.PREVIEW_PR_NUMBER}`;
+            const expectedUid = process.env.EXPECTED_DEPLOYED_RUNTIME_NAMESPACE_UID;
+            if (
+              process.env.RUNTIME_NAMESPACE !== expectedNamespace ||
+              metadata?.name !== expectedNamespace ||
+              typeof metadata?.uid !== "string" ||
+              metadata.uid.length === 0 ||
+              !expectedUid ||
+              metadata.uid !== expectedUid ||
+              labels?.["firemud.dev/preview"] !== "true" ||
+              labels?.["firemud.dev/pr-number"] !== process.env.PREVIEW_PR_NUMBER ||
+              Object.values(expectedTuple).some((value) => typeof value !== "string" || !value) ||
+              Object.entries(expectedTuple).some(
+                ([key, value]) => annotations?.[key] !== value,
+              )
+            ) {
+              core.notice(
+                "Skipping stale preview proof failure publication because the current Namespace UID or requested/deployed source tuple no longer matches this deploy.",
+              );
+              return;
             }
             await publishPreviewComment({
               github,
               context,
               core,
               mode: "failure",
-              markerPolicy: "replace",
+              markerPolicy: "preserve-reclaimed",
               statePolicy: "expected-open",
               telnetPort: "unavailable",
               failureStage: "verify-runtime",

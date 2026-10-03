@@ -21,9 +21,19 @@ import net.firedevops.firemud.common.settings.ScopedSettingsSnapshot;
 import net.firedevops.firemud.common.settings.SharedSettingsAuthorityReader;
 import net.firedevops.firemud.gamesession.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamesession.client.ModerationPolicyClient;
+import net.firedevops.firemud.gamesession.command.text.GameplayWorldCatalog;
 import net.firedevops.firemud.gamesession.dto.GameInstanceDto;
 import net.firedevops.firemud.gamesession.dto.StartSessionRequest;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.RunOwnedInitialLaunchResult;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
+import org.springframework.beans.factory.support.RootBeanDefinition;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.web.server.context.WebServerApplicationContext;
@@ -317,9 +327,61 @@ public final class CrossServiceAppHarness {
       };
     }
 
-    @Bean(name = "gameInstanceServiceImpl")
+    @Bean
+    @ConditionalOnProperty(
+        name = "firemud.database.enabled",
+        havingValue = "false",
+        matchIfMissing = true)
+    // Replace the scanned service before eager singleton creation in database-free tests.
+    static BeanDefinitionRegistryPostProcessor disabledDatabaseGameInstanceServiceStub() {
+      return new BeanDefinitionRegistryPostProcessor() {
+        @Override
+        public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
+          if (registry.containsBeanDefinition("gameInstanceServiceImpl")) {
+            registry.removeBeanDefinition("gameInstanceServiceImpl");
+          }
+          RootBeanDefinition stub = new RootBeanDefinition(GameInstanceService.class);
+          stub.setInstanceSupplier(GameSessionTestOverrides::stubGameInstanceService);
+          stub.setPrimary(true);
+          registry.registerBeanDefinition("gameInstanceServiceImpl", stub);
+        }
+
+        @Override
+        public void postProcessBeanFactory(ConfigurableListableBeanFactory beanFactory) {}
+      };
+    }
+
+    @Bean(name = "crossServiceTestGameInstanceService")
     @Primary
-    GameInstanceService gameInstanceService() {
+    @ConditionalOnProperty(name = "firemud.database.enabled", havingValue = "true")
+    GameInstanceService gameInstanceService(
+        @Qualifier("gameInstanceServiceImpl") GameInstanceService actualGameInstanceService) {
+      GameInstanceService stubGameInstanceService = stubGameInstanceService();
+      return new GameInstanceService() {
+        @Override
+        public GameInstanceDto startSession(
+            StartSessionRequest request, boolean replaceExistingFirst) {
+          return stubGameInstanceService.startSession(request, replaceExistingFirst);
+        }
+
+        @Override
+        public GameInstanceDto stopSession(long sessionId) {
+          return stubGameInstanceService.stopSession(sessionId);
+        }
+
+        @Override
+        public GameInstanceDto restartSession(long sessionId) {
+          return stubGameInstanceService.restartSession(sessionId);
+        }
+
+        @Override
+        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
+          return actualGameInstanceService.startRunOwnedInitialLaunch(request);
+        }
+      };
+    }
+
+    private static GameInstanceService stubGameInstanceService() {
       return new GameInstanceService() {
         @Override
         public GameInstanceDto startSession(
@@ -350,7 +412,31 @@ public final class CrossServiceAppHarness {
           return new GameInstanceDto(
               sessionId, 0L, "stub", null, null, null, null, null, null, null, null, "RUNNING");
         }
+
+        @Override
+        public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
+          throw new IllegalStateException(
+              "run-owned launch requires a database-enabled test context");
+        }
       };
+    }
+  }
+
+  /** Test-only catalog authority for the default demo cross-service transport fixture. */
+  @TestConfiguration
+  public static class DefaultDemoCatalogTestOverrides {
+    @Bean
+    @Primary
+    TestGameplayWorldCatalogs.MutableDefaultDemoCatalog defaultDemoCatalogFixture(
+        GameplayAdmissionPointerAuthorityService pointerAuthority) {
+      return new TestGameplayWorldCatalogs.MutableDefaultDemoCatalog(pointerAuthority);
+    }
+
+    @Bean
+    @Primary
+    GameplayWorldCatalog defaultDemoTestGameplayWorldCatalog(
+        TestGameplayWorldCatalogs.MutableDefaultDemoCatalog fixture) {
+      return fixture.catalog();
     }
   }
 

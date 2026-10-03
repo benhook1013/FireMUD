@@ -5,8 +5,6 @@ import net.firedevops.firemud.gamesession.entity.FeatureFlag;
 import net.firedevops.firemud.gamesession.entity.GameManifest;
 import net.firedevops.firemud.gamesession.repository.FeatureFlagRepository;
 import net.firedevops.firemud.gamesession.repository.GameManifestRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -25,8 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
     matchIfMissing = false)
 @RequiredArgsConstructor
 public class TestDataSeeder implements ApplicationRunner {
-  private static final Logger LOGGER = LoggerFactory.getLogger(TestDataSeeder.class);
-
   private final GameManifestRepository gameManifestRepository;
   private final FeatureFlagRepository featureFlagRepository;
 
@@ -48,9 +44,5 @@ public class TestDataSeeder implements ApplicationRunner {
     flag.setName("double_xp");
     flag.setEnabled(true);
     featureFlagRepository.save(flag);
-
-    LOGGER.warn(
-        "Skipping demo game instance seed: TestDataSeeder has no authoritative Account UUID"
-            + " source");
   }
 }

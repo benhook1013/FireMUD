@@ -5,6 +5,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.annotation.Import;
 
@@ -13,10 +14,15 @@ import org.springframework.context.annotation.Import;
 @Import(GlobalExceptionHandler.class)
 public class GameDesignServiceApplication {
   public static void main(String[] args) {
-    if (oneShotMigrationRequested()) {
+    MigrationMode migrationMode =
+        selectMigrationMode(
+            System.getenv("FIREMUD_ENTITY_BASELINE_MIGRATION_ENABLED"),
+            System.getenv("FIREMUD_TENANT_ASSOCIATION_MIGRATION_ENABLED"));
+    if (migrationMode != MigrationMode.NORMAL) {
       requireNoSharedJwtSecret();
       SpringApplication application = new SpringApplication(GameDesignServiceApplication.class);
       application.setWebApplicationType(WebApplicationType.NONE);
+      application.addInitializers(new RequireFlywayDisabledInitializer());
       application.setDefaultProperties(
           java.util.Map.of(
               "spring.main.web-application-type", "none",
@@ -33,9 +39,39 @@ public class GameDesignServiceApplication {
     }
   }
 
-  private static boolean oneShotMigrationRequested() {
-    return "true".equals(System.getenv("FIREMUD_ENTITY_BASELINE_MIGRATION_ENABLED"))
-        || "true".equals(System.getenv("FIREMUD_TENANT_ASSOCIATION_MIGRATION_ENABLED"));
+  static MigrationMode selectMigrationMode(String entityBaseline, String tenantAssociation) {
+    boolean entityBaselineEnabled = "true".equals(entityBaseline);
+    boolean tenantAssociationEnabled = "true".equals(tenantAssociation);
+    if (entityBaselineEnabled && tenantAssociationEnabled) {
+      throw new IllegalStateException(
+          "Game Design one-shot migration modes cannot be enabled together");
+    }
+    if (entityBaselineEnabled) {
+      return MigrationMode.ENTITY_BASELINE;
+    }
+    if (tenantAssociationEnabled) {
+      return MigrationMode.TENANT_ASSOCIATION;
+    }
+    return MigrationMode.NORMAL;
+  }
+
+  enum MigrationMode {
+    NORMAL,
+    ENTITY_BASELINE,
+    TENANT_ASSOCIATION
+  }
+
+  static final class RequireFlywayDisabledInitializer
+      implements ApplicationContextInitializer<ConfigurableApplicationContext> {
+    @Override
+    public void initialize(ConfigurableApplicationContext applicationContext) {
+      String flywayEnabled =
+          applicationContext.getEnvironment().getProperty("spring.flyway.enabled");
+      if (!"false".equalsIgnoreCase(flywayEnabled)) {
+        throw new IllegalStateException(
+            "Game Design one-shot migration Jobs require spring.flyway.enabled=false explicitly");
+      }
+    }
   }
 
   private static void requireNoSharedJwtSecret() {
