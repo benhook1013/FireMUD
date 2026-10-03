@@ -12,6 +12,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -509,6 +510,88 @@ class GameplayCommandRepositoryIntegrationTest {
     assertThatThrownBy(() -> repository.save(sameScope))
         .isInstanceOf(DataAccessException.class)
         .hasMessageContaining("idx_gameplay_command_tenant_instance_command_id");
+  }
+
+  @Test
+  void saveRoundTripsExplicitAccountUuidWithoutChangingLegacyNumericAccountId() {
+    UUID accountUuid = UUID.fromString("a190bcb9-8680-4acd-b86f-3cae3fe1635f");
+    GameplayCommand command = repositoryCommand("account-uuid-command", "PLAYER");
+    command.setAccountId(712L);
+    command.setAccountUuid(accountUuid);
+
+    GameplayCommand saved = repository.save(command);
+
+    assertThat(saved)
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(712L, accountUuid);
+    assertThat(
+            repository.findByTenantIdAndGameInstanceIdAndCommandId(1L, 7L, "account-uuid-command"))
+        .get()
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(712L, accountUuid);
+
+    saved.setAttemptCount(1);
+    GameplayCommand updated = repository.save(saved);
+
+    assertThat(updated)
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(712L, accountUuid);
+    assertThat(updated.getAttemptCount()).isEqualTo(1);
+  }
+
+  @Test
+  void saveRoundTripsNullableAccountUuidAlongsideLegacyNumericAccountId() {
+    GameplayCommand command = repositoryCommand("legacy-account-command", "PLAYER");
+    command.setAccountId(908L);
+    command.setAccountUuid(null);
+
+    GameplayCommand saved = repository.save(command);
+
+    assertThat(saved)
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(908L, null);
+    assertThat(
+            repository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "legacy-account-command"))
+        .get()
+        .extracting(GameplayCommand::getAccountId, GameplayCommand::getAccountUuid)
+        .containsExactly(908L, null);
+  }
+
+  @Test
+  void saveRejectsNilAccountUuidAtDatabaseFence() {
+    GameplayCommand command = repositoryCommand("nil-account-uuid-command", "PLAYER");
+    command.setAccountId(101L);
+    command.setAccountUuid(new UUID(0L, 0L));
+
+    assertThatThrownBy(() -> repository.save(command))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("chk_gameplay_command_account_uuid_non_nil");
+    assertThat(dsl.fetchCount(GAMEPLAY_COMMAND)).isZero();
+  }
+
+  @Test
+  void accountUuidEvidenceInsertRollsBackWithItsContainingTransaction() {
+    UUID accountUuid = UUID.fromString("5317ade3-c0e6-437a-ae8d-af77d1ec497d");
+    GameplayCommand command = repositoryCommand("rolled-back-account-uuid-command", "PLAYER");
+    command.setAccountId(345L);
+    command.setAccountUuid(accountUuid);
+
+    assertThatThrownBy(
+            () ->
+                transactionTemplate.executeWithoutResult(
+                    status -> {
+                      repository.save(command);
+                      throw new IllegalStateException("force transaction rollback");
+                    }))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("force transaction rollback");
+
+    assertThat(
+            repository.findByTenantIdAndGameInstanceIdAndCommandId(
+                1L, 7L, "rolled-back-account-uuid-command"))
+        .isEmpty();
+    assertThat(dsl.fetchCount(GAMEPLAY_COMMAND)).isZero();
   }
 
   @Test

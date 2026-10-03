@@ -355,6 +355,7 @@ public class GameplayCommandRepository {
             .set(GAMEPLAY_COMMAND.GAME_INSTANCE_ID, entity.getGameInstanceId())
             .set(GAMEPLAY_COMMAND.SESSION_ID, entity.getSessionId())
             .set(GAMEPLAY_COMMAND.ACCOUNT_ID, entity.getAccountId())
+            .set(GAMEPLAY_COMMAND.ACCOUNT_UUID, entity.getAccountUuid())
             .set(GAMEPLAY_COMMAND.CHARACTER_ID, entity.getCharacterId())
             .set(GAMEPLAY_COMMAND.COMMAND_NAME, entity.getCommandName())
             .set(GAMEPLAY_COMMAND.COMMAND_TEXT, entity.getCommandText())
@@ -603,6 +604,7 @@ public class GameplayCommandRepository {
     record.setGameInstanceId(entity.getGameInstanceId());
     record.setSessionId(entity.getSessionId());
     record.setAccountId(entity.getAccountId());
+    record.setAccountUuid(entity.getAccountUuid());
     record.setCharacterId(entity.getCharacterId());
     record.setCommandName(entity.getCommandName());
     record.setCommandText(entity.getCommandText());
@@ -661,6 +663,7 @@ public class GameplayCommandRepository {
     entity.setGameInstanceId(record.get(GAMEPLAY_COMMAND.GAME_INSTANCE_ID));
     entity.setSessionId(record.get(GAMEPLAY_COMMAND.SESSION_ID));
     entity.setAccountId(record.get(GAMEPLAY_COMMAND.ACCOUNT_ID));
+    entity.setAccountUuid(record.get(GAMEPLAY_COMMAND.ACCOUNT_UUID));
     entity.setCharacterId(record.get(GAMEPLAY_COMMAND.CHARACTER_ID));
     entity.setCommandName(record.get(GAMEPLAY_COMMAND.COMMAND_NAME));
     entity.setCommandText(record.get(GAMEPLAY_COMMAND.COMMAND_TEXT));
