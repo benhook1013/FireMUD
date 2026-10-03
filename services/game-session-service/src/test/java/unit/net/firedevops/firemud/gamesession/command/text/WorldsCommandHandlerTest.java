@@ -1930,7 +1930,8 @@ class WorldsCommandHandlerTest {
     Mockito.clearInvocations(accountClient);
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "other"))
-        .isEqualTo(WorldsCommandHandler.RealmBrowseResult.invalidSelector());
+        .isEqualTo(
+            WorldsCommandHandler.RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
     Mockito.verifyNoInteractions(accountClient);
 
     assertThat(localHandler.joinPublicProductionMembership(authenticatedSession(), "demo"))

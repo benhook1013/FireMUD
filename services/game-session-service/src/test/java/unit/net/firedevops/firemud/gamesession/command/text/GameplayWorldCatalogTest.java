@@ -1819,8 +1819,7 @@ class GameplayWorldCatalogTest {
   @Test
   void genericAuthorityResolverUsesStableSlugForWorldViewSuppliers() {
     GameplayWorldCatalog catalog =
-        GameplayWorldCatalog.forWorldViews(
-            List.of(worldWithRealm("123", "production", 7L, true)));
+        GameplayWorldCatalog.forWorldViews(List.of(worldWithRealm("123", "production", 7L, true)));
 
     assertThat(catalog.resolveWorldFromAuthoritySnapshot("123"))
         .hasValueSatisfying(world -> assertThat(world.slug()).isEqualTo("123"));
