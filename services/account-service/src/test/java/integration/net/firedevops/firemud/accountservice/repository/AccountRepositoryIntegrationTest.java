@@ -1527,7 +1527,16 @@ class AccountRepositoryIntegrationTest {
                     UUID.randomUUID(),
                     firstAccountId))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("accounts_identity_immutable");
+        .hasMessageContaining("Account identity cannot be reassigned")
+        .satisfies(
+            failure -> {
+              Throwable rootCause = failure;
+              while (rootCause.getCause() != null) {
+                rootCause = rootCause.getCause();
+              }
+              assertThat(rootCause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+            });
     assertThatThrownBy(
             () ->
                 dsl.execute(
@@ -1535,7 +1544,16 @@ class AccountRepositoryIntegrationTest {
                     AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT.name(),
                     firstAccountId))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("accounts_identity_immutable");
+        .hasMessageContaining("Account identity cannot be reassigned")
+        .satisfies(
+            failure -> {
+              Throwable rootCause = failure;
+              while (rootCause.getCause() != null) {
+                rootCause = rootCause.getCause();
+              }
+              assertThat(rootCause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+            });
     assertThatThrownBy(
             () ->
                 dsl.execute(
@@ -1545,7 +1563,16 @@ class AccountRepositoryIntegrationTest {
                     firstAccountId + 10,
                     firstAccountId))
         .isInstanceOf(DataAccessException.class)
-        .hasStackTraceContaining("accounts_identity_immutable");
+        .hasMessageContaining("Account identity cannot be reassigned")
+        .satisfies(
+            failure -> {
+              Throwable rootCause = failure;
+              while (rootCause.getCause() != null) {
+                rootCause = rootCause.getCause();
+              }
+              assertThat(rootCause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+            });
     assertThat(
             dsl.resultQuery(
                     "SELECT account_uuid FROM " + schema + ".accounts WHERE id = ?", firstAccountId)
