@@ -30,6 +30,28 @@ class JobStoreTest(unittest.TestCase):
     def bootstrap(self) -> None:
         self.store.bootstrap()
 
+    def test_worker_controls_are_rejected_at_each_ingress_without_writes(self) -> None:
+        self.bootstrap()
+        job = self.store.create("valid-worker", "Build Team", "Valid")
+        brief = Path(self.temp.name) / "brief.md"
+        brief.write_text("Retained import brief")
+        with sqlite3.connect(self.database) as connection:
+            before = list(connection.iterdump())
+        for worker in ("Build\nTeam", "Build\rTeam", "Build\tTeam"):
+            operations = [
+                lambda worker=worker: self.store.create("bad-worker", worker, "Invalid"),
+                lambda worker=worker: self.store.revise(job["id"], job["revision"], worker=worker),
+                lambda worker=worker: self.store.note("Reminder", worker=worker),
+                lambda worker=worker: self.store.pause(worker, reason="Stopped"),
+                lambda worker=worker: self.store.import_briefs({"version": 1, "jobs": [
+                    {"name": "bad-import", "worker": worker, "title": "Invalid", "brief_file": str(brief)}]}),
+            ]
+            for operation in operations:
+                with self.subTest(worker=worker, operation=operation), self.assertRaisesRegex(JobError, "worker alias"):
+                    operation()
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
     def test_construction_is_side_effect_free_and_bootstrap_is_explicit(self) -> None:
         self.assertFalse(self.database.exists())
         with self.assertRaises(JobsNotBootstrapped):

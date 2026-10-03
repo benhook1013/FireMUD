@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def worker_alias(value) -> bool:
+    """The same bounded alias is accepted by stores, identity and web views."""
+    return (isinstance(value, str) and bool(value.strip()) and value == value.strip() and len(value) <= 100
+            and not any(ord(character) < 32 for character in value))
+
+
 @dataclass(frozen=True)
 class ProjectContext:
     root: Path

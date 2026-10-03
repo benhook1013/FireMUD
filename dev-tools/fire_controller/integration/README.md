@@ -35,7 +35,7 @@ Captured post-patch SHA-256 values for the isolated copy:
 | render.py | a0a62f0d254a7553d1caaec16a15b82ca134b93e3e5599caae8a0f6460a8c1f9 |
 | server.py | 2dc5418179804dfacb0247dc5ac48fc9f7e435aaca3a82ca3fbf06583418f010 |
 | publish-hetzner.py | 6d3a4dad2de8cdccd760aaaa17843926cbbeb97db4b392d17227c6162dee4298 |
-| render_progress.py | cc8b1318f51d281f2502825d17abee6962dbd49608b35f696a37cea055e3df35 |
+| render_progress.py | d1f2b3bdc2862ba46166e8d30348920f0836e52eec1bdde28ed2378a0b0c47a2 |
 
 The renderer accepts `--jobs-database` and `--controller-tools` together. It loads the controller lane snapshot in one batched call and joins SQL map state to the repository-owned `progress.json` editorial headings and explanations. Public text uses the safe renderer’s HTTP(S)-only link policy, so local job, workstream, and inbox paths do not enter generated output. The server uses the same explicit database and tool paths, serves private detail pages from memory, and adds local links only to HTTP responses. The publisher scans staged pages, assets, and review pages and fails if a private `/jobs/`, `/workstreams/`, or `/inbox/` route appears.
 

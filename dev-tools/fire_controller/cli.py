@@ -8,6 +8,8 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from .context import worker_alias
+
 
 def _body(args, *, optional=False):
     if getattr(args, "body_file", None):
@@ -452,9 +454,7 @@ def _unread_metadata(database, worker):
 
 
 def _validate_identity(worker):
-    if worker is not None and (not isinstance(worker, str) or not worker.strip()
-                               or worker != worker.strip() or len(worker) > 100
-                               or any(ord(char) < 32 for char in worker)):
+    if worker is not None and not worker_alias(worker):
         raise ValueError("worker identity must be nonblank bounded text without control characters")
 
 

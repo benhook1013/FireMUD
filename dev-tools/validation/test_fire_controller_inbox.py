@@ -23,6 +23,17 @@ class InboxStoreTest(unittest.TestCase):
         self.other_database = self.root / "beta.sqlite3"
         self.store = InboxStore(self.database)
 
+    def test_worker_controls_match_job_identity_and_web_contract(self) -> None:
+        self.store.bootstrap()
+        for worker in ("Build\nTeam", "Build\rTeam", "Build\tTeam", " Build Team"):
+            for operation in (lambda worker=worker: self.store.send(worker, "Message"),
+                              lambda worker=worker: self.store.send("General", "Message", author=worker),
+                              lambda worker=worker: self.store.list(worker), lambda worker=worker: self.store.unread_count(worker)):
+                with self.subTest(worker=worker), self.assertRaises(InboxError):
+                    operation()
+        self.assertEqual(self.store.list("General"), [])
+        self.assertEqual(self.store.send("Build Team", "Valid")["recipient"], "Build Team")
+
     def test_unread_count_is_read_only_when_inbox_schema_is_missing(self) -> None:
         self.assertEqual(self.store.unread_count("General"), 0)
         self.assertFalse(self.database.exists())

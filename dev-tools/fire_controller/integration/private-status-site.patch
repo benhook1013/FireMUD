@@ -756,11 +756,13 @@ diff --git a/render_progress.py b/render_progress.py
          phases = "".join(
              f'<li><span>{safe(phase["name"])}</span><b>{safe(phase["state"])}</b></li>'
              for phase in track["phases"]
-@@ -106,12 +159,12 @@
+@@ -105,13 +158,13 @@
+         tracks.append(f'''<article class="track" id="{safe(track["id"])}">
  <div class="track-head"><div><span class="eyebrow">Programme track</span><h3>{safe(track["name"])}</h3></div><span class="state {safe(track["tone"])}">{safe(track["state"])}</span></div>
  <p class="purpose">{safe(track["purpose"])}</p>
- <div class="track-body"><div><h4>Where it stands</h4><p>{safe(track["now"])}</p><h4>Next milestone</h4><p>{safe(track["milestone"])}</p><h4>Return when</h4><p>{safe(track["return_when"])}</p></div><ol class="phases">{phases}</ol></div>
+-<div class="track-body"><div><h4>Where it stands</h4><p>{safe(track["now"])}</p><h4>Next milestone</h4><p>{safe(track["milestone"])}</p><h4>Return when</h4><p>{safe(track["return_when"])}</p></div><ol class="phases">{phases}</ol></div>
 -<div class="track-links">{links}</div></article>''')
++<div class="track-body"><div><h4>Where it stands</h4><p>{public_inline(track["now"])}</p><h4>Next milestone</h4><p>{public_inline(track["milestone"])}</p><h4>Return when</h4><p>{safe(track["return_when"])}</p></div><ol class="phases">{phases}</ol></div>
 +<div class="track-links">{links}<span data-fire-controller-workstream-id="{safe(track["id"])}"></span></div>{_job_cards(track["id"], jobs, public_inline)}</article>''')
 
      domains = []

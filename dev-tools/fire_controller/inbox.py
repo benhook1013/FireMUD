@@ -20,6 +20,8 @@ from typing import Any
 
 from pr_review.sqlite_store import SqliteStateStore
 
+from .context import worker_alias
+
 INBOX_SCHEMA_VERSION = 1
 _MAX_TEXT = 20_000
 _MAX_PAGE = 10_000
@@ -79,6 +81,13 @@ def _text(value: Any, label: str, *, maximum: int = 200, allow_empty: bool = Fal
         raise InboxError(f"{label} must not contain control characters")
     return value
 
+
+
+def _worker(value, label) -> str:
+    selected = _text(value, label, maximum=100)
+    if not worker_alias(selected):
+        raise InboxError(f"{label} must be a worker alias without surrounding whitespace or control characters")
+    return selected
 
 def _limit(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= _MAX_PAGE:
@@ -175,10 +184,10 @@ class InboxStore:
             for row in connection.execute("SELECT * FROM inbox_messages"):
                 message = cls._message_dict(row)
                 _text(message["id"], "message id", maximum=100)
-                _text(message["recipient"], "recipient", maximum=100)
+                _worker(message["recipient"], "recipient")
                 _text(message["body"], "message body", maximum=_MAX_TEXT)
                 if message["author"] is not None:
-                    _text(message["author"], "author", maximum=100)
+                    _worker(message["author"], "author")
                 if message["job"] is not None:
                     _text(message["job"], "job", maximum=100)
                 if message["pr"] is not None and (
@@ -212,9 +221,9 @@ class InboxStore:
     ) -> dict[str, Any]:
         """Send one private message; author is descriptive metadata only."""
 
-        selected_recipient = _text(recipient, "recipient", maximum=100)
+        selected_recipient = _worker(recipient, "recipient")
         selected_body = _text(body, "message body", maximum=_MAX_TEXT)
-        selected_author = None if author is None else _text(author, "author", maximum=100)
+        selected_author = None if author is None else _worker(author, "author")
         selected_job = None if job is None else _text(job, "job", maximum=100)
         if pr is not None and (isinstance(pr, bool) or not isinstance(pr, int) or pr <= 0):
             raise InboxError("pr must be a positive integer")
@@ -246,7 +255,7 @@ class InboxStore:
     ) -> list[dict[str, Any]]:
         """List a recipient's private messages newest first with a bounded page."""
 
-        selected_recipient = _text(recipient, "recipient", maximum=100)
+        selected_recipient = _worker(recipient, "recipient")
         if not isinstance(unread, bool):
             raise InboxError("unread must be a boolean")
         selected_limit = _limit(limit)
@@ -275,7 +284,7 @@ class InboxStore:
 
     def _mark(self, message_id: str, *, recipient: str | None, acknowledge: bool) -> dict[str, Any]:
         selected_id = _text(message_id, "message id", maximum=100)
-        selected_recipient = None if recipient is None else _text(recipient, "recipient", maximum=100)
+        selected_recipient = None if recipient is None else _worker(recipient, "recipient")
         timestamp = _now()
         with self._write() as connection:
             row = self._message(connection, selected_id, selected_recipient)
@@ -300,7 +309,7 @@ class InboxStore:
     def unread_count(self, worker: str) -> int:
         """Return an unread count without creating missing inbox tables."""
 
-        selected_worker = _text(worker, "worker", maximum=100)
+        selected_worker = _worker(worker, "worker")
         if not self.path.exists() or self.path.is_symlink() or not self.path.is_file():
             return 0
         try:

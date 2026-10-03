@@ -8,6 +8,8 @@ import posixpath
 import re
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+from .context import worker_alias as _worker_alias
+
 PUBLIC_FIELDS = (
     "id", "name", "worker", "workstream_id", "title", "status", "primary", "summary", "progress", "blocker",
 )
@@ -24,12 +26,6 @@ _MARKDOWN_TOKEN = re.compile(
 _CHECKLIST_ITEM = re.compile(r"^\s*(?:[-*+]\s+|\d+\.\s+)(.*)$")
 _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 
-
-def _worker_alias(value) -> bool:
-    return (
-        isinstance(value, str) and bool(value.strip()) and value == value.strip() and len(value) <= 100
-        and not any(ord(character) < 0x20 for character in value)
-    )
 
 
 def public_jobs(rows) -> list[dict]:

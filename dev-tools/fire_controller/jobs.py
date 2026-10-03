@@ -25,6 +25,8 @@ from typing import Any
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import ReviewState, StateError
 
+from .context import worker_alias
+
 JOBS_SCHEMA_VERSION = 2
 JOB_WORKERS = ("Gameplay", "General", "Document", "Overseer")
 JOB_STATUSES = ("active", "parked", "blocked", "completed")
@@ -200,8 +202,8 @@ def _slug(value: Any) -> str:
 
 def _worker(value: Any) -> str:
     selected = _text(value, "worker", maximum=100)
-    if selected != selected.strip():
-        raise JobError("worker alias must not start or end with whitespace")
+    if not worker_alias(selected):
+        raise JobError("worker alias must not have surrounding whitespace or control characters")
     return selected
 
 

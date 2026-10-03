@@ -388,6 +388,23 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
             public_inline=web.render_public_inline,
         )
 
+    def test_mutable_map_paragraphs_use_safe_public_inline_markdown(self):
+        text = '**Proof complete** [details](https://example.com) [private](/jobs/private) [unsafe](javascript:alert(1)) <script>bad</script>'
+        mapping = {"workstreams": [{"id": track["id"], "name": track["name"], "state": "Plain **state**",
+            "now": text, "milestone": text, "phase_states": {phase["name"]: "Active" for phase in track["phases"]}}
+            for track in self.editorial["tracks"]], "return_points": [{"name": point["name"], "state": "Pending"}
+            for point in self.editorial["return_points"]]}
+        page = self.progress_module.render(self.editorial, self.now, map_state=mapping,
+                                           public_inline=web.render_public_inline)
+        self.assertIn("<strong>Proof complete</strong>", page)
+        self.assertIn('href="https://example.com"', page)
+        self.assertIn("Plain **state**", page)
+        self.assertNotIn('href="/jobs/', page)
+        self.assertNotIn('href="javascript:', page)
+        self.assertNotIn("<script>", page)
+        self.assertIn("&lt;script&gt;", page)
+        self.assertNotIn("/jobs/", json.dumps(self.publisher.resources(self.publisher.progress_public_html(page))[1]))
+
     def test_full_copy_render_and_public_stage_keep_private_data_out(self):
         self.assertIn("Build the bridge", self.document)
         self.assertIn("blocked", self.document)
