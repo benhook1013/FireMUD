@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceOperation.Lifecycle;
 import net.firedevops.firemud.accountservice.security.AccountEncryptedEnvelope;
 import net.firedevops.firemud.accountservice.security.AccountEnvelopeBinding;
@@ -103,6 +104,182 @@ public class AccountConnectTokenIssuanceRepository {
   }
 
   /**
+   * Reads the separately persisted positive Account issuance-fence capture for one exact operation.
+   * A legacy issuance-fence digest without the complete capture group remains unproved.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<AccountConnectIssuanceFenceEvidence> readIssuanceFenceCapture(
+      AccountConnectTokenIssuanceIdentity identity, byte[] requestDigest) {
+    validateIdentity(identity);
+    byte[] digest = requireDigest(requestDigest, "request digest");
+    Optional<AccountConnectTokenIssuanceOperation> operation = readOperation(identity);
+    if (operation.isEmpty()) {
+      return Optional.empty();
+    }
+    AccountConnectTokenIssuanceOperation stored = operation.orElseThrow();
+    requireDigestMatch(stored, digest);
+
+    Record row =
+        dsl.fetchOne(
+            "SELECT issuance_fence_capture_schema, issuance_fence_capture_account_uuid, "
+                + "issuance_fence_capture_value, issuance_fence_capture_source_version, "
+                + "issuance_fence_capture_digest FROM "
+                + OPERATION_TABLE
+                + " WHERE operation_id = ? AND account_id = ? AND tenant_id = ? "
+                + "AND connect_scope_hash = ? AND request_id = ? "
+                + "AND request_digest_version = ? AND request_digest = ?",
+            stored.operationId(),
+            identity.accountId(),
+            identity.tenantId(),
+            identity.connectScopeHash(),
+            identity.requestId(),
+            REQUEST_DIGEST_VERSION,
+            digest);
+    if (row == null) {
+      throw new IllegalStateException("Connect-token issuance capture owner row disappeared");
+    }
+
+    String schemaName = row.get("issuance_fence_capture_schema", String.class);
+    UUID accountUuid = row.get("issuance_fence_capture_account_uuid", UUID.class);
+    Long value = row.get("issuance_fence_capture_value", Long.class);
+    Long sourceVersion = row.get("issuance_fence_capture_source_version", Long.class);
+    byte[] captureDigest = row.get("issuance_fence_capture_digest", byte[].class);
+    boolean allAbsent =
+        schemaName == null
+            && accountUuid == null
+            && value == null
+            && sourceVersion == null
+            && captureDigest == null;
+    if (allAbsent) {
+      return Optional.empty();
+    }
+    if (schemaName == null
+        || accountUuid == null
+        || value == null
+        || sourceVersion == null
+        || captureDigest == null) {
+      throw new IllegalStateException("Stored Account issuance-fence capture is incomplete");
+    }
+
+    AccountConnectIssuanceFenceEvidence evidence =
+        new AccountConnectIssuanceFenceEvidence(
+            schemaName,
+            stored.operationId(),
+            accountUuid,
+            identity.tenantId(),
+            identity.connectScopeHash(),
+            identity.requestId(),
+            stored.requestDigest(),
+            value,
+            sourceVersion,
+            captureDigest);
+    if (stored.issuanceFenceDigest() == null
+        || !MessageDigest.isEqual(stored.issuanceFenceDigest(), evidence.digest())) {
+      throw new IllegalStateException(
+          "Captured Account issuance fence differs from operation fence digest evidence");
+    }
+    requirePersistedAccountIdentity(stored.accountId(), evidence.accountUuid());
+    return Optional.of(evidence);
+  }
+
+  /**
+   * Binds one positive Account issuance-fence capture to the exact first-writer PENDING claim.
+   * Existing evidence is read back unchanged; a different preexisting fence digest is a conflict.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public AccountConnectIssuanceFenceEvidence captureIssuanceFence(
+      ClaimResult claim, byte[] requestDigest, AccountConnectIssuanceFenceEvidence evidence) {
+    AccountConnectTokenIssuanceIdentity identity = requireClaimIdentity(claim);
+    byte[] digest = requireDigest(requestDigest, "request digest");
+    Objects.requireNonNull(evidence, "Account issuance-fence evidence is required");
+    AccountConnectTokenIssuanceOperation operation = requireClaimedOperation(claim, digest);
+    requireCaptureIdentity(operation, identity, digest, evidence);
+    if (operation.lifecycle() != Lifecycle.PENDING) {
+      throw new IllegalStateException(
+          "Only a pending connect-token operation can capture its issuance fence");
+    }
+    byte[] existingFenceDigest = operation.issuanceFenceDigest();
+    if (existingFenceDigest != null
+        && !MessageDigest.isEqual(existingFenceDigest, evidence.digest())) {
+      throw new EvidenceMismatchException(
+          "Connect-token operation already has a different issuance-fence digest");
+    }
+
+    Optional<AccountConnectIssuanceFenceEvidence> existingCapture =
+        readIssuanceFenceCapture(identity, digest);
+    if (existingCapture.isPresent()) {
+      if (!existingCapture.orElseThrow().equals(evidence)) {
+        throw new EvidenceMismatchException(
+            "Connect-token issuance fence is already captured with different evidence");
+      }
+      return existingCapture.orElseThrow();
+    }
+
+    Record changed =
+        dsl.fetchOne(
+            "UPDATE "
+                + OPERATION_TABLE
+                + " SET issuance_fence_capture_schema = COALESCE(issuance_fence_capture_schema, ?), "
+                + "issuance_fence_capture_account_uuid = "
+                + "COALESCE(issuance_fence_capture_account_uuid, ?), "
+                + "issuance_fence_capture_value = COALESCE(issuance_fence_capture_value, ?), "
+                + "issuance_fence_capture_source_version = "
+                + "COALESCE(issuance_fence_capture_source_version, ?), "
+                + "issuance_fence_capture_digest = COALESCE(issuance_fence_capture_digest, ?), "
+                + "issuance_fence_digest = COALESCE(issuance_fence_digest, ?) "
+                + "WHERE operation_id = ? AND account_id = ? AND tenant_id = ? "
+                + "AND connect_scope_hash = ? AND request_id = ? "
+                + "AND request_digest_version = ? AND request_digest = ? AND status = 'PENDING' "
+                + "AND (issuance_fence_capture_schema IS NULL "
+                + "OR issuance_fence_capture_schema = ?) "
+                + "AND (issuance_fence_capture_account_uuid IS NULL "
+                + "OR issuance_fence_capture_account_uuid = ?) "
+                + "AND (issuance_fence_capture_value IS NULL "
+                + "OR issuance_fence_capture_value = ?) "
+                + "AND (issuance_fence_capture_source_version IS NULL "
+                + "OR issuance_fence_capture_source_version = ?) "
+                + "AND (issuance_fence_capture_digest IS NULL "
+                + "OR issuance_fence_capture_digest = ?) "
+                + "AND (issuance_fence_digest IS NULL OR issuance_fence_digest = ?) "
+                + "RETURNING operation_id",
+            evidence.schemaName(),
+            evidence.accountUuid(),
+            evidence.issuanceFence(),
+            evidence.fenceSourceVersion(),
+            evidence.digest(),
+            evidence.digest(),
+            operation.operationId(),
+            identity.accountId(),
+            identity.tenantId(),
+            identity.connectScopeHash(),
+            identity.requestId(),
+            REQUEST_DIGEST_VERSION,
+            digest,
+            evidence.schemaName(),
+            evidence.accountUuid(),
+            evidence.issuanceFence(),
+            evidence.fenceSourceVersion(),
+            evidence.digest(),
+            evidence.digest());
+    if (changed == null
+        || !operation.operationId().equals(changed.get("operation_id", UUID.class))) {
+      throw new EvidenceMismatchException(
+          "Connect-token issuance capture could not bind to the exact pending operation");
+    }
+    AccountConnectIssuanceFenceEvidence captured =
+        readIssuanceFenceCapture(identity, digest)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Account issuance-fence capture has no exact durable readback"));
+    if (!captured.equals(evidence)) {
+      throw new EvidenceMismatchException(
+          "Account issuance-fence capture readback differs from its candidate");
+    }
+    return captured;
+  }
+
+  /**
    * Reads a successful committed source result using only its exact caller identity. The request
    * digest and all AEAD evidence are recovered from the immutable winning operation row; callers
    * must not derive or substitute a digest when they only possess the original scope and request
@@ -151,6 +328,15 @@ public class AccountConnectTokenIssuanceRepository {
                 () ->
                     new IllegalStateException(
                         "Committed connect-token source has no exact response envelope"));
+    Optional<AccountConnectIssuanceFenceEvidence> capture =
+        readIssuanceFenceCapture(identity, operation.requestDigest());
+    if (capture.isPresent()
+        && (!MessageDigest.isEqual(operation.issuanceFenceDigest(), capture.orElseThrow().digest())
+            || !MessageDigest.isEqual(
+                envelope.binding().issuanceFenceDigest(), capture.orElseThrow().digest()))) {
+      throw new IllegalStateException(
+          "Committed connect-token envelope differs from its captured Account issuance fence");
+    }
     return Optional.of(new AccountCommittedConnectSource(operation, envelope));
   }
 
@@ -796,6 +982,61 @@ public class AccountConnectTokenIssuanceRepository {
           "Only the first connect-token operation claimant may record evidence or an outcome");
     }
     return claim.identity();
+  }
+
+  private void requireCaptureIdentity(
+      AccountConnectTokenIssuanceOperation operation,
+      AccountConnectTokenIssuanceIdentity identity,
+      byte[] requestDigest,
+      AccountConnectIssuanceFenceEvidence evidence) {
+    if (!operation.operationId().equals(evidence.operationId())
+        || operation.accountId() != identity.accountId()
+        || !operation.tenantId().equals(identity.tenantId())
+        || !operation.connectScopeHash().equals(identity.connectScopeHash())
+        || !operation.requestId().equals(identity.requestId())
+        || !evidence.tenantUuid().equals(identity.tenantId())
+        || !evidence.connectScopeHash().equals(identity.connectScopeHash())
+        || !evidence.requestId().equals(identity.requestId())
+        || !MessageDigest.isEqual(evidence.requestDigest(), requestDigest)) {
+      throw new EvidenceMismatchException(
+          "Account issuance-fence capture differs from its operation identity or request digest");
+    }
+    requirePersistedAccountIdentity(operation.accountId(), evidence.accountUuid());
+  }
+
+  private void requirePersistedAccountIdentity(long accountId, UUID expectedAccountUuid) {
+    if (accountId <= 0L
+        || expectedAccountUuid == null
+        || expectedAccountUuid.equals(new UUID(0L, 0L))) {
+      throw new EvidenceMismatchException(
+          "Account issuance-fence capture requires a canonical persisted Account identity");
+    }
+    Record account =
+        dsl.fetchOne(
+            "SELECT id, account_uuid, account_uuid_provenance, account_uuid_source_numeric_id "
+                + "FROM accounts WHERE id = ?",
+            accountId);
+    if (account == null) {
+      throw new EvidenceMismatchException(
+          "Account issuance-fence operation has no exact persisted Account row");
+    }
+    Long persistedAccountId = account.get("id", Long.class);
+    UUID persistedAccountUuid = account.get("account_uuid", UUID.class);
+    String provenanceValue = account.get("account_uuid_provenance", String.class);
+    Long sourceNumericId = account.get("account_uuid_source_numeric_id", Long.class);
+    AccountIdentityProvenance provenance =
+        AccountIdentityProvenance.fromStorageValue(provenanceValue);
+    if (persistedAccountId == null
+        || persistedAccountId != accountId
+        || persistedAccountUuid == null
+        || persistedAccountUuid.equals(new UUID(0L, 0L))
+        || !persistedAccountUuid.equals(expectedAccountUuid)
+        || sourceNumericId == null
+        || sourceNumericId.longValue() != persistedAccountId.longValue()
+        || !provenance.name().equals(provenanceValue)) {
+      throw new EvidenceMismatchException(
+          "Account issuance-fence capture differs from exact Account UUID provenance");
+    }
   }
 
   private AccountConnectTokenIssuanceOperation requireClaimedOperation(

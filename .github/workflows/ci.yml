@@ -2012,11 +2012,25 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#contradictoryLatestEventDeniesLeftWithoutMembershipOrOutboxMutation()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#auditFailureRollsBackCompleteOwnerLeftTransaction()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentLeftAndReactivationSerializeAsCompleteAccountTransitions()' \
-            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#durablePendingClaimRecoversExactOperationAfterLostAcknowledgementWithoutEnvelope()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#changedDigestRequestOrSourceCannotReplaceDurablePendingClaim()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#rollingBackPendingClaimLeavesNoPartialExchange()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#concurrentExactPendingClaimsConvergeOnOneDurableOperation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#concurrentChangedPendingEvidenceWritersKeepOneFirstWrite()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#terminalSuccessWithoutItsExactBoundEnvelopeCannotCommit()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#directDeletionOfIssuanceOperationOrResponseEnvelopeIsRejected()' \
             account-service
+
+      - name: Upload Account bare LOGIN storage PostgreSQL proof
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-bare-login-storage-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountBareLoginExchangeRepositoryIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Verify Account current recipient source composition PostgreSQL proof
         if: ${{ !cancelled() && matrix.module == 'account-service' }}
@@ -2026,6 +2040,18 @@ jobs:
             --require-suite net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#postJoinSnapshotCarriesCurrentCompositeSourcesWithoutRewritingMembershipEvent()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#membershipSourceReaderReadsRetainedInactiveRetryAndReactivationWithoutMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#activeMembershipCaptureCommitsBesideSyntheticV35SourceAndExactReadbackDoesNotRewriteIt()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderReturnsExactRedactedReadbackWithoutMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderRejectsMissingCaptureForValidCommittedSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderRechecksDeadlineAfterAuthorityRead()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderRejectsSourceAfterAccountAuthorityAndFenceAdvance()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#concurrentCaptureWaitsForAccountOwnerAdvanceAndBindsTheNewFence()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#concurrentCurrentAuthorityReadWaitsForAdvanceThenRejectsOriginalSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#captureRollbackLeavesNeitherCaptureNorPartialCommittedSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#absentAndInactiveMembershipRejectCaptureWithoutInitializingOrRejoining()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#capturedEvidenceCannotBeReplacedByChangedIdentityDigestOrFenceValues()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#directRepositoryRejectsCaptureForAnotherPersistedAccountUuid()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#populatedCaptureIsImmutableAndTerminalSourceCannotBeBackfilled()' \
             account-service
 
       - name: Upload Account current recipient source composition PostgreSQL proof

@@ -52,22 +52,244 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
-  void claimOnlyTransactionRollsBackPendingExchange() {
+  void durablePendingClaimRecoversExactOperationAfterLostAcknowledgementWithoutEnvelope() {
     TestContext context = newTestContext();
     Source source = committedSource(context);
     AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
     byte[] requestDigest = digest(0);
 
+    // The first response is intentionally discarded to model a committed claim with a lost ack.
+    inTransaction(context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    UUID originalOperationId =
+        context
+            .dsl()
+            .resultQuery(
+                "SELECT operation_id FROM account_bare_login_exchange_operations "
+                    + "WHERE source_connect_operation_id = ?",
+                identity.sourceConnectOperationId())
+            .fetchOne(0, UUID.class);
+    assertThat(originalOperationId).isNotNull();
+
+    var recovered =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    var persisted =
+        inTransaction(
+            context.transaction(),
+            () -> context.repository().find(identity, requestDigest).orElseThrow());
+    AccountEnvelopeBinding binding = binding(originalOperationId, identity, requestDigest, 3);
+
+    assertThat(recovered.disposition())
+        .isEqualTo(AccountBareLoginExchangeRepository.ClaimDisposition.REPLAYED);
+    assertThat(recovered.operation().operationId()).isEqualTo(originalOperationId);
+    assertThat(recovered.operation().lifecycle()).isEqualTo(Lifecycle.PENDING);
+    assertThat(persisted.operationId()).isEqualTo(originalOperationId);
+    assertThat(persisted.lifecycle()).isEqualTo(Lifecycle.PENDING);
+    assertThat(persisted.requestDigest()).containsExactly(requestDigest);
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().readResponseEnvelope(identity, requestDigest, binding)))
+        .isEmpty();
+    Long envelopeCount =
+        context
+            .dsl()
+            .resultQuery(
+                "SELECT COUNT(*) FROM account_bare_login_response_envelopes "
+                    + "WHERE operation_id = ?",
+                originalOperationId)
+            .fetchOne(0, Long.class);
+    assertThat(envelopeCount).isEqualTo(0L);
+
+    var evidenceReadback =
+        inTransaction(
+            context.transaction(),
+            () ->
+                context
+                    .repository()
+                    .recordPendingEvidence(
+                        recovered,
+                        requestDigest,
+                        "delegation-jti-recovered",
+                        digest(80),
+                        binding.contextEvidenceDigest(),
+                        binding.authorityTupleDigest(),
+                        binding.issuanceFenceDigest(),
+                        binding.postconditionDigest()));
+    assertThat(evidenceReadback.lifecycle()).isEqualTo(Lifecycle.PENDING);
+    assertThat(evidenceReadback.operationId()).isEqualTo(originalOperationId);
+    assertThat(evidenceReadback.requestDigest()).containsExactly(requestDigest);
+
+    AccountEnvelopeBinding changedBinding =
+        binding(originalOperationId, identity, requestDigest, 4);
     assertThatThrownBy(
             () ->
                 inTransaction(
                     context.transaction(),
-                    () -> context.repository().claim(identity, requestDigest)))
-        .isInstanceOf(TransactionSystemException.class);
+                    () ->
+                        context
+                            .repository()
+                            .recordPendingEvidence(
+                                recovered,
+                                requestDigest,
+                                "delegation-jti-changed",
+                                digest(81),
+                                changedBinding.contextEvidenceDigest(),
+                                changedBinding.authorityTupleDigest(),
+                                changedBinding.issuanceFenceDigest(),
+                                changedBinding.postconditionDigest())))
+        .isInstanceOf(AccountBareLoginExchangeRepository.EvidenceMismatchException.class);
+
+    var exactPendingRetry =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    assertThat(exactPendingRetry.disposition())
+        .isEqualTo(AccountBareLoginExchangeRepository.ClaimDisposition.REPLAYED);
+    assertThat(exactPendingRetry.operation().operationId()).isEqualTo(originalOperationId);
+    assertThat(exactPendingRetry.operation().lifecycle()).isEqualTo(Lifecycle.PENDING);
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().readResponseEnvelope(identity, requestDigest, binding)))
+        .isEmpty();
+
+    AccountBareLoginResponseEnvelope stored =
+        inTransaction(
+            context.transaction(),
+            () ->
+                context
+                    .repository()
+                    .completeWithEnvelope(
+                        exactPendingRetry,
+                        requestDigest,
+                        "delegation-jti-recovered",
+                        digest(80),
+                        binding,
+                        encryptedEnvelope(AccountEnvelopePurpose.BARE_LOGIN_RESPONSE)));
+    assertThat(stored.operationId()).isEqualTo(originalOperationId);
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().find(identity, requestDigest).orElseThrow().lifecycle()))
+        .isEqualTo(Lifecycle.COMMITTED);
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().readResponseEnvelope(identity, requestDigest, binding)))
+        .contains(stored);
+  }
+
+  @Test
+  void changedDigestRequestOrSourceCannotReplaceDurablePendingClaim() {
+    TestContext context = newTestContext();
+    Source source = committedSource(context);
+    AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
+    byte[] requestDigest = digest(4);
+    var original =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(), () -> context.repository().claim(identity, digest(5))))
+        .isInstanceOf(AccountBareLoginExchangeRepository.IdempotencyConflictException.class);
+
+    AccountBareLoginExchangeIdentity changedRequest =
+        new AccountBareLoginExchangeIdentity(
+            identity.sourceConnectOperationId(),
+            identity.accountId(),
+            identity.tenantId(),
+            identity.connectScopeId(),
+            identity.requestId() + "-changed");
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> context.repository().claim(changedRequest, requestDigest)))
+        .isInstanceOf(AccountBareLoginExchangeRepository.IdentityConflictException.class);
+
+    AccountBareLoginExchangeIdentity changedSourceBinding =
+        new AccountBareLoginExchangeIdentity(
+            identity.sourceConnectOperationId(),
+            identity.accountId() + 1,
+            identity.tenantId(),
+            identity.connectScopeId(),
+            identity.requestId());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> context.repository().claim(changedSourceBinding, requestDigest)))
+        .isInstanceOf(AccountBareLoginExchangeRepository.IdentityConflictException.class);
+
+    AccountBareLoginExchangeIdentity changedSourceOperation =
+        new AccountBareLoginExchangeIdentity(
+            UUID.randomUUID(),
+            identity.accountId(),
+            identity.tenantId(),
+            identity.connectScopeId(),
+            identity.requestId());
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> context.repository().claim(changedSourceOperation, requestDigest)))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("source connect operation is missing");
+
+    var unchanged =
+        inTransaction(
+            context.transaction(),
+            () -> context.repository().find(identity, requestDigest).orElseThrow());
+    assertThat(unchanged.operationId()).isEqualTo(original.operation().operationId());
+    assertThat(unchanged.lifecycle()).isEqualTo(Lifecycle.PENDING);
+    assertThat(unchanged.requestDigest()).containsExactly(requestDigest);
+    assertThat(unchanged.tokenIdentity()).isNull();
+    Long envelopeCount =
+        context
+            .dsl()
+            .resultQuery(
+                "SELECT COUNT(*) FROM account_bare_login_response_envelopes "
+                    + "WHERE operation_id = ?",
+                unchanged.operationId())
+            .fetchOne(0, Long.class);
+    assertThat(envelopeCount).isEqualTo(0L);
+  }
+
+  @Test
+  void rollingBackPendingClaimLeavesNoPartialExchange() {
+    TestContext context = newTestContext();
+    Source source = committedSource(context);
+    AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
+    byte[] requestDigest = digest(6);
+
+    AccountBareLoginExchangeRepository.ClaimResult attempted =
+        context
+            .transaction()
+            .execute(
+                status -> {
+                  var claim = context.repository().claim(identity, requestDigest);
+                  status.setRollbackOnly();
+                  return claim;
+                });
+
+    assertThat(attempted).isNotNull();
+    assertThat(attempted.disposition())
+        .isEqualTo(AccountBareLoginExchangeRepository.ClaimDisposition.CLAIMED);
     assertThat(
             inTransaction(
                 context.transaction(), () -> context.repository().find(identity, requestDigest)))
         .isEmpty();
+    Long operationCount =
+        context
+            .dsl()
+            .resultQuery(
+                "SELECT COUNT(*) FROM account_bare_login_exchange_operations "
+                    + "WHERE source_connect_operation_id = ?",
+                identity.sourceConnectOperationId())
+            .fetchOne(0, Long.class);
+    assertThat(operationCount).isEqualTo(0L);
   }
 
   @Test
@@ -117,6 +339,24 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
         .isEqualTo(AccountBareLoginExchangeRepository.ClaimDisposition.REPLAYED);
     assertThat(exactRetry.operation().operationId()).isEqualTo(claimed.operation().operationId());
     assertThat(exactRetry.operation().lifecycle()).isEqualTo(Lifecycle.COMMITTED);
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () ->
+                        context
+                            .repository()
+                            .recordPendingEvidence(
+                                exactRetry,
+                                digest,
+                                "delegation-jti-source",
+                                digest(80),
+                                firstResult.binding().contextEvidenceDigest(),
+                                firstResult.binding().authorityTupleDigest(),
+                                firstResult.binding().issuanceFenceDigest(),
+                                firstResult.binding().postconditionDigest())))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("exact pending bare LOGIN exchange claim");
     assertThat(
             inTransaction(
                 context.transaction(),
@@ -155,6 +395,183 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
                     () -> context.repository().claim(pendingIdentity, digest)))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("not committed");
+  }
+
+  @Test
+  void concurrentExactPendingClaimsConvergeOnOneDurableOperation() throws Exception {
+    TestContext context = newTestContext();
+    Source source = committedSource(context);
+    AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
+    byte[] requestDigest = digest(7);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Callable<AccountBareLoginExchangeRepository.ClaimResult> claimExactPending =
+          () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Pending exchange claim race did not start together");
+            }
+            return inTransaction(
+                context.transaction(), () -> context.repository().claim(identity, requestDigest));
+          };
+      Future<AccountBareLoginExchangeRepository.ClaimResult> first =
+          executor.submit(claimExactPending);
+      Future<AccountBareLoginExchangeRepository.ClaimResult> second =
+          executor.submit(claimExactPending);
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      var results = List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS));
+      assertThat(results)
+          .extracting(AccountBareLoginExchangeRepository.ClaimResult::disposition)
+          .containsExactlyInAnyOrder(
+              AccountBareLoginExchangeRepository.ClaimDisposition.CLAIMED,
+              AccountBareLoginExchangeRepository.ClaimDisposition.REPLAYED);
+      UUID operationId = results.get(0).operation().operationId();
+      assertThat(results.get(1).operation().operationId()).isEqualTo(operationId);
+      assertThat(results)
+          .extracting(result -> result.operation().lifecycle())
+          .containsOnly(Lifecycle.PENDING);
+
+      var persisted =
+          inTransaction(
+              context.transaction(),
+              () -> context.repository().find(identity, requestDigest).orElseThrow());
+      assertThat(persisted.operationId()).isEqualTo(operationId);
+      assertThat(persisted.lifecycle()).isEqualTo(Lifecycle.PENDING);
+      assertThat(persisted.requestDigest()).containsExactly(requestDigest);
+      Long envelopeCount =
+          context
+              .dsl()
+              .resultQuery(
+                  "SELECT COUNT(*) FROM account_bare_login_response_envelopes "
+                      + "WHERE operation_id = ?",
+                  operationId)
+              .fetchOne(0, Long.class);
+      assertThat(envelopeCount).isEqualTo(0L);
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void concurrentChangedPendingEvidenceWritersKeepOneFirstWrite() throws Exception {
+    TestContext context = newTestContext();
+    Source source = committedSource(context);
+    AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
+    byte[] requestDigest = digest(8);
+    var originalClaim =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    var exactRetry =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    AccountEnvelopeBinding firstBinding =
+        binding(originalClaim.operation().operationId(), identity, requestDigest, 9);
+    AccountEnvelopeBinding secondBinding =
+        binding(originalClaim.operation().operationId(), identity, requestDigest, 19);
+    CountDownLatch ready = new CountDownLatch(2);
+    CountDownLatch start = new CountDownLatch(1);
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Callable<Boolean> firstWriter =
+          () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Pending evidence race did not start together");
+            }
+            try {
+              inTransaction(
+                  context.transaction(),
+                  () ->
+                      context
+                          .repository()
+                          .recordPendingEvidence(
+                              originalClaim,
+                              requestDigest,
+                              "delegation-jti-concurrent-first",
+                              digest(90),
+                              firstBinding.contextEvidenceDigest(),
+                              firstBinding.authorityTupleDigest(),
+                              firstBinding.issuanceFenceDigest(),
+                              firstBinding.postconditionDigest()));
+              return true;
+            } catch (AccountBareLoginExchangeRepository.EvidenceMismatchException exception) {
+              return false;
+            }
+          };
+      Callable<Boolean> secondWriter =
+          () -> {
+            ready.countDown();
+            if (!start.await(5, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("Pending evidence race did not start together");
+            }
+            try {
+              inTransaction(
+                  context.transaction(),
+                  () ->
+                      context
+                          .repository()
+                          .recordPendingEvidence(
+                              exactRetry,
+                              requestDigest,
+                              "delegation-jti-concurrent-second",
+                              digest(91),
+                              secondBinding.contextEvidenceDigest(),
+                              secondBinding.authorityTupleDigest(),
+                              secondBinding.issuanceFenceDigest(),
+                              secondBinding.postconditionDigest()));
+              return true;
+            } catch (AccountBareLoginExchangeRepository.EvidenceMismatchException exception) {
+              return false;
+            }
+          };
+      Future<Boolean> first = executor.submit(firstWriter);
+      Future<Boolean> second = executor.submit(secondWriter);
+      assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+      start.countDown();
+
+      assertThat(List.of(first.get(20, TimeUnit.SECONDS), second.get(20, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(true, false);
+      var persisted =
+          inTransaction(
+              context.transaction(),
+              () -> context.repository().find(identity, requestDigest).orElseThrow());
+      assertThat(persisted.operationId()).isEqualTo(originalClaim.operation().operationId());
+      assertThat(persisted.lifecycle()).isEqualTo(Lifecycle.PENDING);
+      AccountEnvelopeBinding winningBinding;
+      if ("delegation-jti-concurrent-first".equals(persisted.tokenIdentity())) {
+        assertThat(persisted.tokenHash()).containsExactly(digest(90));
+        winningBinding = firstBinding;
+      } else {
+        assertThat(persisted.tokenIdentity()).isEqualTo("delegation-jti-concurrent-second");
+        assertThat(persisted.tokenHash()).containsExactly(digest(91));
+        winningBinding = secondBinding;
+      }
+      assertThat(persisted.contextEvidenceDigest())
+          .containsExactly(winningBinding.contextEvidenceDigest());
+      assertThat(persisted.authorityTupleDigest())
+          .containsExactly(winningBinding.authorityTupleDigest());
+      assertThat(persisted.issuanceFenceDigest())
+          .containsExactly(winningBinding.issuanceFenceDigest());
+      assertThat(persisted.postconditionDigest())
+          .containsExactly(winningBinding.postconditionDigest());
+      Long envelopeCount =
+          context
+              .dsl()
+              .resultQuery(
+                  "SELECT COUNT(*) FROM account_bare_login_response_envelopes "
+                      + "WHERE operation_id = ?",
+                  persisted.operationId())
+              .fetchOne(0, Long.class);
+      assertThat(envelopeCount).isEqualTo(0L);
+    } finally {
+      start.countDown();
+      executor.shutdownNow();
+    }
   }
 
   @Test
@@ -415,6 +832,81 @@ class AccountBareLoginExchangeRepositoryIntegrationTest {
                 inTransaction(
                     context.transaction(), () -> context.repository().find(identity, digest(11))))
         .isInstanceOf(AccountBareLoginExchangeRepository.IdempotencyConflictException.class);
+  }
+
+  @Test
+  void terminalSuccessWithoutItsExactBoundEnvelopeCannotCommit() {
+    TestContext context = newTestContext();
+    Source source = committedSource(context);
+    AccountBareLoginExchangeIdentity identity = source.exchangeIdentity();
+    byte[] requestDigest = digest(12);
+    var claim =
+        inTransaction(
+            context.transaction(), () -> context.repository().claim(identity, requestDigest));
+    AccountEnvelopeBinding binding =
+        binding(claim.operation().operationId(), identity, requestDigest, 22);
+    inTransaction(
+        context.transaction(),
+        () ->
+            context
+                .repository()
+                .recordPendingEvidence(
+                    claim,
+                    requestDigest,
+                    "delegation-jti-no-envelope",
+                    digest(82),
+                    binding.contextEvidenceDigest(),
+                    binding.authorityTupleDigest(),
+                    binding.issuanceFenceDigest(),
+                    binding.postconditionDigest()));
+
+    assertThatThrownBy(
+            () ->
+                inTransaction(
+                    context.transaction(),
+                    () -> {
+                      int updated =
+                          context
+                              .dsl()
+                              .execute(
+                                  "UPDATE account_bare_login_exchange_operations "
+                                      + "SET status = 'COMMITTED', outcome_code = 'SUCCESS' "
+                                      + "WHERE operation_id = ?",
+                                  claim.operation().operationId());
+                      assertThat(updated).isEqualTo(1);
+                      return null;
+                    }))
+        .isInstanceOf(TransactionSystemException.class)
+        .satisfies(
+            exception -> {
+              Throwable rootCause = ((TransactionSystemException) exception).getRootCause();
+              assertThat(rootCause).isNotNull();
+              assertThat(rootCause.getMessage())
+                  .contains("Terminal bare LOGIN exchange requires its exact response envelope");
+            });
+
+    var unchanged =
+        inTransaction(
+            context.transaction(),
+            () -> context.repository().find(identity, requestDigest).orElseThrow());
+    assertThat(unchanged.lifecycle()).isEqualTo(Lifecycle.PENDING);
+    assertThat(unchanged.outcomeCode()).isNull();
+    assertThat(unchanged.requestDigest()).containsExactly(requestDigest);
+    assertThat(unchanged.contextEvidenceDigest()).containsExactly(binding.contextEvidenceDigest());
+    assertThat(
+            inTransaction(
+                context.transaction(),
+                () -> context.repository().readResponseEnvelope(identity, requestDigest, binding)))
+        .isEmpty();
+    Long envelopeCount =
+        context
+            .dsl()
+            .resultQuery(
+                "SELECT COUNT(*) FROM account_bare_login_response_envelopes "
+                    + "WHERE operation_id = ?",
+                claim.operation().operationId())
+            .fetchOne(0, Long.class);
+    assertThat(envelopeCount).isEqualTo(0L);
   }
 
   @Test
