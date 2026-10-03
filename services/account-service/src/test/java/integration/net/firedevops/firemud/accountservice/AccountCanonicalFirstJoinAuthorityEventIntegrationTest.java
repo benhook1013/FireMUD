@@ -603,7 +603,7 @@ class AccountCanonicalFirstJoinAuthorityEventIntegrationTest {
         Objects.requireNonNull(
             dsl.resultQuery(
                     "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-                    "canonical-first-join-" + suffix,
+                    "first-join-" + suffix,
                     "canonical-first-join-" + suffix + "@example.test",
                     "fixture-hash")
                 .fetchOne(0, Long.class),
