@@ -1,12 +1,14 @@
 package net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
 import java.util.UUID;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamesession.dto.CanonicalClosedAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.dto.CanonicalRealmCatalogSnapshot;
 import net.firedevops.firemud.gamesession.dto.CreateCanonicalClosedAdmissionPointerRequest;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
@@ -90,6 +92,57 @@ class GameSessionCanonicalAdmissionPointerRepositoryTest {
                     uuid(1), TARGET_NAMESPACE, uuid(2), uuid(3), uuid(4), 1L, "actor", "  "))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("bounded and nonblank");
+  }
+
+  @Test
+  void expectedClosedVersionCheckRequiresTheExactInitialPointerAndCatalogTuple() {
+    CreateCanonicalClosedAdmissionPointerRequest request = request("origin actor", "origin reason");
+    CanonicalRealmCatalogSnapshot catalog = catalogSnapshot();
+    String requestDigest =
+        GameSessionCanonicalAdmissionPointerRepository.requestDigest(request, catalog);
+    Instant updatedAt = Instant.parse("2026-10-03T00:00:00.123456Z");
+    CanonicalClosedAdmissionPointerSnapshot origin =
+        new CanonicalClosedAdmissionPointerSnapshot(
+            catalog.targetNamespace(),
+            catalog.tenantId(),
+            catalog.realmId(),
+            catalog.worldSlug(),
+            catalog.realmSlug(),
+            1L,
+            catalog.catalogRevision(),
+            "CLOSED",
+            null,
+            request.requestId(),
+            requestDigest,
+            GameSessionCanonicalAdmissionPointerRepository.receiptDigest(
+                request, catalog, requestDigest, 123L, updatedAt),
+            request.actorPrincipal(),
+            request.reason(),
+            123L,
+            updatedAt,
+            catalog);
+
+    assertThatCode(
+            () ->
+                GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(
+                    origin, 1L, 1L))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(
+            () ->
+                GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(
+                    origin, 2L, 1L))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("versions do not match");
+    assertThatThrownBy(
+            () ->
+                GameSessionCanonicalAdmissionPointerRepository.requireExpectedVersions(
+                    origin, 1L, 2L))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("versions do not match");
   }
 
   private static CreateCanonicalClosedAdmissionPointerRequest request(

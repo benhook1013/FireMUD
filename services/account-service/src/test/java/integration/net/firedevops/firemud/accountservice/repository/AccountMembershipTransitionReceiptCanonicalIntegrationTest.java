@@ -487,7 +487,7 @@ class AccountMembershipTransitionReceiptCanonicalIntegrationTest {
         ResolveLegacyAccountTenantAssociationResponse.newBuilder()
             .setLegacyAccountTenantId(RETAINED_TENANT_ID)
             .setCanonicalTenantId(tenantUuid.toString())
-            .setSourceLegacyGameTenantId("retained-" + UUID.randomUUID())
+            .setSourceLegacyGameTenantId("r-" + UUID.randomUUID().toString().replace("-", ""))
             .setSourceGameRowId(positiveLong())
             .setAccountEvidenceDigest(retainedDigest)
             .setOperationId(sourceOperationId.toString())
@@ -1052,7 +1052,7 @@ class AccountMembershipTransitionReceiptCanonicalIntegrationTest {
   private static FreshTenantCreationEvidence freshTenantEvidence(UUID canonicalTenantId) {
     UUID requestId = UUID.randomUUID();
     UUID operationId = UUID.randomUUID();
-    String sourceTenantKey = "fresh-" + UUID.randomUUID().toString().replace("-", "");
+    String sourceTenantKey = "f-" + UUID.randomUUID().toString().replace("-", "");
     String requestDigest =
         GameTenantCreationDigest.requestDigest(
             TEST_NAMESPACE, requestId, sourceTenantKey, "Canonical receipt fixture", null);

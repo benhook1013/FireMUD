@@ -20,6 +20,8 @@ import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSou
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.CanonicalClosedPointerConflictException;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.ExpectedClosedEvidence;
+import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.PreparedExpectedClosed;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepository.PreparedInitialClosed;
 import net.firedevops.firemud.gamesession.repository.GameSessionCanonicalRealmCatalogRepository;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
@@ -106,6 +108,162 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
         .isEqualTo(1L);
     assertThat(fixture.count("game_session_canonical_closed_admission_pointer_request"))
         .isEqualTo(1L);
+  }
+
+  @Test
+  void expectedClosedLocksAndReturnsOnlyTheExactNeverOpenOriginEvidence() {
+    Fixture fixture = fixture(false);
+    Created created = fixture.create(uuid(28), "expected-close actor", "expected-close reason");
+    PreparedExpectedClosed prepared =
+        fixture.pointerRepository.prepareExpectedClosed(
+            NAMESPACE, created.snapshot.requestId(), 1L, 1L);
+
+    ExpectedClosedEvidence evidence = fixture.lockExpectedClosed(prepared);
+
+    assertThat(evidence.isNeverOpenOrigin()).isTrue();
+    assertThat(evidence.targetNamespace()).isEqualTo(NAMESPACE);
+    assertThat(evidence.originalRequestId()).isEqualTo(created.snapshot.requestId());
+    assertThat(evidence.canonicalTenantId()).isEqualTo(created.catalog.tenantId());
+    assertThat(evidence.realmId()).isEqualTo(created.catalog.realmId());
+    assertThat(evidence.pointerVersion()).isEqualTo(1L);
+    assertThat(evidence.catalogRevision()).isEqualTo(1L);
+    assertThat(evidence.auditEventId()).isEqualTo(created.snapshot.auditEventId());
+    assertThat(evidence.requestDigest()).isEqualTo(created.snapshot.requestDigest());
+    assertThat(evidence.receiptDigest()).isEqualTo(created.snapshot.receiptDigest());
+  }
+
+  @Test
+  void expectedClosedRejectsMissingForgedAndWrongVersionOriginSelectors() {
+    Fixture fixture = fixture(false);
+    Created created = fixture.create(uuid(29), "expected-close actor", "expected-close reason");
+
+    assertThatThrownBy(
+            () -> fixture.pointerRepository.prepareExpectedClosed(NAMESPACE, uuid(998), 1L, 1L))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("origin is missing");
+    assertThatThrownBy(
+            () ->
+                fixture.pointerRepository.prepareExpectedClosed(
+                    NAMESPACE + "-other", created.snapshot.requestId(), 1L, 1L))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("origin is missing");
+    assertThatThrownBy(
+            () ->
+                fixture.pointerRepository.prepareExpectedClosed(
+                    NAMESPACE, created.snapshot.requestId(), 2L, 1L))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("versions do not match");
+    assertThatThrownBy(
+            () ->
+                fixture.pointerRepository.prepareExpectedClosed(
+                    NAMESPACE, created.snapshot.requestId(), 1L, 2L))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("versions do not match");
+  }
+
+  @Test
+  void expectedClosedLockRejectsDriftAndPartialOriginalEvidence() {
+    Fixture drifted = fixture(false);
+    Created created = drifted.create(uuid(38), "drift actor", "original reason");
+    PreparedExpectedClosed driftPrepared =
+        drifted.pointerRepository.prepareExpectedClosed(
+            NAMESPACE, created.snapshot.requestId(), 1L, 1L);
+    drifted.dsl.execute(
+        "ALTER TABLE gameplay_admission_pointer_event "
+            + "DISABLE TRIGGER gameplay_admission_pointer_event_canonical_immutable");
+    drifted.dsl.execute(
+        "UPDATE gameplay_admission_pointer_event SET reason = 'changed after prepare' WHERE id = ?",
+        created.snapshot.auditEventId());
+    drifted.dsl.execute(
+        "ALTER TABLE gameplay_admission_pointer_event "
+            + "ENABLE TRIGGER gameplay_admission_pointer_event_canonical_immutable");
+
+    assertThatThrownBy(() -> drifted.lockExpectedClosed(driftPrepared))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("audit event conflicts");
+
+    Fixture partial = fixture(false);
+    Created partialCreated = partial.create(uuid(39), "partial actor", "partial origin reason");
+    PreparedExpectedClosed partialPrepared =
+        partial.pointerRepository.prepareExpectedClosed(
+            NAMESPACE, partialCreated.snapshot.requestId(), 1L, 1L);
+    partial.dsl.execute(
+        "ALTER TABLE game_session_canonical_closed_admission_pointer_request "
+            + "DISABLE TRIGGER ALL");
+    partial.dsl.execute("ALTER TABLE gameplay_admission_pointer_event DISABLE TRIGGER ALL");
+    partial.dsl.execute(
+        "DELETE FROM game_session_canonical_closed_admission_pointer_request "
+            + "WHERE target_namespace = ? AND request_id = ?",
+        NAMESPACE,
+        partialCreated.snapshot.requestId());
+    partial.dsl.execute(
+        "DELETE FROM gameplay_admission_pointer_event WHERE id = ?",
+        partialCreated.snapshot.auditEventId());
+    partial.dsl.execute(
+        "ALTER TABLE game_session_canonical_closed_admission_pointer_request "
+            + "ENABLE TRIGGER ALL");
+    partial.dsl.execute("ALTER TABLE gameplay_admission_pointer_event ENABLE TRIGGER ALL");
+
+    assertThatThrownBy(() -> partial.lockExpectedClosed(partialPrepared))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("request outcome is missing");
+    assertThatThrownBy(
+            () ->
+                partial.pointerRepository.prepareExpectedClosed(
+                    NAMESPACE, partialCreated.snapshot.requestId(), 1L, 1L))
+        .isInstanceOf(
+            GameSessionCanonicalAdmissionPointerRepository
+                .InvalidCanonicalClosedPointerEvidenceException.class)
+        .hasMessageContaining("origin is missing");
+  }
+
+  @Test
+  void expectedClosedRequiresCommittedPreflightAndWritableReadCommittedOwnerLock() {
+    Fixture fixture = fixture(false);
+    Created created = fixture.create(uuid(40), "boundary actor", "boundary reason");
+    PreparedExpectedClosed prepared =
+        fixture.pointerRepository.prepareExpectedClosed(
+            NAMESPACE, created.snapshot.requestId(), 1L, 1L);
+
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.pointerRepository.prepareExpectedClosed(
+                            NAMESPACE, created.snapshot.requestId(), 1L, 1L)))
+        .hasMessageContaining("committed-outcome owner read");
+    assertThatThrownBy(() -> fixture.pointerRepository.lockExpectedClosed(prepared))
+        .hasMessageContaining("active owner transaction");
+
+    TransactionTemplate readOnly = new TransactionTemplate(fixture.transactionManager);
+    readOnly.setReadOnly(true);
+    assertThatThrownBy(
+            () ->
+                readOnly.execute(status -> fixture.pointerRepository.lockExpectedClosed(prepared)))
+        .hasMessageContaining("read-write transaction");
+
+    TransactionTemplate serializable = new TransactionTemplate(fixture.transactionManager);
+    serializable.setIsolationLevel(
+        org.springframework.transaction.TransactionDefinition.ISOLATION_SERIALIZABLE);
+    assertThatThrownBy(
+            () ->
+                serializable.execute(
+                    status -> fixture.pointerRepository.lockExpectedClosed(prepared)))
+        .hasMessageContaining("READ COMMITTED");
+
+    assertThat(fixture.lockExpectedClosed(prepared).isNeverOpenOrigin()).isTrue();
   }
 
   @Test
@@ -698,6 +856,11 @@ class GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest {
               dsl.fetchOne("SELECT count(*) FROM " + tableOrPredicate),
               "Count query must return one row")
           .get(0, Long.class);
+    }
+
+    ExpectedClosedEvidence lockExpectedClosed(PreparedExpectedClosed prepared) {
+      return java.util.Objects.requireNonNull(
+          transactions.execute(status -> pointerRepository.lockExpectedClosed(prepared)));
     }
 
     Record required(String sql, Object... bindings) {

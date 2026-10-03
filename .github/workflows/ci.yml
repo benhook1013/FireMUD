@@ -1232,6 +1232,10 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#committedReadbackRequiresExactOwnerTransactionBoundaries()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#partialPointerCannotCommitWithoutItsAuditAndRequestOutcome()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#retainedNumericReadersRemainIsolatedAndCanonicalMutationGuardsHold()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#expectedClosedLocksAndReturnsOnlyTheExactNeverOpenOriginEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#expectedClosedRejectsMissingForgedAndWrongVersionOriginSelectors()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#expectedClosedLockRejectsDriftAndPartialOriginalEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionCanonicalAdmissionPointerRepositoryIntegrationTest#expectedClosedRequiresCommittedPreflightAndWritableReadCommittedOwnerLock()' \
             game-session-service
 
       - name: Upload Game Session canonical CLOSED pointer PostgreSQL proof results

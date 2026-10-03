@@ -192,6 +192,84 @@ public class GameSessionCanonicalAdmissionPointerRepository {
     }
   }
 
+  /**
+   * Prepares an explicit expected-closed check from the exact original committed CLOSED request.
+   * Missing request, pointer, event, or catalog history is invalid evidence and never establishes a
+   * never-open origin.
+   */
+  @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
+  public PreparedExpectedClosed prepareExpectedClosed(
+      String targetNamespace,
+      UUID originalRequestId,
+      long expectedPointerVersion,
+      long expectedCatalogRevision) {
+    requireReadSelector(targetNamespace, originalRequestId);
+    requirePositive(expectedPointerVersion, "expectedPointerVersion");
+    requirePositive(expectedCatalogRevision, "expectedCatalogRevision");
+    requireCommittedRead();
+
+    CanonicalClosedAdmissionPointerSnapshot origin =
+        readByRequest(targetNamespace, originalRequestId)
+            .orElseThrow(
+                () ->
+                    new InvalidCanonicalClosedPointerEvidenceException(
+                        "Exact original committed canonical CLOSED origin is missing"));
+    requireExpectedVersions(origin, expectedPointerVersion, expectedCatalogRevision);
+    return new PreparedExpectedClosed(origin, expectedPointerVersion, expectedCatalogRevision);
+  }
+
+  /**
+   * Locks and revalidates one prepared original CLOSED origin in the caller's read-write READ
+   * COMMITTED owner transaction. The returned token is local repository evidence only; it is not
+   * World hold/readback, caller authentication, or authorization to transition the pointer.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ExpectedClosedEvidence lockExpectedClosed(PreparedExpectedClosed prepared) {
+    Objects.requireNonNull(prepared, "prepared");
+    requireWritableOwnerTransaction();
+    CanonicalClosedAdmissionPointerSnapshot committedOrigin = prepared.committedOrigin();
+    CreateCanonicalClosedAdmissionPointerRequest originRequest =
+        requestFromSnapshot(committedOrigin);
+
+    CanonicalRealmCatalogSnapshot lockedCatalog =
+        catalogRepository.lockExactInitialPublicProduction(
+            originRequest.targetNamespace(),
+            originRequest.canonicalTenantId(),
+            originRequest.realmId(),
+            originRequest.catalogCreationRequestId(),
+            prepared.expectedCatalogRevision());
+    if (!committedOrigin.catalogSnapshot().equals(lockedCatalog)) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact catalog origin changed after expected-CLOSED preparation");
+    }
+
+    Record lockedPointer = lockCanonicalPointer(originRequest);
+    if (lockedPointer == null) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact original canonical CLOSED pointer row is missing");
+    }
+    Record outcome = findRequest(originRequest.targetNamespace(), originRequest.requestId());
+    if (outcome == null) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact original canonical CLOSED request outcome is missing");
+    }
+
+    CanonicalClosedAdmissionPointerSnapshot lockedOrigin =
+        verifyOrigin(
+            originRequest.targetNamespace(),
+            originRequest.requestId(),
+            outcome,
+            lockedCatalog,
+            lockedPointer);
+    requireExpectedVersions(
+        lockedOrigin, prepared.expectedPointerVersion(), prepared.expectedCatalogRevision());
+    if (!committedOrigin.equals(lockedOrigin)) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Exact original canonical CLOSED origin changed after preparation");
+    }
+    return new ExpectedClosedEvidence(lockedOrigin);
+  }
+
   /** Reads and verifies the immutable request outcome from committed owner rows. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public Optional<CanonicalClosedAdmissionPointerSnapshot> readByRequest(
@@ -216,63 +294,8 @@ public class GameSessionCanonicalAdmissionPointerRepository {
                   () ->
                       new InvalidCanonicalClosedPointerEvidenceException(
                           "Canonical CLOSED pointer outcome lost its catalog reference"));
-      requireExactInitialCatalog(request, catalog);
-      String requestDigest = requestDigest(request, catalog);
-      if (!requestDigest.equals(required(outcome, "request_digest", String.class))) {
-        throw new InvalidCanonicalClosedPointerEvidenceException(
-            "Canonical CLOSED pointer request digest does not match committed request inputs");
-      }
-      if (!catalog.requestDigest().equals(required(outcome, "catalog_request_digest", String.class))
-          || !catalog
-              .receiptDigest()
-              .equals(required(outcome, "catalog_receipt_digest", String.class))) {
-        throw new InvalidCanonicalClosedPointerEvidenceException(
-            "Canonical CLOSED pointer outcome does not match its exact catalog digests");
-      }
-
-      long eventId = required(outcome, "audit_event_id", Long.class);
-      Instant updatedAt = outcomeTimestamp(outcome);
-      String receiptDigest = receiptDigest(request, catalog, requestDigest, eventId, updatedAt);
-      if (!receiptDigest.equals(required(outcome, "receipt_digest", String.class))) {
-        throw new InvalidCanonicalClosedPointerEvidenceException(
-            "Canonical CLOSED pointer receipt digest does not match its committed result");
-      }
-      requireOutcomeMatches(
-          outcome, request, catalog, requestDigest, receiptDigest, eventId, updatedAt);
-
       Record pointer = findCanonicalPointer(request);
-      if (pointer == null) {
-        throw new InvalidCanonicalClosedPointerEvidenceException(
-            "Canonical CLOSED pointer outcome has no committed routing row");
-      }
-      requirePointerMatches(pointer, request, catalog, updatedAt);
-
-      Record event = findCanonicalEvent(eventId);
-      if (event == null) {
-        throw new InvalidCanonicalClosedPointerEvidenceException(
-            "Canonical CLOSED pointer outcome has no committed audit event");
-      }
-      requireEventMatches(event, request, catalog, eventId, updatedAt);
-
-      return Optional.of(
-          new CanonicalClosedAdmissionPointerSnapshot(
-              catalog.targetNamespace(),
-              catalog.tenantId(),
-              catalog.realmId(),
-              catalog.worldSlug(),
-              catalog.realmSlug(),
-              INITIAL_POINTER_VERSION,
-              catalog.catalogRevision(),
-              CLOSED,
-              null,
-              request.requestId(),
-              requestDigest,
-              receiptDigest,
-              request.actorPrincipal(),
-              request.reason(),
-              eventId,
-              updatedAt,
-              catalog));
+      return Optional.of(verifyOrigin(targetNamespace, requestId, outcome, catalog, pointer));
     } catch (InvalidCanonicalClosedPointerEvidenceException
         | GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException
         | GameSessionCanonicalRealmCatalogRepository.CatalogConflictException exception) {
@@ -289,6 +312,125 @@ public class GameSessionCanonicalAdmissionPointerRepository {
             + "WHERE target_namespace = ? AND request_id = ?",
         targetNamespace,
         requestId);
+  }
+
+  private Record lockCanonicalPointer(CreateCanonicalClosedAdmissionPointerRequest request) {
+    return dsl.fetchOne(
+        "SELECT * FROM gameplay_admission_pointer "
+            + "WHERE representation_version = 2 AND target_namespace = ? "
+            + "AND canonical_tenant_id = ? AND realm_id = ? FOR UPDATE",
+        request.targetNamespace(),
+        request.canonicalTenantId(),
+        request.realmId());
+  }
+
+  private CanonicalClosedAdmissionPointerSnapshot verifyOrigin(
+      String targetNamespace,
+      UUID requestId,
+      Record outcome,
+      CanonicalRealmCatalogSnapshot catalog,
+      Record pointer) {
+    try {
+      CreateCanonicalClosedAdmissionPointerRequest request = requestFromOutcome(outcome);
+      if (!targetNamespace.equals(request.targetNamespace())
+          || !requestId.equals(request.requestId())) {
+        throw new InvalidCanonicalClosedPointerEvidenceException(
+            "Canonical CLOSED pointer outcome does not match its read selector");
+      }
+      requireExactInitialCatalog(request, catalog);
+      String computedRequestDigest = requestDigest(request, catalog);
+      if (!computedRequestDigest.equals(required(outcome, "request_digest", String.class))) {
+        throw new InvalidCanonicalClosedPointerEvidenceException(
+            "Canonical CLOSED pointer request digest does not match committed request inputs");
+      }
+      if (!catalog.requestDigest().equals(required(outcome, "catalog_request_digest", String.class))
+          || !catalog
+              .receiptDigest()
+              .equals(required(outcome, "catalog_receipt_digest", String.class))) {
+        throw new InvalidCanonicalClosedPointerEvidenceException(
+            "Canonical CLOSED pointer outcome does not match its exact catalog digests");
+      }
+
+      long eventId = required(outcome, "audit_event_id", Long.class);
+      Instant updatedAt = outcomeTimestamp(outcome);
+      String computedReceiptDigest =
+          receiptDigest(request, catalog, computedRequestDigest, eventId, updatedAt);
+      if (!computedReceiptDigest.equals(required(outcome, "receipt_digest", String.class))) {
+        throw new InvalidCanonicalClosedPointerEvidenceException(
+            "Canonical CLOSED pointer receipt digest does not match its committed result");
+      }
+      requireOutcomeMatches(
+          outcome,
+          request,
+          catalog,
+          computedRequestDigest,
+          computedReceiptDigest,
+          eventId,
+          updatedAt);
+
+      if (pointer == null) {
+        throw new InvalidCanonicalClosedPointerEvidenceException(
+            "Canonical CLOSED pointer outcome has no committed routing row");
+      }
+      requirePointerMatches(pointer, request, catalog, updatedAt);
+
+      Record event = findCanonicalEvent(eventId);
+      if (event == null) {
+        throw new InvalidCanonicalClosedPointerEvidenceException(
+            "Canonical CLOSED pointer outcome has no committed audit event");
+      }
+      requireEventMatches(event, request, catalog, eventId, updatedAt);
+
+      return new CanonicalClosedAdmissionPointerSnapshot(
+          catalog.targetNamespace(),
+          catalog.tenantId(),
+          catalog.realmId(),
+          catalog.worldSlug(),
+          catalog.realmSlug(),
+          INITIAL_POINTER_VERSION,
+          catalog.catalogRevision(),
+          CLOSED,
+          null,
+          request.requestId(),
+          computedRequestDigest,
+          computedReceiptDigest,
+          request.actorPrincipal(),
+          request.reason(),
+          eventId,
+          updatedAt,
+          catalog);
+    } catch (InvalidCanonicalClosedPointerEvidenceException
+        | GameSessionCanonicalRealmCatalogRepository.InvalidCatalogEvidenceException
+        | GameSessionCanonicalRealmCatalogRepository.CatalogConflictException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Persisted canonical CLOSED pointer evidence is invalid", exception);
+    }
+  }
+
+  private static CreateCanonicalClosedAdmissionPointerRequest requestFromSnapshot(
+      CanonicalClosedAdmissionPointerSnapshot snapshot) {
+    return new CreateCanonicalClosedAdmissionPointerRequest(
+        snapshot.requestId(),
+        snapshot.targetNamespace(),
+        snapshot.canonicalTenantId(),
+        snapshot.realmId(),
+        snapshot.catalogSnapshot().creationRequestId(),
+        snapshot.catalogRevision(),
+        snapshot.actorPrincipal(),
+        snapshot.reason());
+  }
+
+  static void requireExpectedVersions(
+      CanonicalClosedAdmissionPointerSnapshot origin,
+      long expectedPointerVersion,
+      long expectedCatalogRevision) {
+    if (origin.pointerVersion() != expectedPointerVersion
+        || origin.catalogRevision() != expectedCatalogRevision) {
+      throw new InvalidCanonicalClosedPointerEvidenceException(
+          "Expected pointer and catalog versions do not match the exact original CLOSED origin");
+    }
   }
 
   private boolean pointerExistsForRealm(UUID realmId) {
@@ -678,6 +820,89 @@ public class GameSessionCanonicalAdmissionPointerRepository {
 
     private String requestDigest() {
       return requestDigest;
+    }
+  }
+
+  /** Opaque committed-origin preflight; callers cannot construct it or replace its exact origin. */
+  public static final class PreparedExpectedClosed {
+    private final CanonicalClosedAdmissionPointerSnapshot committedOrigin;
+    private final long expectedPointerVersion;
+    private final long expectedCatalogRevision;
+
+    private PreparedExpectedClosed(
+        CanonicalClosedAdmissionPointerSnapshot committedOrigin,
+        long expectedPointerVersion,
+        long expectedCatalogRevision) {
+      this.committedOrigin = Objects.requireNonNull(committedOrigin, "committedOrigin");
+      this.expectedPointerVersion = expectedPointerVersion;
+      this.expectedCatalogRevision = expectedCatalogRevision;
+    }
+
+    private CanonicalClosedAdmissionPointerSnapshot committedOrigin() {
+      return committedOrigin;
+    }
+
+    private long expectedPointerVersion() {
+      return expectedPointerVersion;
+    }
+
+    private long expectedCatalogRevision() {
+      return expectedCatalogRevision;
+    }
+  }
+
+  /**
+   * Opaque local evidence that the exact original canonical CLOSED v1 pointer, its creation event,
+   * immutable request outcome, and initial catalog were positively verified under owner locks. This
+   * evidence is not caller authentication, World lifecycle or hold evidence, or OPEN authority.
+   */
+  public static final class ExpectedClosedEvidence {
+    private final CanonicalClosedAdmissionPointerSnapshot verifiedOrigin;
+
+    private ExpectedClosedEvidence(CanonicalClosedAdmissionPointerSnapshot verifiedOrigin) {
+      this.verifiedOrigin = Objects.requireNonNull(verifiedOrigin, "verifiedOrigin");
+    }
+
+    public String targetNamespace() {
+      return verifiedOrigin.targetNamespace();
+    }
+
+    public UUID originalRequestId() {
+      return verifiedOrigin.requestId();
+    }
+
+    public UUID canonicalTenantId() {
+      return verifiedOrigin.canonicalTenantId();
+    }
+
+    public UUID realmId() {
+      return verifiedOrigin.realmId();
+    }
+
+    public long pointerVersion() {
+      return verifiedOrigin.pointerVersion();
+    }
+
+    public long catalogRevision() {
+      return verifiedOrigin.catalogRevision();
+    }
+
+    public String requestDigest() {
+      return verifiedOrigin.requestDigest();
+    }
+
+    public String receiptDigest() {
+      return verifiedOrigin.receiptDigest();
+    }
+
+    public long auditEventId() {
+      return verifiedOrigin.auditEventId();
+    }
+
+    public boolean isNeverOpenOrigin() {
+      return CLOSED.equals(verifiedOrigin.admissionState())
+          && verifiedOrigin.pointerVersion() == INITIAL_POINTER_VERSION
+          && verifiedOrigin.admissibleGameInstanceId() == null;
     }
   }
 

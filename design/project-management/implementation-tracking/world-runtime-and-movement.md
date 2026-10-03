@@ -6,6 +6,8 @@ This is a non-normative implementation tracker for world runtime and movement. C
 
 ## Current Status
 
+The canonical Unit 1B tree does not yet contain a persisted authenticated launch association from Game Session's canonical catalog/instance identities to World's lifecycle row. Existing start/prepare paths still carry numeric tenant/instance/template/version selectors and drop the persisted Game Session instance UUID; the fresh canonical catalog deliberately supplies no numeric tenant alias. The separately prepared #2939 numeric `NO_PRIOR_POINTER` hold is therefore not a compatible canonical first-OPEN handoff. Required work is an explicit persisted owner launch binding and authenticated exact readback, both tagged initial-hold modes, an ACTIVE epoch fence, termination blocking while unresolved, and atomic Game Session pointer/audit/outcome proof. Retained associations require authoritative source evidence rather than guessed mapping. See the [initial hold owner contract](../../architecture/microservices/world-management-service/api-contracts.md#initial-admission-hold-contract). No canonical World hold, OPEN runtime composition or activation is claimed by the current receipt/CLOSED checkpoint.
+
 This tracker is the permanent reader-facing implementation record for world runtime, room reads, movement, lifecycle orchestration, and Draft topology mutation. Canonical target-state design remains under [design/architecture](../../architecture/README.md).
 
 ## Packet 4 Status and Proof Gaps
