@@ -1670,6 +1670,22 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void deleteAccountRejectsMissingSessionBeforeUnavailableWorkflow() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    SessionContext.clear();
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<DeleteAccountResponse> observer = new RecordingObserver<>();
+
+    service.deleteAccount(DeleteAccountRequest.newBuilder().setAccountId("2").build(), observer);
+
+    assertTrue(observer.completed());
+    assertFalse(observer.response().getSuccess());
+    assertEquals("PERMISSION_DENIED", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
   void deleteAccountRejectsZeroAccountIdBeforeDelete() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
