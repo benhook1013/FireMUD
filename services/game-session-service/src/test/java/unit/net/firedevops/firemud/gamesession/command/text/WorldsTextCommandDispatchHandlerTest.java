@@ -104,7 +104,6 @@ class WorldsTextCommandDispatchHandlerTest {
         new WorldsTextCommandDispatchHandler(
             new WorldsCommandHandler(
                 new GameplayWorldCatalog(authorityService),
-                entityManagementClient,
                 accountClient,
                 DirectTextConnectScopeSessionStore.inMemoryForTest()),
             scriptEventPublisher);
