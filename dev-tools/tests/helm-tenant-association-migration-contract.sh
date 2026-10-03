@@ -69,6 +69,46 @@ with tempfile.TemporaryDirectory() as directory:
                 continue
             raise SystemExit(f"{workload} Flyway check accepted a missing or enabled property")
 
+    database_secrets = {
+        ("account", "evidence"): "firemud-account-tenant-evidence-db",
+        ("account", "import"): "firemud-account-tenant-import-db",
+        ("game-design", "preflight"): "firemud-game-design-tenant-preflight-db",
+        ("game-design", "apply"): "firemud-game-design-tenant-apply-db",
+    }
+
+    def require_database_credentials(container, service, mode):
+        if container.get("envFrom"):
+            raise SystemExit("migration must not import an unrestricted credential bundle")
+        expected_secret = database_secrets[(service, mode)]
+        for key in ("FIREMUD_POSTGRES_USER", "FIREMUD_POSTGRES_PASSWORD"):
+            entries = [entry for entry in container["env"] if entry["name"] == key]
+            expected = {
+                "name": key,
+                "valueFrom": {
+                    "secretKeyRef": {"name": expected_secret, "key": key, "optional": False},
+                },
+            }
+            if entries != [expected]:
+                raise SystemExit(f"{service}/{mode} must require its dedicated {key} Secret key")
+
+    def require_database_guard_negative_proof(container, service, mode):
+        for replacement in (
+            {"name": "firemud-secret", "key": "FIREMUD_POSTGRES_USER", "optional": False},
+            {"name": "firemud-game-design-baseline-writer-db", "key": "FIREMUD_POSTGRES_USER", "optional": False},
+            {"name": database_secrets[(service, mode)], "key": "PASSWORD", "optional": False},
+            {"name": database_secrets[(service, mode)], "key": "FIREMUD_POSTGRES_USER", "optional": True},
+            {"name": database_secrets[(service, mode)], "key": "FIREMUD_POSTGRES_USER"},
+            None,
+        ):
+            invalid = copy.deepcopy(container)
+            credential = next(entry for entry in invalid["env"] if entry["name"] == "FIREMUD_POSTGRES_USER")
+            credential["valueFrom"]["secretKeyRef"] = replacement
+            try:
+                require_database_credentials(invalid, service, mode)
+            except SystemExit:
+                continue
+            raise SystemExit(f"{service}/{mode} credential guard accepted {replacement}")
+
     disabled = render("tenant-migration-disabled")
     if disabled.returncode:
         raise SystemExit(disabled.stderr)
@@ -126,6 +166,8 @@ with tempfile.TemporaryDirectory() as directory:
                 raise SystemExit(f"{workload} reused an ordinary service certificate")
             require_flyway_disabled(pod["containers"][0]["args"], workload)
             require_flyway_guard_negative_proof(pod["containers"][0]["args"], workload)
+            require_database_credentials(pod["containers"][0], service, mode)
+            require_database_guard_negative_proof(pod["containers"][0], service, mode)
             policy = by_kind_name[("NetworkPolicy", workload)]["spec"]
             if policy["ingress"] != [] or set(policy["policyTypes"]) != {"Ingress", "Egress"}:
                 raise SystemExit(f"{workload} has an unexpected ingress allowance")
