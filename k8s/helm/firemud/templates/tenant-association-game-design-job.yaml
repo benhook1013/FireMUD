@@ -16,6 +16,10 @@
 {{- if not (has $mode (list "preflight" "apply")) -}}
 {{- fail "Game Design tenant association mode must be preflight or apply" -}}
 {{- end -}}
+{{- $postgresCredentialSecretName := "firemud-game-design-tenant-preflight-db" -}}
+{{- if eq $mode "apply" -}}
+{{- $postgresCredentialSecretName = "firemud-game-design-tenant-apply-db" -}}
+{{- end -}}
 {{- $runId := required "Game Design tenant association migration requires runId" $job.runId -}}
 {{- if or (gt (len $runId) 32) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $runId)) -}}
 {{- fail "Game Design tenant association runId must be a DNS label of at most 32 characters" -}}
@@ -113,13 +117,15 @@ spec:
             - name: FIREMUD_POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: firemud-secret
+                  name: {{ $postgresCredentialSecretName | quote }}
                   key: FIREMUD_POSTGRES_USER
+                  optional: false
             - name: FIREMUD_POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: firemud-secret
+                  name: {{ $postgresCredentialSecretName | quote }}
                   key: FIREMUD_POSTGRES_PASSWORD
+                  optional: false
             - name: FIREMUD_REDIS_ENABLED
               value: "false"
             - name: FIREMUD_TEMPORAL_ENABLED

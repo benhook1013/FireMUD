@@ -16,6 +16,10 @@
 {{- if not (has $mode (list "evidence" "import")) -}}
 {{- fail "Account tenant association mode must be evidence or import" -}}
 {{- end -}}
+{{- $postgresCredentialSecretName := "firemud-account-tenant-evidence-db" -}}
+{{- if eq $mode "import" -}}
+{{- $postgresCredentialSecretName = "firemud-account-tenant-import-db" -}}
+{{- end -}}
 {{- $runId := required "Account tenant association import requires runId" $job.runId -}}
 {{- if or (gt (len $runId) 32) (not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $runId)) -}}
 {{- fail "Account tenant association runId must be a DNS label of at most 32 characters" -}}
@@ -112,13 +116,15 @@ spec:
             - name: FIREMUD_POSTGRES_USER
               valueFrom:
                 secretKeyRef:
-                  name: firemud-secret
+                  name: {{ $postgresCredentialSecretName | quote }}
                   key: FIREMUD_POSTGRES_USER
+                  optional: false
             - name: FIREMUD_POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: firemud-secret
+                  name: {{ $postgresCredentialSecretName | quote }}
                   key: FIREMUD_POSTGRES_PASSWORD
+                  optional: false
             - name: FIREMUD_REDIS_ENABLED
               value: "false"
             - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
