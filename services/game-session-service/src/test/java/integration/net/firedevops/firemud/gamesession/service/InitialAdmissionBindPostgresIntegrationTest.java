@@ -98,9 +98,11 @@ class InitialAdmissionBindPostgresIntegrationTest {
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer"))).isZero();
     assertThat(dsl.fetchCount(DSL.table("gameplay_admission_pointer_event"))).isZero();
     assertThat(
-            dsl.fetchOne(
-                    "SELECT status FROM gameplay_initial_admission_bind_attempt WHERE attempt_id = ?",
-                    attempt.attemptId())
+            Objects.requireNonNull(
+                    dsl.fetchOne(
+                        "SELECT status FROM gameplay_initial_admission_bind_attempt WHERE attempt_id = ?",
+                        attempt.attemptId()),
+                    "Pending initial-bind attempt must remain after audit rollback")
                 .get("status", String.class))
         .isEqualTo("PENDING");
     dsl.execute("DROP TRIGGER reject_initial_admission_audit ON gameplay_admission_pointer_event");

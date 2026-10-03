@@ -1444,7 +1444,10 @@ public final class GameplayWorldCatalog {
       List<WorldView> worlds, Map<Long, Long> publicProductionCounts) {
     Map<String, Set<Long>> tenantsBySelector = new HashMap<>();
     for (WorldView world : worlds) {
-      if (world == null || world.slug() == null || world.slug().isBlank() || world.realms() == null) {
+      if (world == null
+          || world.slug() == null
+          || world.slug().isBlank()
+          || world.realms() == null) {
         continue;
       }
       world.realms().stream()
