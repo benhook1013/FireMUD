@@ -1287,6 +1287,33 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Run Account canonical membership receipt PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest#retainedV1HistoryBindsOnceAndCanonicalAppendContinuesItsSequence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest#freshCanonicalHeadHasNoNumericTenantAliasAndExactRetryDoesNotAdvanceIt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest#freshKnownJoinHistoryWithMissingReceiptHeadCannotRestartForAnotherRequest()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest#retainedMembershipHistoryWithoutReceiptHeadCannotStartCanonicalSequence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest#concurrentMatchingRequestConvergesOnOneOriginalCanonicalReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest#rollbackAndUnprovedSourceLeaveNoCanonicalHeadOrReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptCanonicalIntegrationTest#canonicalAppendRequiresReadWriteOwnerTransactionAndHistoricalReadbackIsNotCurrent()' \
+            account-service
+
+      - name: Upload Account canonical membership receipt PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-canonical-membership-receipt-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountMembershipTransitionReceiptCanonicalIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run Account persisted UUID authentication PostgreSQL component proof
         if: ${{ matrix.module == 'account-service' }}
         run: |

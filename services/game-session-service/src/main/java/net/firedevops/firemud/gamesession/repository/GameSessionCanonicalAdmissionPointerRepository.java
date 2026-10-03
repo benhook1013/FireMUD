@@ -170,7 +170,7 @@ public class GameSessionCanonicalAdmissionPointerRepository {
               + "catalog_creation_request_id, catalog_revision, catalog_request_digest, "
               + "catalog_receipt_digest, actor_principal, reason, admission_state, pointer_version, "
               + "audit_event_id, receipt_digest, updated_at) "
-              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSED', 1, ?, ?, ?)",
+              + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSED', 1, ?, ?, CAST(? AS TIMESTAMPTZ))",
           request.targetNamespace(),
           request.requestId(),
           requestDigest,
