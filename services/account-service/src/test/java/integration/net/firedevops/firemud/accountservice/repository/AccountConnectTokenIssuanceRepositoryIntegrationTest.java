@@ -605,9 +605,19 @@ class AccountConnectTokenIssuanceRepositoryIntegrationTest {
                                 claim.operation().operationId())))
         .hasMessageContaining("Connect-token issuance replay evidence cannot be deleted");
 
-    assertThat(context.dsl().fetchCount(DSL.table("account_connect_token_issuance_operations")))
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(
+                    DSL.table("account_connect_token_issuance_operations"),
+                    DSL.field("operation_id", UUID.class).eq(claim.operation().operationId())))
         .isEqualTo(1);
-    assertThat(context.dsl().fetchCount(DSL.table("account_connect_token_response_envelopes")))
+    assertThat(
+            context
+                .dsl()
+                .fetchCount(
+                    DSL.table("account_connect_token_response_envelopes"),
+                    DSL.field("operation_id", UUID.class).eq(claim.operation().operationId())))
         .isEqualTo(1);
   }
 
