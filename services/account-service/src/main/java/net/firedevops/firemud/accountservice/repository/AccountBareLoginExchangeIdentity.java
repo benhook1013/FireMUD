@@ -8,7 +8,7 @@ import java.util.UUID;
 public record AccountBareLoginExchangeIdentity(
     UUID sourceConnectOperationId,
     long accountId,
-    long tenantId,
+    UUID tenantId,
     String connectScopeId,
     String requestId) {
 
@@ -17,8 +17,9 @@ public record AccountBareLoginExchangeIdentity(
 
   public AccountBareLoginExchangeIdentity {
     Objects.requireNonNull(sourceConnectOperationId, "sourceConnectOperationId");
-    if (accountId <= 0 || tenantId <= 0) {
-      throw new IllegalArgumentException("Bare LOGIN account and tenant IDs must be positive");
+    if (accountId <= 0 || tenantId == null || tenantId.equals(new UUID(0L, 0L))) {
+      throw new IllegalArgumentException(
+          "Bare LOGIN account ID and non-nil canonical tenant UUID are required");
     }
     connectScopeId = requireText(connectScopeId, "connectScopeId");
     requestId = requireText(requestId, "requestId");

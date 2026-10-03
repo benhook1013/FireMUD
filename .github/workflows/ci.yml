@@ -945,7 +945,7 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" ]]; then
+          if [[ "${{ matrix.module }}" == "account-service" || "${{ matrix.module }}" == "game-session-service" || "${{ matrix.module }}" == "game-design-service" ]]; then
             ./gradlew :${{ matrix.module }}:check -PfullCheck --no-build-cache --no-configuration-cache
           else
             ./gradlew :${{ matrix.module }}:check -PfullCheck
@@ -962,6 +962,7 @@ jobs:
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#positiveMembershipSnapshotRejectsScalarAndWrongTenantVersionMaps()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#concurrentFirstJoinCannotMixWithCompleteFencedRuntimeMembershipSnapshot()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountJoinPostgresIntegrationTest#canonicalExistingPairBoundPositiveMembershipSnapshotRepeatsWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountBareLoginExchangeRepositoryIntegrationTest#claimOnlyTransactionRollsBackPendingExchange()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#concurrentExactIssuanceClaimsHaveOneTerminalFirstWriter()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectTokenIssuanceRepositoryIntegrationTest#lostIssuanceResponseRecoversExactEncryptedResultFromDurableReadback(Path)' \
@@ -980,13 +981,75 @@ jobs:
             account-service
 
       - name: 🔎 Verify Account committed connect source readback proof
-        if: ${{ matrix.module == 'account-service' }}
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
         run: |
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExactCommittedOriginalSourceAndLostResultWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsFreshUuidCommittedSourceAndStoredHistoricalFrameWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#doesNotReturnWhenAccountFenceWaitOutlivesTheUnchangedGatewayDeadline()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsExpiredCommittedSourceOnlyThroughHistoricalEvidenceWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRejectsRequestTargetHashAndTokenIdentityMismatches()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRequiresCommittedSuccess()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#historicalReadRequiresRegisteredGatewayAndAccountSigningKeys()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#readsCommittedStoredFrameAndOriginalSourceAfterGatewayContextExpiryWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#storedHistoryRejectsChangedDigestSourceContextResultHashAndKey()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlatesExpiredOriginalFrameWithSeparateFreshCommittedSourceWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlationRejectsExpiredFreshContextAndReissuedContextForOriginalSource()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlationRequiresExactAccountTenantAndCompleteSelectedTarget()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCommittedConnectSourceReaderIntegrationTest#correlationRechecksFreshDeadlineAfterStoredFrameReadWait()' \
+            account-service
+
+      - name: Verify Account fresh tenant association PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest#exactRetryReadbackGenerationInitializationAndImmutabilityStayAccountLocal()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest#concurrentRetainedAndFreshUuidClaimsSerializeOnTheSharedPrimaryKey()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationIntegrationTest#generationFailureRollsBackFreshAssociationAndCanonicalClaim()' \
+            account-service
+
+      - name: Verify Game Design fresh tenant creation PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#createCandidateExactRetryReturnsCommittedReceiptWithoutSecondGameWrite()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#concurrentDuplicateCreationRequestsConvergeOnOneUuidAndReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepositoryIntegrationTest#runtimeIdentityLookupReadsOnlyExactNewAndRetainedGameDesignRows()' \
+            game-design-service
+
+      - name: Verify Game Design authored-world source PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#registersAndReadsExactFreshAndRetainedV29ToV30Sources()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#failedOwnerCommitRollsBackBothTenantSelectorAndWorldSource()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactRegistrationRetriesReturnOnePersistedReceipt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepositoryIntegrationTest#concurrentDifferentTenantsCannotClaimTheSameTenantSlug()' \
+            game-design-service
+
+      - name: Verify Account fresh UUID pair and snapshot PostgreSQL proof
+        if: ${{ !cancelled() && matrix.module == 'account-service' }}
+        run: |
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryIntegrationTest \
+            --require-suite net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryIntegrationTest#v39PreservesRetainedPairHistoryAndEnforcesUuidOnlyFreshRows()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepositoryIntegrationTest#v39RefusesToRewriteAnExistingFreshNumericPair()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#freshUuidSnapshotEnrollsExactNonAdmittingBaselineAndRetriesWithoutSideEffects()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#freshUuidSnapshotRejectsAdvancedTenantGenerationAndRollsBackBaselineWrites()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#concurrentFreshUuidSnapshotCallsInitializeOneExactPairBaseline()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadUsesFreshUuidAssociationWithoutInventingRetainedAlias()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#canonicalRuntimeReadRejectsUnmappedTenantUuidWithoutEnrollment()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountFreshUuidMembershipSnapshotIntegrationTest#strictExistingMembershipReadDeniesFreshAssociationWithoutEnrollmentOrMutation()' \
             account-service
 
       - name: 🔎 Verify Game Session PostgreSQL proof case

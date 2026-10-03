@@ -9,7 +9,7 @@ import java.util.UUID;
 public record AccountConnectTokenIssuanceOperation(
     UUID operationId,
     long accountId,
-    long tenantId,
+    UUID tenantId,
     String connectScopeHash,
     String requestId,
     int requestDigestVersion,
@@ -47,7 +47,8 @@ public record AccountConnectTokenIssuanceOperation(
   public AccountConnectTokenIssuanceOperation {
     if (operationId == null
         || accountId <= 0
-        || tenantId <= 0
+        || tenantId == null
+        || tenantId.equals(new UUID(0L, 0L))
         || connectScopeHash == null
         || requestId == null
         || requestDigestVersion != 1
@@ -105,7 +106,7 @@ public record AccountConnectTokenIssuanceOperation(
       return false;
     }
     return accountId == that.accountId
-        && tenantId == that.tenantId
+        && tenantId.equals(that.tenantId)
         && requestDigestVersion == that.requestDigestVersion
         && reconciliationAttemptCount == that.reconciliationAttemptCount
         && operationId.equals(that.operationId)

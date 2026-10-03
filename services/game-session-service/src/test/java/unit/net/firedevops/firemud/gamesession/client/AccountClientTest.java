@@ -10,6 +10,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.grpc.ManagedChannel;
@@ -48,6 +49,7 @@ import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -488,25 +490,28 @@ class AccountClientTest {
 
   @Test
   void runtimeMembershipCallerUsesCanonicalAccountTenantRequest() throws Exception {
+    String accountId = "9b80a81b-7971-44af-bd6b-18079027f47a";
+    String tenantId = "cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1";
     AccountServiceGrpc.AccountServiceBlockingStub stub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     GetTenantMembershipForRuntimeResponse expected =
         GetTenantMembershipForRuntimeResponse.newBuilder()
-            .setAccountId("00000000-0000-0000-0000-000000000042")
-            .setTenantId("00000000-0000-0000-0000-000000000007")
+            .setAccountId(accountId)
+            .setTenantId(tenantId)
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
-            .putMembershipVersion("00000000-0000-0000-0000-000000000007", "12")
+            .putMembershipVersion(tenantId, "12")
             .setMembershipAuthorityGeneration("4")
-            .setRequestAccountId("42")
-            .setRequestTenantId("7")
+            .setRequestAccountId(accountId)
+            .setRequestTenantId(tenantId)
             .setEvaluatedAt("2026-07-31T00:00:00Z")
             .build();
     when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
         .thenReturn(expected);
     AccountClient client = newClient(stub);
-    PlayerExecutionContext playerContext = runtimeMembershipContext("42", "7", "request-1");
+    PlayerExecutionContext playerContext =
+        runtimeMembershipContext(accountId, tenantId, "request-1");
 
     GetTenantMembershipForRuntimeResponse actual =
         client.getTenantMembershipForRuntime(playerContext);
@@ -518,11 +523,58 @@ class AccountClientTest {
     assertThat(actual).isEqualTo(expected);
   }
 
+  @ParameterizedTest
+  @CsvSource({
+    "42, cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "9b80a81b-7971-44af-bd6b-18079027f47a, 7",
+    "not-a-uuid, cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "9b80a81b-7971-44af-bd6b-18079027f47a, malformed",
+    "9B80A81B-7971-44AF-BD6B-18079027F47A, cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "9b80a81b-7971-44af-bd6b-18079027f47a, CC5E6D40-88C0-4F91-A6D3-A738F4F2F0A1",
+    "00000000-0000-0000-0000-000000000000, cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "9b80a81b-7971-44af-bd6b-18079027f47a, 00000000-0000-0000-0000-000000000000",
+    "'', cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+    "9b80a81b-7971-44af-bd6b-18079027f47a, ''"
+  })
+  void runtimeMembershipRejectsInvalidScopeBeforeStubOrChannelUse(String accountId, String tenantId)
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    AccountClient client = newClient(stub, channelFactory);
+
+    GetTenantMembershipForRuntimeResponse response =
+        client.getTenantMembershipForRuntime(
+            runtimeMembershipContext(accountId, tenantId, "request-1"));
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+    verifyNoInteractions(stub, channelFactory);
+  }
+
+  @Test
+  void runtimeMembershipRejectsNullContextBeforeStubOrChannelUse() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    GrpcChannelFactory channelFactory = mock(GrpcChannelFactory.class);
+    AccountClient client = newClient(stub, channelFactory);
+
+    GetTenantMembershipForRuntimeResponse response = client.getTenantMembershipForRuntime(null);
+
+    assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
+    assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
+    verifyNoInteractions(stub, channelFactory);
+  }
+
   @Test
   void runtimeMembershipReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
     GetTenantMembershipForRuntimeResponse response =
         newClient(null)
-            .getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
+            .getTenantMembershipForRuntime(
+                runtimeMembershipContext(
+                    "9b80a81b-7971-44af-bd6b-18079027f47a",
+                    "cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+                    "request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
@@ -546,11 +598,11 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
     GetTenantMembershipForRuntimeResponse expected =
         GetTenantMembershipForRuntimeResponse.newBuilder()
-            .setAccountId("00000000-0000-0000-0000-000000000042")
-            .setTenantId("00000000-0000-0000-0000-000000000007")
+            .setAccountId("9b80a81b-7971-44af-bd6b-18079027f47a")
+            .setTenantId("cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1")
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
-            .putMembershipVersion("00000000-0000-0000-0000-000000000007", "12")
+            .putMembershipVersion("cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1", "12")
             .build();
     when(fixture
             .retryStub()
@@ -560,13 +612,26 @@ class AccountClientTest {
     GetTenantMembershipForRuntimeResponse actual =
         fixture
             .client()
-            .getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
+            .getTenantMembershipForRuntime(
+                runtimeMembershipContext(
+                    "9b80a81b-7971-44af-bd6b-18079027f47a",
+                    "cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+                    "request-1"));
 
     assertThat(actual).isEqualTo(expected);
-    verify(fixture.initialStub())
-        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
-    verify(fixture.retryStub())
-        .getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class));
+    ArgumentCaptor<GetTenantMembershipForRuntimeRequest> firstCaptor =
+        ArgumentCaptor.forClass(GetTenantMembershipForRuntimeRequest.class);
+    ArgumentCaptor<GetTenantMembershipForRuntimeRequest> retryCaptor =
+        ArgumentCaptor.forClass(GetTenantMembershipForRuntimeRequest.class);
+    verify(fixture.initialStub()).getTenantMembershipForRuntime(firstCaptor.capture());
+    verify(fixture.retryStub()).getTenantMembershipForRuntime(retryCaptor.capture());
+    assertThat(firstCaptor.getValue()).isEqualTo(retryCaptor.getValue());
+    assertThat(firstCaptor.getValue().getPlayerContext())
+        .isEqualTo(
+            runtimeMembershipContext(
+                "9b80a81b-7971-44af-bd6b-18079027f47a",
+                "cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+                "request-1"));
     verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
@@ -585,7 +650,11 @@ class AccountClientTest {
     GetTenantMembershipForRuntimeResponse response =
         fixture
             .client()
-            .getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
+            .getTenantMembershipForRuntime(
+                runtimeMembershipContext(
+                    "9b80a81b-7971-44af-bd6b-18079027f47a",
+                    "cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+                    "request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
@@ -666,7 +735,11 @@ class AccountClientTest {
     AccountClient client = newClient(stub, channelFactory);
 
     GetTenantMembershipForRuntimeResponse response =
-        client.getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
+        client.getTenantMembershipForRuntime(
+            runtimeMembershipContext(
+                "9b80a81b-7971-44af-bd6b-18079027f47a",
+                "cc5e6d40-88c0-4f91-a6d3-a738f4f2f0a1",
+                "request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");

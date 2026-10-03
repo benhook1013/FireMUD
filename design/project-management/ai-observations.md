@@ -282,3 +282,8 @@ Entry format:
   - Context: the complete Account snapshot/first-JOIN test held the Account row `FOR UPDATE` and waited for JOIN's explicit Account-lock spy. JOIN first inserts its PENDING intent, whose foreign-key check can already wait on that same row.
   - Observation: exact CI timed out at the later spy, not at a source invariant. Instrumenting the actual intent-insert backend before the real insert retained the exact `pg_blocking_pids` correlation and complete before/after DTO assertions; corrected CI `36778631119` executed the race once successfully. Worker exceptions are surfaced rather than hidden behind a latch timeout.
   - Expected pattern: trace earlier foreign-key and deferred-trigger work before selecting a concurrency signal; prove the exact blocked backend/owner relation and do not fix a misplaced signal by extending timeouts or changing production transaction order.
+
+- `2026-10-01`: Consume the final validation result before committing a claimed green checkpoint
+  - Context: a final #2917 tracker edit began a paragraph with a PR hash, which Markdown lint interpreted as a malformed heading. The documentation gate exited nonzero, but its redirected log was not inspected before the local commit.
+  - Observation: no push occurred; inspection identified the lint failure and the unvalidated claim was corrected in a follow-up commit. Earlier successful documentation checks did not cover that last edit.
+  - Expected pattern: consume every final gate's exit status and failure log before committing or publishing proof claims; after a status-only edit, validate that exact edited scope rather than inheriting the preceding green result.

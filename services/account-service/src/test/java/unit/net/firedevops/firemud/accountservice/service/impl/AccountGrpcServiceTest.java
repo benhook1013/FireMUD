@@ -78,7 +78,11 @@ class AccountGrpcServiceTest {
   private static final String REALM_ID = "4c4b57d8-e3a2-48fe-9977-e7df0fdce901";
   private static final String OTHER_REALM_ID = "57c58f36-c5ea-4aa8-8ef7-91a45e407f01";
   private static final String ACCOUNT_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72001";
+  private static final String OTHER_ACCOUNT_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72003";
   private static final String TENANT_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72002";
+  private static final String OTHER_TENANT_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72004";
+  private static final String PLAYABLE_NAMESPACE_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72005";
+  private static final String GAME_INSTANCE_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72006";
   private static final String PLAYABLE_STATE_NAMESPACE_ID = "c6ed6a44-c7e7-4f18-81fc-078a74e67c07";
   private static final GrpcPeerIdentity GAME_SESSION_PEER =
       new GrpcPeerIdentity(
@@ -105,25 +109,39 @@ class AccountGrpcServiceTest {
   }
 
   private static PlayerExecutionContext validRuntimeMembershipContext() {
+    return validRuntimeMembershipContext(ACCOUNT_UUID, TENANT_UUID);
+  }
+
+  private static PlayerExecutionContext validRuntimeMembershipContext(
+      String accountUuid, String tenantUuid) {
+    return validRuntimeMembershipContext(
+        accountUuid, tenantUuid, PLAYABLE_NAMESPACE_UUID, GAME_INSTANCE_UUID);
+  }
+
+  private static PlayerExecutionContext validRuntimeMembershipContext(
+      String accountUuid,
+      String tenantUuid,
+      String playableNamespaceUuid,
+      String gameInstanceUuid) {
     return PlayerExecutionContext.newBuilder()
-        .setAccountId("10")
-        .setTenantId("20")
+        .setAccountId(accountUuid)
+        .setTenantId(tenantUuid)
         .setRealmId(REALM_ID)
-        .setPlayableStateNamespaceId("realm-state-30")
+        .setPlayableStateNamespaceId(playableNamespaceUuid)
         .setPlayableStateScope("SHARED")
-        .setGameInstanceId("40")
+        .setGameInstanceId(gameInstanceUuid)
         .setSessionId("50")
         .setRequestId("membership-read-1")
         .build();
   }
 
   private static RuntimeMembershipSnapshotDto runtimeMembershipSnapshot(
-      long requestAccountId,
+      String requestAccountUuid,
       boolean membershipExists,
       List<OutboxCheckpointEntry> checkpoints,
       List<OutboxSourceEvidence> sourceEvidence) {
     return runtimeMembershipSnapshot(
-        requestAccountId,
+        requestAccountUuid,
         membershipExists,
         checkpoints,
         sourceEvidence,
@@ -131,14 +149,14 @@ class AccountGrpcServiceTest {
   }
 
   private static RuntimeMembershipSnapshotDto runtimeMembershipSnapshot(
-      long requestAccountId,
+      String requestAccountUuid,
       boolean membershipExists,
       List<OutboxCheckpointEntry> checkpoints,
       List<OutboxSourceEvidence> sourceEvidence,
       MembershipEvent sourceEvent) {
     return new RuntimeMembershipSnapshotDto(
-        requestAccountId,
-        20L,
+        requestAccountUuid,
+        TENANT_UUID,
         ACCOUNT_UUID,
         TENANT_UUID,
         membershipExists,
@@ -1984,7 +2002,10 @@ class AccountGrpcServiceTest {
   void encodeRuntimeMembershipCandidateEncodesCompleteActivePositiveSnapshot() {
     RuntimeMembershipSnapshotDto snapshot =
         runtimeMembershipSnapshot(
-            10L, true, runtimeMembershipCheckpoints("1"), runtimeMembershipSourceEvidence());
+            ACCOUNT_UUID,
+            true,
+            runtimeMembershipCheckpoints("1"),
+            runtimeMembershipSourceEvidence());
 
     GetTenantMembershipForRuntimeResponse response =
         AccountGrpcService.encodeRuntimeMembershipCandidate(
@@ -1992,8 +2013,8 @@ class AccountGrpcServiceTest {
 
     assertEquals(ACCOUNT_UUID, response.getAccountId());
     assertEquals(TENANT_UUID, response.getTenantId());
-    assertEquals("10", response.getRequestAccountId());
-    assertEquals("20", response.getRequestTenantId());
+    assertEquals(ACCOUNT_UUID, response.getRequestAccountId());
+    assertEquals(TENANT_UUID, response.getRequestTenantId());
     assertEquals("membership-read-1", response.getRequestId());
     assertTrue(response.getMembershipExists());
     assertTrue(response.getGameplayAdmissionAllowed());
@@ -2017,7 +2038,8 @@ class AccountGrpcServiceTest {
   @Test
   void encodeRuntimeMembershipCandidateEncodesNeverJoinedSequenceZeroSnapshot() {
     RuntimeMembershipSnapshotDto snapshot =
-        runtimeMembershipSnapshot(10L, false, runtimeMembershipCheckpoints("0"), List.of());
+        runtimeMembershipSnapshot(
+            ACCOUNT_UUID, false, runtimeMembershipCheckpoints("0"), List.of());
 
     GetTenantMembershipForRuntimeResponse response =
         AccountGrpcService.encodeRuntimeMembershipCandidate(
@@ -2042,13 +2064,87 @@ class AccountGrpcServiceTest {
   void encodeRuntimeMembershipCandidateRejectsWrongCallerTarget() {
     RuntimeMembershipSnapshotDto snapshot =
         runtimeMembershipSnapshot(
-            11L, true, runtimeMembershipCheckpoints("1"), runtimeMembershipSourceEvidence());
+            ACCOUNT_UUID,
+            true,
+            runtimeMembershipCheckpoints("1"),
+            runtimeMembershipSourceEvidence());
 
     assertThrows(
         IllegalArgumentException.class,
         () ->
             AccountGrpcService.encodeRuntimeMembershipCandidate(
-                validRuntimeMembershipContext(), snapshot));
+                validRuntimeMembershipContext(OTHER_ACCOUNT_UUID, TENANT_UUID), snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext(ACCOUNT_UUID, OTHER_TENANT_UUID), snapshot));
+  }
+
+  @Test
+  void encodeRuntimeMembershipCandidateRejectsNumericAndNoncanonicalUuidInputs() {
+    RuntimeMembershipSnapshotDto snapshot =
+        runtimeMembershipSnapshot(
+            ACCOUNT_UUID,
+            true,
+            runtimeMembershipCheckpoints("1"),
+            runtimeMembershipSourceEvidence());
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext("10", TENANT_UUID), snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext("00000000-0000-0000-0000-000000000000", TENANT_UUID),
+                snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext(ACCOUNT_UUID.toUpperCase(), TENANT_UUID), snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext(ACCOUNT_UUID, "20"), snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext(
+                    ACCOUNT_UUID, TENANT_UUID, "realm-state-30", GAME_INSTANCE_UUID),
+                snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext(
+                    ACCOUNT_UUID, TENANT_UUID, PLAYABLE_NAMESPACE_UUID, "40"),
+                snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext(
+                    ACCOUNT_UUID,
+                    TENANT_UUID,
+                    PLAYABLE_NAMESPACE_UUID.toUpperCase(),
+                    GAME_INSTANCE_UUID),
+                snapshot));
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            AccountGrpcService.encodeRuntimeMembershipCandidate(
+                validRuntimeMembershipContext(
+                    ACCOUNT_UUID,
+                    TENANT_UUID,
+                    PLAYABLE_NAMESPACE_UUID,
+                    GAME_INSTANCE_UUID.toUpperCase()),
+                snapshot));
   }
 
   @Test
@@ -2056,7 +2152,7 @@ class AccountGrpcServiceTest {
     List<OutboxCheckpointEntry> completeCheckpoints = runtimeMembershipCheckpoints("1");
     RuntimeMembershipSnapshotDto missingCheckpoint =
         runtimeMembershipSnapshot(
-            10L,
+            ACCOUNT_UUID,
             true,
             completeCheckpoints.subList(0, completeCheckpoints.size() - 1),
             runtimeMembershipSourceEvidence());
@@ -2067,7 +2163,7 @@ class AccountGrpcServiceTest {
                 validRuntimeMembershipContext(), missingCheckpoint));
     assertThrows(
         IllegalArgumentException.class,
-        () -> runtimeMembershipSnapshot(10L, true, completeCheckpoints, List.of()));
+        () -> runtimeMembershipSnapshot(ACCOUNT_UUID, true, completeCheckpoints, List.of()));
   }
 
   @Test
@@ -2104,7 +2200,7 @@ class AccountGrpcServiceTest {
           IllegalArgumentException.class,
           () ->
               runtimeMembershipSnapshot(
-                  10L,
+                  ACCOUNT_UUID,
                   true,
                   runtimeMembershipCheckpoints("1"),
                   runtimeMembershipSourceEvidence(inconsistent),

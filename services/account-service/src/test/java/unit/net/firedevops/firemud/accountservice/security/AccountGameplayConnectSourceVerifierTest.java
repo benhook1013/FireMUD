@@ -1,5 +1,6 @@
 package unit.net.firedevops.firemud.accountservice.security;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -20,6 +21,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.accountservice.security.AccountGameplayConnectSourceVerifier;
+import net.firedevops.firemud.accountservice.security.HistoricalAccountGameplayConnectEvidence;
+import net.firedevops.firemud.common.security.GatewayConnectContextCodec;
+import net.firedevops.firemud.common.security.GatewayConnectContextSignature;
+import net.firedevops.firemud.common.security.HistoricalGatewayConnectEvidence;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
@@ -28,6 +33,7 @@ class AccountGameplayConnectSourceVerifierTest {
   private static final String ISSUER = "https://account.example.test";
   private static final String RSA_KID = "account-rsa-current";
   private static final String ED_KID = "account-ed-current";
+  private static final String GATEWAY_KID = "gateway-history-test";
   private static final int MAX_COMPACT_JWT_BYTES = 16 * 1024;
   private static final Instant NOW = Instant.parse("2026-04-06T12:00:00Z");
   private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
@@ -44,6 +50,7 @@ class AccountGameplayConnectSourceVerifierTest {
 
   private KeyPair rsaKeyPair;
   private KeyPair edKeyPair;
+  private KeyPair gatewayKeyPair;
 
   @BeforeEach
   void setUp() throws Exception {
@@ -51,6 +58,7 @@ class AccountGameplayConnectSourceVerifierTest {
     rsa.initialize(2048);
     rsaKeyPair = rsa.generateKeyPair();
     edKeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
+    gatewayKeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair();
   }
 
   @Test
@@ -174,6 +182,81 @@ class AccountGameplayConnectSourceVerifierTest {
     assertSanitizedFailure(sign(expired, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()));
     assertSanitizedFailure(sign(future, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()));
     assertSanitizedFailure(sign(overlong, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()));
+  }
+
+  @Test
+  void verifiesExpiredSourceOnlyAgainstSignedHistoricalGatewayTime() throws Exception {
+    Map<String, Object> claims = sourceClaims(NOW_SECONDS - 30, NOW_SECONDS - 1);
+    String compactJwt = sign(claims, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate());
+    HistoricalGatewayConnectEvidence gatewayEvidence =
+        historicalGatewayEvidence(claims, NOW_SECONDS - 2);
+
+    assertSanitizedFailure(compactJwt);
+    HistoricalAccountGameplayConnectEvidence evidence =
+        verifier().verifyHistorical(compactJwt, gatewayEvidence);
+
+    assertEquals(RSA_KID, evidence.accountKeyId());
+    assertEquals(claims, evidence.sourceClaims());
+    assertEquals(gatewayEvidence.signedEnvelope(), evidence.gatewayEvidence().signedEnvelope());
+    assertArrayEquals(gatewayEvidence.signedPayload(), evidence.gatewayEvidence().signedPayload());
+    assertEquals(gatewayEvidence.claims(), evidence.gatewayEvidence().claims());
+    assertEquals(
+        LARGE_ACCOUNT_GENERATION,
+        objectMap(objectMap(evidence.sourceClaims().get("authorityTuple")))
+            .get("accountAuthorityGeneration"));
+    assertFalse(evidence.sourceClaims().containsValue(compactJwt));
+    assertFalse(evidence.toString().contains(compactJwt));
+    assertThrows(UnsupportedOperationException.class, () -> evidence.sourceClaims().put("x", "y"));
+    Map<String, Object> tuple = objectMap(evidence.sourceClaims().get("authorityTuple"));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> tuple.put("accountAuthorityGeneration", BigInteger.ZERO));
+    assertFalse(evidence.gatewayEvidence().signedEnvelope().isEmpty());
+  }
+
+  @Test
+  void rejectsBadAccountSignatureProfileAndHistoricalSourceCorrespondence() throws Exception {
+    Map<String, Object> claims = sourceClaims(NOW_SECONDS - 30, NOW_SECONDS - 1);
+    String validCompactJwt = sign(claims, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate());
+    HistoricalGatewayConnectEvidence validGatewayEvidence =
+        historicalGatewayEvidence(claims, NOW_SECONDS - 2);
+
+    KeyPair wrongAccountSigner = KeyPairGenerator.getInstance("RSA").generateKeyPair();
+    assertHistoricalSanitizedFailure(
+        sign(claims, "RS256", RSA_KID, "JWT", wrongAccountSigner.getPrivate()),
+        validGatewayEvidence);
+
+    Map<String, Object> wrongIssuer = new LinkedHashMap<>(claims);
+    wrongIssuer.put("iss", "https://other-account.example.test");
+    assertHistoricalSanitizedFailure(
+        sign(wrongIssuer, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()), validGatewayEvidence);
+
+    Map<String, Object> wrongAudience = new LinkedHashMap<>(claims);
+    wrongAudience.put("aud", "player-bootstrap");
+    assertHistoricalSanitizedFailure(
+        sign(wrongAudience, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()),
+        validGatewayEvidence);
+
+    Map<String, Object> changedTarget = new LinkedHashMap<>(claims);
+    changedTarget.put("realmId", "00000000-0000-4000-8000-000000000099");
+    assertHistoricalSanitizedFailure(
+        sign(changedTarget, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()),
+        validGatewayEvidence);
+
+    HistoricalGatewayConnectEvidence changedGatewayEvidence =
+        historicalGatewayEvidence(
+            claims, NOW_SECONDS - 2, "realmId", "00000000-0000-4000-8000-000000000099");
+    assertHistoricalSanitizedFailure(validCompactJwt, changedGatewayEvidence);
+
+    Map<String, Object> sourceValidAtGatewayTime = sourceClaims(NOW_SECONDS - 29, NOW_SECONDS + 1);
+    HistoricalGatewayConnectEvidence gatewayAfterSourceExpiry =
+        historicalGatewayEvidence(sourceValidAtGatewayTime, NOW_SECONDS);
+    assertHistoricalSanitizedFailure(validCompactJwt, gatewayAfterSourceExpiry);
+
+    Map<String, Object> openProfile = new LinkedHashMap<>(claims);
+    openProfile.put("unregisteredClaim", "not accepted");
+    assertHistoricalSanitizedFailure(
+        sign(openProfile, "RS256", RSA_KID, "JWT", rsaKeyPair.getPrivate()), validGatewayEvidence);
   }
 
   @Test
@@ -332,6 +415,28 @@ class AccountGameplayConnectSourceVerifierTest {
         ISSUER, Map.of(RSA_KID, rsaKeyPair.getPublic()), MAX_COMPACT_JWT_BYTES, CLOCK);
   }
 
+  private HistoricalGatewayConnectEvidence historicalGatewayEvidence(
+      Map<String, Object> sourceClaims, long verifiedAt) throws Exception {
+    return historicalGatewayEvidence(sourceClaims, verifiedAt, null, null);
+  }
+
+  private HistoricalGatewayConnectEvidence historicalGatewayEvidence(
+      Map<String, Object> sourceClaims, long verifiedAt, String changedField, Object changedValue)
+      throws Exception {
+    Map<String, Object> contextClaims =
+        new LinkedHashMap<>(
+            GatewayConnectContextCodec.projectVerifiedAccountGameplayConnectClaims(
+                sourceClaims, verifiedAt, "gateway-history-request"));
+    if (changedField != null) {
+      contextClaims.put(changedField, changedValue);
+    }
+    String envelope =
+        GatewayConnectContextSignature.sign(
+            JSON.writeValueAsBytes(contextClaims), GATEWAY_KID, gatewayKeyPair.getPrivate());
+    return GatewayConnectContextCodec.verifyHistoricalEvidence(
+        envelope, Map.of(GATEWAY_KID, gatewayKeyPair.getPublic()));
+  }
+
   private void assertSanitizedFailure(String compactJwt) {
     assertSanitizedFailure(verifier(), compactJwt);
   }
@@ -340,6 +445,19 @@ class AccountGameplayConnectSourceVerifierTest {
       AccountGameplayConnectSourceVerifier verifier, String compactJwt) {
     IllegalArgumentException failure =
         assertThrows(IllegalArgumentException.class, () -> verifier.verify(compactJwt));
+    assertEquals("invalid Account gameplay-connect source JWT", failure.getMessage());
+    assertNull(failure.getCause());
+    if (compactJwt != null) {
+      assertFalse(failure.getMessage().contains(compactJwt));
+    }
+  }
+
+  private void assertHistoricalSanitizedFailure(
+      String compactJwt, HistoricalGatewayConnectEvidence gatewayEvidence) {
+    IllegalArgumentException failure =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> verifier().verifyHistorical(compactJwt, gatewayEvidence));
     assertEquals("invalid Account gameplay-connect source JWT", failure.getMessage());
     assertNull(failure.getCause());
     if (compactJwt != null) {

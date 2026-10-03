@@ -177,31 +177,62 @@ public final class GatewayConnectContextCodec {
 
     Map<String, Object> context = verifiedGatewayContext.claims();
     BigInteger verifiedAt = requirePositiveInteger(context, "verifiedAt");
-    long gatewayVerifiedAt;
     try {
-      gatewayVerifiedAt = verifiedAt.longValueExact();
+      long gatewayVerifiedAt = verifiedAt.longValueExact();
       Instant originalVerificationTime = Instant.ofEpochSecond(gatewayVerifiedAt);
       validate(context, originalVerificationTime);
-      Map<String, Object> expected =
-          new LinkedHashMap<>(
-              projectVerifiedAccountGameplayConnectClaims(
-                  verifiedSourceClaims,
-                  gatewayVerifiedAt,
-                  requireText(context, "gatewayRequestId")));
-
-      BigInteger latestPermittedExpiry = requirePositiveInteger(expected, "expiresAt");
-      if (requirePositiveInteger(context, "expiresAt").compareTo(latestPermittedExpiry) > 0) {
-        throw invalid("Gateway context expiry extends beyond the Account source token");
-      }
-      // Compare the complete registered projection, not a second field allowlist that could miss
-      // a future source-carried field. Only the independently shortened Gateway deadline differs.
-      expected.put("expiresAt", context.get("expiresAt"));
-      if (!expected.equals(context)) {
-        throw invalid("Gateway context does not exactly preserve the Account source evidence");
-      }
+      requireSourceMatchesGatewayProjection(verifiedSourceClaims, context, gatewayVerifiedAt);
     } catch (ArithmeticException | java.time.DateTimeException ex) {
       throw invalid(
           "Gateway context verification time is outside the supported epoch-second range");
+    }
+  }
+
+  /**
+   * Requires exact correspondence between already-verified Account gameplay-connect claims and a
+   * signature-verified historical Gateway assertion. This proves only that the signed historical
+   * assertion carried the complete registered projection of those source claims. Callers must
+   * independently verify the Account source signature/profile and must not treat this evidence as a
+   * current Gateway authorization or proof of current Account authority, registry state, or
+   * recovery eligibility.
+   */
+  public static void requireVerifiedAccountSourceMatchesHistoricalGatewayEvidence(
+      Map<String, ?> verifiedSourceClaims,
+      HistoricalGatewayConnectEvidence historicalGatewayEvidence) {
+    if (historicalGatewayEvidence == null) {
+      throw invalid("historical Gateway evidence is required");
+    }
+
+    Map<String, Object> context = historicalGatewayEvidence.claims();
+    BigInteger verifiedAt = requirePositiveInteger(context, "verifiedAt");
+    try {
+      long gatewayVerifiedAt = verifiedAt.longValueExact();
+      Instant.ofEpochSecond(gatewayVerifiedAt);
+      validateShapeAndTimeGeometry(context);
+      validateSupportedTimestampRange(context);
+      requireSourceMatchesGatewayProjection(verifiedSourceClaims, context, gatewayVerifiedAt);
+    } catch (ArithmeticException | java.time.DateTimeException ex) {
+      throw invalid(
+          "Gateway context verification time is outside the supported epoch-second range");
+    }
+  }
+
+  private static void requireSourceMatchesGatewayProjection(
+      Map<String, ?> verifiedSourceClaims, Map<String, Object> context, long gatewayVerifiedAt) {
+    Map<String, Object> expected =
+        new LinkedHashMap<>(
+            projectVerifiedAccountGameplayConnectClaims(
+                verifiedSourceClaims, gatewayVerifiedAt, requireText(context, "gatewayRequestId")));
+
+    BigInteger latestPermittedExpiry = requirePositiveInteger(expected, "expiresAt");
+    if (requirePositiveInteger(context, "expiresAt").compareTo(latestPermittedExpiry) > 0) {
+      throw invalid("Gateway context expiry extends beyond the Account source token");
+    }
+    // Compare the complete registered projection, not a second field allowlist that could miss a
+    // future source-carried field. Only the independently shortened Gateway deadline differs.
+    expected.put("expiresAt", context.get("expiresAt"));
+    if (!expected.equals(context)) {
+      throw invalid("Gateway context does not exactly preserve the Account source evidence");
     }
   }
 
@@ -221,6 +252,25 @@ public final class GatewayConnectContextCodec {
     Map<String, Object> claims = parsePayload(verified.payload());
     validate(claims, clock.instant());
     return new GatewayConnectContext(signedEnvelope, verified.payload(), verified.kid(), claims);
+  }
+
+  /**
+   * Verifies and validates an expired Gateway assertion solely as immutable historical evidence.
+   * The result is a distinct type and is not accepted by current-context consumers. This method
+   * does not establish that Gateway actually observed or accepted the assertion at its signed
+   * times, verify the Account source signature, or establish any current authority or recovery
+   * eligibility.
+   */
+  public static HistoricalGatewayConnectEvidence verifyHistoricalEvidence(
+      String signedEnvelope,
+      Map<String, ? extends java.security.PublicKey> gatewayVerificationKeys) {
+    GatewayConnectContextSignature.VerifiedContext verified =
+        GatewayConnectContextSignature.verify(signedEnvelope, gatewayVerificationKeys);
+    Map<String, Object> claims = parsePayload(verified.payload());
+    validateShapeAndTimeGeometry(claims);
+    validateSupportedTimestampRange(claims);
+    return new HistoricalGatewayConnectEvidence(
+        signedEnvelope, verified.payload(), verified.kid(), claims);
   }
 
   /**
@@ -274,6 +324,25 @@ public final class GatewayConnectContextCodec {
   }
 
   private static void validate(Map<String, Object> claims, Instant now) {
+    validateShapeAndTimeGeometry(claims);
+
+    BigInteger issuedAt = requirePositiveInteger(claims, "issuedAt");
+    BigInteger verifiedAt = requirePositiveInteger(claims, "verifiedAt");
+    BigInteger expiresAt = requirePositiveInteger(claims, "expiresAt");
+    BigInteger nowSeconds = BigInteger.valueOf(now.getEpochSecond());
+    BigInteger latestAllowedVerification =
+        nowSeconds.add(BigInteger.valueOf(MAX_CLOCK_SKEW_SECONDS));
+    if (verifiedAt.compareTo(latestAllowedVerification) > 0
+        || issuedAt.compareTo(latestAllowedVerification) > 0) {
+      throw invalid("Gateway context time is too far in the future");
+    }
+    if (expiresAt.compareTo(nowSeconds) <= 0) {
+      throw invalid("Gateway context is expired");
+    }
+    validateSupportedTimestampRange(claims);
+  }
+
+  private static void validateShapeAndTimeGeometry(Map<String, Object> claims) {
     Set<String> allowed = new java.util.HashSet<>(REQUIRED_FIELDS);
     allowed.addAll(CONDITIONAL_FIELDS);
     if (!allowed.containsAll(claims.keySet()) || !claims.keySet().containsAll(REQUIRED_FIELDS)) {
@@ -332,20 +401,13 @@ public final class GatewayConnectContextCodec {
             > 0) {
       throw invalid("Gateway context verification time is outside its signed lifetime");
     }
-    BigInteger nowSeconds = BigInteger.valueOf(now.getEpochSecond());
-    BigInteger latestAllowedVerification =
-        nowSeconds.add(BigInteger.valueOf(MAX_CLOCK_SKEW_SECONDS));
-    if (verifiedAt.compareTo(latestAllowedVerification) > 0
-        || issuedAt.compareTo(latestAllowedVerification) > 0) {
-      throw invalid("Gateway context time is too far in the future");
-    }
-    if (expiresAt.compareTo(nowSeconds) <= 0) {
-      throw invalid("Gateway context is expired");
-    }
+  }
+
+  private static void validateSupportedTimestampRange(Map<String, Object> claims) {
     try {
-      Instant.ofEpochSecond(issuedAt.longValueExact());
-      Instant.ofEpochSecond(verifiedAt.longValueExact());
-      Instant.ofEpochSecond(expiresAt.longValueExact());
+      Instant.ofEpochSecond(requirePositiveInteger(claims, "issuedAt").longValueExact());
+      Instant.ofEpochSecond(requirePositiveInteger(claims, "verifiedAt").longValueExact());
+      Instant.ofEpochSecond(requirePositiveInteger(claims, "expiresAt").longValueExact());
     } catch (ArithmeticException | java.time.DateTimeException ex) {
       throw invalid("Gateway context time is outside the supported epoch-second range");
     }
