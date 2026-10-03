@@ -960,10 +960,9 @@ jobs:
         run: |
           ./gradlew :game-design-service:integrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \
-            -PfullCheck --no-build-cache --no-configuration-cache
-          ./gradlew :game-design-service:test \
+            :game-design-service:test \
             --tests net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest \
-            -PfullCheck --no-build-cache --no-configuration-cache
+            -PfullCheck --continue --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \

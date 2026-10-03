@@ -192,13 +192,13 @@ public class LaunchDescriptorRepository {
     descriptor.setReleaseBundleId(record.get(RELEASE_BUNDLE_ID));
     descriptor.setPublishedReleaseBundleRef(record.get(PUBLISHED_RELEASE_BUNDLE_REF));
     descriptor.setRemapSetId(record.get(REMAP_SET_ID));
-    descriptor.setDescriptorSchemaVersion(record.get(DESCRIPTOR_SCHEMA_VERSION));
+    descriptor.setDescriptorSchemaVersion(record.get(DESCRIPTOR_SCHEMA_VERSION, Integer.class));
     descriptor.setTargetNamespace(record.get(TARGET_NAMESPACE));
-    UUID canonicalTenantId = record.get(CANONICAL_TENANT_ID);
+    UUID canonicalTenantId = record.get(CANONICAL_TENANT_ID, UUID.class);
     descriptor.setCanonicalTenantId(
         canonicalTenantId == null ? null : canonicalTenantId.toString());
     descriptor.setWorldSlug(record.get(WORLD_SLUG));
-    UUID sourceOperationId = record.get(SOURCE_OPERATION_ID);
+    UUID sourceOperationId = record.get(SOURCE_OPERATION_ID, UUID.class);
     descriptor.setAuthoredWorldSourceOperationId(
         sourceOperationId == null ? null : sourceOperationId.toString());
     descriptor.setAuthoredWorldSourceEvidenceDigest(record.get(SOURCE_EVIDENCE_DIGEST));
@@ -209,7 +209,7 @@ public class LaunchDescriptorRepository {
     descriptor.setOutcomeStatus(record.get(OUTCOME_STATUS));
     descriptor.setFailureCode(record.get(FAILURE_CODE));
     descriptor.setFailureMessage(record.get(FAILURE_MESSAGE));
-    Timestamp createdAt = record.get(CREATED_AT);
+    Timestamp createdAt = record.get(CREATED_AT, Timestamp.class);
     descriptor.setCreatedAt(createdAt == null ? null : createdAt.toLocalDateTime());
     return descriptor;
   }
