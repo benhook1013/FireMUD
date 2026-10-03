@@ -76,10 +76,7 @@ public class AccountAuditReceiptRepository {
         .onConflictDoNothing()
         .execute();
 
-    var tenantCondition =
-        request.tenantId() == null
-            ? LOG_EVENTS.TENANT_ID.isNull()
-            : LOG_EVENTS.TENANT_ID.eq(request.tenantId());
+    var tenantKeyCondition = LOG_EVENTS.TENANT_KEY.eq(tenantKey);
     Long logEventId =
         dsl.select(LOG_EVENTS.ID)
             .from(LOG_EVENTS)
@@ -87,7 +84,7 @@ public class AccountAuditReceiptRepository {
                 LOG_EVENTS
                     .SCOPE
                     .eq(request.scope().databaseValue())
-                    .and(tenantCondition)
+                    .and(tenantKeyCondition)
                     .and(LOG_EVENTS.AUDIT_EVENT_ID.eq(request.auditEventId())))
             .fetchOne(LOG_EVENTS.ID);
     if (logEventId == null) {
