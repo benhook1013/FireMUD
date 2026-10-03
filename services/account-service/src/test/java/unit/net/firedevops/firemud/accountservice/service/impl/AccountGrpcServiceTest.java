@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.grpc.Context;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -663,6 +665,54 @@ class AccountGrpcServiceTest {
     assertEquals("Account already exists", observer.response().getError().getMessage());
     assertTrue(observer.completed());
     assertFalse(observer.receivedTransportError());
+  }
+
+  @Test
+  void createAccountInternalFailureReturnsBoundedTransportError() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.createAccount(Mockito.any()))
+        .thenThrow(new IllegalStateException("private backend detail"));
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    AtomicInteger nextCalls = new AtomicInteger();
+    AtomicInteger errorCalls = new AtomicInteger();
+    AtomicInteger completedCalls = new AtomicInteger();
+    AtomicReference<Throwable> transportError = new AtomicReference<>();
+
+    service.createAccount(
+        CreateAccountRequest.newBuilder()
+            .setUsername("demo")
+            .setEmail("demo@example.com")
+            .setPassword("pass")
+            .build(),
+        new StreamObserver<CreateAccountResponse>() {
+          @Override
+          public void onNext(CreateAccountResponse value) {
+            nextCalls.incrementAndGet();
+          }
+
+          @Override
+          public void onError(Throwable throwable) {
+            errorCalls.incrementAndGet();
+            transportError.set(throwable);
+          }
+
+          @Override
+          public void onCompleted() {
+            completedCalls.incrementAndGet();
+          }
+        });
+
+    assertEquals(0, nextCalls.get());
+    assertEquals(1, errorCalls.get());
+    assertEquals(0, completedCalls.get());
+    assertEquals(Status.Code.INTERNAL, Status.fromThrowable(transportError.get()).getCode());
+    assertEquals(
+        "Account creation failed", Status.fromThrowable(transportError.get()).getDescription());
+    assertFalse(
+        Status.fromThrowable(transportError.get())
+            .getDescription()
+            .contains("private backend detail"));
   }
 
   @Test
