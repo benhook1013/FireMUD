@@ -128,6 +128,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
       return;
     }
     String key = key(snapshot.tenantId(), snapshot.accountId());
+    // Best-effort retention check: this adds a Redis read but is not atomic with the write below;
+    // a concurrent writer can replace the value after this check.
     try {
       Object retained = valueOps.get(key);
       if (retained != null && !(retained instanceof AccountRecentPresenceState)) {
