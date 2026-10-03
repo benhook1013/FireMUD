@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
@@ -91,10 +92,22 @@ class RedisFirstPartyConnectContextRegistryTest {
 
     assertEquals(Optional.empty(), registry.find(91L));
 
-    registry.register(
-        91L,
-        new FirstPartyConnectContext(
-            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-2", "req-2", "gateway-1"));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            registry.register(
+                91L,
+                new FirstPartyConnectContext(
+                    "77",
+                    22L,
+                    "demo",
+                    "production",
+                    41L,
+                    17L,
+                    "scope-1",
+                    "jti-2",
+                    "req-2",
+                    "gateway-1")));
     registry.unregister(91L);
 
     verify(redisTemplate, never()).delete(key);
@@ -109,10 +122,22 @@ class RedisFirstPartyConnectContextRegistryTest {
 
     assertEquals(Optional.empty(), registry.find(91L));
 
-    registry.register(
-        91L,
-        new FirstPartyConnectContext(
-            "77", 22L, "demo", "production", 41L, 17L, "scope-1", "jti-2", "req-2", "gateway-1"));
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            registry.register(
+                91L,
+                new FirstPartyConnectContext(
+                    "77",
+                    22L,
+                    "demo",
+                    "production",
+                    41L,
+                    17L,
+                    "scope-1",
+                    "jti-2",
+                    "req-2",
+                    "gateway-1")));
     registry.unregister(91L);
 
     assertEquals(retainedEvidence, store.get(key));

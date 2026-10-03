@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -147,6 +148,10 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
           redisTemplate.execute(
               new SessionCallback<>() {
                 @Override
+                @SuppressFBWarnings(
+                    value = "RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE",
+                    justification =
+                        "Redis EXEC returns null when WATCH detects a concurrent key change; retrying preserves the newer retained presence.")
                 public WriteAttemptResult execute(RedisOperations operations) {
                   operations.watch(key);
                   Object retained;

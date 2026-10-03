@@ -200,6 +200,55 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void afterConnectionEstablishedRejectsFirstPartyContextWhenRetainedStateCannotBeRegistered()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                "token"));
+    FirstPartyConnectContext connectContext =
+        new FirstPartyConnectContext(
+            "123", 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                pointer(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    Mockito.doThrow(new IllegalStateException("retained context is unreadable"))
+        .when(firstPartyConnectContextRegistry)
+        .register(41L, connectContext);
+
+    handler.afterConnectionEstablished(session);
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionContextService, never()).save(Mockito.any());
+    verify(firstPartyConnectContextRegistry).register(41L, connectContext);
+  }
+
+  @Test
   void afterConnectionEstablishedClosesWithServiceUnavailableWhenPointerAuthorityFails()
       throws Exception {
     when(session.getAttributes())

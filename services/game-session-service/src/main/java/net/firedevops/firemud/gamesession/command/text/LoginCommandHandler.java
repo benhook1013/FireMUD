@@ -237,6 +237,22 @@ public final class LoginCommandHandler {
       firstPartyConnectContextRegistry.unregister(numericSessionId);
       return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
     }
+    long numericAccountId;
+    try {
+      numericAccountId =
+          PositiveLongParsing.requireOptionalText(verifiedContext.accountId(), "accountId")
+              .orElseThrow(() -> new IllegalArgumentException("accountId must be positive"));
+    } catch (IllegalArgumentException ex) {
+      clearFailedFirstPartyLoginSessionState(
+          numericSessionId,
+          existingSession,
+          verifiedContext.tenantId(),
+          verifiedContext.gameInstanceId(),
+          verifiedContext.worldSlug(),
+          verifiedContext.realmSlug(),
+          verifiedContext.pointerVersion());
+      return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
+    }
     Optional<GameInstance> maybeInstance =
         gameInstanceRepository.findById(verifiedContext.gameInstanceId());
     if (maybeInstance.isEmpty()) {
@@ -276,8 +292,7 @@ public final class LoginCommandHandler {
     persistSessionContext(
         numericSessionId,
         verifiedContext.tenantId(),
-        PositiveLongParsing.requireOptionalText(verifiedContext.accountId(), "accountId")
-            .orElseThrow(() -> new IllegalArgumentException("accountId must be positive")),
+        numericAccountId,
         "first-party:" + verifiedContext.accountId(),
         null,
         verifiedContext.gameInstanceId(),
@@ -290,6 +305,26 @@ public final class LoginCommandHandler {
                 "Logged in as first-party account " + verifiedContext.accountId(),
                 "message.login.first-party-success",
                 Map.of("accountId", verifiedContext.accountId()))));
+  }
+
+  private void clearFailedFirstPartyLoginSessionState(
+      long sessionId,
+      SessionContext existingSession,
+      long fallbackTenantId,
+      long fallbackBootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion) {
+    if (existingSession != null && existingSession.hasAccountIdentity()) {
+      return;
+    }
+    clearFailedLoginSessionState(
+        sessionId,
+        fallbackTenantId,
+        fallbackBootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion);
   }
 
   private void persistSessionContext(

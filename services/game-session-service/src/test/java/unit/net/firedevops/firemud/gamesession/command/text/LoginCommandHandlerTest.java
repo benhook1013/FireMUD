@@ -467,6 +467,125 @@ class LoginCommandHandlerTest {
   }
 
   @Test
+  void bareLoginRejectsUnsupportedFirstPartyAccountTextBeforeInstanceLookup() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    List<String> unsupportedAccountIds = List.of("0", "-17", "account:opaque");
+    for (int index = 0; index < unsupportedAccountIds.size(); index++) {
+      long sessionId = index + 1L;
+      stubSessionContext(bootstrapShell(sessionId, 1L));
+      when(firstPartyConnectContextRegistry.find(sessionId))
+          .thenReturn(
+              Optional.of(
+                  new FirstPartyConnectContext(
+                      unsupportedAccountIds.get(index),
+                      22L,
+                      "demo",
+                      "production",
+                      1L,
+                      1L,
+                      "scope-1",
+                      "jti-1",
+                      "req-1",
+                      "gateway-1")));
+
+      LoginCommandHandlingResult result = handler.handle(Long.toString(sessionId), command, false);
+
+      assertFalse(result.commandResult().accepted());
+      assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    }
+
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(gameplayAdmissionPointerAuthorityService, never())
+        .listByRuntimeTarget(anyLong(), anyLong());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService, times(unsupportedAccountIds.size())).save(captor.capture());
+    assertTrue(captor.getAllValues().stream().allMatch(context -> context.accountId() == null));
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
+  }
+
+  @Test
+  void bareLoginRejectsAbsentFirstPartyAccountBeforeInstanceLookup() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    String[] absentAccountIds = {null, " "};
+    for (int index = 0; index < absentAccountIds.length; index++) {
+      long sessionId = index + 1L;
+      stubSessionContext(bootstrapShell(sessionId, 1L));
+      when(firstPartyConnectContextRegistry.find(sessionId))
+          .thenReturn(
+              Optional.of(
+                  new FirstPartyConnectContext(
+                      absentAccountIds[index],
+                      22L,
+                      "demo",
+                      "production",
+                      1L,
+                      1L,
+                      "scope-1",
+                      "jti-1",
+                      "req-1",
+                      "gateway-1")));
+
+      LoginCommandHandlingResult result = handler.handle(Long.toString(sessionId), command, false);
+
+      assertFalse(result.commandResult().accepted());
+      assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    }
+
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    ArgumentCaptor<SessionContext> captor = ArgumentCaptor.forClass(SessionContext.class);
+    verify(sessionContextService, times(absentAccountIds.length)).save(captor.capture());
+    assertTrue(captor.getAllValues().stream().allMatch(context -> context.accountId() == null));
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
+  }
+
+  @Test
+  void bareLoginRejectsOpaqueFirstPartyAccountWithoutClearingExistingOwnerAlias() {
+    TextCommand command = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
+    String accountId = "acct:opaque/legacy";
+    stubSessionContext(
+        new SessionContext(
+            1L,
+            22L,
+            accountId,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            "en-NZ",
+            1L,
+            "demo",
+            "production",
+            1L,
+            null,
+            "scope-1",
+            "req-1"));
+    when(firstPartyConnectContextRegistry.find(1L))
+        .thenReturn(
+            Optional.of(
+                new FirstPartyConnectContext(
+                    accountId,
+                    22L,
+                    "demo",
+                    "production",
+                    1L,
+                    1L,
+                    "scope-1",
+                    "jti-1",
+                    "req-1",
+                    "gateway-1")));
+
+    LoginCommandHandlingResult result = handler.handle("1", command, false);
+
+    assertFalse(result.commandResult().accepted());
+    assertEquals("CONNECT_CONTEXT_INVALID", result.commandResult().errorCode());
+    verify(gameInstanceRepository, never()).findById(anyLong());
+    verify(sessionContextService, never()).save(any(SessionContext.class));
+    verify(firstPartyConnectContextRegistry, never()).unregister(anyLong());
+  }
+
+  @Test
   void credentialLoginAsDifferentAccountInvalidatesFirstPartyContextBeforeBareLogin() {
     TextCommand bareLogin = new TextCommand(TextCommandType.LOGIN, List.of(), "LOGIN");
     TextCommand credentialLogin =
