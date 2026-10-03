@@ -1057,6 +1057,56 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Run World authored-source intake socket mTLS proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:test \
+            --tests net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#sameNamespaceGameDesignIntakesThenReadsExactReceiptOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#wrongWorkloadsAndWrongNamespaceAreDeniedBeforeDecodeOrOwnerAccess()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#sharedCertificateWithoutWorkloadUriCannotReachOwner()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#jwtOnlyAndPlaintextCallersFailAtThePhysicalTransportBoundary()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#clientRejectsAResponseFromTheWrongAuthenticatedWorldServerIdentity()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#changedEchoDigestAndUnknownFieldsAreRejectedAfterSocketResponse()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#publicWireMessagesNeverContainWorldPrivateNumericTenantKey()' \
+            world-management-service
+
+      - name: Upload World authored-source intake socket proof results
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-authored-source-intake-socket-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/test/TEST-*WorldAuthoredSourceIntakeMtlsTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run World authored-source intake PostgreSQL socket composition proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:integrationTest \
+            --tests net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#commitsFreshWorldOwnerReceiptThenReturnsExactReceiptOverAuthenticatedSocket()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#reconcilesLostSuccessAcknowledgementWithExactRetryAndCommittedReadback()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#deniesWrongWorkloadAndChangedBindingWithoutOwnerMutation()' \
+            world-management-service
+
+      - name: Upload World authored-source intake PostgreSQL socket composition results
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-authored-source-intake-postgres-socket-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredSourceIntakeMtlsIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run Game Session authored-world intake PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}
         run: |

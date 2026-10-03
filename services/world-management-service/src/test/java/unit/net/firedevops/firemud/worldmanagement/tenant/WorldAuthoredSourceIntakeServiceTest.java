@@ -34,6 +34,7 @@ class WorldAuthoredSourceIntakeServiceTest {
   private static final UUID TENANT = UUID.fromString("22222222-2222-4222-8222-222222222222");
   private static final UUID SOURCE_OPERATION =
       UUID.fromString("33333333-3333-4333-8333-333333333333");
+  private static final UUID READ_REQUEST = UUID.fromString("66666666-6666-4666-8666-666666666666");
   private static final String WORLD = "violet-wilds";
 
   private final AuthoredWorldSourceClient client = mock(AuthoredWorldSourceClient.class);
@@ -110,6 +111,22 @@ class WorldAuthoredSourceIntakeServiceTest {
                   () ->
                       service.intake(INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, "sha256:bad"))
               .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(
+                  () ->
+                      service.intake(
+                          2,
+                          NAMESPACE,
+                          INTAKE_REQUEST,
+                          TENANT,
+                          WORLD,
+                          SOURCE_OPERATION,
+                          digest('a')))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(
+                  () ->
+                      service.intake(
+                          1, "other", INTAKE_REQUEST, TENANT, WORLD, SOURCE_OPERATION, digest('a')))
+              .isInstanceOf(SecurityException.class);
           return null;
         });
 
@@ -161,6 +178,124 @@ class WorldAuthoredSourceIntakeServiceTest {
     assertThat(result).isSameAs(receipt);
     verify(client, never()).read(any(ReadRequest.class));
     verify(repository, never()).acceptFresh(any(), any(), any());
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void exactCommittedReadReturnsWorldReceiptWithoutSourceReadOrAllocation() {
+    AuthoredWorldSourceEvidence source = source(NAMESPACE, TENANT, SOURCE_OPERATION, WORLD);
+    WorldAuthoredSourceIntakeReceipt receipt = receipt(source, 9001L);
+    when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.of(receipt));
+
+    Optional<WorldAuthoredSourceIntakeReceipt> result =
+        withGameDesign(
+            () ->
+                service.readCommittedReceipt(
+                    1,
+                    NAMESPACE,
+                    READ_REQUEST,
+                    INTAKE_REQUEST,
+                    TENANT,
+                    WORLD,
+                    SOURCE_OPERATION,
+                    source.evidenceDigest()));
+
+    assertThat(result).containsSame(receipt);
+    verify(repository).read(NAMESPACE, INTAKE_REQUEST);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    verifyNoInteractions(client);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void exactCommittedReadRejectsWrongPeerNamespaceAndChangedReceiptBindingBeforeOwnerAccess() {
+    AuthoredWorldSourceEvidence source = source(NAMESPACE, TENANT, SOURCE_OPERATION, WORLD);
+    WorldAuthoredSourceIntakeReceipt receipt = receipt(source, 9001L);
+    when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.of(receipt));
+
+    assertThatThrownBy(
+            () ->
+                withoutPeer(
+                    () ->
+                        service.readCommittedReceipt(
+                            1,
+                            NAMESPACE,
+                            READ_REQUEST,
+                            INTAKE_REQUEST,
+                            TENANT,
+                            WORLD,
+                            SOURCE_OPERATION,
+                            source.evidenceDigest())))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withPeer(
+                    peer(NAMESPACE, "game-session-service"),
+                    () ->
+                        service.readCommittedReceipt(
+                            1,
+                            NAMESPACE,
+                            READ_REQUEST,
+                            INTAKE_REQUEST,
+                            TENANT,
+                            WORLD,
+                            SOURCE_OPERATION,
+                            source.evidenceDigest())))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withGameDesign(
+                    () ->
+                        service.readCommittedReceipt(
+                            1,
+                            "other",
+                            READ_REQUEST,
+                            INTAKE_REQUEST,
+                            TENANT,
+                            WORLD,
+                            SOURCE_OPERATION,
+                            source.evidenceDigest())))
+        .isInstanceOf(SecurityException.class);
+    assertThatThrownBy(
+            () ->
+                withGameDesign(
+                    () ->
+                        service.readCommittedReceipt(
+                            1,
+                            NAMESPACE,
+                            INTAKE_REQUEST,
+                            INTAKE_REQUEST,
+                            TENANT,
+                            WORLD,
+                            SOURCE_OPERATION,
+                            source.evidenceDigest())))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    verifyNoInteractions(client, repository);
+    assertThat(transactionManager.startedWith).isNull();
+  }
+
+  @Test
+  void exactCommittedReadReturnsAbsentWithoutMutationWhenNoReceiptExists() {
+    when(repository.read(NAMESPACE, INTAKE_REQUEST)).thenReturn(Optional.empty());
+
+    Optional<WorldAuthoredSourceIntakeReceipt> result =
+        withGameDesign(
+            () ->
+                service.readCommittedReceipt(
+                    1,
+                    NAMESPACE,
+                    READ_REQUEST,
+                    INTAKE_REQUEST,
+                    TENANT,
+                    WORLD,
+                    SOURCE_OPERATION,
+                    digest('a')));
+
+    assertThat(result).isEmpty();
+    verify(repository).read(NAMESPACE, INTAKE_REQUEST);
+    verify(repository, never()).acceptFresh(any(), any(), any());
+    verifyNoInteractions(client);
     assertThat(transactionManager.startedWith).isNull();
   }
 

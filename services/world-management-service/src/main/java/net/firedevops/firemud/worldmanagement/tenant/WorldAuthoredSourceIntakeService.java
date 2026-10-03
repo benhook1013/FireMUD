@@ -20,6 +20,7 @@ import org.springframework.transaction.support.TransactionTemplate;
  * transaction that retains its complete evidence and private tenant association.
  */
 public class WorldAuthoredSourceIntakeService {
+  private static final int SCHEMA_VERSION = 1;
   private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final AuthoredWorldSourceClient sourceClient;
@@ -60,9 +61,30 @@ public class WorldAuthoredSourceIntakeService {
       String worldSlug,
       UUID sourceOperationId,
       String expectedSourceEvidenceDigest) {
+    return intake(
+        SCHEMA_VERSION,
+        workloadNamespace,
+        intakeRequestId,
+        canonicalTenantId,
+        worldSlug,
+        sourceOperationId,
+        expectedSourceEvidenceDigest);
+  }
+
+  /** Accepts the complete wire binding after authenticating the exact Game Design workload. */
+  public WorldAuthoredSourceIntakeReceipt intake(
+      int schemaVersion,
+      String targetNamespace,
+      UUID intakeRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      UUID sourceOperationId,
+      String expectedSourceEvidenceDigest) {
     requireAuthenticatedGameDesignCaller();
+    validateSchemaAndNamespace(schemaVersion, targetNamespace);
     requireNoAmbientTransaction();
     validateRequest(
+        targetNamespace,
         intakeRequestId,
         canonicalTenantId,
         worldSlug,
@@ -130,6 +152,47 @@ public class WorldAuthoredSourceIntakeService {
     return readback;
   }
 
+  /** Reads only an exact committed receipt; it never re-reads Game Design or allocates state. */
+  public Optional<WorldAuthoredSourceIntakeReceipt> readCommittedReceipt(
+      int schemaVersion,
+      String targetNamespace,
+      UUID requestId,
+      UUID intakeRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
+      UUID sourceOperationId,
+      String expectedSourceEvidenceDigest) {
+    requireAuthenticatedGameDesignCaller();
+    validateSchemaAndNamespace(schemaVersion, targetNamespace);
+    requireNoAmbientTransaction();
+    requireNonNil(requestId, "requestId");
+    requireNonNil(intakeRequestId, "intakeRequestId");
+    if (requestId.equals(intakeRequestId)) {
+      throw new IllegalArgumentException("Read requestId must differ from intakeRequestId");
+    }
+    validateRequest(
+        targetNamespace,
+        intakeRequestId,
+        canonicalTenantId,
+        worldSlug,
+        sourceOperationId,
+        expectedSourceEvidenceDigest);
+
+    Optional<WorldAuthoredSourceIntakeReceipt> receipt =
+        repository.read(targetNamespace, intakeRequestId);
+    if (receipt.isEmpty()) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        requireReceiptForRequest(
+            receipt.orElseThrow(),
+            intakeRequestId,
+            canonicalTenantId,
+            worldSlug,
+            sourceOperationId,
+            expectedSourceEvidenceDigest));
+  }
+
   private void requireAuthenticatedGameDesignCaller() {
     GrpcPeerIdentity peer = GrpcPeerIdentity.current();
     if (peer == null
@@ -147,7 +210,18 @@ public class WorldAuthoredSourceIntakeService {
     }
   }
 
+  private void validateSchemaAndNamespace(int schemaVersion, String targetNamespace) {
+    if (schemaVersion != SCHEMA_VERSION) {
+      throw new IllegalArgumentException("Unsupported World authored-source intake version");
+    }
+    if (!workloadNamespace.equals(targetNamespace)) {
+      throw new SecurityException(
+          "World authored-source intake target namespace does not match this workload");
+    }
+  }
+
   private void validateRequest(
+      String targetNamespace,
       UUID intakeRequestId,
       UUID canonicalTenantId,
       String worldSlug,
@@ -156,7 +230,7 @@ public class WorldAuthoredSourceIntakeService {
     requireNonNil(intakeRequestId, "intakeRequestId");
     requireNonNil(canonicalTenantId, "canonicalTenantId");
     requireNonNil(sourceOperationId, "sourceOperationId");
-    AuthoredWorldSourceDigest.validateReadSelector(workloadNamespace, canonicalTenantId, worldSlug);
+    AuthoredWorldSourceDigest.validateReadSelector(targetNamespace, canonicalTenantId, worldSlug);
     if (!GameTenantCreationDigest.isDigest(expectedSourceEvidenceDigest)) {
       throw new IllegalArgumentException(
           "expectedSourceEvidenceDigest must be a canonical SHA-256 digest");

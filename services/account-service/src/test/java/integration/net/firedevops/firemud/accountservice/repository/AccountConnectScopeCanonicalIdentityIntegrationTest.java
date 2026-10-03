@@ -449,6 +449,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                 scopeRepository(fixture).freshTenantIdentities().importVerified(tenantEvidence));
     flyway(fixture.dataSource(), fixture.schema(), "46").migrate();
     flyway(fixture.dataSource(), fixture.schema(), "47").migrate();
+    flyway(fixture.dataSource(), fixture.schema(), "50").migrate();
 
     AccountConnectScopeRepository scopes = scopeRepository(fixture).scopes();
     VerifiedTenantProvenance tenantProvenance =
@@ -629,15 +630,24 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                             operations.bindCanonicalPolicyEvidence(
                                 requestId, scope, callerBinding, true, 10L)))
         .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
-    assertThatThrownBy(
-            () ->
-                fixture
-                    .transaction()
-                    .execute(
-                        status ->
-                            operations.recordCanonicalPolicyUnavailable(
-                                requestId, scope, callerBinding, "ENTITLEMENT_UNAVAILABLE")))
-        .isInstanceOf(AccountJoinOperationRepository.CanonicalJoinOperationConflictException.class);
+    CanonicalJoinOperationEvidence laterUnavailableAttempt =
+        fixture
+            .transaction()
+            .execute(
+                status ->
+                    operations.recordCanonicalPolicyUnavailable(
+                        requestId, scope, callerBinding, "ENTITLEMENT_UNAVAILABLE"));
+    assertThat(laterUnavailableAttempt.status()).isEqualTo("PENDING");
+    assertThat(laterUnavailableAttempt.outcome()).isNull();
+    assertThat(laterUnavailableAttempt.membershipId()).isNull();
+    assertThat(laterUnavailableAttempt.entitlementAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(laterUnavailableAttempt.allowPublicJoin()).isTrue();
+    assertThat(laterUnavailableAttempt.entitlementVersion()).isEqualTo(9L);
+    assertThat(laterUnavailableAttempt.requestDigestVersion()).isEqualTo(2);
+    assertThat(laterUnavailableAttempt.requestDigest()).isEqualTo(expectedPolicyDigest);
+    assertThat(laterUnavailableAttempt.lastAttemptAuthorityAvailability()).isEqualTo("UNAVAILABLE");
+    assertThat(laterUnavailableAttempt.lastAttemptFailureCode())
+        .isEqualTo("ENTITLEMENT_UNAVAILABLE");
 
     String unavailableRequestId = "canonical-join-policy-unavailable";
     fixture

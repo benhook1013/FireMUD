@@ -406,7 +406,7 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
         Objects.requireNonNull(
             dsl.resultQuery(
                     "INSERT INTO accounts (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
-                    "canonical-reconcile-" + suffix,
+                    "canon-rec-" + suffix,
                     "canonical-reconcile-" + suffix + "@example.test",
                     "synthetic-fixture-hash")
                 .fetchOne(0, Long.class));

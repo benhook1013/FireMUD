@@ -995,29 +995,29 @@ public class AccountJoinOperationRepository {
       Long membershipAuthorityGeneration) {
     var provenance = operation.scopeEvidence().tenantProvenance();
     return Boolean.TRUE.equals(
-        dsl.fetchValue(
-            "SELECT EXISTS (SELECT 1 FROM account_tenant_membership membership "
-                + "WHERE membership.id = ? AND membership.account_id = ? "
-                + "AND membership.tenant_id IS NOT DISTINCT FROM ? "
-                + "AND membership.tenant_uuid = ? "
-                + "AND membership.tenant_provenance_kind = ? "
-                + "AND membership.tenant_source_operation_id = ? "
-                + "AND membership.tenant_provenance_digest = ? "
-                + "AND membership.lifecycle_state = 'ACTIVE' "
-                + "AND membership.gameplay_admission_allowed IS TRUE "
-                + "AND membership.membership_version = ? "
-                + "AND membership.membership_authority_generation = ? "
-                + "AND membership.authority_provenance = 'EXPLICIT_JOIN')",
-            Boolean.class,
-            membershipId,
-            operation.privateAccountId(),
-            provenance.legacyTenantId(),
-            operation.scopeEvidence().tenantUuid(),
-            provenance.kind().name(),
-            provenance.sourceOperationId(),
-            provenance.digest(),
-            membershipVersion,
-            membershipAuthorityGeneration));
+        dsl.resultQuery(
+                "SELECT EXISTS (SELECT 1 FROM account_tenant_membership membership "
+                    + "WHERE membership.id = ? AND membership.account_id = ? "
+                    + "AND membership.tenant_id IS NOT DISTINCT FROM ? "
+                    + "AND membership.tenant_uuid = ? "
+                    + "AND membership.tenant_provenance_kind = ? "
+                    + "AND membership.tenant_source_operation_id = ? "
+                    + "AND membership.tenant_provenance_digest = ? "
+                    + "AND membership.lifecycle_state = 'ACTIVE' "
+                    + "AND membership.gameplay_admission_allowed IS TRUE "
+                    + "AND membership.membership_version = ? "
+                    + "AND membership.membership_authority_generation = ? "
+                    + "AND membership.authority_provenance = 'EXPLICIT_JOIN')",
+                membershipId,
+                operation.privateAccountId(),
+                provenance.legacyTenantId(),
+                operation.scopeEvidence().tenantUuid(),
+                provenance.kind().name(),
+                provenance.sourceOperationId(),
+                provenance.digest(),
+                membershipVersion,
+                membershipAuthorityGeneration)
+            .fetchOne(0, Boolean.class));
   }
 
   private static void requireCanonicalTerminalShape(
