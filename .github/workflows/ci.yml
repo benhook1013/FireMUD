@@ -1036,17 +1036,22 @@ jobs:
         run: |
           ./gradlew :game-design-service:integrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateIntegrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest \
             :game-design-service:test \
             --tests net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest \
             --continue -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateIntegrationTest#readsCompletePersistedSourceAndCurrentVersionWithoutMutatingOwnerRows()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateIntegrationTest#rejectsStaleSourceDigestAndARealVersionOwnedByAnotherGame()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateIntegrationTest#freshOwnerSnapshotDoesNotJoinAnAmbientRepeatableReadSnapshot()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateIntegrationTest#versionChangeDuringOwnerReadRemainsOneRepeatableReadSnapshot()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#returnsCompletePersistedSourceAndVersionStateOverSocketWithoutMutation(Path)' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#changedSourceDigestAndForeignPersistedVersionFailClosedWithoutMutation(Path)' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.AuthoredWorldVersionStateMtlsIntegrationTest#sameReadIdentityObservesFreshCommittedLifecycleAndEpochSnapshot(Path)' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest#exactSameNamespaceWorldWorkloadReceivesCompleteVersionStateEvidenceOverSocket(Path)' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest#wrongServiceNamespaceAndSharedCertificatesAreRejectedBeforeProducerRead()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldVersionStateMtlsTest#missingClientCertificateCannotSupplyAnAuthenticatedPeerToProducer()' \
@@ -1062,6 +1067,7 @@ jobs:
           name: game-design-authored-world-version-state-proof-${{ github.sha }}
           path: |
             services/game-design-service/build/test-results/integrationTest/TEST-*AuthoredWorldVersionStateIntegrationTest.xml
+            services/game-design-service/build/test-results/integrationTest/TEST-*AuthoredWorldVersionStateMtlsIntegrationTest.xml
             services/game-design-service/build/test-results/test/TEST-*AuthoredWorldVersionStateMtlsTest.xml
           if-no-files-found: warn
           retention-days: 7
@@ -1092,6 +1098,32 @@ jobs:
         with:
           name: world-authored-source-intake-proof-${{ github.sha }}
           path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredSourceIntakeIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run World shared publication-fence PostgreSQL prerequisite proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:integrationTest \
+            --tests net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#rollbackAndCommittedExactReadbackRetainOneImmutableAttempt()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#sameCanonicalTenantAndVersionRowCanBeLockedThroughDifferentIntakes()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#concurrentExactFreezeRetryReturnsTheSameFenceAndCheckpoint()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#writerHoldingTheOpenLockCommitsBeforeFreezeCapturesItsCheckpoint()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#freezeHoldingTheLockMakesAWaitingOrdinaryWriterFailClosed()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldDesignPublicationFenceIntegrationTest#changedAssociationSourceRequestDigestEpochAndMissingCheckpointDoNotMutate()' \
+            world-management-service
+
+      - name: Upload World shared publication-fence prerequisite proof results
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-publication-fence-prerequisite-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldDesignPublicationFenceIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 

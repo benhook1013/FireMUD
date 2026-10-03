@@ -72,7 +72,7 @@ World Management exposes design-time APIs used by Game Design to write Draft tem
 
 ### Publication freeze and terminal handoff (target state)
 
-The publication-freeze operations are target contract surfaces. They are deliberately specified here as the World Management owner contract; the current proto, DTOs, client adapter, persistence schema, handler, and focused proof do not exist. No current caller may infer a freeze, publication, or terminal owner result from a digest, a remote `GetVersionState` read, or a Temporal run identity.
+The publication-freeze operations remain unavailable target contract surfaces. The internal owner-lock persistence prerequisite is not an authenticated freeze producer or terminal handoff; the [World implementation tracker](../../../project-management/implementation-tracking/world-runtime-and-movement.md#current-status) records its current code and proof limits. No current caller may infer a freeze, publication, or terminal owner result from a digest, a remote `GetVersionState` read, or a Temporal run identity.
 
 `BeginVersionPublicationFreeze` accepts exactly:
 

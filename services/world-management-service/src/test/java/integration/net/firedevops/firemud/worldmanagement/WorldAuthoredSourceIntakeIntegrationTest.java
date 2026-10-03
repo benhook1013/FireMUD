@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -669,6 +670,7 @@ class WorldAuthoredSourceIntakeIntegrationTest {
             .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
             .schemas(schema)
             .defaultSchema(schema)
+            .placeholders(Map.of("serviceSchema", schema))
             .locations("classpath:db/migration");
     if (target != null) {
       configuration.target(target);
