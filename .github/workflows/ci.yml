@@ -1392,6 +1392,62 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      - name: Run Account canonical first-JOIN event PostgreSQL component proof
+        if: ${{ matrix.module == 'account-service' }}
+        run: |
+          ./gradlew :account-service:integrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest#freshUuidFirstJoinCommitsClosedEventAndPairFromStoredMembershipAndPolicy()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest#approvedRetainedUuidAssociationPublishesWithoutInventingTenantIdentity()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest#absentRequestChangedScopeUnavailablePolicyAndChangedDigestAreDenied()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest#eventReadbackConflictRollsBackMembershipEventAndPairTogether()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest#failureAfterPairAdvanceRollsBackMembershipEventAndPairTogether()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest#retainedMembershipEventHistoryCannotBeResetOrReallocated()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalFirstJoinAuthorityEventIntegrationTest#concurrentSameScopePublishersCommitOnlyOneSequenceOneEvent()' \
+            account-service
+
+      - name: Upload Account canonical first-JOIN event PostgreSQL proof results
+        if: ${{ always() && matrix.module == 'account-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: account-canonical-first-join-event-postgresql-proof-${{ github.sha }}
+          path: services/account-service/build/test-results/integrationTest/TEST-*AccountCanonicalFirstJoinAuthorityEventIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run Logging Account audit physical mTLS handler proof
+        if: ${{ matrix.module == 'logging-admin-service' }}
+        run: |
+          ./gradlew :logging-admin-service:test \
+            --tests net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#validAccountCanonicalUuidCreateAndReadEchoExactIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1NumericCreateAndReadEchoExplicitIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#retainedV1PlatformCreateAndReadEchoExplicitIdentityOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#missingClientCertificateIsRejectedByTls()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#wrongServiceValidCaCertificateCannotInvokeEitherAccountAuditMethod()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#wrongNamespaceCertificateCannotInvokeEitherAccountAuditMethod()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#sharedCertificateWithoutWorkloadUriCannotInvokeEitherAccountAuditMethod()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#jwtOnlyCallerCannotBypassMissingClientCertificate()' \
+            --require-case 'net.firedevops.firemud.loggingadmin.service.impl.AccountAuditCanonicalIdentityMtlsTest#mixedAndUnknownTenantIdentityFailBeforeLogEventServiceInvocation()' \
+            logging-admin-service
+
+      - name: Upload Logging Account audit physical mTLS proof results
+        if: ${{ always() && matrix.module == 'logging-admin-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: logging-account-audit-physical-mtls-proof-${{ github.sha }}
+          path: services/logging-admin-service/build/test-results/test/TEST-*AccountAuditCanonicalIdentityMtlsTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run Logging canonical Account audit PostgreSQL component proof
         if: ${{ matrix.module == 'logging-admin-service' }}
         run: |

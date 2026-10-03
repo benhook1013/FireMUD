@@ -12,4 +12,5 @@ firemudJooq {
 }
 
 dependencies {
+    testImplementation(libs.bouncycastle.pkix)
 }
