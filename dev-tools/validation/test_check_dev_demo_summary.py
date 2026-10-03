@@ -901,6 +901,50 @@ class DevDemoSummaryValidatorTest(unittest.TestCase):
             ):
                 validator.validate_workflow(root)
 
+    def test_discovery_accepts_canonical_direct_summary_writer_with_inline_helper(self):
+        validator = self.validator
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._write_workflow_fixture(root, self._bootstrap_manifest_fixture())
+
+            writers = validator.discover_summary_writers(
+                validator.collect_workflow_run_sources(validator._load_workflow(root)),
+                root,
+            )
+
+            self.assertEqual(
+                [(writer.job_name, writer.step_name) for writer in writers],
+                [("dev-demo-deploy", "Summarize dev-demo access")],
+            )
+
+    def test_discovery_rejects_nested_canonical_summary_helper_calls(self):
+        validator = self.validator
+        child_calls = (
+            'source ./dev-tools/hosted/dev-demo/emit-summary-details.sh',
+            'bash ./dev-tools/hosted/dev-demo/emit-summary-details.sh',
+        )
+        for child_call in child_calls:
+            with self.subTest(child_call=child_call), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self._write_workflow_fixture(root, self._bootstrap_manifest_fixture())
+                summary_helper = (
+                    root / "dev-tools/hosted/dev-demo/write-dev-demo-summary.sh"
+                )
+                summary_helper.write_text(f"{child_call}\n", encoding="utf-8")
+                (
+                    root / "dev-tools/hosted/dev-demo/emit-summary-details.sh"
+                ).write_text(
+                    'printf \'%s\\n\' "${DEMO_SMOKE_PASSWORD}"\n',
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "canonical dev-demo summary helper must not invoke "
+                    "repository shell helpers",
+                ):
+                    validator.validate_workflow(root)
+
     def test_discovery_rejects_nested_workflow_helper_summary_credential_sink(self):
         validator = self.validator
         with tempfile.TemporaryDirectory() as directory:

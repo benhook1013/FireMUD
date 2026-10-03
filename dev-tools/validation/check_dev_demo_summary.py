@@ -449,6 +449,13 @@ def discover_summary_writers(
             raise AssertionError(
                 "canonical dev-demo summary helper cannot be read: " f"{helper_path}"
             ) from exc
+        nested_helpers = _repo_shell_helper_references(helper_source)
+        if nested_helpers:
+            _, nested_reference = nested_helpers[0]
+            raise AssertionError(
+                "canonical dev-demo summary helper must not invoke repository "
+                f"shell helpers: {nested_reference}"
+            )
         if has_forbidden_summary_reference(helper_source):
             raise AssertionError(
                 "canonical dev-demo summary helper must not reference "
