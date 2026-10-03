@@ -151,6 +151,8 @@ These RPCs and schemas are accepted target state but are not present in the curr
 
 ## REST APIs
 
+Current explicit JOIN status: the local `/auth/bootstrap/join` controller and operation are implemented, but the exact Gateway path is blocked by its route guard and the route is absent from `publicOpenAPI`. Local policy-digest revalidation does not prove that the exact target remains valid through Account commit; the strict ADR 0025 commit gate remains incomplete. The canonical owner is [Runtime & Data](./runtime-and-data.md#membership-and-entitlement-authority), with the target contract in [ADR 0025](../../decisions/adr-0025-explicit-open-enrollment-membership.md).
+
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/ping` | Simple health check |

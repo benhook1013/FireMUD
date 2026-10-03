@@ -1,6 +1,7 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -178,18 +179,12 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
     try {
       AdminRoleGuard.requireAdminRole();
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "CreateLogEvent",
-                      "UNAVAILABLE",
-                      ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
+      GrpcAppErrors.error(
+          meterRegistry,
+          logger,
+          "CreateLogEvent",
+          "UNAVAILABLE",
+          ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE);
     } catch (AdminAuthorizationException ex) {
       CreateLogEventResponse response =
           CreateLogEventResponse.newBuilder()
@@ -203,6 +198,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+      return;
     } catch (Exception ex) {
       CreateLogEventResponse response =
           CreateLogEventResponse.newBuilder()
@@ -210,7 +206,12 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+      return;
     }
+    responseObserver.onError(
+        Status.UNAVAILABLE
+            .withDescription(ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE)
+            .asRuntimeException());
   }
 
   @Override

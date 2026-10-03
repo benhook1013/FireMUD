@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -20,8 +21,6 @@ import net.firedevops.firemud.loggingadmin.dto.ModerationPolicyDecisionDto;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
 import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.loggingadmin.service.ModerationService;
-import net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome;
-import net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus;
 import net.firedevops.firemud.loggingadmin.v1.ApplyModerationActionRequest;
 import net.firedevops.firemud.loggingadmin.v1.ApplyModerationActionResponse;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
@@ -78,38 +77,46 @@ class LoggingAdminGrpcServiceAuthTest {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     ModerationService moderationService = Mockito.mock(ModerationService.class);
+    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     LoggingAdminGrpcService service =
         new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            logEventService,
-            moderationService,
-            new SimpleMeterRegistry());
+            Mockito.mock(LogQueryService.class), logEventService, moderationService, meterRegistry);
 
-    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    java.util.concurrent.atomic.AtomicBoolean receivedResponse =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    java.util.concurrent.atomic.AtomicBoolean completed =
+        new java.util.concurrent.atomic.AtomicBoolean();
     service.createLogEvent(
         CreateLogEventRequest.newBuilder().setTenantId("1").build(),
         new StreamObserver<>() {
           @Override
           public void onNext(CreateLogEventResponse value) {
-            ref.set(value);
+            receivedResponse.set(true);
           }
 
           @Override
-          public void onError(Throwable t) {}
+          public void onError(Throwable t) {
+            error.set(t);
+          }
 
           @Override
-          public void onCompleted() {}
+          public void onCompleted() {
+            completed.set(true);
+          }
         });
 
-    assertNotNull(ref.get());
-    assertEquals("UNAVAILABLE", ref.get().getError().getCode());
-    assertEquals("", ref.get().getLogEventId());
-    assertEquals("", ref.get().getReceiptId());
+    assertNotNull(error.get());
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
+    String description = Status.fromThrowable(error.get()).getDescription();
     assertEquals(
-        AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_UNSPECIFIED, ref.get().getStatus());
-    assertEquals(
-        AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_UNSPECIFIED,
-        ref.get().getOutcome());
+        "Account audit receipt receiver is unavailable until the immutable receipt contract is "
+            + "implemented",
+        description);
+    assertTrue(description.length() <= 128);
+    assertFalse(receivedResponse.get());
+    assertFalse(completed.get());
+    assertEquals(1.0, meterRegistry.counter("grpc.app_error", "code", "UNAVAILABLE").count());
     verifyNoInteractions(logEventService, moderationService);
   }
 
