@@ -27,7 +27,9 @@ class PlayerCommandHistoryFlowTest {
         Mockito.mock(PlayerCommandHistoryStorageService.class);
     SessionAuthenticationService sessionAuthenticationService =
         Mockito.mock(SessionAuthenticationService.class);
-    SessionContext context = new SessionContext(1L, 7L, 9L, 17L, 11L, "R-1", "token");
+    SessionContext context =
+        new SessionContext(
+            1L, 7L, "3a16e242-3467-4d98-906f-71d47b888b5e", 17L, 11L, "R-1", "token");
     List<String> storedCommands = new ArrayList<>(List.of("LOOK"));
     when(sessionAuthenticationService.resolveSessionContext("41")).thenReturn(Optional.of(context));
     when(storage.findRecent(7L, 11L, 17L, 10))

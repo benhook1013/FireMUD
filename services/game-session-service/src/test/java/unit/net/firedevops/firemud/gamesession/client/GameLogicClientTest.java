@@ -39,9 +39,24 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 class GameLogicClientTest {
+  private static final String ACCOUNT_UUID = "f2ed193b-12c1-4c96-bcad-c162229af440";
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, 0L, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L,
+          22L,
+          ACCOUNT_UUID,
+          "",
+          123L,
+          "",
+          1L,
+          "R-1021",
+          "",
+          null,
+          1L,
+          "world",
+          "realm",
+          17L,
+          "SHARED");
 
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {
@@ -317,7 +332,7 @@ class GameLogicClientTest {
         PickupVisibleRoomItemRequest.newBuilder()
             .setTenantId("22")
             .setSessionId("41")
-            .setAccountId("0")
+            .setAccountId(ACCOUNT_UUID)
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setRoomInstanceId("R-1021")
@@ -422,7 +437,7 @@ class GameLogicClientTest {
         DropCarriedItemRequest.newBuilder()
             .setTenantId("22")
             .setSessionId("41")
-            .setAccountId("0")
+            .setAccountId(ACCOUNT_UUID)
             .setCharacterId("123")
             .setGameInstanceId("1")
             .setRoomInstanceId("R-1021")
@@ -527,10 +542,10 @@ class GameLogicClientTest {
     GameplaySessionAttestationService attestationService =
         mock(GameplaySessionAttestationService.class);
     when(attestationService.issueGameplaySessionAttestation(
-            "22", "41", "0", "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
         .thenReturn("attestation");
     when(attestationService.issueGameplaySessionAttestation(
-            "22", "41", "0", "123", "1", "R-2045", "world", "realm", "17", "SHARED"))
+            "22", "41", ACCOUNT_UUID, "123", "1", "R-2045", "world", "realm", "17", "SHARED"))
         .thenReturn("destination-attestation");
     when(attestationService.issueInternalProbeAttestation("22", "1", "R-1021"))
         .thenReturn("probe-attestation");

@@ -55,7 +55,17 @@ class EffectiveSettingsControllerTest {
   void effectiveSettingsUsesNormalizedPersistedSessionContext() {
     SessionContext cleared =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     PresentationProperties presentation = new PresentationProperties();
     MovementProperties movement = new MovementProperties();
     WorldTopologyProperties worldTopology = new WorldTopologyProperties();

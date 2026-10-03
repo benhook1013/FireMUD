@@ -5,6 +5,9 @@ import io.grpc.ServerBuilder;
 import io.grpc.stub.StreamObserver;
 import java.io.IOException;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.entitymanagement.v1.ContainerItem;
 import net.firedevops.firemud.entitymanagement.v1.DropItemToRoomRequest;
@@ -63,6 +66,8 @@ public final class EntityManagementStubServer implements AutoCloseable {
       new AtomicReference<>(LookTestFixtures.sampleEntities());
   private final AtomicReference<ListCharactersByAccountRequest> lastListCharactersByAccountRequest =
       new AtomicReference<>();
+  private final ConcurrentMap<String, net.firedevops.firemud.entitymanagement.v1.Character>
+      syntheticCharactersByAccountUuid = new ConcurrentHashMap<>();
   private final AtomicReference<QueryActorStateResponse> actorState =
       new AtomicReference<>(QueryActorStateResponse.getDefaultInstance());
   private boolean torchOnGround = true;
@@ -253,37 +258,52 @@ public final class EntityManagementStubServer implements AutoCloseable {
     lastListCharactersByAccountRequest.set(null);
   }
 
+  public void registerCharacterForAccountUuid(
+      String accountUuid, net.firedevops.firemud.entitymanagement.v1.Character character) {
+    String canonicalAccountUuid = requireCanonicalAccountUuid(accountUuid);
+    if (character == null
+        || !canonicalAccountUuid.equals(character.getAccountId())
+        || character.getId().isBlank()) {
+      throw new IllegalArgumentException("synthetic character must be bound to its Account UUID");
+    }
+    syntheticCharactersByAccountUuid.put(canonicalAccountUuid, character.toBuilder().build());
+  }
+
+  public void resetSyntheticAccountCharacters() {
+    syntheticCharactersByAccountUuid.clear();
+  }
+
   public Optional<ListCharactersByAccountRequest> lastListCharactersByAccountRequest() {
     return Optional.ofNullable(lastListCharactersByAccountRequest.get());
   }
 
   private net.firedevops.firemud.entitymanagement.v1.Character characterForAccount(
-      String accountId) {
+      String accountUuid) {
     net.firedevops.firemud.entitymanagement.v1.Character fixedCharacter =
-        switch (accountId) {
-          case "7" -> ChatTestFixtures.characterByName("Emberline");
-          case "8" -> ChatTestFixtures.characterByName("Sora");
-          case "9" -> ChatTestFixtures.characterByName("Nyx");
+        switch (accountUuid) {
+          case ChatTestFixtures.ACCOUNT_UUID_EMBERLINE ->
+              ChatTestFixtures.characterByName("Emberline");
+          case ChatTestFixtures.ACCOUNT_UUID_SORA -> ChatTestFixtures.characterByName("Sora");
+          case ChatTestFixtures.ACCOUNT_UUID_NYX -> ChatTestFixtures.characterByName("Nyx");
           default -> null;
         };
     if (fixedCharacter != null) {
       return fixedCharacter;
     }
+    return syntheticCharactersByAccountUuid.get(requireCanonicalAccountUuid(accountUuid));
+  }
+
+  private static String requireCanonicalAccountUuid(String accountUuid) {
     try {
-      long numericAccountId = Long.parseLong(accountId);
-      if (numericAccountId >= 7_001L && numericAccountId <= 7_010L) {
-        long playerNumber = numericAccountId - 7_000L;
-        return net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
-            .setId(Long.toString(numericAccountId))
-            .setTenantId("1")
-            .setAccountId(Long.toString(numericAccountId))
-            .setName("player-" + playerNumber)
-            .build();
+      UUID parsed = UUID.fromString(accountUuid);
+      if ((parsed.getMostSignificantBits() == 0L && parsed.getLeastSignificantBits() == 0L)
+          || !parsed.toString().equals(accountUuid)) {
+        throw new IllegalArgumentException("Account UUID must be canonical and non-nil");
       }
-    } catch (NumberFormatException ignored) {
-      // Non-numeric account identities are not persisted actors in this fixture.
+      return accountUuid;
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("Account UUID must be canonical and non-nil", exception);
     }
-    return null;
   }
 
   public synchronized void resetItemState() {

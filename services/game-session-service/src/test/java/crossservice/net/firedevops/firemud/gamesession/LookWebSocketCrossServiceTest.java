@@ -8,6 +8,7 @@ import java.util.List;
 import net.firedevops.firemud.entitymanagement.v1.ActorConditionState;
 import net.firedevops.firemud.entitymanagement.v1.ActorResourceValue;
 import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
+import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
 import net.firedevops.firemud.gamesession.testsupport.GameplayCrossServiceStack;
@@ -28,7 +29,8 @@ import org.testcontainers.utility.DockerImageName;
 class LookWebSocketCrossServiceTest {
   private static final Duration COMMAND_WAIT = Duration.ofSeconds(8);
   private static final long TENANT_ID = 1L;
-  private static final long ACCOUNT_ID = 7L;
+  private static final String ACCOUNT_UUID = ChatTestFixtures.ACCOUNT_UUID_EMBERLINE;
+  private static final long MANAGEMENT_OWNER_SELECTOR = 7L;
   private static final long CHARACTER_ID = 123L;
   private static final String READY_LOOK_TEXT = "Candle-lit Antechamber";
 
@@ -329,7 +331,7 @@ class LookWebSocketCrossServiceTest {
 
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (STACK == null) {
-      STACK = GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID).start();
+      STACK = GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_UUID).start();
     }
   }
 
@@ -343,9 +345,10 @@ class LookWebSocketCrossServiceTest {
 
   private long insertGameInstance(boolean clearExisting) {
     if (clearExisting) {
-      return STACK.freshGameplayBaseline(TENANT_ID, 1L, ACCOUNT_ID, 7L, CHARACTER_ID);
+      return STACK.freshGameplayBaseline(
+          TENANT_ID, 1L, MANAGEMENT_OWNER_SELECTOR, 7L, CHARACTER_ID);
     }
-    return STACK.insertRunningGameInstance(TENANT_ID, ACCOUNT_ID, 7L, false);
+    return STACK.insertRunningGameInstance(TENANT_ID, MANAGEMENT_OWNER_SELECTOR, 7L, false);
   }
 
   private List<String> runLookSequence(long sessionId) throws Exception {

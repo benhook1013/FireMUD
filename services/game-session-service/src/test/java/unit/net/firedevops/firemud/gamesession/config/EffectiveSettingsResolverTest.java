@@ -53,7 +53,16 @@ class EffectiveSettingsResolverTest {
 
     PresentationProperties effective =
         resolver.presentation(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+            new SessionContext(
+                1L,
+                22L,
+                "11111111-1111-4111-8111-111111111111",
+                "demo@example.com",
+                911L,
+                "Ember",
+                7L,
+                "R-1",
+                null));
 
     assertThat(effective.defaultLocaleTag()).isEqualTo("fr");
     assertThat(effective.defaultColorMode()).isEqualTo(PresentationProperties.ColorMode.BASIC);
@@ -87,7 +96,18 @@ class EffectiveSettingsResolverTest {
             authorityReader);
 
     SessionContext prePlay =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, null, null, 41L);
+        new SessionContext(
+            1L,
+            22L,
+            "11111111-1111-4111-8111-111111111111",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            41L);
 
     assertThat(resolver.movement(prePlay).postMoveLookEnabled()).isFalse();
     assertThat(resolver.worldTopology(prePlay).scopeModel())

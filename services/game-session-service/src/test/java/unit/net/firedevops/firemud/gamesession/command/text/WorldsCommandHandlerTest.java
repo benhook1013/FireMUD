@@ -145,7 +145,15 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(
+                1L,
+                22L,
+                "f2ed193b-12c1-4c96-bcad-c162229af440",
+                "demo@example.com",
+                0L,
+                null,
+                0L,
+                "jwt"),
             "private-world",
             null);
 
@@ -186,7 +194,15 @@ class WorldsCommandHandlerTest {
                             "ALLOW_NEW")))));
     WorldsCommandHandler localHandler = new WorldsCommandHandler(catalog, entityManagementClient);
     SessionContext context =
-        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt");
+        new SessionContext(
+            1L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            "jwt");
 
     assertThat(localHandler.browseCharacters(context, "mixed-world", "secret"))
         .isInstanceOf(WorldsCommandHandler.CharacterBrowseResult.InvalidRealm.class);
@@ -203,7 +219,15 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(
+                1L,
+                22L,
+                "f2ed193b-12c1-4c96-bcad-c162229af440",
+                "demo@example.com",
+                0L,
+                null,
+                0L,
+                "jwt"),
             "demo",
             null);
 

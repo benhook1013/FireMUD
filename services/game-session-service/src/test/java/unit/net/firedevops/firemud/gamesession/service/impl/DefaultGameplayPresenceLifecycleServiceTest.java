@@ -34,7 +34,15 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   void registerConnectedUpdatesLiveAndRecentPresence() {
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "");
 
     service.registerConnected(context);
 
@@ -54,7 +62,15 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   void clearGameplayBindingPublishesExitAndRemovesLivePresenceWithoutDisconnecting() {
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "");
 
     service.clearGameplayBinding(context, "STALE_ADMISSION_POINTER");
 
@@ -71,7 +87,16 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   @Test
   void clearGameplayBindingSkipsExitWithoutGameplayRegionBinding() {
     SessionContext context =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "");
+        new SessionContext(
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "");
 
     service.clearGameplayBinding(context, "LOGIN_FAILED");
 
@@ -86,7 +111,15 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   void recordDisconnectedWritesRecentPresenceBeforeRemovingLivePresence() {
     whenGameplayContextPresent(
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", ""));
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            ""));
 
     service.recordDisconnected(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
 
@@ -109,7 +142,15 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   void recordDisconnectedPreservesCanonicalLogoutEventId() {
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "");
     whenGameplayContextPresent(context);
 
     service.recordDisconnected(41L, AccountRecentPresenceDisposition.LOGOUT);
@@ -121,7 +162,15 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   void takeoverRemovesDisplacedSessionWithoutPublishingCharacterRegionExit() {
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 1L, "R-1021", "");
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "");
     whenGameplayContextPresent(context);
 
     service.recordDisconnected(41L, AccountRecentPresenceDisposition.TAKEOVER);
@@ -136,7 +185,7 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   @Test
   void recordDisconnectedSkipsLifecycleEventWithoutGameplayRegionBinding() {
     whenGameplayContextPresent(
-        new SessionContext(41L, 22L, 0L, "demo@example.com", 7001L, "Emberline", 0L, "", ""));
+        new SessionContext(41L, 22L, null, "demo@example.com", 7001L, "Emberline", 0L, "", ""));
 
     service.recordDisconnected(41L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
 
@@ -157,7 +206,16 @@ class DefaultGameplayPresenceLifecycleServiceTest {
   @Test
   void recordDisconnectedSkipsExitWhenNormalizationClearsStaleGameplayBinding() {
     SessionContext cleared =
-        new SessionContext(41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "");
+        new SessionContext(
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "");
     Mockito.when(sessionRoutingNormalizationService.resolveProjectedSessionContext("41"))
         .thenReturn(Optional.of(cleared));
 

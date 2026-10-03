@@ -163,14 +163,17 @@ class SessionResumptionFlowTest {
         .thenReturn(CommandEnqueueResult.success());
     when(accountClient.authenticate(Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
-            AuthenticateResponse.newBuilder().setAuthToken("jwt").setAccountId("77").build());
+            AuthenticateResponse.newBuilder()
+                .setAuthToken("jwt")
+                .setAccountId("550e8400-e29b-41d4-a716-446655440000")
+                .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
         .thenAnswer(
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                          77L, 22L, "1")
+                          "550e8400-e29b-41d4-a716-446655440000", 22L, "1")
                       .toBuilder()
                       .setEvaluatedAt(Instant.now().toString())
                       .build();
@@ -184,7 +187,7 @@ class SessionResumptionFlowTest {
             Mockito.anyString(),
             Mockito.anyString()))
         .thenReturn(GetRealmAccessGrantForRuntimeResponse.newBuilder().setGranted(true).build());
-    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyLong()))
+    when(moderationPolicyClient.evaluateGameplayAdmission(Mockito.anyLong(), Mockito.anyString()))
         .thenReturn(
             net.firedevops.firemud.loggingadmin.v1.EvaluateModerationPolicyResponse.newBuilder()
                 .setAllowed(true)
@@ -210,7 +213,7 @@ class SessionResumptionFlowTest {
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
                         .setTenantId("22")
-                        .setAccountId("77")
+                        .setAccountId("550e8400-e29b-41d4-a716-446655440000")
                         .setName("Emberline")
                         .setLevel(12)
                         .setPlayableStateScope(
@@ -463,7 +466,7 @@ class SessionResumptionFlowTest {
             invocation -> {
               var response =
                   net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures.active(
-                      77L, 22L, "2");
+                      "550e8400-e29b-41d4-a716-446655440000", 22L, "2");
               var deniedResponse =
                   response.toBuilder()
                       .setGameplayAdmissionAllowed(false)
@@ -493,7 +496,8 @@ class SessionResumptionFlowTest {
     assertEquals("PLAY_REQUIRED", lookAfterDeniedReconnect.commandResult().errorCode());
     assertTrue(sessionAuthenticationService.isAuthenticated("1"));
     assertEquals(
-        77L, sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow().accountId());
+        "550e8400-e29b-41d4-a716-446655440000",
+        sessionContextService.findByTenantAndSessionId(22L, 1L).orElseThrow().accountId());
     TextCommandInterpretationResult joinAfterDeniedPlay =
         interpreter.interpret("1", "JOIN demo", false);
     assertEquals("AUTH_UNAVAILABLE", joinAfterDeniedPlay.commandResult().errorCode());
@@ -621,7 +625,7 @@ class SessionResumptionFlowTest {
     return new SessionContext(
         sessionId,
         22L,
-        0L,
+        null,
         null,
         0L,
         null,

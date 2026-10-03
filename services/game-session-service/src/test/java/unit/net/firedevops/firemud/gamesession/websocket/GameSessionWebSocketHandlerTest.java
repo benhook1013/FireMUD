@@ -47,6 +47,8 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 
 class GameSessionWebSocketHandlerTest {
+  private static final String FIRST_PARTY_ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
+
   private final TextCommandInterpreter interpreter = Mockito.mock(TextCommandInterpreter.class);
   private final LookCommandHandler lookHandler = Mockito.mock(LookCommandHandler.class);
   private final SessionAuthenticationService sessionAuthenticationService =
@@ -137,7 +139,16 @@ class GameSessionWebSocketHandlerTest {
                 "token"));
     FirstPartyConnectContext connectContext =
         new FirstPartyConnectContext(
-            123L, 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+            FIRST_PARTY_ACCOUNT_ID,
+            22L,
+            "demo",
+            "production",
+            7L,
+            3L,
+            "scope-1",
+            "jti",
+            "req-1",
+            "gw-1");
     when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
@@ -214,7 +225,16 @@ class GameSessionWebSocketHandlerTest {
                 "token"));
     FirstPartyConnectContext connectContext =
         new FirstPartyConnectContext(
-            123L, 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+            FIRST_PARTY_ACCOUNT_ID,
+            22L,
+            "demo",
+            "production",
+            7L,
+            3L,
+            "scope-1",
+            "jti",
+            "req-1",
+            "gw-1");
     when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenThrow(new IllegalStateException("database unavailable"));
@@ -470,7 +490,7 @@ class GameSessionWebSocketHandlerTest {
         .save(
             eq(
                 new SessionContext(
-                    41L, 22L, 0L, null, 0L, null, 0L, null, null, null, 7L, null, null, 0L, null,
+                    41L, 22L, null, null, 0L, null, 0L, null, null, null, 7L, null, null, 0L, null,
                     null, null)));
   }
 
@@ -601,7 +621,7 @@ class GameSessionWebSocketHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "Emberline",
@@ -650,7 +670,7 @@ class GameSessionWebSocketHandlerTest {
                 context ->
                     context.sessionId() == 41L
                         && context.tenantId() == 22L
-                        && context.accountId() == 0L
+                        && context.accountId() == null
                         && context.bootstrapGameInstanceId() == 7L
                         && "demo".equals(context.worldSlug())
                         && "production".equals(context.realmSlug())
@@ -665,7 +685,7 @@ class GameSessionWebSocketHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             123L,
             "Emberline",
@@ -727,7 +747,7 @@ class GameSessionWebSocketHandlerTest {
                 context ->
                     context.sessionId() == 41L
                         && context.tenantId() == 22L
-                        && context.accountId() == 0L
+                        && context.accountId() == null
                         && context.bootstrapGameInstanceId() == 7L
                         && context.worldSlug() == null
                         && context.realmSlug() == null
@@ -740,7 +760,17 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Recent room line");
     SessionContext clearedShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -775,7 +805,17 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Recent room line");
     SessionContext partialShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, null, "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -810,7 +850,17 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Presence: online in Demo World / Live Realm");
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("WHO")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -847,7 +897,17 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Entering Demo World");
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -891,7 +951,17 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Custom session response");
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("CUSTOM-PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -928,7 +998,17 @@ class GameSessionWebSocketHandlerTest {
     WebSocketSession decoratedSession = Mockito.mock(WebSocketSession.class);
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            1L);
     when(session.getId()).thenReturn("session-41");
     when(decoratedSession.getId()).thenReturn("session-41");
     when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(decoratedSession));
@@ -976,7 +1056,17 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext clearedShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1007,7 +1097,17 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext partialShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 1L, null, "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            1L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1038,7 +1138,17 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext freshBinding =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            1L);
     when(session.getAttributes())
         .thenReturn(
             Map.of(
@@ -1084,7 +1194,17 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext binding =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1123,7 +1243,17 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext binding =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt",
+            "en-NZ",
+            1L);
     PresentationProperties presentation =
         new PresentationProperties(
             "en-NZ",
@@ -1181,7 +1311,17 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Recent room line");
     SessionContext clearedShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            0L,
+            null,
+            0L,
+            null,
+            "jwt",
+            "en-NZ",
+            1L);
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1369,7 +1509,21 @@ class GameSessionWebSocketHandlerTest {
             "LOGIN demo@example.com swordfish");
     SessionContext tenantScoped =
         new SessionContext(
-            41L, 22L, 0L, null, 0L, null, 0L, null, null, null, 7L, "demo", "production", 3L, null);
+            41L,
+            22L,
+            null,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            7L,
+            "demo",
+            "production",
+            3L,
+            null);
     when(parser.parse("LOGIN demo@example.com swordfish")).thenReturn(command);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
         .thenReturn(Optional.of(tenantScoped));

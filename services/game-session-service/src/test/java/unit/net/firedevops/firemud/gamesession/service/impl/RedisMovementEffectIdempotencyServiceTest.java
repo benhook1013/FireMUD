@@ -57,7 +57,7 @@ class RedisMovementEffectIdempotencyServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
             "demo@example.com",
             7001L,
             "demo",
@@ -103,7 +103,9 @@ class RedisMovementEffectIdempotencyServiceTest {
     SessionContext current = baselineContext();
     when(valueOperations.get("sessionctx:22:41:context")).thenReturn(current);
     when(valueOperations.get("sessionctx:22:41:movement-effect:tfx-1")).thenReturn(null);
-    MoveEffectApplyResult result = service.apply("tfx-1", withAccountId(current, 999L), "R-2045");
+    MoveEffectApplyResult result =
+        service.apply(
+            "tfx-1", withAccountId(current, "11111111-1111-4111-8111-111111111111"), "R-2045");
 
     assertEquals(MoveEffectApplyStatus.CONFLICT, result.status());
     assertEquals(current.withoutJwt(), result.context());
@@ -171,7 +173,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     return new SessionContext(
         41L,
         22L,
-        123L,
+        "f2ed193b-12c1-4c96-bcad-c162229af440",
         "demo@example.com",
         7001L,
         "demo",
@@ -186,7 +188,7 @@ class RedisMovementEffectIdempotencyServiceTest {
         "SHARED");
   }
 
-  private SessionContext withAccountId(SessionContext context, long accountId) {
+  private SessionContext withAccountId(SessionContext context, String accountId) {
     return new SessionContext(
         context.sessionId(),
         context.tenantId(),

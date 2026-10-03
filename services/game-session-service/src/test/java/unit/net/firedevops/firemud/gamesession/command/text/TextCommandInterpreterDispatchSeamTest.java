@@ -23,7 +23,17 @@ class TextCommandInterpreterDispatchSeamTest {
         Mockito.mock(SessionAuthenticationService.class);
     SessionContext gameplayContext =
         new SessionContext(
-            1L, 7L, 8L, "player@example.com", 9L, "Demo", 10L, "R-1", "token", "en-NZ", 10L);
+            1L,
+            7L,
+            "e87d27af-9f41-4575-915d-d76d1a5359c9",
+            "player@example.com",
+            9L,
+            "Demo",
+            10L,
+            "R-1",
+            "token",
+            "en-NZ",
+            10L);
     Mockito.when(authenticationService.resolveSessionContext("1"))
         .thenReturn(Optional.of(gameplayContext));
 

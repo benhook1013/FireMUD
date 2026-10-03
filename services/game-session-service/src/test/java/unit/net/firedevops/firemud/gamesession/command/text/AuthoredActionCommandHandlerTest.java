@@ -43,7 +43,16 @@ class AuthoredActionCommandHandlerTest {
 
     TextCommandInterpretationResult result =
         handler.handle(
-            new SessionContext(1L, 1L, 2L, "player@example.com", 3L, "Player", 4L, "room", "jwt"),
+            new SessionContext(
+                1L,
+                1L,
+                "11111111-1111-4111-8111-111111111111",
+                "player@example.com",
+                3L,
+                "Player",
+                4L,
+                "room",
+                "jwt"),
             command);
 
     assertFalse(result.commandResult().accepted());

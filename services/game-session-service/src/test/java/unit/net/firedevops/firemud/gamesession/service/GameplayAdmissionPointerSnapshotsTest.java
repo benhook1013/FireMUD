@@ -11,11 +11,13 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import org.junit.jupiter.api.Test;
 
 class GameplayAdmissionPointerSnapshotsTest {
+  private static final String ACCOUNT_ID = "f2ed193b-12c1-4c96-bcad-c162229af440";
+
   @Test
   void admittedRoutingBundleReturnsNormalizedBundleWhenRoutingClaimsAreComplete() {
     SessionContext completeContext =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", "realm", 17L,
+            22L, 41L, null, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", "realm", 17L,
             null);
 
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle bundle =
@@ -33,7 +35,8 @@ class GameplayAdmissionPointerSnapshotsTest {
   void admittedRoutingBundleReturnsEmptyForPartialRoutingClaims() {
     SessionContext partialRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", null, 17L, null);
+            22L, 41L, null, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", null, 17L,
+            null);
 
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle bundle =
         GameplayAdmissionPointerSnapshots.admittedRoutingBundle(partialRouting);
@@ -48,7 +51,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void admittedRoutingBundleReturnsEmptyWhenRoutingClaimsAreAbsent() {
     SessionContext missingRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, null, null, 0L, null);
+            22L, 41L, null, null, 123L, null, 1L, "R-1021", null, null, 1L, null, null, 0L, null);
 
     GameplayAdmissionPointerSnapshots.AdmittedRoutingBundle bundle =
         GameplayAdmissionPointerSnapshots.admittedRoutingBundle(missingRouting);
@@ -63,7 +66,8 @@ class GameplayAdmissionPointerSnapshotsTest {
   void requireAdmittedRoutingBundleRejectsPartialRoutingClaimsWithCallerSpecificMessage() {
     SessionContext partialRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", null, 17L, null);
+            22L, 41L, null, null, 123L, null, 1L, "R-1021", null, null, 1L, "world", null, 17L,
+            null);
 
     assertThatThrownBy(
             () ->
@@ -77,7 +81,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void requireAdmittedRoutingBundleRejectsMissingRoutingClaimsWithCallerSpecificMessage() {
     SessionContext missingRouting =
         new SessionContext(
-            22L, 41L, 0L, null, 123L, null, 1L, "R-1021", null, null, 1L, null, null, 0L, null);
+            22L, 41L, null, null, 123L, null, 1L, "R-1021", null, null, 1L, null, null, 0L, null);
 
     assertThatThrownBy(
             () ->
@@ -426,7 +430,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void sameBootstrapRouteRejectsFirstPartyConnectContextWhenRoutingIdentityChanges() {
     FirstPartyConnectContext existing =
         new FirstPartyConnectContext(
-            123L, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
+            ACCOUNT_ID, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
 
     assertThat(
             GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
@@ -454,7 +458,7 @@ class GameplayAdmissionPointerSnapshotsTest {
   void sameBootstrapRouteAcceptsFirstPartyConnectContextWithCaseInsensitiveRoutingIdentity() {
     FirstPartyConnectContext existing =
         new FirstPartyConnectContext(
-            123L, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
+            ACCOUNT_ID, 22L, "demo", "production", 1L, 7L, "scope-1", "jti-1", "req-1", "gw-1");
 
     assertThat(
             GameplayAdmissionPointerSnapshots.sameBootstrapRoute(
@@ -482,7 +486,7 @@ class GameplayAdmissionPointerSnapshotsTest {
     return new SessionContext(
         1L,
         tenantId,
-        0L,
+        null,
         null,
         0L,
         null,

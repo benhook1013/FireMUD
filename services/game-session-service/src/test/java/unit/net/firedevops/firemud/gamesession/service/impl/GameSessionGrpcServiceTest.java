@@ -67,6 +67,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class GameSessionGrpcServiceTest {
+  private static final String ACCOUNT_VIEWER = "37bf660c-8de4-49ed-8f62-821455239d78";
+  private static final String ACCOUNT_TARGET = "b693f855-e466-4eb7-bec9-c8892b530b2b";
   private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
   private static final String OTHER_ACCOUNT_UUID = "f720d1f5-7f16-4e02-9340-d0a5e2345f67";
 
@@ -208,12 +210,14 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
-    Mockito.when(accountPresenceQueryService.queryAccountPresence(1L, 42L, List.of(7L)))
+    SessionContext.setContext(ACCOUNT_VIEWER, List.of(), Map.of());
+    Mockito.when(
+            accountPresenceQueryService.queryAccountPresence(
+                1L, ACCOUNT_VIEWER, List.of(ACCOUNT_TARGET)))
         .thenReturn(
             List.of(
                 new AccountPresenceSnapshot(
-                    7L,
+                    ACCOUNT_TARGET,
                     true,
                     9L,
                     "ISOLATED",
@@ -244,8 +248,8 @@ class GameSessionGrpcServiceTest {
     service.queryAccountPresence(
         QueryAccountPresenceRequest.newBuilder()
             .setTenantId("1")
-            .setViewerAccountId("42")
-            .addAccountIds("7")
+            .setViewerAccountId(ACCOUNT_VIEWER)
+            .addAccountIds(ACCOUNT_TARGET)
             .build(),
         new StreamObserver<>() {
           @Override
@@ -263,7 +267,7 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals(1, ref.get().getPresencesCount());
-    assertEquals("7", ref.get().getPresences(0).getAccountId());
+    assertEquals(ACCOUNT_TARGET, ref.get().getPresences(0).getAccountId());
     assertEquals(true, ref.get().getPresences(0).getOnline());
     assertEquals("demo", ref.get().getPresences(0).getWorldSlug());
     assertEquals("Demo World", ref.get().getPresences(0).getWorldDisplayName());
@@ -292,7 +296,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(ACCOUNT_VIEWER, List.of(), Map.of());
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -309,8 +313,8 @@ class GameSessionGrpcServiceTest {
     service.queryAccountPresence(
         QueryAccountPresenceRequest.newBuilder()
             .setTenantId("1")
-            .setViewerAccountId("42")
-            .addAccountIds("abc")
+            .setViewerAccountId(ACCOUNT_VIEWER)
+            .addAccountIds("not-a-uuid")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -328,7 +332,7 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be a number", ref.get().getError().getMessage());
+    assertEquals("accountId must be a canonical non-nil UUID", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(accountPresenceQueryService);
   }
 
@@ -344,7 +348,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(ACCOUNT_VIEWER, List.of(), Map.of());
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -361,8 +365,8 @@ class GameSessionGrpcServiceTest {
     service.queryAccountPresence(
         QueryAccountPresenceRequest.newBuilder()
             .setTenantId("1")
-            .setViewerAccountId("42")
-            .addAccountIds("0")
+            .setViewerAccountId(ACCOUNT_VIEWER)
+            .addAccountIds("00000000-0000-0000-0000-000000000000")
             .build(),
         new StreamObserver<>() {
           @Override
@@ -380,7 +384,7 @@ class GameSessionGrpcServiceTest {
         });
 
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
-    assertEquals("accountId must be positive", ref.get().getError().getMessage());
+    assertEquals("accountId must be a canonical non-nil UUID", ref.get().getError().getMessage());
     Mockito.verifyNoInteractions(accountPresenceQueryService);
   }
 
@@ -396,7 +400,7 @@ class GameSessionGrpcServiceTest {
     TickService tickService = Mockito.mock(TickService.class);
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    SessionContext.setContext("42", List.of(), Map.of());
+    SessionContext.setContext(ACCOUNT_VIEWER, List.of(), Map.of());
     GameSessionGrpcService service =
         newService(
             pingService,
@@ -410,9 +414,11 @@ class GameSessionGrpcServiceTest {
             ipLimiter);
 
     QueryAccountPresenceRequest.Builder request =
-        QueryAccountPresenceRequest.newBuilder().setTenantId("1").setViewerAccountId("42");
+        QueryAccountPresenceRequest.newBuilder()
+            .setTenantId("1")
+            .setViewerAccountId(ACCOUNT_VIEWER);
     for (int index = 0; index < 101; index++) {
-      request.addAccountIds(index == 100 ? "not-a-number" : Long.toString(index + 1L));
+      request.addAccountIds(index == 100 ? "not-a-uuid" : ACCOUNT_TARGET);
     }
 
     AtomicReference<QueryAccountPresenceResponse> ref = new AtomicReference<>();

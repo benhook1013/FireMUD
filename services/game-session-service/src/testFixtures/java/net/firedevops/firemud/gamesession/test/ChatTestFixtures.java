@@ -11,6 +11,9 @@ public final class ChatTestFixtures {
   public static final String PLAYER_EMBERLINE = "7";
   public static final String PLAYER_SORA = "8";
   public static final String PLAYER_NYX = "9";
+  public static final String ACCOUNT_UUID_EMBERLINE = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
+  public static final String ACCOUNT_UUID_SORA = "5f7624ca-8aee-4d34-9cd8-3ba3a1815f30";
+  public static final String ACCOUNT_UUID_NYX = "3a16e242-3467-4d98-906f-71d47b888b5e";
 
   private ChatTestFixtures() {}
 
@@ -57,7 +60,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_EMBERLINE)
           .setTenantId("1")
-          .setAccountId("7")
+          .setAccountId(ACCOUNT_UUID_EMBERLINE)
           .setName("Emberline")
           .build();
     }
@@ -65,7 +68,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_SORA)
           .setTenantId("1")
-          .setAccountId("8")
+          .setAccountId(ACCOUNT_UUID_SORA)
           .setName("Sora")
           .build();
     }
@@ -73,7 +76,7 @@ public final class ChatTestFixtures {
       return Character.newBuilder()
           .setId(PLAYER_NYX)
           .setTenantId("1")
-          .setAccountId("9")
+          .setAccountId(ACCOUNT_UUID_NYX)
           .setName("Nyx")
           .build();
     }

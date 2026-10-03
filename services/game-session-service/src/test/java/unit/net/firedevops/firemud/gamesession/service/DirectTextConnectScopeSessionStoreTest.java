@@ -12,7 +12,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void resolvesOpaqueScopeOnlyForTheIssuingAccountAndTransportSession() {
-    SessionContext caller = session(7L, 41L);
+    SessionContext caller = session(7L, "11111111-1111-4111-8111-111111111111");
     Instant expiry = Instant.parse("2030-01-01T00:00:00Z");
     store.replaceWorldScopes(
         caller,
@@ -24,17 +24,21 @@ class DirectTextConnectScopeSessionStoreTest {
         .hasValueSatisfying(scope -> assertThat(scope.connectScopeId()).isEqualTo("scope-secret"));
     assertThat(
             store.publicProductionScope(
-                session(8L, 41L), "1", Instant.parse("2029-01-01T00:00:00Z")))
+                session(8L, "11111111-1111-4111-8111-111111111111"),
+                "1",
+                Instant.parse("2029-01-01T00:00:00Z")))
         .isEmpty();
     assertThat(
             store.publicProductionScope(
-                session(7L, 42L), "1", Instant.parse("2029-01-01T00:00:00Z")))
+                session(7L, "22222222-2222-4222-8222-222222222222"),
+                "1",
+                Instant.parse("2029-01-01T00:00:00Z")))
         .isEmpty();
   }
 
   @Test
   void refusesExpiredAndAmbiguousPublicScopes() {
-    SessionContext caller = session(7L, 41L);
+    SessionContext caller = session(7L, "11111111-1111-4111-8111-111111111111");
     store.replaceWorldScopes(
         caller,
         "demo-world",
@@ -64,7 +68,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void clearsPriorScopeBeforeReplacingTheWorldBinding() {
-    SessionContext caller = session(7L, 41L);
+    SessionContext caller = session(7L, "11111111-1111-4111-8111-111111111111");
     store.replaceWorldScopes(
         caller,
         "1",
@@ -81,7 +85,7 @@ class DirectTextConnectScopeSessionStoreTest {
 
   @Test
   void reusesJoinRequestIdForScopeRetryAndStartsANewIdAfterFreshRealms() {
-    SessionContext caller = session(7L, 41L);
+    SessionContext caller = session(7L, "11111111-1111-4111-8111-111111111111");
     Instant expiry = Instant.parse("2031-01-01T00:00:00Z");
     store.replaceWorldScopes(
         caller,
@@ -120,7 +124,7 @@ class DirectTextConnectScopeSessionStoreTest {
     assertThat(newAttempt.requestId()).isNotEqualTo(firstAttempt.requestId());
   }
 
-  private static SessionContext session(long sessionId, long accountId) {
+  private static SessionContext session(long sessionId, String accountId) {
     return new SessionContext(sessionId, 22L, accountId, 7001L, 9L, "jwt");
   }
 
@@ -128,7 +132,7 @@ class DirectTextConnectScopeSessionStoreTest {
       SessionContext caller, String realmSlug, String scopeId, Instant expiry) {
     PlayerExecutionContext playerContext =
         PlayerExecutionContext.newBuilder()
-            .setAccountId(Long.toString(caller.accountId()))
+            .setAccountId(caller.accountId())
             .setSessionId(Long.toString(caller.sessionId()))
             .setTenantId("22")
             .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")

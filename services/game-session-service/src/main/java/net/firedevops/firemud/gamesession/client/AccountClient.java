@@ -257,7 +257,8 @@ public final class AccountClient
   }
 
   private boolean hasDirectTextCallerIdentity(PlayerExecutionContext context) {
-    return isPositiveLong(context.getAccountId()) && isPositiveLong(context.getSessionId());
+    return AccountIds.isCanonicalNonNilUuid(context.getAccountId())
+        && isPositiveLong(context.getSessionId());
   }
 
   private boolean isPositiveLong(String value) {

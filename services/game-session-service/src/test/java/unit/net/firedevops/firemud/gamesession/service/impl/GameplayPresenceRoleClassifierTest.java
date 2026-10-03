@@ -22,7 +22,15 @@ class GameplayPresenceRoleClassifierTest {
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
             new SessionContext(
-                1L, 22L, 102L, "player@example.com", 202L, "Ben", 7L, "R-1", "boom-token"),
+                1L,
+                22L,
+                "6b56d98a-f6cd-4e39-9db9-111b9f8c6aa1",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                "boom-token"),
             jwtUtil,
             logger);
 
@@ -34,16 +42,25 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            "54d0886e-416b-49f4-920c-ae4a19ed7a83",
             java.util.Map.of(
                 "accountId",
-                "202",
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("moderator"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L,
+                22L,
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                jwt),
             JWT_UTIL,
             logger);
 
@@ -55,16 +72,25 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            "54d0886e-416b-49f4-920c-ae4a19ed7a83",
             java.util.Map.of(
                 "accountId",
-                "202",
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
                 "globalRoles",
                 java.util.List.of("platformAdmin", "support", "billingAdmin", "god", "moderator")));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L,
+                22L,
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                jwt),
             JWT_UTIL,
             logger);
 
@@ -76,10 +102,10 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            "54d0886e-416b-49f4-920c-ae4a19ed7a83",
             java.util.Map.of(
                 "accountId",
-                "202",
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
                 "globalRoles",
                 java.util.List.of("platformAdmin", "support", "billingAdmin"),
                 "scopedRoles",
@@ -87,7 +113,16 @@ class GameplayPresenceRoleClassifierTest {
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L,
+                22L,
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                jwt),
             JWT_UTIL,
             logger);
 
@@ -99,16 +134,25 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            "54d0886e-416b-49f4-920c-ae4a19ed7a83",
             java.util.Map.of(
                 "accountId",
-                "202",
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("tenantAdmin"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L,
+                22L,
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                jwt),
             JWT_UTIL,
             logger);
 
@@ -120,16 +164,25 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            "54d0886e-416b-49f4-920c-ae4a19ed7a83",
             java.util.Map.of(
                 "accountId",
-                "202",
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("moderator", "tenantAdmin", "god"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L,
+                22L,
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                jwt),
             JWT_UTIL,
             logger);
 
@@ -140,11 +193,23 @@ class GameplayPresenceRoleClassifierTest {
   void classifyRoleReturnsPlayerWhenScopedRolesClaimIsMalformed() {
     Logger logger = mock(Logger.class);
     String jwt =
-        JWT_UTIL.generateToken("202", java.util.Map.of("accountId", "202", "scopedRoles", "bad"));
+        JWT_UTIL.generateToken(
+            "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+            java.util.Map.of(
+                "accountId", "54d0886e-416b-49f4-920c-ae4a19ed7a83", "scopedRoles", "bad"));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L,
+                22L,
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                jwt),
             JWT_UTIL,
             logger);
 
@@ -156,16 +221,25 @@ class GameplayPresenceRoleClassifierTest {
     Logger logger = mock(Logger.class);
     String jwt =
         JWT_UTIL.generateToken(
-            "202",
+            "54d0886e-416b-49f4-920c-ae4a19ed7a83",
             java.util.Map.of(
                 "accountId",
-                "202",
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
                 "scopedRoles",
                 java.util.Map.of("22", java.util.List.of("god"))));
 
     GameplayPresenceRole role =
         GameplayPresenceRoleClassifier.classifyRole(
-            new SessionContext(1L, 22L, 202L, "player@example.com", 202L, "Ben", 7L, "R-1", jwt),
+            new SessionContext(
+                1L,
+                22L,
+                "54d0886e-416b-49f4-920c-ae4a19ed7a83",
+                "player@example.com",
+                202L,
+                "Ben",
+                7L,
+                "R-1",
+                jwt),
             JWT_UTIL,
             logger);
 

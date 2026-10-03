@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -23,11 +24,13 @@ import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 
 @SuppressWarnings("unchecked")
 class RedisSessionContextServiceTest {
   private static final Duration TTL = Duration.ofMillis(1000L);
   private static final String DISTINCTIVE_JWT = "distinctive-raw-backend-jwt-for-test";
+  private static final String ACCOUNT_ID = "22b7315e-204f-4d9f-85df-975c3fce8e7f";
 
   private final RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
   private final ValueOperations<String, Object> valueOperations =
@@ -49,7 +52,7 @@ class RedisSessionContextServiceTest {
 
   @Test
   void saveStoresContextInSessionAndIdentityKeys() throws Exception {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, DISTINCTIVE_JWT);
+    SessionContext context = new SessionContext(1L, 10L, ACCOUNT_ID, 30L, 40L, DISTINCTIVE_JWT);
 
     service.save(context);
 
@@ -70,8 +73,8 @@ class RedisSessionContextServiceTest {
 
   @Test
   void saveRemovesStaleSessionKeyBeforeWritingNewIdentityBinding() {
-    SessionContext existing = new SessionContext(1L, 10L, 20L, 30L, 40L, "old-jwt");
-    SessionContext replacement = new SessionContext(2L, 10L, 20L, 30L, 40L, "new-jwt");
+    SessionContext existing = new SessionContext(1L, 10L, ACCOUNT_ID, 30L, 40L, "old-jwt");
+    SessionContext replacement = new SessionContext(2L, 10L, ACCOUNT_ID, 30L, 40L, "new-jwt");
     when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(existing);
 
     service.save(replacement);
@@ -84,7 +87,7 @@ class RedisSessionContextServiceTest {
 
   @Test
   void findByTenantAndSessionIdProjectsLegacyJwtOut() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, DISTINCTIVE_JWT);
+    SessionContext context = new SessionContext(1L, 10L, ACCOUNT_ID, 30L, 40L, DISTINCTIVE_JWT);
     when(valueOperations.get("sessionctx:10:1:context")).thenReturn(context);
 
     Optional<SessionContext> result = service.findByTenantAndSessionId(10L, 1L);
@@ -95,7 +98,7 @@ class RedisSessionContextServiceTest {
 
   @Test
   void findBySessionIdProjectsLegacyJwtOut() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, DISTINCTIVE_JWT);
+    SessionContext context = new SessionContext(1L, 10L, ACCOUNT_ID, 30L, 40L, DISTINCTIVE_JWT);
     when(valueOperations.get("sessionctx:session:1:context")).thenReturn(context);
 
     Optional<SessionContext> result = service.findBySessionId(1L);
@@ -106,7 +109,7 @@ class RedisSessionContextServiceTest {
 
   @Test
   void findByGameplayIdentityProjectsLegacyJwtOut() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, DISTINCTIVE_JWT);
+    SessionContext context = new SessionContext(1L, 10L, ACCOUNT_ID, 30L, 40L, DISTINCTIVE_JWT);
     when(valueOperations.get("sessionctx:10:identity:40:30:context")).thenReturn(context);
 
     Optional<SessionContext> result = service.findByGameplayIdentity(10L, 40L, 30L);
@@ -121,7 +124,7 @@ class RedisSessionContextServiceTest {
         new SessionContext(
             1L,
             10L,
-            20L,
+            ACCOUNT_ID,
             "demo",
             30L,
             "Hero",
@@ -143,8 +146,18 @@ class RedisSessionContextServiceTest {
   }
 
   @Test
+  void unreadableLegacyContextFailsClosedWithoutDeletingRetainedValue() {
+    String key = "sessionctx:10:1:context";
+    when(valueOperations.get(key)).thenThrow(new SerializationException("legacy record"));
+
+    assertEquals(Optional.empty(), service.findByTenantAndSessionId(10L, 1L));
+
+    verify(redisTemplate, never()).delete(key);
+  }
+
+  @Test
   void deleteBySessionIdRemovesBothKeys() {
-    SessionContext context = new SessionContext(1L, 10L, 20L, 30L, 40L, "jwt");
+    SessionContext context = new SessionContext(1L, 10L, ACCOUNT_ID, 30L, 40L, "jwt");
     when(valueOperations.get("sessionctx:10:1:context")).thenReturn(context);
 
     service.deleteBySessionId(10L, 1L);
@@ -158,7 +171,7 @@ class RedisSessionContextServiceTest {
   @Test
   void savePreservesLocaleTagInStoredContext() {
     SessionContext context =
-        new SessionContext(1L, 10L, 20L, null, 30L, null, 40L, "R-1", "jwt", "fr", 40L);
+        new SessionContext(1L, 10L, ACCOUNT_ID, null, 30L, null, 40L, "R-1", "jwt", "fr", 40L);
 
     service.save(context);
 

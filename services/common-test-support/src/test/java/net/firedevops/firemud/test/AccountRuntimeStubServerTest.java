@@ -1,10 +1,12 @@
 package net.firedevops.firemud.test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
 import java.time.Instant;
+import java.util.Locale;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
 import net.firedevops.firemud.account.v1.GetProfileRequest;
@@ -16,6 +18,9 @@ import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV
 import org.junit.jupiter.api.Test;
 
 class AccountRuntimeStubServerTest {
+  private static final String ACCOUNT_UUID = "c91fb96e-5ad8-4e4e-a12d-2838640093b2";
+  private static final String NIL_ACCOUNT_UUID = "00000000-0000-0000-0000-000000000000";
+
   @Test
   void authenticationCanonicalizesMappedEmailAndMembershipLifecycleMatchesAdmission()
       throws Exception {
@@ -25,7 +30,7 @@ class AccountRuntimeStubServerTest {
       try {
         AccountServiceGrpc.AccountServiceBlockingStub stub =
             AccountServiceGrpc.newBlockingStub(channel);
-        server.mapAccountId("demo@example.com", 7L);
+        server.mapAccountUuid("demo@example.com", ACCOUNT_UUID);
 
         assertThat(
                 stub.authenticate(
@@ -34,13 +39,13 @@ class AccountRuntimeStubServerTest {
                             .setPassword("password")
                             .build())
                     .getAccountId())
-            .isEqualTo("7");
+            .isEqualTo(ACCOUNT_UUID);
 
         var request =
             GetTenantMembershipForRuntimeRequest.newBuilder()
                 .setPlayerContext(
                     net.firedevops.firemud.shared.v1.PlayerExecutionContext.newBuilder()
-                        .setAccountId("7")
+                        .setAccountId(ACCOUNT_UUID)
                         .setTenantId("1")
                         .setRequestId("request-1"))
                 .build();
@@ -48,6 +53,8 @@ class AccountRuntimeStubServerTest {
         GetTenantMembershipForRuntimeResponse active = stub.getTenantMembershipForRuntime(request);
         Instant activeAfter = Instant.now();
         assertThat(active.getMembershipLifecycleState()).isEqualTo("ACTIVE");
+        assertThat(active.getAccountId()).isEqualTo(ACCOUNT_UUID);
+        assertThat(active.getRequestAccountId()).isEqualTo(ACCOUNT_UUID);
         assertThat(active.getRequestId()).isEqualTo("request-1");
         assertThat(active.getMembershipAuthorityGeneration()).isEqualTo("1");
         assertMembershipEventMatches(active, "ACTIVE", true);
@@ -138,7 +145,10 @@ class AccountRuntimeStubServerTest {
         AccountProfileJson initialProfile =
             AccountProfileJson.parse(
                 stub.getProfile(
-                        GetProfileRequest.newBuilder().setTenantId("1").setAccountId("7").build())
+                        GetProfileRequest.newBuilder()
+                            .setTenantId("1")
+                            .setAccountId(ACCOUNT_UUID)
+                            .build())
                     .getProfileJson(),
                 "FRIENDS_ONLY");
         assertThat(initialProfile.presenceVisibilityPolicy()).isEqualTo("FRIENDS_ONLY");
@@ -147,11 +157,10 @@ class AccountRuntimeStubServerTest {
                 stub.updateProfile(
                         UpdateProfileRequest.newBuilder()
                             .setTenantId("1")
-                            .setAccountId("7")
+                            .setAccountId(ACCOUNT_UUID)
                             .setProfileJson(
-                                """
-                                {"displayName":"Demo-7","bio":null,"presenceVisibilityPolicy":"PRIVATE"}
-                                """)
+                                "{\"displayName\":\"Demo-%s\",\"bio\":null,\"presenceVisibilityPolicy\":\"PRIVATE\"}"
+                                    .formatted(ACCOUNT_UUID))
                             .build())
                     .getSuccess())
             .isTrue();
@@ -159,10 +168,72 @@ class AccountRuntimeStubServerTest {
         AccountProfileJson updatedProfile =
             AccountProfileJson.parse(
                 stub.getProfile(
-                        GetProfileRequest.newBuilder().setTenantId("1").setAccountId("7").build())
+                        GetProfileRequest.newBuilder()
+                            .setTenantId("1")
+                            .setAccountId(ACCOUNT_UUID)
+                            .build())
                     .getProfileJson(),
                 "FRIENDS_ONLY");
         assertThat(updatedProfile.presenceVisibilityPolicy()).isEqualTo("PRIVATE");
+      } finally {
+        channel.shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void rejectsInvalidAccountSelectorsForRegistrationAndProfileMutation() throws Exception {
+    try (AccountRuntimeStubServer server = new AccountRuntimeStubServer(0)) {
+      ManagedChannel channel =
+          ManagedChannelBuilder.forAddress("localhost", server.port()).usePlaintext().build();
+      try {
+        AccountServiceGrpc.AccountServiceBlockingStub stub =
+            AccountServiceGrpc.newBlockingStub(channel);
+        server.setDefaultAccountUuid(ACCOUNT_UUID);
+        assertThat(
+                stub.updateProfile(profileUpdate(ACCOUNT_UUID, "Protected profile")).getSuccess())
+            .isTrue();
+
+        String[] invalidAccountUuids = {
+          "7", ACCOUNT_UUID.toUpperCase(Locale.ROOT), NIL_ACCOUNT_UUID
+        };
+        for (String invalidAccountUuid : invalidAccountUuids) {
+          assertThatThrownBy(
+                  () -> server.mapAccountUuid("candidate@example.com", invalidAccountUuid))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(() -> server.setDefaultAccountUuid(invalidAccountUuid))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThatThrownBy(
+                  () -> server.setPresenceVisibilityPolicy(invalidAccountUuid, "PRIVATE"))
+              .isInstanceOf(IllegalArgumentException.class);
+          assertThat(
+                  stub.updateProfile(profileUpdate(invalidAccountUuid, "Overwritten profile"))
+                      .getSuccess())
+              .isFalse();
+        }
+
+        assertThatThrownBy(() -> server.mapAccountUuid("candidate@example.com", null))
+            .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> server.setDefaultAccountUuid(null))
+            .isInstanceOf(IllegalArgumentException.class);
+        AuthenticateRequest candidateRequest =
+            AuthenticateRequest.newBuilder()
+                .setEmail("candidate@example.com")
+                .setPassword("password")
+                .build();
+        assertThat(stub.authenticate(candidateRequest).getAccountId()).isEqualTo(ACCOUNT_UUID);
+
+        AccountProfileJson protectedProfile =
+            AccountProfileJson.parse(
+                stub.getProfile(
+                        GetProfileRequest.newBuilder()
+                            .setTenantId("1")
+                            .setAccountId(ACCOUNT_UUID)
+                            .build())
+                    .getProfileJson(),
+                "FRIENDS_ONLY");
+        assertThat(protectedProfile.displayName()).isEqualTo("Protected profile");
+        assertThat(protectedProfile.presenceVisibilityPolicy()).isEqualTo("PRIVATE");
       } finally {
         channel.shutdownNow();
       }
@@ -182,7 +253,7 @@ class AccountRuntimeStubServerTest {
                 stub.updateProfile(
                         UpdateProfileRequest.newBuilder()
                             .setTenantId("1")
-                            .setAccountId("7")
+                            .setAccountId(ACCOUNT_UUID)
                             .setProfileJson(
                                 """
                                 {"displayName":"Demo-7","bio":null,"presenceVisibilityPolicy":"PRIVATE"}
@@ -196,7 +267,10 @@ class AccountRuntimeStubServerTest {
         AccountProfileJson resetProfile =
             AccountProfileJson.parse(
                 stub.getProfile(
-                        GetProfileRequest.newBuilder().setTenantId("1").setAccountId("7").build())
+                        GetProfileRequest.newBuilder()
+                            .setTenantId("1")
+                            .setAccountId(ACCOUNT_UUID)
+                            .build())
                     .getProfileJson(),
                 "FRIENDS_ONLY");
         assertThat(resetProfile.presenceVisibilityPolicy()).isEqualTo("FRIENDS_ONLY");
@@ -204,5 +278,15 @@ class AccountRuntimeStubServerTest {
         channel.shutdownNow();
       }
     }
+  }
+
+  private static UpdateProfileRequest profileUpdate(String accountUuid, String displayName) {
+    return UpdateProfileRequest.newBuilder()
+        .setTenantId("1")
+        .setAccountId(accountUuid)
+        .setProfileJson(
+            "{\"displayName\":\"%s\",\"bio\":null,\"presenceVisibilityPolicy\":\"PRIVATE\"}"
+                .formatted(displayName))
+        .build();
   }
 }

@@ -40,7 +40,7 @@ public final class DirectTextConnectScopeSessionStore {
     }
     safeScopes.forEach(
         scope -> {
-          if (!scope.playerContext().getAccountId().equals(Long.toString(caller.accountId()))
+          if (!scope.playerContext().getAccountId().equals(caller.accountId())
               || !scope.playerContext().getSessionId().equals(Long.toString(caller.sessionId()))) {
             throw new IllegalArgumentException("scope caller identity did not match session");
           }
@@ -51,7 +51,7 @@ public final class DirectTextConnectScopeSessionStore {
         (sessionId, existing) -> {
           Map<String, List<ScopedRealm>> byWorld = new HashMap<>();
           Map<String, String> worldBySelector = new HashMap<>();
-          if (existing != null && existing.accountId() == caller.accountId()) {
+          if (existing != null && Objects.equals(existing.accountId(), caller.accountId())) {
             byWorld.putAll(existing.scopesByWorld());
             worldBySelector.putAll(existing.worldBySelector());
           }
@@ -72,7 +72,7 @@ public final class DirectTextConnectScopeSessionStore {
     scopesBySessionId.computeIfPresent(
         caller.sessionId(),
         (sessionId, existing) -> {
-          if (existing.accountId() != caller.accountId()) {
+          if (!Objects.equals(existing.accountId(), caller.accountId())) {
             return null;
           }
           String worldSlug = existing.worldBySelector().get(selector);
@@ -101,7 +101,7 @@ public final class DirectTextConnectScopeSessionStore {
       return Optional.empty();
     }
     SessionScopes sessionScopes = scopesBySessionId.get(caller.sessionId());
-    if (sessionScopes == null || sessionScopes.accountId() != caller.accountId()) {
+    if (sessionScopes == null || !Objects.equals(sessionScopes.accountId(), caller.accountId())) {
       if (sessionScopes != null) {
         scopesBySessionId.remove(caller.sessionId(), sessionScopes);
       }
@@ -138,7 +138,7 @@ public final class DirectTextConnectScopeSessionStore {
     scopesBySessionId.computeIfPresent(
         caller.sessionId(),
         (sessionId, sessionScopes) -> {
-          if (sessionScopes.accountId() != caller.accountId()) {
+          if (!Objects.equals(sessionScopes.accountId(), caller.accountId())) {
             return sessionScopes;
           }
           String worldSlug = sessionScopes.worldBySelector().get(selector);
@@ -226,7 +226,7 @@ public final class DirectTextConnectScopeSessionStore {
   }
 
   private void requireCallerIdentity(SessionContext caller) {
-    if (caller.accountId() <= 0 || caller.sessionId() <= 0) {
+    if (!caller.hasAccountIdentity() || caller.sessionId() <= 0) {
       throw new IllegalArgumentException(
           "authenticated account and transport session are required");
     }
@@ -286,7 +286,7 @@ public final class DirectTextConnectScopeSessionStore {
   }
 
   private record SessionScopes(
-      long accountId,
+      String accountId,
       Map<String, List<ScopedRealm>> scopesByWorld,
       Map<String, String> worldBySelector) {
     private SessionScopes {

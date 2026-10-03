@@ -29,7 +29,15 @@ class TextCommandInterpreterCapabilityTest {
     TextCommandDispatcher dispatcher = Mockito.mock(TextCommandDispatcher.class);
     SessionContext gameplayContext =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt");
     when(sessionAuthenticationService.resolveSessionContext("41"))
         .thenReturn(Optional.of(gameplayContext));
     TextCommandInterpreter interpreter =
@@ -62,7 +70,15 @@ class TextCommandInterpreterCapabilityTest {
         Mockito.mock(EffectiveCommandCapabilitiesSettingsResolver.class);
     SessionContext gameplayContext =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+            41L,
+            22L,
+            "f2ed193b-12c1-4c96-bcad-c162229af440",
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            7L,
+            "R-1",
+            "jwt");
     when(sessionAuthenticationService.resolveSessionContext("41"))
         .thenReturn(Optional.of(gameplayContext));
     when(capabilitiesResolver.isEnabled(PlayerCommandCapability.SOCIAL, 22L, 7L))

@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
+import net.firedevops.firemud.gamesession.test.ChatTestFixtures;
 import net.firedevops.firemud.gamesession.test.LookTestFixtures;
 import net.firedevops.firemud.gamesession.test.stubs.SocialGroupsStubServer;
 import net.firedevops.firemud.gamesession.testsupport.GameplayAsyncAssertions;
@@ -35,7 +36,7 @@ class MultiplayerLoadProofCrossServiceTest {
   private static final Duration FOLLOW_UP_PHASE_BUDGET = Duration.ofSeconds(15);
   private static final long TENANT_ID = 1L;
   private static final int CLIENT_COUNT = 10;
-  private static final long ACCOUNT_ID_BASE = 7000L;
+  private static final long CHARACTER_ID_BASE = 7000L;
 
   @Container
   static final PostgreSQLContainer<?> POSTGRES =
@@ -67,7 +68,8 @@ class MultiplayerLoadProofCrossServiceTest {
   void tenConcurrentPlayersCanLoginPlayAndLookAgainstRealCrossServiceStack() throws Exception {
     ensureTestServicesStarted();
     List<GameplayLoadScenarios.PlayerSeed> players =
-        GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
+        GameplayLoadScenarios.seedPlayers(
+            STACK, TENANT_ID, 1L, CHARACTER_ID_BASE, CLIENT_COUNT, 7L);
     URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
     TimedResult<List<PlayerRunResult>> playerRuns =
         timed(
@@ -117,8 +119,9 @@ class MultiplayerLoadProofCrossServiceTest {
           .hasValueSatisfying(
               context -> {
                 assertThat(context.tenantId()).isEqualTo(TENANT_ID);
+                assertThat(context.accountId()).isEqualTo(player.accountUuid());
                 assertThat(context.gameInstanceId()).isEqualTo(1L);
-                assertThat(context.characterId()).isEqualTo(player.accountId());
+                assertThat(context.characterId()).isEqualTo(player.characterId());
                 assertThat(context.roomInstanceId()).isEqualTo(LookTestFixtures.ROOM_ID);
               });
     }
@@ -134,7 +137,8 @@ class MultiplayerLoadProofCrossServiceTest {
   void tenConcurrentPlayersCanMoveNorthAfterConcurrentEntry() throws Exception {
     ensureTestServicesStarted();
     List<GameplayLoadScenarios.PlayerSeed> players =
-        GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
+        GameplayLoadScenarios.seedPlayers(
+            STACK, TENANT_ID, 1L, CHARACTER_ID_BASE, CLIENT_COUNT, 7L);
     URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
 
     TimedResult<List<PlayerSessionDriver>> readyPlayers =
@@ -180,7 +184,8 @@ class MultiplayerLoadProofCrossServiceTest {
   void tenConcurrentPlayersCanBroadcastSayAfterConcurrentEntry() throws Exception {
     ensureTestServicesStarted();
     List<GameplayLoadScenarios.PlayerSeed> players =
-        GameplayLoadScenarios.seedPlayers(STACK, TENANT_ID, 1L, ACCOUNT_ID_BASE, CLIENT_COUNT, 7L);
+        GameplayLoadScenarios.seedPlayers(
+            STACK, TENANT_ID, 1L, CHARACTER_ID_BASE, CLIENT_COUNT, 7L);
     URI uri = URI.create("ws://localhost:" + gameSession().port() + "/ws/game");
 
     TimedResult<List<PlayerSessionDriver>> readyPlayers =
@@ -236,7 +241,8 @@ class MultiplayerLoadProofCrossServiceTest {
   private static synchronized void ensureTestServicesStarted() throws Exception {
     if (STACK == null) {
       STACK =
-          GameplayCrossServiceStack.defaultDemoBuilder(POSTGRES, REDIS, ACCOUNT_ID_BASE)
+          GameplayCrossServiceStack.defaultDemoBuilder(
+                  POSTGRES, REDIS, ChatTestFixtures.ACCOUNT_UUID_EMBERLINE)
               .withSocialEnabled(true)
               .start();
     }
@@ -309,11 +315,11 @@ class MultiplayerLoadProofCrossServiceTest {
   }
 
   private String sayText(GameplayLoadScenarios.PlayerSeed player) {
-    return "multiplayer burst " + player.accountId();
+    return "multiplayer burst " + player.characterId();
   }
 
   private String expectedSayTranscript(GameplayLoadScenarios.PlayerSeed player) {
-    return "You say, \"Multiplayer burst " + player.accountId() + ".\"";
+    return "You say, \"Multiplayer burst " + player.characterId() + ".\"";
   }
 
   private <T, R> List<R> runConcurrently(List<T> items, ConcurrentTask<T, R> task)

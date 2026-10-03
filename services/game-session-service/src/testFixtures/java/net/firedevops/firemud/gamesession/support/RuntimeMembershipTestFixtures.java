@@ -22,21 +22,21 @@ public final class RuntimeMembershipTestFixtures {
   private RuntimeMembershipTestFixtures() {}
 
   public static GetTenantMembershipForRuntimeResponse active(
-      long accountId, long tenantId, String membershipVersion) {
+      String accountId, long tenantId, String membershipVersion) {
     return complete(accountId, tenantId, true, "ACTIVE", true, membershipVersion);
   }
 
-  public static GetTenantMembershipForRuntimeResponse missing(long accountId, long tenantId) {
+  public static GetTenantMembershipForRuntimeResponse missing(String accountId, long tenantId) {
     return complete(accountId, tenantId, false, "MISSING", false, "1");
   }
 
   public static GetTenantMembershipForRuntimeResponse inactive(
-      long accountId, long tenantId, String membershipVersion) {
+      String accountId, long tenantId, String membershipVersion) {
     return complete(accountId, tenantId, true, "INACTIVE", false, membershipVersion);
   }
 
   public static GetTenantMembershipForRuntimeResponse left(
-      long accountId, long tenantId, List<String> retainedRoles) {
+      String accountId, long tenantId, List<String> retainedRoles) {
     return complete(
         accountId, tenantId, true, "INACTIVE", false, "3", "2", "2", "2", true, retainedRoles);
   }
@@ -47,20 +47,20 @@ public final class RuntimeMembershipTestFixtures {
   }
 
   public static GetTenantMembershipForRuntimeResponse incomplete(
-      long accountId,
+      String accountId,
       long tenantId,
       boolean membershipExists,
       String lifecycle,
       boolean gameplayAdmissionAllowed,
       String membershipVersion,
       String evaluatedAt) {
-    String accountUuid = uuid(accountId);
+    String accountUuid = accountId;
     String tenantUuid = uuid(tenantId);
     GetTenantMembershipForRuntimeResponse.Builder response =
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(accountUuid)
             .setTenantId(tenantUuid)
-            .setRequestAccountId(Long.toString(accountId))
+            .setRequestAccountId(accountId)
             .setRequestTenantId(Long.toString(tenantId))
             .setMembershipExists(membershipExists)
             .setMembershipLifecycleState(lifecycle)
@@ -73,7 +73,7 @@ public final class RuntimeMembershipTestFixtures {
   }
 
   public static GetTenantMembershipForRuntimeResponse advancedTenantWithZeroCheckpoint(
-      long accountId, long tenantId) {
+      String accountId, long tenantId) {
     GetTenantMembershipForRuntimeResponse response = active(accountId, tenantId, "1");
     return response.toBuilder()
         .setAuthorityTuple(
@@ -83,7 +83,7 @@ public final class RuntimeMembershipTestFixtures {
   }
 
   private static GetTenantMembershipForRuntimeResponse complete(
-      long accountId,
+      String accountId,
       long tenantId,
       boolean exists,
       String lifecycle,
@@ -104,7 +104,7 @@ public final class RuntimeMembershipTestFixtures {
   }
 
   private static GetTenantMembershipForRuntimeResponse complete(
-      long accountId,
+      String accountId,
       long tenantId,
       boolean exists,
       String lifecycle,
@@ -115,7 +115,7 @@ public final class RuntimeMembershipTestFixtures {
       String outboxSequence,
       boolean callerBoundAuthorityInvalidated,
       List<String> roles) {
-    String accountUuid = uuid(accountId);
+    String accountUuid = accountId;
     String tenantUuid = uuid(tenantId);
     String membershipStream = STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
     List<RuntimeOutboxCheckpoint> checkpoints =
@@ -144,7 +144,7 @@ public final class RuntimeMembershipTestFixtures {
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(accountUuid)
             .setTenantId(tenantUuid)
-            .setRequestAccountId(Long.toString(accountId))
+            .setRequestAccountId(accountId)
             .setRequestTenantId(Long.toString(tenantId))
             .setAuthorityAvailability("AVAILABLE")
             .setMembershipExists(exists)

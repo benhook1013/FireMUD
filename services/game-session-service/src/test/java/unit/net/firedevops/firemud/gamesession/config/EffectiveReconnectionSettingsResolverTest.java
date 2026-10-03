@@ -53,7 +53,16 @@ class EffectiveReconnectionSettingsResolverTest {
 
     FiremudReconnectionProperties effective =
         resolver.reconnection(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+            new SessionContext(
+                1L,
+                22L,
+                "11111111-1111-4111-8111-111111111111",
+                "demo@example.com",
+                911L,
+                "Ember",
+                7L,
+                "R-1",
+                null));
 
     assertThat(effective.policy().resumeWindowMs()).isEqualTo(45_000L);
     assertThat(effective.policy().staleResumeFallsThroughToFreshEntry()).isTrue();
@@ -114,7 +123,16 @@ class EffectiveReconnectionSettingsResolverTest {
 
     EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties> resolved =
         resolver.resolvedReconnection(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+            new SessionContext(
+                1L,
+                22L,
+                "11111111-1111-4111-8111-111111111111",
+                "demo@example.com",
+                911L,
+                "Ember",
+                7L,
+                "R-1",
+                null));
 
     assertThat(resolved.effective().buffer().softMaxBytes()).isEqualTo(16_384);
     assertThat(resolved.effective().buffer().hardMaxBytes()).isEqualTo(65_536);
@@ -159,7 +177,16 @@ class EffectiveReconnectionSettingsResolverTest {
 
     EffectiveReconnectionSettingsResolver.ResolvedValue<FiremudReconnectionProperties> resolved =
         resolver.resolvedReconnection(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 911L, "Ember", 7L, "R-1", null));
+            new SessionContext(
+                1L,
+                22L,
+                "11111111-1111-4111-8111-111111111111",
+                "demo@example.com",
+                911L,
+                "Ember",
+                7L,
+                "R-1",
+                null));
 
     assertThat(resolved.effective().buffer().softMaxBytes()).isEqualTo(16_384);
     assertThat(resolved.effective().buffer().hardMaxBytes()).isEqualTo(80_000);

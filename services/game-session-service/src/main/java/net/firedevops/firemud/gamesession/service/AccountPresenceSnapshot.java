@@ -6,7 +6,7 @@ import java.time.Instant;
  * Canonical account-scoped social presence snapshot derived from current gameplay runtime state.
  */
 public record AccountPresenceSnapshot(
-    long accountId,
+    String accountId,
     boolean online,
     Long gameInstanceId,
     String playableStateScope,
@@ -21,7 +21,7 @@ public record AccountPresenceSnapshot(
     Instant lastSeenAt,
     AccountRecentPresenceDisposition recentDisposition) {
   public AccountPresenceSnapshot(
-      long accountId,
+      String accountId,
       boolean online,
       Long gameInstanceId,
       String worldSlug,
@@ -50,7 +50,7 @@ public record AccountPresenceSnapshot(
   }
 
   public AccountPresenceSnapshot(
-      long accountId,
+      String accountId,
       boolean online,
       Long gameInstanceId,
       String playableStateScope,

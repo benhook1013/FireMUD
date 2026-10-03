@@ -198,9 +198,10 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setGameInstanceId(queueTarget.queueTargetId());
     gameplayCommand.setSessionId(sessionId);
     sessionContext
+        .filter(SessionContext::hasAccountIdentity)
         .map(SessionContext::accountId)
-        .filter(id -> id > 0)
-        .ifPresent(gameplayCommand::setAccountId);
+        .map(UUID::fromString)
+        .ifPresent(gameplayCommand::setAccountUuid);
     sessionContext
         .map(SessionContext::characterId)
         .filter(id -> id > 0)

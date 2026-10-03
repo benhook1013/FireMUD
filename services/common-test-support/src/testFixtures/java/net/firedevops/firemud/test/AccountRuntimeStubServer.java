@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -49,6 +50,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     implements AutoCloseable {
   private static final String AUTHORITY_STREAM_PREFIX = "account:auth-authority:v1:";
   private static final String ACCOUNT_ISSUER = "firemud-account-service";
+  private static final String DEFAULT_ACCOUNT_UUID = "a7e0feac-60ab-4fd1-9002-0ad38d585db0";
   private static final String MEMBERSHIP_EVENT_ID = "00000000-0000-0000-0000-000000000099";
   private static final String MEMBERSHIP_EVENT_REQUEST_ID = "runtime-membership-request";
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
@@ -69,10 +71,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private final AtomicBoolean gameplayAvailable = new AtomicBoolean(true);
   private final AtomicBoolean allowPublicJoin = new AtomicBoolean(true);
   private final AtomicBoolean realmAccessGranted = new AtomicBoolean(true);
-  private final AtomicLong defaultAccountId = new AtomicLong(1L);
+  private final AtomicReference<String> defaultAccountUuid =
+      new AtomicReference<>(DEFAULT_ACCOUNT_UUID);
   private final AtomicLong nextConnectScopeId = new AtomicLong(1L);
-  private final Map<String, Long> accountIdsByEmail = new ConcurrentHashMap<>();
-  private final Map<Long, StubProfile> profilesByAccountId = new ConcurrentHashMap<>();
+  private final Map<String, String> accountUuidsByEmail = new ConcurrentHashMap<>();
+  private final Map<String, StubProfile> profilesByAccountUuid = new ConcurrentHashMap<>();
   private final Map<String, StubConnectScope> connectScopesById = new ConcurrentHashMap<>();
 
   public AccountRuntimeStubServer(int port) throws IOException {
@@ -91,19 +94,21 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     return List.copyOf(authenticateRequests);
   }
 
-  public void setDefaultAccountId(long accountId) {
-    defaultAccountId.set(accountId);
+  public void setDefaultAccountUuid(String accountUuid) {
+    defaultAccountUuid.set(requireCanonicalAccountUuid(accountUuid));
   }
 
-  public void mapAccountId(String email, long accountId) {
-    accountIdsByEmail.put(EmailCanonicalization.normalize(email), accountId);
+  public void mapAccountUuid(String email, String accountUuid) {
+    accountUuidsByEmail.put(
+        EmailCanonicalization.normalize(email), requireCanonicalAccountUuid(accountUuid));
   }
 
-  public void setPresenceVisibilityPolicy(long accountId, String visibilityPolicy) {
-    profilesByAccountId.compute(
-        accountId,
+  public void setPresenceVisibilityPolicy(String accountUuid, String visibilityPolicy) {
+    String canonicalAccountUuid = requireCanonicalAccountUuid(accountUuid);
+    profilesByAccountUuid.compute(
+        canonicalAccountUuid,
         (ignored, current) ->
-            (current == null ? StubProfile.defaultFor(accountId) : current)
+            (current == null ? StubProfile.defaultFor(canonicalAccountUuid) : current)
                 .withPresenceVisibilityPolicy(visibilityPolicy));
   }
 
@@ -150,7 +155,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     gameplayAvailable.set(true);
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
-    profilesByAccountId.clear();
+    profilesByAccountUuid.clear();
   }
 
   @Override
@@ -164,12 +169,12 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       AuthenticateRequest request, StreamObserver<AuthenticateResponse> responseObserver) {
     authenticateRequests.add(request);
     String canonicalEmail = EmailCanonicalization.normalize(request.getEmail());
-    long accountId = accountIdsByEmail.getOrDefault(canonicalEmail, defaultAccountId.get());
-    profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
+    String accountUuid = accountUuidsByEmail.getOrDefault(canonicalEmail, defaultAccountUuid.get());
+    profilesByAccountUuid.computeIfAbsent(accountUuid, StubProfile::defaultFor);
     responseObserver.onNext(
         AuthenticateResponse.newBuilder()
-            .setAccountId(Long.toString(accountId))
-            .setAuthToken("stub-token-" + accountId)
+            .setAccountId(accountUuid)
+            .setAuthToken("stub-token-" + accountUuid)
             .build());
     responseObserver.onCompleted();
   }
@@ -179,7 +184,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       GetTenantMembershipForRuntimeRequest request,
       StreamObserver<GetTenantMembershipForRuntimeResponse> responseObserver) {
     boolean exists = membershipExists.get();
-    String accountSelector = request.getPlayerContext().getAccountId();
+    String accountUuid = requireCanonicalAccountUuid(request.getPlayerContext().getAccountId());
     String tenantSelector = request.getPlayerContext().getTenantId();
     String lifecycle = membershipLifecycleState.get();
     boolean admitted = gameplayAdmissionAllowed.get();
@@ -187,30 +192,21 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (exists && admitted && "ACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountSelector,
-              tenantSelector,
-              request.getPlayerContext().getRequestId(),
-              lifecycle);
+              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
     } else if (exists && !admitted && "INACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountSelector,
-              tenantSelector,
-              request.getPlayerContext().getRequestId(),
-              lifecycle);
+              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
     } else if (!exists && !admitted && "MISSING".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountSelector,
-              tenantSelector,
-              request.getPlayerContext().getRequestId(),
-              lifecycle);
+              accountUuid, tenantSelector, request.getPlayerContext().getRequestId(), lifecycle);
     } else {
       response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
-              .setAccountId(canonicalUuid(accountSelector))
-              .setTenantId(canonicalUuid(tenantSelector))
-              .setRequestAccountId(accountSelector)
+              .setAccountId(accountUuid)
+              .setTenantId(syntheticTenantUuid(tenantSelector))
+              .setRequestAccountId(accountUuid)
               .setRequestTenantId(tenantSelector)
               .setRequestId(request.getPlayerContext().getRequestId())
               .setMembershipExists(exists)
@@ -224,11 +220,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   private static GetTenantMembershipForRuntimeResponse completeMembershipSnapshot(
-      String accountSelector, String tenantSelector, String requestId, String lifecycle) {
+      String accountUuid, String tenantSelector, String requestId, String lifecycle) {
     boolean exists = !"MISSING".equals(lifecycle);
     boolean admitted = "ACTIVE".equals(lifecycle);
-    String accountUuid = canonicalUuid(accountSelector);
-    String tenantUuid = canonicalUuid(tenantSelector);
+    String tenantUuid = syntheticTenantUuid(tenantSelector);
     String membershipStream =
         AUTHORITY_STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
     List<RuntimeOutboxCheckpoint> checkpoints =
@@ -257,7 +252,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         GetTenantMembershipForRuntimeResponse.newBuilder()
             .setAccountId(accountUuid)
             .setTenantId(tenantUuid)
-            .setRequestAccountId(accountSelector)
+            .setRequestAccountId(accountUuid)
             .setRequestTenantId(tenantSelector)
             .setRequestId(requestId)
             .setAuthorityAvailability("AVAILABLE")
@@ -321,10 +316,29 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         .build();
   }
 
-  private static String canonicalUuid(String selector) {
+  private static String requireCanonicalAccountUuid(String selector) {
+    if (selector == null) {
+      throw new IllegalArgumentException("Account UUID must be canonical and non-nil");
+    }
+    UUID parsed;
+    try {
+      parsed = UUID.fromString(selector);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException("Account UUID must be canonical and non-nil", exception);
+    }
+    if ((parsed.getMostSignificantBits() == 0L && parsed.getLeastSignificantBits() == 0L)
+        || !parsed.toString().equals(selector)) {
+      throw new IllegalArgumentException("Account UUID must be canonical and non-nil");
+    }
+    return selector;
+  }
+
+  private static String syntheticTenantUuid(String selector) {
+    // This stable UUID-shaped key is only a legacy synthetic-tenant test fixture. It is not
+    // evidence of an Account-owned tenant identity or an authenticated membership snapshot.
     long value = Long.parseLong(selector);
     if (value <= 0L || !Long.toString(value).equals(selector)) {
-      throw new IllegalArgumentException("runtime membership fixture selector must be canonical");
+      throw new IllegalArgumentException("synthetic tenant fixture selector must be canonical");
     }
     return "00000000-0000-0000-0000-" + String.format(Locale.ROOT, "%012d", value);
   }
@@ -468,9 +482,10 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   @Override
   public void getProfile(
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
-    long accountId = Long.parseLong(request.getAccountId());
-    StubProfile profile = profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
     try {
+      String accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      StubProfile profile =
+          profilesByAccountUuid.computeIfAbsent(accountUuid, StubProfile::defaultFor);
       responseObserver.onNext(
           GetProfileResponse.newBuilder()
               .setProfileJson(
@@ -489,13 +504,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void updateProfile(
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
-      long accountId = Long.parseLong(request.getAccountId());
+      String accountUuid = requireCanonicalAccountUuid(request.getAccountId());
       AccountProfileJson profile =
           AccountProfileJson.parse(request.getProfileJson(), StubProfile.DEFAULT_VISIBILITY_POLICY);
       StubProfile existing =
-          profilesByAccountId.computeIfAbsent(accountId, StubProfile::defaultFor);
-      profilesByAccountId.put(
-          accountId,
+          profilesByAccountUuid.computeIfAbsent(accountUuid, StubProfile::defaultFor);
+      profilesByAccountUuid.put(
+          accountUuid,
           new StubProfile(
               profile.displayName(),
               profile.bio(),
@@ -518,8 +533,8 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private record StubProfile(String displayName, String bio, String presenceVisibilityPolicy) {
     private static final String DEFAULT_VISIBILITY_POLICY = "FRIENDS_ONLY";
 
-    private static StubProfile defaultFor(long accountId) {
-      return new StubProfile("Demo-" + accountId, null, DEFAULT_VISIBILITY_POLICY);
+    private static StubProfile defaultFor(String accountUuid) {
+      return new StubProfile("Demo-" + accountUuid, null, DEFAULT_VISIBILITY_POLICY);
     }
 
     private StubProfile withPresenceVisibilityPolicy(String visibilityPolicy) {
