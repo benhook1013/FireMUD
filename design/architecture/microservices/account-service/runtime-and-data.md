@@ -274,6 +274,8 @@ Current `AccountRealmAccessGrant` persistence and internal grant reads are limit
 
 The current JOIN implementation re-reads Game Session routing/catalog/pointer evidence but does not ensure that the exact target remains valid through the Account commit. The strict ADR 0025 commit gate is incomplete; detailed implementation and proof status is tracked in [Player Access and Session](../../../project-management/implementation-tracking/player-access-and-session.md#capability-status).
 
+Account deletion currently fails closed when `hasRetainedOperation` finds any retained JOIN operation row, including terminal receipts; any such row blocks deletion. Bounded JOIN receipt cleanup/minimization and deletion reconciliation are not implemented. Account's retention/deletion workflow owns that follow-through under [ADR 0163](../../decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md) and [ADR 0050](../../decisions/adr-0050-versioned-export-retention-and-erasure-policy.md); it depends on the JOIN receipt and unknown-outcome reconciliation work in #2848. No universal retention duration is implied.
+
 ## Monetization and Notification Domain Notes
 
 ### Monetization Design

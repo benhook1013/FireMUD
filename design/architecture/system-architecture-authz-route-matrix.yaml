@@ -1933,10 +1933,14 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED, IDEMPOTENCY_CONFLICT, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
     mutation_contract: explicit_public_membership_atomic
     membership_creation: caller_bound_after_validation
     route_status: target_not_currently_routable
+    implementation_status:
+      known_drift:
+        - Account_controller_and_operation_are_implemented_locally_but_the_exact_public_Gateway_path_is_blocked_by_an_explicit_route_guard_and_the_route_is_absent_from_publicOpenAPI
+        - local_policy_digest_revalidation_does_not_prove_exact_target_validity_through_Account_commit; strict_ADR_0025_commit_gate_remains_incomplete
   - service: account-service
     route: IssueDirectTextConnectScope
     scope: tenant

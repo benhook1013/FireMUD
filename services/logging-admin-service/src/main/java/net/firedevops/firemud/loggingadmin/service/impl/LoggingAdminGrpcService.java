@@ -175,7 +175,7 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   public void createLogEvent(
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
     responseObserver.onError(
-        Status.UNIMPLEMENTED
+        Status.UNAVAILABLE
             .withDescription(
                 "Typed account audit receipt receiver is unavailable in this service revision")
             .asRuntimeException());
