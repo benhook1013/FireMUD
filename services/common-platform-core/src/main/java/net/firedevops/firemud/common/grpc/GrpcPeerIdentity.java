@@ -30,6 +30,7 @@ public record GrpcPeerIdentity(String uri, String namespace, String service) {
           "account-service",
           "automation-scripting-service",
           "entity-management-service",
+          "game-design-baseline-migrator",
           "game-design-service",
           "game-logic-service",
           "game-session-service",

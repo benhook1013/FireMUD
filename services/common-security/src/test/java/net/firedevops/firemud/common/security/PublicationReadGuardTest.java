@@ -22,6 +22,11 @@ class PublicationReadGuardTest {
           "spiffe://firemud/ns/firemud/sa/game-design-service",
           TRUSTED_NAMESPACE,
           "game-design-service");
+  private static final GrpcPeerIdentity ENTITY_BASELINE_MIGRATOR_PEER =
+      new GrpcPeerIdentity(
+          "spiffe://firemud/ns/firemud/sa/game-design-baseline-migrator",
+          TRUSTED_NAMESPACE,
+          "game-design-baseline-migrator");
 
   private final PublicationReadGuard guard = new PublicationReadGuard(TRUSTED_NAMESPACE);
 
@@ -59,6 +64,42 @@ class PublicationReadGuardTest {
             guard.requirePublicationRead(method);
           }
         });
+  }
+
+  @Test
+  void baselineMigratorCanReadOnlyTheEntityDigestWithoutUserContext() {
+    withPeer(
+        ENTITY_BASELINE_MIGRATOR_PEER,
+        () -> {
+          guard.requirePublicationRead(PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD);
+          for (String method : PublicationReadGuard.PUBLICATION_READ_METHODS) {
+            if (!method.equals(PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD)) {
+              assertThatThrownBy(() -> guard.requirePublicationRead(method))
+                  .isInstanceOf(AdminAuthorizationException.class);
+            }
+          }
+          SessionContext.setContext("7", List.of("platformAdmin"), Map.of());
+          assertThatThrownBy(
+                  () ->
+                      guard.requirePublicationRead(
+                          PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
+              .isInstanceOf(AdminAuthorizationException.class);
+        });
+  }
+
+  @Test
+  void baselineMigratorFromAnotherNamespaceCannotReadEntityDigest() {
+    withPeer(
+        new GrpcPeerIdentity(
+            "spiffe://firemud/ns/other/sa/game-design-baseline-migrator",
+            "other",
+            "game-design-baseline-migrator"),
+        () ->
+            assertThatThrownBy(
+                    () ->
+                        guard.requirePublicationRead(
+                            PublicationReadGuard.ENTITY_MANAGEMENT_DIGEST_METHOD))
+                .isInstanceOf(AdminAuthorizationException.class));
   }
 
   @Test

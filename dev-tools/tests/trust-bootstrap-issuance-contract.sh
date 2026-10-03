@@ -150,6 +150,51 @@ def check_contract(items: list[dict]) -> None:
     certificate_match = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
         "matchConditions"
     ][0]["expression"]
+    certificate_match_normalized = " ".join(certificate_match.split())
+    certificate_rules = actual_policies["firemud-trust-bootstrap-certificate"]["spec"][
+        "matchConstraints"
+    ]["resourceRules"]
+    if len(certificate_rules) != 1:
+        fail("Certificate issuance boundary must have exactly one resource rule")
+    if certificate_rules[0].get("operations") != ["CREATE", "UPDATE", "DELETE"]:
+        fail("Certificate issuance boundary must cover create, update, and delete")
+    if certificate_rules[0].get("resources") != ["certificates"]:
+        fail("Certificate issuance boundary must match only the certificates resource")
+    if certificate_rules[0].get("scope") != "Namespaced":
+        fail("Certificate issuance boundary must be namespaced")
+    delete_match_branch = certificate_match_normalized.split(
+        "(request.operation == 'DELETE' &&", 1
+    )[1].split("(request.operation == 'CREATE' &&", 1)[0]
+    for needle in (
+        "oldObject.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-grpc-(",
+        "game-design-baseline-migrator)$')",
+        "request.namespace.matches('^(dev|pr-[1-9][0-9]{0,50})$')",
+    ):
+        require(delete_match_branch, needle, "runtime migrator Certificate DELETE match condition")
+    certificate_validations = actual_policies["firemud-trust-bootstrap-certificate"][
+        "spec"
+    ]["validations"]
+    if len(certificate_validations) != 2:
+        fail("Certificate boundary must retain both authorization and spec validations")
+    certificate_validation_normalized = " ".join(
+        certificate_validations[0]["expression"].split()
+    )
+    if not certificate_validation_normalized.startswith(
+        "request.userInfo.groups.exists(group, group == 'system:masters') ||"
+    ):
+        fail("trusted system:masters must pass the Certificate authorization validation")
+    spec_validation_normalized = " ".join(
+        certificate_validations[1]["expression"].split()
+    )
+    for needle in (
+        "request.userInfo.groups.exists(group, group == 'system:masters') ||",
+        "request.operation == 'DELETE' ||",
+    ):
+        require(
+            spec_validation_normalized,
+            needle,
+            "Certificate spec validation for an authorized DELETE",
+        )
     certificate_status_policy = actual_policies["firemud-trust-bootstrap-certificate-status"]
     certificate_status = certificate_status_policy["spec"]
     for needle in (
@@ -175,6 +220,10 @@ def check_contract(items: list[dict]) -> None:
         "object.spec.privateKey.rotationPolicy == 'Always'",
         "object.spec.usages == ['digital signature', 'key encipherment', 'server auth']",
         "object.spec.usages == ['digital signature', 'key encipherment', 'client auth']",
+        "object.spec.secretName == 'firemud-grpc-game-design-baseline-migrator'",
+        "object.spec.secretTemplate.metadata.labels == {",
+        "object.spec.secretTemplate.metadata.annotations == {",
+        "object.spec.uris == ['spiffe://firemud/ns/' + request.namespace + '/sa/game-design-baseline-migrator']",
         "firemud-hosted-identity-controller",
         "system:serviceaccount:kube-system:namespace-controller",
         "object.metadata.name.matches('^(dev|pr-[1-9][0-9]{0,50})-(tls|telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$')",
@@ -205,7 +254,7 @@ def check_contract(items: list[dict]) -> None:
         fail("Certificate status denial message does not describe the allowed callers")
     require(
         certificate_validation,
-        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service))$",
+        "^(dev|pr-[1-9][0-9]{0,50})-(telnet-tls|gateway-internal-ws|tcp-proxy-bridge|grpc-(game-design-service|world-management-service|entity-management-service|game-logic-service|automation-scripting-service|account-service|game-session-service|social-groups-service|game-design-baseline-migrator))$",
         "standalone Certificate validation",
     )
     for needle in (

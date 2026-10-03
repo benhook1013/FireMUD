@@ -71,6 +71,11 @@ class VersionPublishCommandServiceImplTest {
         .thenReturn(Optional.empty());
     when(versionAssetArtifactService.findState(any(String.class), any(Long.class)))
         .thenReturn(Optional.empty());
+    when(versionRepository.findByTenantIdAndIdForUpdate(any(String.class), any(Long.class)))
+        .thenAnswer(
+            invocation ->
+                versionRepository.findByTenantIdAndId(
+                    invocation.getArgument(0), invocation.getArgument(1)));
     org.mockito.Mockito.doAnswer(
             invocation -> {
               try {
@@ -227,6 +232,9 @@ class VersionPublishCommandServiceImplTest {
     assertEquals(8, dto.versionNumber());
     assertEquals(VersionLifecycleState.PUBLISHED, dto.versionState());
     assertEquals(2L, dto.versionStateEpoch());
+    InOrder versionOrder = inOrder(versionRepository);
+    versionOrder.verify(versionRepository).findByTenantIdAndIdForUpdate("tenant-1", 10L);
+    versionOrder.verify(versionRepository).save(any(Version.class));
     verify(publishAttemptService)
         .createFullVersionAttempt(any(VersionDto.class), any(String.class), any(String.class));
     verify(assetExportService).exportAssets("tenant-1", 8);
@@ -791,6 +799,12 @@ class VersionPublishCommandServiceImplTest {
     verify(recordedParticipantDigestService)
         .assertMatchesRecordedDigests("tenant-1", PublishType.FULL_VERSION, participantDigests);
     verify(recordedParticipantDigestService)
+        .recordVerifiedDigests(
+            "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
+    InOrder reconciliationOrder = inOrder(versionRepository, recordedParticipantDigestService);
+    reconciliationOrder.verify(versionRepository).findByTenantIdAndIdForUpdate("tenant-1", 10L);
+    reconciliationOrder
+        .verify(recordedParticipantDigestService)
         .recordVerifiedDigests(
             "tenant-1", PublishType.FULL_VERSION, workflowId, participantDigests);
     verify(publishAttemptService).markFullVersionSucceeded(workflowId);
