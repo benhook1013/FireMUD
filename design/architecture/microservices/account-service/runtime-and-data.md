@@ -65,7 +65,7 @@ The target capacity retry contract uses stable outer `(tenantId, requestId, admi
 
 ## Data Model
 
-- `account` table stores username, password hash, email, and status flags for the global platform account.
+- `account` table stores username, password hash, email, and status flags for the global platform account, with an immutable unique non-nil `account_uuid`, its provenance, and the unchanged numeric source-row id added by V29. This is Account-local storage identity only; authentication outputs and downstream session carriers do not yet use the UUID.
 - Target `profile` relationships are tenant-scoped and keyed exactly by `{accountId, tenantId}`; profile reads/writes require the corresponding membership and exact tenant filter. Any legacy account-only profile shape is implementation drift and must not authorize or expose a tenant relationship.
 - Target `achievement` relationships are tenant-scoped and keyed exactly by `{tenantId, accountId, achievementId}` (with any additional version/effect identity carried separately); the legacy “account and game” wording/shape is implementation drift because `game` is not an authority identifier.
 - Target `external_account` records link a server-verified canonical `{provider, issuer, subject}` to one global platform account without tenant scope. The current tenant-scoped, caller-asserted row shape is implementation drift.

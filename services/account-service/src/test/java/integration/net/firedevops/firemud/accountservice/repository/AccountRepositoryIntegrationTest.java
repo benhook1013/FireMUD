@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.file.Path;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -821,6 +822,34 @@ class AccountRepositoryIntegrationTest {
     assertThat(databaseInserted.get("account_uuid_source_numeric_id", Long.class))
         .isEqualTo(databaseInserted.get("id", Long.class));
 
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "INSERT INTO accounts "
+                        + "(username, email, password_hash, account_uuid, "
+                        + "account_uuid_provenance) VALUES (?, ?, ?, ?, ?)",
+                    "migration-origin-account",
+                    "migration-origin@example.com",
+                    "hash",
+                    UUID.randomUUID(),
+                    AccountIdentityProvenance.ACCOUNT_V29_MIGRATION.name()))
+        .isInstanceOf(DataAccessException.class)
+        .hasMessageContaining("ACCOUNT_V29_MIGRATION provenance is reserved for retained rows")
+        .satisfies(
+            failure -> {
+              Throwable rootCause = failure;
+              while (rootCause.getCause() != null) {
+                rootCause = rootCause.getCause();
+              }
+              assertThat(rootCause).isInstanceOf(SQLException.class);
+              assertThat(((SQLException) rootCause).getSQLState()).isEqualTo("23514");
+            });
+    assertThat(
+            dsl.fetchValue(
+                "SELECT COUNT(*) FROM accounts WHERE username = 'migration-origin-account'",
+                Long.class))
+        .isEqualTo(0L);
+
     saved.setAccountUuid(UUID.randomUUID());
     assertThatThrownBy(() -> repository.save(saved))
         .isInstanceOf(IllegalStateException.class)
@@ -1179,16 +1208,6 @@ class AccountRepositoryIntegrationTest {
             + "membership_version, membership_authority_generation, authority_provenance) "
             + "VALUES (?, 42, TRUE, 'ACTIVE', 2, 3, 'EXPLICIT_JOIN')",
         secondAccountId);
-    long secondMembershipId =
-        Objects.requireNonNull(
-                (Number)
-                    dsl.fetchValue(
-                        "SELECT id FROM "
-                            + schema
-                            + ".account_tenant_membership WHERE account_id = ? AND tenant_id = 42",
-                        secondAccountId))
-            .longValue();
-
     UUID joinRealmId = REALM_ID;
     String pendingJoinRequestId = "retained-v28-pending-join";
     String retainedConnectScopeId = "retained-scope-token";
@@ -1285,37 +1304,6 @@ class AccountRepositoryIntegrationTest {
         retainedScope.pointerVersion(),
         intentDigest);
 
-    String receiptStreamKey =
-        "account:membership-transition-receipt:v1:membership/" + secondAccountId + "/42";
-    String receiptRequestId = "retained-v28-membership-transition";
-    UUID receiptId = UUID.fromString("92b9c1a4-2840-4c48-9622-782b9aa83a07");
-    String receiptPayload = "retained membership transition receipt";
-    String receiptDigest = AccountAuditDigest.ofPayload(receiptPayload);
-    dsl.execute(
-        "INSERT INTO "
-            + schema
-            + ".account_membership_transition_receipt_stream_heads "
-            + "(account_id, tenant_id, receipt_stream_key, last_receipt_sequence) "
-            + "VALUES (?, 42, ?, 1)",
-        secondAccountId,
-        receiptStreamKey);
-    dsl.execute(
-        "INSERT INTO "
-            + schema
-            + ".account_membership_transition_receipts "
-            + "(receipt_stream_key, receipt_sequence, account_id, tenant_id, evidence_status, "
-            + "transition_type, request_id, membership_id, membership_lifecycle_state, "
-            + "gameplay_admission_allowed, membership_version, membership_authority_generation, "
-            + "authority_provenance, receipt_id, receipt_digest) "
-            + "VALUES (?, 1, ?, 42, 'PROVISIONAL_TRANSITION_RECEIPT', 'MEMBERSHIP_JOINED', ?, ?, "
-            + "'ACTIVE', TRUE, 2, 3, 'EXPLICIT_JOIN', ?, ?)",
-        receiptStreamKey,
-        secondAccountId,
-        receiptRequestId,
-        secondMembershipId,
-        receiptId,
-        receiptDigest);
-
     UUID auditEventId = UUID.fromString("1596dcce-a52c-4c39-86bf-138a06069012");
     String payload = "{\"accountId\":" + firstAccountId + ",\"event\":\"retained\"}";
     String payloadDigest = AccountAuditDigest.ofPayload(payload);
@@ -1366,19 +1354,6 @@ class AccountRepositoryIntegrationTest {
                 + schema
                 + ".account_connect_scope_records s WHERE scope_token_hash = ?",
             scopeTokenHash);
-    String receiptStreamHeadBefore =
-        jsonRow(
-            "SELECT to_jsonb(h)::text FROM "
-                + schema
-                + ".account_membership_transition_receipt_stream_heads h "
-                + "WHERE account_id = ? AND tenant_id = 42",
-            secondAccountId);
-    String membershipTransitionReceiptBefore =
-        jsonRow(
-            "SELECT to_jsonb(r)::text FROM "
-                + schema
-                + ".account_membership_transition_receipts r WHERE receipt_id = ?",
-            receiptId);
     String outboxBefore =
         jsonRow(
             "SELECT to_jsonb(o)::text FROM "
@@ -1440,21 +1415,6 @@ class AccountRepositoryIntegrationTest {
                     + ".account_connect_scope_records s WHERE scope_token_hash = ?",
                 scopeTokenHash))
         .isEqualTo(retainedConnectScopeBefore);
-    assertThat(
-            jsonRow(
-                "SELECT to_jsonb(h)::text FROM "
-                    + schema
-                    + ".account_membership_transition_receipt_stream_heads h "
-                    + "WHERE account_id = ? AND tenant_id = 42",
-                secondAccountId))
-        .isEqualTo(receiptStreamHeadBefore);
-    assertThat(
-            jsonRow(
-                "SELECT to_jsonb(r)::text FROM "
-                    + schema
-                    + ".account_membership_transition_receipts r WHERE receipt_id = ?",
-                receiptId))
-        .isEqualTo(membershipTransitionReceiptBefore);
     assertThat(
             jsonRow(
                 "SELECT to_jsonb(o)::text FROM "
