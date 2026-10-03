@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -73,7 +74,7 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void createLogEventRemainsUnimplementedForAdminRoleWithoutDispatch() {
+  void createLogEventReturnsUnavailableForTypedRequestWithoutDispatch() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     LogEventService logEventService = Mockito.mock(LogEventService.class);
     assertCreateLogEventUnavailable(validCreateLogEventRequest(), logEventService);
@@ -583,6 +584,8 @@ class LoggingAdminGrpcServiceAuthTest {
 
     AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
     AtomicReference<Throwable> error = new AtomicReference<>();
+    java.util.concurrent.atomic.AtomicBoolean completed =
+        new java.util.concurrent.atomic.AtomicBoolean();
     service.createLogEvent(
         request,
         new StreamObserver<>() {
@@ -597,12 +600,20 @@ class LoggingAdminGrpcServiceAuthTest {
           }
 
           @Override
-          public void onCompleted() {}
+          public void onCompleted() {
+            completed.set(true);
+          }
         });
 
     assertNull(response.get());
     assertNotNull(error.get());
-    assertEquals(Status.Code.UNIMPLEMENTED, Status.fromThrowable(error.get()).getCode());
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
+    String description = Status.fromThrowable(error.get()).getDescription();
+    assertEquals(
+        "Typed account audit receipt receiver is unavailable in this service revision",
+        description);
+    assertTrue(description.length() <= 128);
+    assertFalse(completed.get());
     verifyNoInteractions(logEventService, moderationService);
   }
 

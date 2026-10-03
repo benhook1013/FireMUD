@@ -54,6 +54,8 @@ This target contract is not complete in the current service. The existing `secur
 
 ## Implementation Status
 
+Current explicit JOIN status: the local `/auth/bootstrap/join` controller and operation are implemented, but the exact Gateway path is blocked by its route guard and the route is absent from `publicOpenAPI`. Local policy-digest revalidation does not prove that the exact target remains valid through Account commit; the strict ADR 0025 commit gate remains incomplete. The canonical owner is [Runtime & Data](./runtime-and-data.md#membership-and-entitlement-authority), with the target contract in [ADR 0025](../../decisions/adr-0025-explicit-open-enrollment-membership.md).
+
 Explicit playtest grants remain partial: current Account persistence and internal lookup can support a grant-backed admission read, but expiry bounded by fork lifecycle, tenant-admin create/extend/list/revoke, distinct audited platform break-glass, stable request-idempotent outcomes, retained revocation tombstones, and active-binding ejection are not implemented or end-to-end proved. The target owner contract is [Account-Owned Playtest Grant Contract](#account-owned-playtest-grant-contract); the links in authentication, session behavior, journeys, and trackers retain only their local consequences.
 
 The hosted Creator Party, terms catalog, acceptance/currentness evidence, and changed-term lifecycle are target-only. No current Account route, proto/schema, storage, signer/transfer operation, creator UI, or focused proof implements them; Game Design must not maintain a copied catalog or authorize a creator mutation from a tenant-local flag.
