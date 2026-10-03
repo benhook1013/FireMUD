@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from fire_controller.jobs import JobsNotBootstrapped, JobsSchemaIncompatible, RevisionConflict
 from fire_controller.map import (
@@ -14,6 +17,7 @@ from fire_controller.map import (
     WorkstreamStore,
     editorial_mapping,
 )
+from pr_review.sqlite_backup import BackupError, _validate_database
 
 
 def _site_sources(directory: Path, *, worker: str = "Build & Tools") -> tuple[Path, Path]:
@@ -192,6 +196,96 @@ class WorkstreamStoreTests(unittest.TestCase):
         with self.assertRaises(JobsNotBootstrapped):
             self.store.list(self.editorial)
         self.assertFalse(self.database.exists())
+
+    def test_backup_validator_refuses_damaged_map_history_without_writing(self):
+        def state_rows(database: Path):
+            with sqlite3.connect(database) as connection:
+                return {
+                    table: connection.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall()
+                    for table in ("map_workstreams", "map_return_points", "map_revisions", "map_imports")
+                }
+
+        def delete_history(connection: sqlite3.Connection) -> None:
+            connection.execute("DELETE FROM map_revisions")
+
+        def mismatch_current(connection: sqlite3.Connection) -> None:
+            connection.execute("UPDATE map_workstreams SET state = 'CONTRADICTORY'")
+
+        def damage_shape(connection: sqlite3.Connection) -> None:
+            connection.execute("UPDATE map_revisions SET snapshot_json = '{}' WHERE record_type = 'workstream'")
+
+        def damage_identity(connection: sqlite3.Connection) -> None:
+            row = connection.execute(
+                "SELECT snapshot_json FROM map_revisions WHERE record_type = 'workstream'"
+            ).fetchone()
+            snapshot = json.loads(row[0])
+            snapshot["id"] = "another-workstream"
+            connection.execute(
+                "UPDATE map_revisions SET snapshot_json = ? WHERE record_type = 'workstream'",
+                (json.dumps(snapshot),),
+            )
+
+        def damage_revision(connection: sqlite3.Connection) -> None:
+            row = connection.execute(
+                "SELECT snapshot_json FROM map_revisions WHERE record_type = 'workstream'"
+            ).fetchone()
+            snapshot = json.loads(row[0])
+            snapshot["revision"] += 1
+            connection.execute(
+                "UPDATE map_revisions SET snapshot_json = ? WHERE record_type = 'workstream'",
+                (json.dumps(snapshot),),
+            )
+
+        def add_orphan(connection: sqlite3.Connection) -> None:
+            row = connection.execute(
+                "SELECT created_at, snapshot_json FROM map_revisions WHERE record_type = 'workstream'"
+            ).fetchone()
+            snapshot = json.loads(row[1])
+            snapshot["id"] = "orphan-workstream"
+            connection.execute(
+                "INSERT INTO map_revisions(record_type, record_id, revision, created_at, snapshot_json) "
+                "VALUES ('workstream', 'orphan-workstream', 1, ?, ?)",
+                (row[0], json.dumps(snapshot)),
+            )
+
+        def add_gap(connection: sqlite3.Connection) -> None:
+            row = connection.execute(
+                "SELECT created_at, snapshot_json FROM map_revisions WHERE record_type = 'workstream'"
+            ).fetchone()
+            snapshot = json.loads(row[1])
+            snapshot["revision"] = 3
+            connection.execute(
+                "INSERT INTO map_revisions(record_type, record_id, revision, created_at, snapshot_json) "
+                "VALUES ('workstream', 'shared-foundations', 3, ?, ?)",
+                (row[0], json.dumps(snapshot)),
+            )
+
+        corruptions = (
+            ("missing history", delete_history),
+            ("current snapshot mismatch", mismatch_current),
+            ("snapshot shape", damage_shape),
+            ("snapshot identity", damage_identity),
+            ("snapshot revision", damage_revision),
+            ("orphan history", add_orphan),
+            ("revision gap", add_gap),
+        )
+        for label, corrupt in corruptions:
+            with self.subTest(corruption=label), tempfile.TemporaryDirectory() as directory:
+                database = Path(directory) / "controller.sqlite3"
+                store = WorkstreamStore(database)
+                store.bootstrap()
+                store.import_site(self.status_source, self.progress_source, apply=True)
+                with sqlite3.connect(database) as connection:
+                    corrupt(connection)
+                damaged_state = state_rows(database)
+
+                with self.assertRaises(BackupError):
+                    _validate_database(database, "damaged map fixture")
+                self.assertEqual(state_rows(database), damaged_state)
+
+                with self.assertRaises(JobsSchemaIncompatible):
+                    store.bootstrap()
+                self.assertEqual(state_rows(database), damaged_state)
 
 
 if __name__ == "__main__":

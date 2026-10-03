@@ -371,6 +371,22 @@ def _field(label: str, value) -> str:
     return f'<section><h3>{label}</h3>{_markdown(value)}</section>'
 
 
+
+def _render_checklist(checklist) -> str:
+    if isinstance(checklist, list):
+        entries = []
+        for item in checklist:
+            if not isinstance(item, dict):
+                continue
+            marker = "Done" if item.get("done") is True else "Open"
+            entries.append(
+                f'<li><span class="checklist-state">{marker}</span> '
+                f'{html.escape(str(item.get("text", "")), quote=True)}</li>'
+            )
+        return f'<section><h2>Checklist</h2><ul class="job-checklist">{"".join(entries)}</ul></section>'
+    return ""
+
+
 def render_job(job, history=False) -> str:
     """Render a private job detail page or a bounded history page as safe HTML."""
 
@@ -392,18 +408,7 @@ def render_job(job, history=False) -> str:
         section = _field(label, job.get(field))
         if section:
             content.append(f'<div class="job-{field}">{section}</div>')
-    checklist = job.get("checklist", [])
-    if isinstance(checklist, list):
-        entries = []
-        for item in checklist:
-            if not isinstance(item, dict):
-                continue
-            marker = "Done" if item.get("done") is True else "Open"
-            entries.append(
-                f'<li><span class="checklist-state">{marker}</span> '
-                f'{html.escape(str(item.get("text", "")), quote=True)}</li>'
-            )
-        content.append(f'<section><h2>Checklist</h2><ul class="job-checklist">{"".join(entries)}</ul></section>')
+    content.append(_render_checklist(job.get("checklist", [])))
     content.append(f'<section><h2>Private working brief</h2>{_markdown(job.get("brief", ""))}</section>')
     checkpoint = job.get("latest_checkpoint")
     if isinstance(checkpoint, dict):
@@ -461,6 +466,13 @@ def _render_history(data: dict) -> str:
             f'<article class="job-history-entry"><h1>{name} · Revision {html.escape(str(revision), quote=True)}</h1>',
             f'<p>{html.escape(str(entry.get("created_at", "")), quote=True)}</p>',
         ]
+        body.append(
+            f'<p class="job-state">{html.escape(str(entry.get("status", "")), quote=True)} · '
+            f'{html.escape(str(entry.get("worker", "")), quote=True)}'
+            f'{" · Primary" if entry.get("primary") is True else ""}</p>'
+            f'<p>{html.escape(str(entry.get("title", "")), quote=True)}</p>'
+        )
+        body.append(_render_checklist(entry.get("checklist", [])))
         for label, field in (("Summary", "summary"), ("Progress", "progress"), ("Blocker", "blocker")):
             section = _field(label, entry.get(field))
             if section:
@@ -494,6 +506,20 @@ def _render_history(data: dict) -> str:
     return _private_document(f"{name} history", "".join(content))
 
 
+
+def _render_phases(phases) -> str:
+    content = []
+    if isinstance(phases, dict):
+        content.append("<section><h2>Phases</h2><ul>")
+        for phase, state in phases.items():
+            content.append(
+                f'<li><strong>{html.escape(str(phase), quote=True)}</strong> · '
+                f'{html.escape(str(state), quote=True)}</li>'
+            )
+        content.append("</ul></section>")
+    return "".join(content)
+
+
 def render_workstream(record: dict, notes=(), history=False) -> str:
     """Render local-only workstream state and its bounded private map notes."""
 
@@ -516,10 +542,18 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
                     f'<article class="job-history-entry"><h2>Revision {revision}</h2>'
                     f'<time>{html.escape(str(item.get("created_at", "")), quote=True)}</time>'
                     f'{_field("Status", item.get("state"))}{_field("Where it stands", item.get("now"))}'
-                    f'{_field("Next milestone", item.get("milestone"))}</article>'
+                    f'{_field("Next milestone", item.get("milestone"))}'
+                    f'{_render_phases(item.get("phase_states", {}))}</article>'
                 )
+        offset = record.get("offset")
+        paging = []
+        if type(offset) is int and offset > 0:
+            paging.append(f'<a href="/workstreams/{encoded_id}/history?offset={max(0, offset - HISTORY_PAGE_SIZE)}">Newer revisions</a>')
+        if type(offset) is int and isinstance(rows, list) and len(rows) == HISTORY_PAGE_SIZE:
+            paging.append(f'<a href="/workstreams/{encoded_id}/history?offset={offset + HISTORY_PAGE_SIZE}">Older revisions</a>')
         content = (
             f'<h1>{name} history</h1><p>Recent workstream revisions</p>{"".join(entries)}'
+            f'<nav class="job-history-paging">{"".join(paging)}</nav>'
             f'<p><a href="/workstreams/{encoded_id}">Current workstream</a></p>'
         )
         return _private_document(f"{name} history", content)
@@ -532,15 +566,7 @@ def render_workstream(record: dict, notes=(), history=False) -> str:
         section = _field(label, record.get(field))
         if section:
             content.append(section)
-    phases = record.get("phase_states", {})
-    if isinstance(phases, dict):
-        content.append("<section><h2>Phases</h2><ul>")
-        for phase, state in phases.items():
-            content.append(
-                f'<li><strong>{html.escape(str(phase), quote=True)}</strong> · '
-                f'{html.escape(str(state), quote=True)}</li>'
-            )
-        content.append("</ul></section>")
+    content.append(_render_phases(record.get("phase_states", {})))
     content.append("<section><h2>Private Overseer notes</h2>")
     note_rows = notes if isinstance(notes, list) else []
     if note_rows:
@@ -747,7 +773,7 @@ def _private_workstream_route(parsed, jobs_store, workstream_store, editorial):
                 return offset[1]
             records = workstream_store.history("workstream", workstream_id, limit=HISTORY_PAGE_SIZE, offset=offset)
             current = workstream_store.get(workstream_id, editorial)
-            return _response(200, render_workstream({**current, "history": records}, history=True))
+            return _response(200, render_workstream({**current, "history": records, "offset": offset}, history=True))
         record = workstream_store.get(workstream_id, editorial)
         notes = [] if jobs_store is None else jobs_store.notes(phase=workstream_id, status=None, limit=50, offset=0)
         return _response(200, render_workstream(record, notes))

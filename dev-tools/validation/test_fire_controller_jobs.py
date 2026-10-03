@@ -16,6 +16,7 @@ from fire_controller.jobs import (
     JobStore,
     RevisionConflict,
 )
+from pr_review.sqlite_backup import BackupError, _validate_database
 from pr_review.sqlite_store import SqliteStateStore
 
 
@@ -165,6 +166,44 @@ class JobStoreTest(unittest.TestCase):
         self.assertEqual(self.store.note_history(job_note["id"], revision=2)["dismissal_reason"], "The phase was cancelled")
         self.assertEqual(self.store.notes(job="check-job"), [])
         self.assertEqual(self.store.notes(job="check-job", status=None)[0]["status"], "dismissed")
+
+    def test_checklist_add_over_limit_leaves_job_revision_and_history_unchanged(self) -> None:
+        self.bootstrap()
+        checklist = [
+            {"id": f"item-{index}", "text": f"Checklist item {index}", "done": False}
+            for index in range(200)
+        ]
+        job = self.store.create("full-checklist", "Document", "Review all items", checklist=checklist)
+        history_before = self.store.history(job["id"], limit=None)
+
+        with self.assertRaisesRegex(JobError, "at most 200"):
+            self.store.checklist(job["id"], job["revision"], "add", text="One item too many")
+
+        current = self.store.get(job["id"])
+        self.assertEqual(current["revision"], job["revision"])
+        self.assertEqual(current["checklist"], checklist)
+        self.assertEqual(self.store.history(job["id"], limit=None), history_before)
+
+    def test_backup_validator_refuses_current_job_that_disagrees_with_latest_history(self) -> None:
+        self.bootstrap()
+        job = self.store.create("damaged-current", "General", "Recorded title")
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("UPDATE jobs SET title = ? WHERE id = ?", ("Contradictory title", job["id"]))
+        damaged_database = self.database.read_bytes()
+
+        with self.assertRaises(BackupError):
+            _validate_database(self.database, "damaged job fixture")
+
+        self.assertEqual(self.database.read_bytes(), damaged_database)
+        with sqlite3.connect(self.database) as connection:
+            self.assertEqual(
+                connection.execute("SELECT title, revision FROM jobs WHERE id = ?", (job["id"],)).fetchone(),
+                ("Contradictory title", 1),
+            )
+            self.assertEqual(
+                connection.execute("SELECT COUNT(*) FROM job_revisions WHERE job_id = ?", (job["id"],)).fetchone()[0],
+                1,
+            )
 
     def test_note_cas_correction_reopen_and_bounded_history(self) -> None:
         self.bootstrap()

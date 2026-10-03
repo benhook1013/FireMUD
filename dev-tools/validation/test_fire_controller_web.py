@@ -601,3 +601,63 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RetainedHistoryAndAdapterTests(unittest.TestCase):
+    def test_historical_job_structured_state_is_visible_and_escaped(self):
+        page = web.render_job({"job": {"id": "job-1", "name": "Current"}, "revision_entry": {
+            "revision": 2, "status": "blocked", "worker": "General<script>", "primary": True,
+            "title": "Historical title", "brief": "Old brief", "checklist": [
+                {"id": "old", "text": "Historical <script>check</script>", "done": True}]}}, history=True)
+        for text in ("blocked", "General&lt;script&gt;", "Primary", "Historical title", "Checklist", "Done",
+                     "Historical &lt;script&gt;check&lt;/script&gt;"):
+            self.assertIn(text, page)
+        self.assertNotIn("<script>", page)
+
+    def test_workstream_pagination_and_historical_phases(self):
+        class Store:
+            def get(self, identifier, editorial):
+                return {"id": identifier, "name": "Track"}
+
+            def history(self, kind, identifier, **kwargs):
+                if "revision" in kwargs:
+                    return {"revision": kwargs["revision"], "state": "Earlier", "phase_states": {"Earlier phase": "Earlier state"}}
+                return [{"revision": 100 - n, "created_at": "then", "state": "Active",
+                         "phase_states": {"Phase <one>": "Historical <state>"}}
+                        for n in range(50)]
+        status, _, body = web.private_route("/workstreams/track/history?offset=50", FakeStore(),
+                                           workstreams=Store(), editorial={})
+        self.assertEqual(status, 200)
+        page = body.decode()
+        self.assertIn("history?offset=0", page)
+        self.assertIn("history?offset=100", page)
+        self.assertIn("Phase &lt;one&gt;", page)
+        self.assertIn("Historical &lt;state&gt;", page)
+        status, _, body = web.private_route("/workstreams/track/history?revision=2", FakeStore(),
+                                           workstreams=Store(), editorial={})
+        self.assertEqual(status, 200)
+        self.assertIn(b"Earlier phase", body)
+        self.assertIn(b"Earlier state", body)
+        self.assertNotIn(b"Older revisions", body)
+
+    def test_adapter_checks_complete_captured_baseline(self):
+        source = TOOLS / "fire_controller" / "integration" / "apply_private_adapter.py"
+        spec = importlib.util.spec_from_file_location("adapter_fingerprints", source)
+        adapter = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(adapter)
+        self.assertEqual(set(adapter.EXPECTED_FILES), set(adapter.BASELINE))
+        self.assertEqual(set(adapter.UNCHANGED), {"shared.css", "test_render.py", "test_server.py", "test_publish.py"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in (*adapter.BASELINE, *adapter.UNCHANGED):
+                (root / name).write_text(name)
+            import hashlib
+            expected = {name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                        for name in (*adapter.BASELINE, *adapter.UNCHANGED)}
+            adapter.check_source(root, expected)
+            for name in adapter.UNCHANGED:
+                original = (root / name).read_text()
+                (root / name).write_text("Changed")
+                with self.assertRaisesRegex(ValueError, name):
+                    adapter.check_source(root, expected)
+                (root / name).write_text(original)

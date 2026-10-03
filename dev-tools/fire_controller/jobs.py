@@ -499,6 +499,24 @@ class JobStore:
         ).fetchone()
         if incomplete_briefs is not None:
             raise JobsSchemaIncompatible("job brief history contains a gap")
+        orphan_brief = connection.execute(
+            "SELECT b.job_id FROM job_briefs AS b LEFT JOIN job_revisions AS r "
+            "ON r.job_id = b.job_id AND r.brief_revision = b.brief_revision "
+            "WHERE r.job_id IS NULL LIMIT 1"
+        ).fetchone()
+        if orphan_brief is not None:
+            raise JobsSchemaIncompatible("job brief history contains an unreferenced version")
+        previous_brief_revision: dict[str, int] = {}
+        for revision_row in connection.execute(
+            "SELECT job_id, revision, brief_revision FROM job_revisions ORDER BY job_id, revision"
+        ):
+            job_id, _, brief_revision = revision_row
+            previous = previous_brief_revision.get(job_id)
+            if (previous is None and brief_revision != 1) or (
+                previous is not None and brief_revision not in {previous, previous + 1}
+            ):
+                raise JobsSchemaIncompatible("job revision history has an inconsistent brief version")
+            previous_brief_revision[job_id] = brief_revision
         for table in _JOB_TABLES:
             foreign_key_failure = connection.execute(f"PRAGMA foreign_key_check(\"{table}\")").fetchone()
             if foreign_key_failure is not None:
@@ -507,10 +525,22 @@ class JobStore:
             job_ids = {row[0] for row in connection.execute("SELECT id FROM jobs")}
             for row in connection.execute("SELECT * FROM jobs"):
                 job = _row_dict(row, JOB_COLUMNS["jobs"])
-                _validate_snapshot(_snapshot(job))
+                current_snapshot = _snapshot(job)
+                _validate_snapshot(current_snapshot)
                 _text(job["created_at"], "job created_at", maximum=100)
                 _text(job["updated_at"], "job updated_at", maximum=100)
                 _text(JobStore._current_brief_for_validation(connection, job["id"], job["brief_revision"]), "job brief", maximum=_MAX_BRIEF, allow_empty=True)
+                latest_revision = connection.execute(
+                    "SELECT revision, brief_revision, state_json FROM job_revisions "
+                    "WHERE job_id = ? ORDER BY revision DESC LIMIT 1",
+                    (job["id"],),
+                ).fetchone()
+                if latest_revision is None or latest_revision[0] != job["revision"]:
+                    raise JobsSchemaIncompatible("current job revision is not the latest history revision")
+                if latest_revision[1] != job["brief_revision"] or _loads(
+                    latest_revision[2], "job revision"
+                ) != current_snapshot:
+                    raise JobsSchemaIncompatible("current job snapshot is inconsistent with its latest history")
             for row in connection.execute("SELECT * FROM job_revisions"):
                 revision = _row_dict(row, JOB_COLUMNS["job_revisions"])
                 snapshot = _loads(revision["state_json"], "job revision")
@@ -1059,6 +1089,7 @@ class JobStore:
                 if any(item["id"] == new_id for item in items):
                     raise JobError(f"checklist item {new_id} already exists")
                 items.append({"id": new_id, "text": selected_text, "done": False})
+                items = _checklist(items)
             else:
                 matched = next((item for item in items if item["id"] == selected_item), None)
                 if matched is None:

@@ -18,6 +18,12 @@ BASELINE = {
     "render_progress.py": "4f9fe30c9d8d6ba0f433445625758e494af60d28069dc49d2fd056e3d39a2adb",
 }
 EXPECTED_FILES = frozenset(BASELINE)
+UNCHANGED = {
+    "shared.css": "cff6958f26f5b65dc4e14f63d43fd08fd8481dcdb830a9025190c85e51614596",
+    "test_render.py": "831b29a35518fcfe60d0331444ad83f92f90f92b126f810fbcc5e810949bd549",
+    "test_server.py": "21d1423f86281497b07a74e7e14d6e6564819f90df6bdc3015f227a4aa8643d9",
+    "test_publish.py": "ac798bb369ec9aab76a6028a2185f0fd28c8ca681059f278ab668d52745a29c1",
+}
 POST_PATCH = {
     "render.py": "a0a62f0d254a7553d1caaec16a15b82ca134b93e3e5599caae8a0f6460a8c1f9",
     "server.py": "2dc5418179804dfacb0247dc5ac48fc9f7e435aaca3a82ca3fbf06583418f010",
@@ -71,12 +77,12 @@ def main(argv=None) -> int:
         parser.error(f"website copy does not exist: {site}")
     try:
         check_patch_scope()
-        check_source(source, BASELINE)
+        check_source(source, {**BASELINE, **UNCHANGED})
         if args.verify:
-            check_source(site, POST_PATCH)
+            check_source(site, {**POST_PATCH, **UNCHANGED})
             print("private adapter fingerprints verified")
             return 0
-        check_source(site, BASELINE)
+        check_source(site, {**BASELINE, **UNCHANGED})
         checked = subprocess.run(
             ["git", "apply", "--check", str(PATCH)],
             cwd=site,
@@ -95,7 +101,7 @@ def main(argv=None) -> int:
         )
         if applied.returncode:
             raise ValueError(f"patch application failed: {applied.stderr.strip()}")
-        check_source(site, POST_PATCH)
+        check_source(site, {**POST_PATCH, **UNCHANGED})
     except (OSError, ValueError) as error:
         print(f"private adapter: {error}", file=sys.stderr)
         return 2

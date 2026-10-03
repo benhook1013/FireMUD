@@ -533,18 +533,77 @@ class WorkstreamStore:
         ).fetchone()
         if invalid_workstream or invalid_return or invalid_revision or invalid_import:
             raise JobsSchemaIncompatible("project-map state contains malformed records")
+        orphan_revision = connection.execute(
+            "SELECT r.record_type, r.record_id FROM map_revisions AS r "
+            "LEFT JOIN map_workstreams AS w ON r.record_type = 'workstream' AND w.id = r.record_id "
+            "LEFT JOIN map_return_points AS p ON r.record_type = 'return_point' AND p.id = r.record_id "
+            "WHERE (r.record_type = 'workstream' AND w.id IS NULL) "
+            "OR (r.record_type = 'return_point' AND p.id IS NULL) LIMIT 1"
+        ).fetchone()
+        if orphan_revision is not None:
+            raise JobsSchemaIncompatible("project-map history has no current record")
+        incomplete_revisions = connection.execute(
+            "SELECT record_type, record_id FROM map_revisions GROUP BY record_type, record_id "
+            "HAVING MIN(revision) <> 1 OR COUNT(*) <> MAX(revision) "
+            "OR COUNT(DISTINCT revision) <> COUNT(*) LIMIT 1"
+        ).fetchone()
+        if incomplete_revisions is not None:
+            raise JobsSchemaIncompatible("project-map revision history contains a gap")
+        latest_revisions: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in connection.execute(
+            "SELECT record_type, record_id, revision, created_at, snapshot_json FROM map_revisions "
+            "ORDER BY record_type, record_id, revision"
+        ):
+            record_type, record_id, revision, created_at, snapshot_json = row
+            snapshot = _loads(snapshot_json, "project-map revision")
+            expected_fields = (
+                {"id", "revision", "state", "now", "milestone", "phase_states", "updated_at"}
+                if record_type == "workstream"
+                else {"id", "revision", "state", "updated_at"}
+            )
+            if not isinstance(snapshot, Mapping) or set(snapshot) != expected_fields:
+                raise JobsSchemaIncompatible("stored project-map revision has an invalid shape")
+            if snapshot["id"] != record_id or snapshot["revision"] != revision:
+                raise JobsSchemaIncompatible("stored project-map revision identity is inconsistent")
+            if not isinstance(record_id, str) or not _ID.fullmatch(record_id):
+                raise JobsSchemaIncompatible("stored project-map record ID is invalid")
+            _map_text(created_at, "project-map revision created_at", maximum=100, allow_empty=False)
+            _bounded_integer(snapshot["revision"], "project-map snapshot revision", minimum=1, maximum=2**63 - 1)
+            _map_text(snapshot["updated_at"], "stored project-map updated_at", maximum=100, allow_empty=False)
+            _map_text(snapshot["state"], "stored project-map state", maximum=500, allow_empty=False)
+            if record_type == "workstream":
+                _map_text(snapshot["now"], "stored workstream now", maximum=5000)
+                _map_text(snapshot["milestone"], "stored workstream milestone", maximum=5000)
+                phase_states = snapshot["phase_states"]
+                if not isinstance(phase_states, Mapping):
+                    raise JobsSchemaIncompatible("stored workstream phase states are malformed")
+                for phase, state in phase_states.items():
+                    _map_text(phase, "stored phase name", maximum=300, allow_empty=False)
+                    _map_text(state, "stored phase state", maximum=500, allow_empty=False)
+            latest_revisions[(record_type, record_id)] = dict(snapshot)
         for row in connection.execute("SELECT * FROM map_workstreams"):
             row_data = {column: row[index] for index, column in enumerate(MAP_COLUMNS["map_workstreams"])}
             snapshot = _snapshot_workstream(row_data)
+            if not isinstance(snapshot["id"], str) or not _ID.fullmatch(snapshot["id"]):
+                raise JobsSchemaIncompatible("stored workstream ID is invalid")
             _map_text(snapshot["state"], "stored workstream state", maximum=500, allow_empty=False)
             _map_text(snapshot["now"], "stored workstream now", maximum=5000)
             _map_text(snapshot["milestone"], "stored workstream milestone", maximum=5000)
+            _map_text(snapshot["updated_at"], "stored workstream updated_at", maximum=100, allow_empty=False)
             for phase, state in snapshot["phase_states"].items():
                 _map_text(phase, "stored phase name", maximum=300, allow_empty=False)
                 _map_text(state, "stored phase state", maximum=500, allow_empty=False)
+            if latest_revisions.get(("workstream", snapshot["id"])) != snapshot:
+                raise JobsSchemaIncompatible("current workstream snapshot is inconsistent with its latest history")
         for row in connection.execute("SELECT * FROM map_return_points"):
             row_data = {column: row[index] for index, column in enumerate(MAP_COLUMNS["map_return_points"])}
-            _map_text(row_data["state"], "stored return-point state", maximum=500, allow_empty=False)
+            snapshot = _snapshot_return_point(row_data)
+            if not isinstance(snapshot["id"], str) or not _ID.fullmatch(snapshot["id"]):
+                raise JobsSchemaIncompatible("stored return-point ID is invalid")
+            _map_text(snapshot["state"], "stored return-point state", maximum=500, allow_empty=False)
+            _map_text(snapshot["updated_at"], "stored return-point updated_at", maximum=100, allow_empty=False)
+            if latest_revisions.get(("return_point", snapshot["id"])) != snapshot:
+                raise JobsSchemaIncompatible("current return-point snapshot is inconsistent with its latest history")
 
     def list(self, editorial: Mapping[str, Any]) -> dict[str, Any]:
         mapping = _normalize_editorial(editorial)

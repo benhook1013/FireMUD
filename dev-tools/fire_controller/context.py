@@ -40,22 +40,26 @@ class ProjectContext:
         return self.database
 
     def validate_review_arguments(self, arguments):
-        for index, argument in enumerate(arguments):
-            option, separator, inline = argument.partition("=")
-            if option not in {"--database", "--repo", "--path"}:
-                continue
-            if separator:
-                value = inline
-            elif index + 1 < len(arguments):
-                value = arguments[index + 1]
-            else:
-                raise ValueError(f"{option} requires a value")
-            if option == "--database":
-                self.select_database(value)
-            elif option == "--repo" and value != self.repository:
-                raise ValueError("--repo does not match the selected project context")
-            elif option == "--path" and Path(value).expanduser().resolve() != self.database.with_suffix(".json"):
-                raise ValueError("review --path does not match the selected project's controller state path")
+        # Use the delegated parser's destinations, including accepted argparse
+        # abbreviations, so forwarding cannot evade project selection guards.
+        from pr_review.cli import _parser
+
+        try:
+            parsed = _parser().parse_args(arguments)
+        except SystemExit as error:
+            if error.code == 0:
+                raise
+            raise ValueError("invalid delegated review arguments") from error
+        supplied_database = getattr(parsed, "database", None)
+        if supplied_database is not None:
+            self.select_database(supplied_database)
+        supplied_repository = getattr(parsed, "repo", None)
+        if supplied_repository is not None and supplied_repository != self.repository:
+            raise ValueError("--repo does not match the selected project context")
+        for field in ("path", "state_path"):
+            value = getattr(parsed, field, None)
+            if value is not None and Path(value).expanduser().resolve() != self.database.with_suffix(".json"):
+                raise ValueError("review state path does not match the selected project's controller state path")
 
     @contextmanager
     def review_environment(self):

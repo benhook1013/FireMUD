@@ -120,6 +120,27 @@ class ControllerCliTest(unittest.TestCase):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 context.validate_review_arguments(arguments)
 
+    def test_review_parsed_options_enforce_context_for_abbreviations(self):
+        from fire_controller.cli import main
+        context = ProjectContext.load(self.contexts["alpha"])
+        other = self.root / "beta" / "state.sqlite3"
+        cases = [
+            ["records", "bootstrap", "--databas", str(other)],
+            ["state", "migrate-sqlite", "--pat=" + str(other.with_suffix(".json"))],
+            ["records", "sync-hosted", "--rep=example/beta"],
+            ["--state-pat", str(other.with_suffix(".json")), "status"],
+            ["status", "--root", str(self.root / "beta")],
+        ]
+        with patch("pr_review.cli.main") as engine, patch("subprocess.run") as external:
+            for arguments in cases:
+                with self.subTest(arguments=arguments):
+                    self.assertEqual(main(["--context", str(self.contexts["alpha"]), "reviews", *arguments]), 2)
+            engine.assert_not_called()
+            external.assert_not_called()
+        context.validate_review_arguments(["records", "bootstrap", "--databas", str(context.database)])
+        context.validate_review_arguments(["state", "status", "--pat", str(context.database.with_suffix(".json"))])
+        context.validate_review_arguments(["records", "sync-hosted", "--rep", context.repository])
+
     def test_review_engine_receives_selected_root_and_repository(self):
         from fire_controller.cli import main
         selected = ProjectContext.load(self.contexts["alpha"])
