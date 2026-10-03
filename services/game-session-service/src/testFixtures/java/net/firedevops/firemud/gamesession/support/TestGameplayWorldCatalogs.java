@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.support;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -139,6 +140,12 @@ public final class TestGameplayWorldCatalogs {
         pointer.playableStateNamespaceId());
   }
 
+  private static UUID stableId(String kind, long tenantId, String worldSlug, String realmSlug) {
+    return UUID.nameUUIDFromBytes(
+        ("firemud-test-catalog:" + kind + ":" + tenantId + ":" + worldSlug + ":" + realmSlug)
+            .getBytes(StandardCharsets.UTF_8));
+  }
+
   private static List<GameplayWorldCatalog.WorldView> toWorldViews(
       List<GameplayCatalogProperties.World> worlds) {
     if (worlds == null) {
@@ -156,14 +163,15 @@ public final class TestGameplayWorldCatalogs {
     if (input.getRealms() != null) {
       for (GameplayCatalogProperties.Realm realm : input.getRealms()) {
         if (realm != null) {
-          realms.add(toRealmView(realm));
+          realms.add(toRealmView(input.getSlug(), realm));
         }
       }
     }
     return new GameplayWorldCatalog.WorldView(input.getSlug(), input.getDisplayName(), realms);
   }
 
-  private static GameplayWorldCatalog.RealmView toRealmView(GameplayCatalogProperties.Realm input) {
+  private static GameplayWorldCatalog.RealmView toRealmView(
+      String worldSlug, GameplayCatalogProperties.Realm input) {
     String stateScope =
         input.getStateScope() == null ? "UNSPECIFIED" : input.getStateScope().name();
     String characterCreationPolicy =
@@ -180,6 +188,20 @@ public final class TestGameplayWorldCatalogs {
         input.isPublicProductionRealm(),
         input.isRequiresCharacterSelection(),
         stateScope,
-        characterCreationPolicy);
+        characterCreationPolicy,
+        1L,
+        stableId("realm", input.getTenantId(), worldSlug, input.getSlug()),
+        namespaceId(stateScope, input.getTenantId(), worldSlug, input.getSlug()));
+  }
+
+  private static UUID namespaceId(
+      String stateScope, long tenantId, String worldSlug, String realmSlug) {
+    String identity =
+        switch (stateScope) {
+          case "SHARED" -> "shared-tenant:" + tenantId;
+          case "ISOLATED" -> "isolated-realm:" + tenantId + ":" + worldSlug + ":" + realmSlug;
+          default -> "unresolved-realm:" + tenantId + ":" + worldSlug + ":" + realmSlug;
+        };
+    return UUID.nameUUIDFromBytes(("test-namespace:" + identity).getBytes(StandardCharsets.UTF_8));
   }
 }

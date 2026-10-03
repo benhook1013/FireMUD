@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -22,6 +23,7 @@ import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.common.config.FiremudCommandHistoryProperties;
@@ -66,6 +68,7 @@ import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
+import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
 import net.firedevops.firemud.gamesession.service.FirstPartyConnectContextRegistry;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
@@ -167,6 +170,15 @@ class TextCommandInterpreterTest {
                 .setAuthToken("auth-token")
                 .setAccountId("123")
                 .build());
+    when(accountClient.issueDirectTextConnectScope(Mockito.any(), Mockito.any()))
+        .thenReturn(
+            IssueDirectTextConnectScopeResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("AUTH_UNAVAILABLE")
+                        .setMessage("scope authority unavailable")
+                        .build())
+                .build());
     when(accountClient.getTenantMembershipForRuntime(
             Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(
@@ -176,7 +188,9 @@ class TextCommandInterpreterTest {
                 .setMembershipExists(true)
                 .setGameplayAdmissionAllowed(true)
                 .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setMembershipLifecycleState("ACTIVE")
+                .setMembershipAuthorityGeneration(1L)
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(accountClient.getRealmAccessGrantForRuntime(
             Mockito.anyString(),
@@ -195,9 +209,10 @@ class TextCommandInterpreterTest {
             GetTenantEntitlementsForRuntimeResponse.newBuilder()
                 .setTenantId("22")
                 .setGameplayAvailable(true)
+                .setAllowPublicJoin(true)
                 .setEntitlementVersion(1L)
                 .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
+                .setEvaluatedAt(Instant.now().toString())
                 .build());
     when(gameLogicClient.queryInventory(Mockito.any(SessionContext.class)))
         .thenReturn(
@@ -368,6 +383,8 @@ class TextCommandInterpreterTest {
             pointerAuthorityService,
             gameplayPresenceLifecycleService,
             meterRegistry);
+    DirectTextConnectScopeSessionStore connectScopeSessionStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
     PlayCommandHandler playHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -381,7 +398,8 @@ class TextCommandInterpreterTest {
             firstPartyConnectContextRegistry,
             gameplayPresenceLifecycleService,
             scriptEventPublisher,
-            meterRegistry);
+            meterRegistry,
+            connectScopeSessionStore);
     AfkCommandHandler afkHandler =
         new AfkCommandHandler(sessionAuthenticationService, gameplayPresenceService);
     WhoCommandHandler whoHandler =
@@ -418,7 +436,8 @@ class TextCommandInterpreterTest {
                         .build())
                 .build());
     WorldsCommandHandler worldsHandler =
-        new WorldsCommandHandler(worldCatalog, entityManagementClient);
+        new WorldsCommandHandler(
+            worldCatalog, entityManagementClient, accountClient, connectScopeSessionStore);
 
     LookResult lookResult =
         LookResult.newBuilder()
@@ -469,14 +488,7 @@ class TextCommandInterpreterTest {
             commandService,
             lookHandler,
             loginHandler,
-            new LogoutCommandHandler(
-                sessionAuthenticationService,
-                sessionContextService,
-                gameInstanceService,
-                pointerAuthorityService,
-                gameplayPresenceLifecycleService,
-                firstPartyConnectContextRegistry,
-                scriptEventPublisher),
+            new LogoutCommandHandler(sessionContextService),
             playHandler,
             moveHandler,
             afkHandler,
@@ -525,15 +537,52 @@ class TextCommandInterpreterTest {
   }
 
   @Test
-  void realmsAreVisibleAfterLogin() {
+  void logoutAliasDispatchesBeforeStaleBindingNormalization() {
+    SessionContext staleBinding =
+        new SessionContext(
+            1L,
+            22L,
+            123L,
+            "demo@example.com",
+            7001L,
+            "Emberline",
+            1L,
+            "R-1021",
+            "jwt-token",
+            null,
+            1L,
+            "demo",
+            "production",
+            1L,
+            "SHARED");
+    sessionContextService.save(staleBinding);
+    gameplayPresenceService.registerConnected(staleBinding);
+    when(pointerAuthorityService.listByRuntimeTarget(22L, 1L)).thenReturn(List.of());
+    Mockito.clearInvocations(pointerAuthorityService);
+
+    TextCommandInterpretationResult result = interpreter.interpret("1", "QUIT", false);
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("LOGOUT_UNAVAILABLE");
+    assertThat(sessionContextService.findBySessionId(1L)).hasValue(staleBinding);
+    assertThat(gameplayPresenceService.findConnectedBySessionId(1L))
+        .hasValueSatisfying(
+            presence -> {
+              assertThat(presence.accountId()).isEqualTo(staleBinding.accountId());
+              assertThat(presence.gameInstanceId()).isEqualTo(staleBinding.gameInstanceId());
+            });
+    Mockito.verify(pointerAuthorityService, never()).listByRuntimeTarget(22L, 1L);
+  }
+
+  @Test
+  void realmsBrowseFailsClosedWhenScopeAuthorityIsUnavailable() {
     interpreter.interpret("1", "LOGIN demo@example.com swordfish", false);
 
     TextCommandInterpretationResult interpretation =
         interpreter.interpret("1", "REALMS demo", false);
 
-    assertTrue(interpretation.commandResult().accepted());
-    assertTrue(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
-    assertTrue(renderedResponse("REALMS demo", interpretation).contains("[shared, allow_new]"));
+    assertFalse(interpretation.commandResult().accepted());
+    assertEquals("AUTH_UNAVAILABLE", interpretation.commandResult().errorCode());
+    assertFalse(renderedResponse("REALMS demo", interpretation).contains("Live Realm"));
   }
 
   @Test

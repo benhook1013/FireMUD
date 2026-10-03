@@ -400,7 +400,7 @@ required_live_check_vocabulary:
   - security_lock_export_action_family
 implementation_status:
   known_drift:
-    - Account_explicit_public_production_JOIN_writer_is_implemented_locally_but_Game_Session_text_dispatch_and_direct_text_end_to_end_proof_remain_unavailable; first_party_Join_and_Play_remains_unimplemented; Account_runtime_membership_response_exposes_membershipLifecycleState_and_membershipAuthorityGeneration_but_current_PLAY_consumer_still_uses_membershipExists_gameplayAdmissionAllowed_membershipVersion_and_evaluatedAt_without_consuming_the_new_fields; current_PLAY_returns_JOIN_REQUIRED_for_missing_or_existing_non_admitting_public_production_membership; current_PLAY_returns_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_reread_remains_unimplemented
+    - direct_text_explicit_public_production_JOIN_is_implemented_locally; first_party_Join_and_Play_remains_unimplemented; Account_runtime_membership_response_exposes_membershipLifecycleState_and_membershipAuthorityGeneration_and_current_PLAY_consumer_validates_membershipLifecycleState_membershipAuthorityGeneration_membershipVersion_and_evaluatedAt; current_PLAY_returns_JOIN_REQUIRED_for_missing_or_INACTIVE_public_production_membership_only_after_fresh_entitlement_and_allowPublicJoin_checks; ACTIVE_non_admitting_membership_is_denied_without_JOIN_advice; current_PLAY_returns_WORLD_ACCESS_DENIED_for_missing_non_public_membership; connect_token_issuance_requires_existing_membership_and_never_creates_it; connect_token_membership_authority_generation_reread_remains_unimplemented
     - protected_cookie_ws_game_and_bootstrap_bare_LOGIN_are_implemented_but_non_promotable_until_Gateway_carrier_requirements_replay_marker_durability_replay_quarantine_continuity_and_Account_planned_rotation_compromise_cutover_evidence_are_complete
     - privileged_control_is_target_only_and_unavailable_in_current_runtime; platformAdmin_and_cross_tenant_billingAdmin_branches_requiring_it_fail_closed_while_the_support_branch_does_not_require_it
     - operator_mutation_rows_are_normative_target_contracts_not_current_availability; action_schema_mutationDigest_v1_vectors_and_account_issued_authorization_reference_flow_are_required_before_external_support
@@ -1167,7 +1167,6 @@ routes:
       any_of: [JOIN_REQUIRED, PUBLIC_PRODUCTION_ADMISSION_DENIED, NON_PUBLIC_ENROLLMENT_REQUIRED, REALM_ACCESS_DENIED, WORLD_ACCESS_DENIED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
   - service: game-session-service
     route: JOIN
-    route_status: target_not_currently_routable
     scope: tenant
     classification: public_production_onboarding
     auth_path: game_session_authenticated_context
@@ -1180,9 +1179,15 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, TENANT_BILLING_BLOCKED]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, MEMBERSHIP_RECONCILIATION_REQUIRED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
     mutation_contract: explicit_public_membership_atomic
     membership_creation: caller_bound_after_validation
+    implementation_status:
+      known_drift:
+        - membership_authority_generation_snapshot_and_consumer_proof_remains_target_only
+        - join_unknown_database_outcome_recovery_and_reconciliation_remains_target_only
+        - join_audit_receipt_retention_and_safe_watermark_proof_remains_target_only
+        - postgresql_runtime_and_direct_text_end_to_end_proof_unavailable
   - service: game-session-service
     route: PLAY
     scope: tenant
@@ -1933,7 +1938,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED, IDEMPOTENCY_CONFLICT, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, AUTH_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, ENTITLEMENT_UNAVAILABLE, IDEMPOTENCY_CONFLICT, MEMBERSHIP_RECONCILIATION_REQUIRED, TENANT_BILLING_BLOCKED]
     mutation_contract: explicit_public_membership_atomic
     membership_creation: caller_bound_after_validation
     route_status: target_not_currently_routable
@@ -1993,7 +1998,7 @@ routes:
     membership_authority_generation_applies: false
     required_live_checks: [account_state_bootstrap_eligible, pending_deletion_state, public_production_visibility, public_production_admission, runtime_entitlements, admission_pointer, connect_scope_match, idempotency]
     canonical_errors:
-      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_MISMATCH, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
+      any_of: [PUBLIC_PRODUCTION_ADMISSION_DENIED, ADMISSION_POINTER_UNAVAILABLE, CONNECT_SCOPE_INVALID, CONNECT_SCOPE_MISMATCH, MEMBERSHIP_RECONCILIATION_REQUIRED, TENANT_BILLING_BLOCKED, ENTITLEMENT_UNAVAILABLE, AUTH_UNAVAILABLE, IDEMPOTENCY_CONFLICT]
     mutation_contract: explicit_public_membership_atomic
     exact_scope_revalidation:
       required: true

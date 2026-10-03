@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.Map;
 import net.firedevops.firemud.cache.ScreenBufferService;
+import net.firedevops.firemud.common.gameplay.GameplayCatalogProperties;
 import net.firedevops.firemud.gamesession.command.text.AdmittedTextCommandRegistryResolver;
 import net.firedevops.firemud.gamesession.command.text.TextCommand;
 import net.firedevops.firemud.gamesession.command.text.TextCommandActionCategory;
@@ -30,9 +31,12 @@ import net.firedevops.firemud.gamesession.presentation.InventoryViewOutput;
 import net.firedevops.firemud.gamesession.presentation.ItemMutationResultOutput;
 import net.firedevops.firemud.gamesession.presentation.LookViewOutput;
 import net.firedevops.firemud.gamesession.presentation.PlayerOutput;
+import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WhoViewOutput;
+import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.SessionContext;
+import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.socket.WebSocketSession;
 
@@ -112,6 +116,78 @@ class WebSocketOutputProjectorTest {
     assertThat(json.path("outputs").get(0).path("payloadType").asText()).isEqualTo("prompt");
     assertThat(json.path("outputs").get(0).path("payload").path("text").asText())
         .isEqualTo("demo> ");
+  }
+
+  @Test
+  void firstPartyRealmsCommandDoesNotExposeRuntimeTargetOrEnterReplayBuffer() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    RealmBrowseViewOutput realms =
+        TestGameplayWorldCatalogs.fromProperties(new GameplayCatalogProperties())
+            .browseRealms("sandbox")
+            .orElseThrow();
+    PlayerOutput output = PlayerOutput.view(realms);
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(TextCommandType.REALMS, List.of("sandbox"), "REALMS sandbox"),
+            new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of(output)),
+            List.of(output),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    JsonNode outputJson = json.path("outputs").get(0);
+    JsonNode realmJson = outputJson.path("payload").path("realms").get(0);
+    assertThat(json.path("eventType").asText()).isEqualTo("command_result");
+    assertThat(json.path("commandType").asText()).isEqualTo("REALMS");
+    assertThat(json.path("accepted").asBoolean()).isTrue();
+    assertThat(outputJson.path("payloadType").asText()).isEqualTo("realms_view");
+    assertThat(outputJson.path("replayPolicy").asText()).isEqualTo("NO_REPLAY");
+    assertThat(realmJson.path("ordinal").asInt()).isEqualTo(1);
+    assertThat(realmJson.path("realmSlug").asText()).isEqualTo("production");
+    assertThat(realmJson.path("displayName").asText()).isEqualTo("Live Realm");
+    assertThat(realmJson.path("requiresCharacterSelection").asBoolean()).isTrue();
+    assertThat(realmJson.path("stateScope").asText()).isEqualTo("SHARED");
+    assertThat(realmJson.path("characterCreationPolicy").asText()).isEqualTo("ALLOW_NEW");
+    assertThat(realmJson.has("gameInstanceId")).isFalse();
+    assertThat(output.screenBufferEligible()).isFalse();
+  }
+
+  @Test
+  void firstPartyWorldsCommandDoesNotExposeRuntimeTarget() throws Exception {
+    WebSocketSession session = mock(WebSocketSession.class);
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR, "first_party_web"));
+    GameplayCatalogProperties catalog = new GameplayCatalogProperties();
+    catalog.setWorlds(List.of(catalog.getWorlds().getFirst()));
+    WorldsViewOutput worlds = TestGameplayWorldCatalogs.fromProperties(catalog).browseView();
+    PlayerOutput output = PlayerOutput.view(worlds);
+
+    String payload =
+        projector.projectCommandResponse(
+            session,
+            new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
+            new TextCommandInterpretationResult(CommandEnqueueResult.success(), List.of(output)),
+            List.of(output),
+            "en-NZ",
+            presentation);
+
+    JsonNode json = objectMapper.readTree(payload);
+    JsonNode outputJson = json.path("outputs").get(0);
+    JsonNode worldJson = outputJson.path("payload").path("worlds").get(0);
+    assertThat(json.path("commandType").asText()).isEqualTo("WORLDS");
+    assertThat(outputJson.path("payloadType").asText()).isEqualTo("worlds_view");
+    assertThat(worldJson.path("ordinal").asInt()).isEqualTo(1);
+    assertThat(worldJson.path("slug").asText()).isEqualTo("demo");
+    assertThat(worldJson.path("displayName").asText()).isEqualTo("Demo World");
+    assertThat(worldJson.has("gameInstanceId")).isFalse();
   }
 
   @Test

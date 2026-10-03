@@ -3,7 +3,6 @@ package net.firedevops.firemud.gamesession.websocket;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.argThat;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.never;
@@ -75,7 +74,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
-import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -260,32 +258,44 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setAuthToken("stub-token")
                 .setAccountId("123")
                 .build());
-    org.mockito.Mockito.doReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build())
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                GetTenantMembershipForRuntimeResponse.newBuilder()
+                    .setAccountId("123")
+                    .setTenantId("22")
+                    .setMembershipExists(true)
+                    .setMembershipLifecycleState("ACTIVE")
+                    .setGameplayAdmissionAllowed(true)
+                    .setMembershipVersion(1L)
+                    .setMembershipAuthorityGeneration(1L)
+                    .setEvaluatedAt(java.time.Instant.now().toString())
+                    .build())
         .when(accountClient)
         .getTenantMembershipForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
-    org.mockito.Mockito.doReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build())
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                    .setTenantId("22")
+                    .setGameplayAvailable(true)
+                    .setEntitlementVersion(1L)
+                    .setTenantBillingSequence(1L)
+                    .setEvaluatedAt(java.time.Instant.now().toString())
+                    .build())
         .when(accountClient)
         .getTenantEntitlementsForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse.newBuilder()
+                    .setConnectScopeId("scope-" + java.util.UUID.randomUUID())
+                    .setConnectScopeExpiresAt(java.time.Instant.now().plusSeconds(300).toString())
+                    .build())
+        .when(accountClient)
+        .issueDirectTextConnectScope(any(), any());
     org.mockito.Mockito.doReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(
@@ -596,22 +606,20 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketLogoutRetainsReplayStateAndClosesTransport() throws Exception {
-    GameplayWebSocketDriver.CloseEvent closeEvent;
+  void websocketLogoutFailsClosedWithoutDeletingSessionOrClosingTransport() throws Exception {
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("41")) {
       client.send("LOGOUT");
-      closeEvent = client.awaitClosed();
+      client.awaitContains("LOGOUT_UNAVAILABLE");
+      assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
+      assertThat(client.responses()).noneMatch(payload -> payload.contains("OK LOGOUT"));
     }
 
-    assertThat(closeEvent.statusCode()).isEqualTo(CloseStatus.NORMAL.getCode());
-    assertThat(closeEvent.reason()).isEqualTo("logout");
-    assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isEmpty();
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
     verify(commandService, never()).enqueue("41", "LOGOUT", false);
   }
 
   @Test
-  void freshLoginAfterLogoutDoesNotReplayStaleReconnectBuffer() throws Exception {
+  void freshReconnectAfterRejectedLogoutDoesNotReplayStaleBuffer() throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -636,7 +644,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void unexpectedDisconnectKeepsReplayEligibleForFreshReconnect() throws Exception {
+  void unexpectedDisconnectKeepsFreshReconnectLookButDoesNotReplayPrivateContext()
+      throws Exception {
     clearInvocations(screenBufferService);
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
@@ -657,16 +666,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
-      client.awaitContains("RECONNECT REPLAY APPEARS");
+      client.awaitContains("Room: Login Hall");
       secondPayloads = client.responses();
       GameplayAsyncAssertions.assertPresenceCountEventually(
           gameplayPresenceService, 22L, 1L, 1, java.time.Duration.ofSeconds(5));
       assertThat(gameplayPresenceService.listConnectedByGameInstance(22L, 1L))
           .anySatisfy(presence -> assertThat(presence.sessionId()).isEqualTo(42L));
     }
-    assertThat(secondPayloads).anyMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
+    assertThat(secondPayloads).noneMatch(payload -> payload.contains("RECONNECT REPLAY APPEARS"));
     assertThat(secondPayloads).anyMatch(payload -> payload.startsWith("OK PLAY"));
-    verify(screenBufferService, atLeastOnce()).get(22L, 1L, 123L);
+    assertThat(secondPayloads).anyMatch(payload -> payload.contains("Room: Login Hall"));
+    verify(screenBufferService, never()).get(22L, 1L, 123L);
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
   }
 
@@ -1010,7 +1020,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
   }
 
   @Test
-  void websocketFirstPartyReconnectReplaysBufferedScreenAndFreshLookAfterPlay() throws Exception {
+  void websocketFirstPartyReconnectSkipsPrivateContextAndKeepsFreshLookAfterPlay()
+      throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -1031,11 +1042,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
-      client.awaitMatching(
-          payload ->
-              "transcript_chunk".equals(json(payload).path("eventType").asText())
-                  && payload.contains("Recent combat line"),
-          "replayed transcript chunk");
       client.awaitMatching(
           payload ->
               "player_output".equals(json(payload).path("eventType").asText())
@@ -1059,10 +1065,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 GameplayStructuredCommandAssertions.isStructuredCommand(
                     payload, "PLAY", "play", "META", "SESSION"));
     assertThat(payloads)
-        .anyMatch(
+        .noneMatch(
             payload ->
-                "transcript_chunk".equals(json(payload).path("eventType").asText())
-                    && payload.contains("Recent combat line"));
+                ("transcript_chunk".equals(json(payload).path("eventType").asText())
+                        || "transcript_entry".equals(json(payload).path("eventType").asText()))
+                    && (payload.contains("Recent combat line")
+                        || payload.contains("Second recent line")));
     assertThat(payloads)
         .anyMatch(
             payload ->
@@ -1073,10 +1081,11 @@ class GameSessionWebSocketHandlerIntegrationTest {
             payload ->
                 "player_output".equals(json(payload).path("eventType").asText())
                     && containsKind(json(payload), "PROMPT"));
+    verify(screenBufferService, never()).get(22L, 1L, 123L);
   }
 
   @Test
-  void websocketFirstPartyLogoutRetainsReplayStateForFreshReconnect() throws Exception {
+  void websocketFirstPartyLogoutDoesNotReplayRetainedContextForFreshReconnect() throws Exception {
     when(screenBufferService.get(eq(22L), eq(1L), eq(123L)))
         .thenReturn(
             Optional.of(
@@ -1087,7 +1096,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                     1,
                     44L)));
 
-    GameplayWebSocketDriver.CloseEvent firstCloseEvent;
     try (GameplayWebSocketDriver client =
         openFirstPartyDriver("1", firstPartyClaims("demo", "production", "1", "1", "logout-1"))) {
       client.send("LOGIN");
@@ -1097,10 +1105,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
       client.send("LOGOUT");
-      firstCloseEvent = client.awaitClosed();
+      client.awaitMatching(
+          payload ->
+              isStructuredCommand(payload, "LOGOUT")
+                  && "LOGOUT_UNAVAILABLE".equals(json(payload).path("errorCode").asText()),
+          "fail-closed LOGOUT result");
+      assertThat(sessionContextService.findByTenantAndSessionId(22L, 1L)).isPresent();
     }
 
-    assertThat(firstCloseEvent.reason()).isEqualTo("logout");
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
@@ -1115,16 +1127,28 @@ class GameSessionWebSocketHandlerIntegrationTest {
       client.send("PLAY demo Emberline");
       client.awaitMatching(
           payload -> isStructuredCommand(payload, "PLAY"), "structured PLAY result");
+      client.awaitMatching(
+          payload ->
+              "player_output".equals(json(payload).path("eventType").asText())
+                  && containsKind(json(payload), "VIEW"),
+          "fresh current view");
       secondPayloads = client.responses();
     }
 
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "LOGIN"));
     assertThat(secondPayloads).anyMatch(payload -> isStructuredCommand(payload, "PLAY"));
     assertThat(secondPayloads)
+        .noneMatch(
+            payload ->
+                ("transcript_chunk".equals(json(payload).path("eventType").asText())
+                        || "transcript_entry".equals(json(payload).path("eventType").asText()))
+                    && payload.contains("First-party replay"));
+    assertThat(secondPayloads)
         .anyMatch(
             payload ->
-                "transcript_chunk".equals(json(payload).path("eventType").asText())
-                    && payload.contains("First-party replay"));
+                "player_output".equals(json(payload).path("eventType").asText())
+                    && containsKind(json(payload), "VIEW"));
+    verify(screenBufferService, never()).get(22L, 1L, 123L);
   }
 
   @Test
@@ -1657,8 +1681,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
   private void performLogoutFlow(String sessionId) throws Exception {
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver(sessionId)) {
       client.send("LOGOUT");
-      GameplayWebSocketDriver.CloseEvent closeEvent = client.awaitClosed();
-      assertThat(closeEvent.reason()).isEqualTo("logout");
+      client.awaitContains("LOGOUT_UNAVAILABLE");
     }
   }
 

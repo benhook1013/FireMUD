@@ -26,6 +26,9 @@ class HelpCommandHandlerTest {
     assertTrue(result.outputs().get(0).text().contains("HELP MOVEMENT"));
     assertTrue(result.outputs().get(0).text().contains("HELP SAY"));
     assertTrue(result.outputs().get(0).text().contains("HELP WHO"));
+    assertTrue(result.outputs().get(0).text().contains("HELP REALMS"));
+    assertTrue(result.outputs().get(0).text().contains("HELP JOIN"));
+    assertTrue(result.outputs().get(0).text().contains("HELP CHARS"));
     assertTrue(result.outputs().get(0).text().contains("HELP INVENTORY"));
     assertTrue(result.outputs().get(0).text().contains("HELP EQUIPMENT"));
   }
@@ -45,6 +48,41 @@ class HelpCommandHandlerTest {
             .contains("List currently connected players in this game instance."));
     assertTrue(result.outputs().get(0).text().contains("Gods appear first, then players."));
     assertTrue(result.outputs().get(0).text().contains("You must already be in-world with PLAY."));
+  }
+
+  @Test
+  void characterHelpUsesNamesRatherThanUnsupportedListNumbers() {
+    for (String topic : List.of("CHARS", "PLAY")) {
+      TextCommandInterpretationResult result =
+          handler.handle(new TextCommand(TextCommandType.HELP, List.of(topic), "HELP " + topic));
+
+      assertTrue(result.commandResult().accepted());
+      assertTrue(result.outputs().get(0).text().contains("character name"));
+      assertTrue(result.outputs().get(0).text().contains("list number"));
+    }
+  }
+
+  @Test
+  void helpJoinExplainsTheExplicitPublicMembershipStep() {
+    TextCommandInterpretationResult result =
+        handler.handle(new TextCommand(TextCommandType.HELP, List.of("join"), "HELP join"));
+
+    assertTrue(result.commandResult().accepted());
+    assertTrue(result.outputs().get(0).text().contains("JOIN <world>"));
+    assertTrue(result.outputs().get(0).text().contains("public-production membership"));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("Use REALMS <world> first, then JOIN to confirm membership."));
+    assertTrue(
+        result
+            .outputs()
+            .get(0)
+            .text()
+            .contains("Character browsing and gameplay entry are currently unavailable."));
+    assertFalse(result.outputs().get(0).text().contains("CHARS and PLAY"));
   }
 
   @Test

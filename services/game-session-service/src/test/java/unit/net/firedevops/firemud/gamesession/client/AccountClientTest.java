@@ -5,7 +5,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,8 +17,13 @@ import io.grpc.Status;
 import io.grpc.StatusRuntimeException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.account.v1.AuthenticateRequest;
@@ -27,6 +34,10 @@ import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeRequest;
+import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipRequest;
+import net.firedevops.firemud.account.v1.JoinPublicProductionMembershipResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -34,12 +45,345 @@ import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class AccountClientTest {
+  private static final Instant JOIN_TEST_NOW = Instant.parse("2026-10-02T00:00:00Z");
+
+  @Test
+  void directTextScopeRequestCarriesTypedCallerAndCompleteServerResolvedTarget() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    IssueDirectTextConnectScopeResponse expected =
+        IssueDirectTextConnectScopeResponse.newBuilder()
+            .setConnectScopeId("account-issued-scope")
+            .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+            .build();
+    when(stub.issueDirectTextConnectScope(any(IssueDirectTextConnectScopeRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = newClient(stub);
+    PlayerExecutionContext context = directTextContext("request-unused");
+    DirectTextConnectScopeTarget target =
+        new DirectTextConnectScopeTarget(
+            "22",
+            "demo-world",
+            "production",
+            "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
+            "42d234a2-7487-4dda-a7e5-a3831214328e",
+            "SHARED",
+            "9",
+            7L,
+            4L);
+
+    IssueDirectTextConnectScopeResponse actual =
+        client.issueDirectTextConnectScope(context, target);
+
+    assertThat(actual).isEqualTo(expected);
+    ArgumentCaptor<IssueDirectTextConnectScopeRequest> captor =
+        ArgumentCaptor.forClass(IssueDirectTextConnectScopeRequest.class);
+    verify(stub).issueDirectTextConnectScope(captor.capture());
+    assertThat(captor.getValue().getPlayerContext().getAccountId()).isEqualTo("41");
+    assertThat(captor.getValue().getPlayerContext().getSessionId()).isEqualTo("7");
+    assertThat(captor.getValue().getTenantId()).isEqualTo("22");
+    assertThat(captor.getValue().getWorldSlug()).isEqualTo("demo-world");
+    assertThat(captor.getValue().getRealmId()).isEqualTo(target.realmId());
+    assertThat(captor.getValue().getPlayableStateNamespaceId())
+        .isEqualTo(target.playableStateNamespaceId());
+    assertThat(captor.getValue().getPlayableStateScope()).isEqualTo("SHARED");
+    assertThat(captor.getValue().getGameInstanceId()).isEqualTo("9");
+    assertThat(captor.getValue().getCatalogRevision()).isEqualTo(7L);
+    assertThat(captor.getValue().getPointerVersion()).isEqualTo(4L);
+  }
+
+  @ParameterizedTest
+  @EnumSource(Status.Code.class)
+  void directTextScopeNormalizesEveryGrpcTransportStatusToAuthUnavailable(Status.Code statusCode)
+      throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.issueDirectTextConnectScope(any(IssueDirectTextConnectScopeRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.fromCode(statusCode)));
+    AccountClient client = newClient(stub);
+    DirectTextConnectScopeTarget target =
+        new DirectTextConnectScopeTarget(
+            "22",
+            "demo-world",
+            "production",
+            "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
+            "42d234a2-7487-4dda-a7e5-a3831214328e",
+            "SHARED",
+            "9",
+            7L,
+            4L);
+
+    IssueDirectTextConnectScopeResponse response =
+        client.issueDirectTextConnectScope(directTextContext("request-unused"), target);
+
+    assertThat(response.hasError()).isTrue();
+    assertThat(response.getError().getCode()).isEqualTo("AUTH_UNAVAILABLE");
+  }
+
+  @Test
+  void directTextScopePreservesCanonicalApplicationErrorCode() throws Exception {
+    AccountServiceGrpc.AccountServiceBlockingStub stub =
+        mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    IssueDirectTextConnectScopeResponse expected =
+        IssueDirectTextConnectScopeResponse.newBuilder()
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("CONNECT_SCOPE_MISMATCH")
+                    .setMessage("The selected scope no longer matches the target."))
+            .build();
+    when(stub.issueDirectTextConnectScope(any(IssueDirectTextConnectScopeRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = newClient(stub);
+    DirectTextConnectScopeTarget target =
+        new DirectTextConnectScopeTarget(
+            "22",
+            "demo-world",
+            "production",
+            "4c4b57d8-e3a2-48fe-9977-e7df0fdce901",
+            "42d234a2-7487-4dda-a7e5-a3831214328e",
+            "SHARED",
+            "9",
+            7L,
+            4L);
+
+    IssueDirectTextConnectScopeResponse response =
+        client.issueDirectTextConnectScope(directTextContext("request-unused"), target);
+
+    assertThat(response).isEqualTo(expected);
+    assertThat(response.getError().getCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+  }
+
+  @Test
+  void directTextJoinRetryReusesExactContextScopeAndRequestId() throws Exception {
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    JoinPublicProductionMembershipResponse expected =
+        JoinPublicProductionMembershipResponse.newBuilder()
+            .setSuccess(true)
+            .setOutcomeCode("CREATED")
+            .build();
+    when(fixture
+            .retryStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenReturn(expected);
+    AccountClient client = fixture.client();
+    PlayerExecutionContext context = directTextContext("join-request-1");
+    Instant expiresAt = JOIN_TEST_NOW.plusSeconds(60);
+
+    JoinPublicProductionMembershipResponse actual =
+        client.joinPublicProductionMembership(
+            context, "account-issued-scope", "join-request-1", expiresAt);
+
+    assertThat(actual).isEqualTo(expected);
+    ArgumentCaptor<JoinPublicProductionMembershipRequest> firstCaptor =
+        ArgumentCaptor.forClass(JoinPublicProductionMembershipRequest.class);
+    ArgumentCaptor<JoinPublicProductionMembershipRequest> retryCaptor =
+        ArgumentCaptor.forClass(JoinPublicProductionMembershipRequest.class);
+    verify(fixture.initialStub()).joinPublicProductionMembership(firstCaptor.capture());
+    verify(fixture.retryStub()).joinPublicProductionMembership(retryCaptor.capture());
+    assertThat(firstCaptor.getValue()).isEqualTo(retryCaptor.getValue());
+    assertThat(retryCaptor.getValue().getConnectScopeId()).isEqualTo("account-issued-scope");
+    assertThat(retryCaptor.getValue().getRequestId()).isEqualTo("join-request-1");
+    assertThat(retryCaptor.getValue().getPlayerContext().getRequestId())
+        .isEqualTo("join-request-1");
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = Status.Code.class,
+      mode = EnumSource.Mode.EXCLUDE,
+      names = {"OK", "UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void directTextJoinMapsTerminalTransportStatusesToBoundedFailureWithoutRetry(
+      Status.Code statusCode) throws Exception {
+    RetryFixture fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    String upstreamDescription = "private account-service detail";
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenThrow(
+            new StatusRuntimeException(
+                Status.fromCode(statusCode).withDescription(upstreamDescription)));
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                JOIN_TEST_NOW.plusSeconds(60));
+
+    assertThat(response.getOutcomeCode()).isEqualTo("JOIN_FAILED");
+    assertThat(response.getError().getCode()).isEqualTo("JOIN_FAILED");
+    assertThat(response.getError().getMessage()).isEqualTo("Account JOIN request failed");
+    assertThat(response.getError().getMessage()).doesNotContain(upstreamDescription);
+    verify(fixture.initialStub())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void directTextJoinPreservesTypedAccountApplicationResponse() throws Exception {
+    RetryFixture fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    JoinPublicProductionMembershipResponse expected =
+        JoinPublicProductionMembershipResponse.newBuilder()
+            .setSuccess(false)
+            .setOutcomeCode("JOIN_NOT_ELIGIBLE")
+            .setAccountId("41")
+            .setTenantId("22")
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("JOIN_NOT_ELIGIBLE")
+                    .setMessage("This account cannot join the selected world."))
+            .build();
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenReturn(expected);
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                JOIN_TEST_NOW.plusSeconds(60));
+
+    assertThat(response).isEqualTo(expected);
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void directTextJoinDoesNotDispatchForMissingExpiredOrBoundaryScope() throws Exception {
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
+    Instant[] invalidExpiries = {null, JOIN_TEST_NOW.minusNanos(1), JOIN_TEST_NOW};
+
+    for (Instant expiresAt : invalidExpiries) {
+      JoinPublicProductionMembershipResponse response =
+          fixture
+              .client()
+              .joinPublicProductionMembership(
+                  directTextContext("join-request-1"),
+                  "account-issued-scope",
+                  "join-request-1",
+                  expiresAt);
+
+      assertThat(response.getOutcomeCode()).isEqualTo("CONNECT_SCOPE_INVALID");
+      assertThat(response.getError().getCode()).isEqualTo("CONNECT_SCOPE_INVALID");
+    }
+
+    verify(fixture.initialStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void directTextJoinDoesNotRetryWhenAmbiguousResponseReachesScopeExpiry(String statusName)
+      throws Exception {
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
+    Instant expiresAt = JOIN_TEST_NOW.plusSeconds(1);
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              clock.set(expiresAt);
+              throw new StatusRuntimeException(Status.fromCode(Status.Code.valueOf(statusName)));
+            });
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                expiresAt);
+
+    assertThat(response.getOutcomeCode()).isEqualTo("AUTH_UNAVAILABLE");
+    verify(fixture.initialStub())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void directTextJoinRechecksExpiryAfterChannelReloadBeforeRetry() throws Exception {
+    TestClock clock = new TestClock(JOIN_TEST_NOW);
+    RetryFixture fixture = newRetryFixture(clock);
+    Instant expiresAt = JOIN_TEST_NOW.plusSeconds(1);
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
+    doAnswer(
+            invocation -> {
+              clock.set(expiresAt);
+              return mock(ManagedChannel.class);
+            })
+        .when(fixture.channelFactory())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                expiresAt);
+
+    assertThat(response.getOutcomeCode()).isEqualTo("AUTH_UNAVAILABLE");
+    verify(fixture.initialStub())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+  }
+
+  private static PlayerExecutionContext directTextContext(String requestId) {
+    return PlayerExecutionContext.newBuilder()
+        .setAccountId("41")
+        .setSessionId("7")
+        .setTenantId("22")
+        .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
+        .setPlayableStateNamespaceId("42d234a2-7487-4dda-a7e5-a3831214328e")
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId("9")
+        .setRequestId(requestId)
+        .build();
+  }
 
   @Test
   void authenticateReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
@@ -439,7 +783,8 @@ class AccountClientTest {
   private static AccountClient newClientWithRetryStub(
       AccountServiceGrpc.AccountServiceBlockingStub initialStub,
       AccountServiceGrpc.AccountServiceBlockingStub retryStub,
-      GrpcChannelFactory channelFactory)
+      GrpcChannelFactory channelFactory,
+      Clock clock)
       throws Exception {
     BlockingGrpcStubCustomizer customizer = mock(BlockingGrpcStubCustomizer.class);
     when(customizer.customize(any(AccountServiceGrpc.AccountServiceBlockingStub.class)))
@@ -449,12 +794,17 @@ class AccountClientTest {
             new ServiceEndpointsProperties(),
             new CommonGrpcClientProperties(),
             channelFactory,
-            customizer);
+            customizer,
+            clock);
     setStub(client, initialStub);
     return client;
   }
 
   private static RetryFixture newRetryFixture() throws Exception {
+    return newRetryFixture(Clock.systemUTC());
+  }
+
+  private static RetryFixture newRetryFixture(Clock clock) throws Exception {
     AccountServiceGrpc.AccountServiceBlockingStub initialStub =
         mock(AccountServiceGrpc.AccountServiceBlockingStub.class);
     AccountServiceGrpc.AccountServiceBlockingStub retryStub =
@@ -466,7 +816,44 @@ class AccountClientTest {
         initialStub,
         retryStub,
         channelFactory,
-        newClientWithRetryStub(initialStub, retryStub, channelFactory));
+        newClientWithRetryStub(initialStub, retryStub, channelFactory, clock));
+  }
+
+  private static final class TestClock extends Clock {
+    private final AtomicReference<Instant> current;
+    private final ZoneId zone;
+
+    private TestClock(Instant current) {
+      this(current, ZoneOffset.UTC);
+    }
+
+    private TestClock(Instant current, ZoneId zone) {
+      this(new AtomicReference<>(current), zone);
+    }
+
+    private TestClock(AtomicReference<Instant> current, ZoneId zone) {
+      this.current = current;
+      this.zone = zone;
+    }
+
+    private void set(Instant value) {
+      current.set(value);
+    }
+
+    @Override
+    public ZoneId getZone() {
+      return zone;
+    }
+
+    @Override
+    public Clock withZone(ZoneId zone) {
+      return new TestClock(current, zone);
+    }
+
+    @Override
+    public Instant instant() {
+      return current.get();
+    }
   }
 
   private record RetryFixture(

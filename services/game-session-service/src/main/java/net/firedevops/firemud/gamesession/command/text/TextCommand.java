@@ -59,6 +59,12 @@ public record TextCommand(
         : Optional.empty();
   }
 
+  public Optional<TextCommandPayload.JoinRequest> joinRequestPayload() {
+    return payload instanceof TextCommandPayload.JoinRequest joinRequest
+        ? Optional.of(joinRequest)
+        : Optional.empty();
+  }
+
   public Optional<TextCommandPayload.CharacterBrowseRequest> characterBrowsePayload() {
     return payload instanceof TextCommandPayload.CharacterBrowseRequest browseRequest
         ? Optional.of(browseRequest)

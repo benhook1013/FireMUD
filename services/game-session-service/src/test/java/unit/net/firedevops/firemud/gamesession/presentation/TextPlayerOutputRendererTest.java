@@ -17,6 +17,31 @@ class TextPlayerOutputRendererTest {
   private static final String STRIDE_COMMAND_ID = "stride";
 
   @Test
+  void characterRosterExplainsCurrentNameOnlySelection() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(false, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.view(
+                new CharacterBrowseViewOutput(
+                    "demo",
+                    "production",
+                    "SHARED",
+                    "ALLOW_NEW",
+                    List.of(new CharacterBrowseViewOutput.CharacterEntry(1, "7001", "Sora", 3)))));
+
+    assertThat(rendered)
+        .contains("1) Sora [lvl 3]")
+        .contains("Use the character name with PLAY; list numbers are not character selectors.");
+  }
+
+  @Test
   void briefModeSuppressesLongLookDescription() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -863,6 +888,58 @@ class TextPlayerOutputRendererTest {
   }
 
   @Test
+  void localizedLogoutUnavailableErrorUsesFrenchRegionalLocaleTemplate() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr-FR",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    String rendered =
+        renderer.render(
+            PlayerOutput.error(
+                "LOGOUT_UNAVAILABLE",
+                "Logout is temporarily unavailable. Please try again.",
+                "error.logout.unavailable",
+                java.util.Map.of()));
+
+    assertThat(rendered)
+        .isEqualTo(
+            "ERROR LOGOUT_UNAVAILABLE La déconnexion est temporairement indisponible. Veuillez réessayer.");
+  }
+
+  @Test
+  void publicJoinOutcomesRenderCurrentGuidanceAndPolicyDenial() {
+    TextPlayerOutputRenderer renderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+
+    assertThat(
+            renderer.render(
+                PlayerOutput.error(
+                    "JOIN_REQUIRED", "fallback", "error.play.join-required", java.util.Map.of())))
+        .isEqualTo(
+            "ERROR JOIN_REQUIRED Membership is required before PLAY. "
+                + "Run REALMS <world> first, then JOIN <world>.");
+    assertThat(
+            renderer.render(
+                PlayerOutput.error(
+                    "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+                    "fallback",
+                    "error.play.public-production-admission-denied",
+                    java.util.Map.of())))
+        .isEqualTo(
+            "ERROR PUBLIC_PRODUCTION_ADMISSION_DENIED Public joining is not available for this"
+                + " world.");
+  }
+
+  @Test
   void localizedUnknownHelpTopicUsesConfiguredLocaleTemplate() {
     TextPlayerOutputRenderer renderer =
         new TextPlayerOutputRenderer(
@@ -1018,9 +1095,9 @@ class TextPlayerOutputRendererTest {
                 PlayerOutput.view(
                     new WorldsViewOutput(
                         List.of(
-                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", 1L, false),
+                            new WorldsViewOutput.WorldEntry(1, "demo", "Demo World", false),
                             new WorldsViewOutput.WorldEntry(
-                                2, "sandbox", "Builder Sandbox", 2L, true))))));
+                                2, "sandbox", "Builder Sandbox", true))))));
 
     assertThat(rendered)
         .isEqualTo("OK WORLDS\n1) Demo World (demo)\n2) Builder Sandbox (sandbox)\n\n");
