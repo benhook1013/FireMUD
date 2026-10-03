@@ -7737,40 +7737,6 @@ class AccountServiceImplTest {
   }
 
   private String retainedConnectScopeForTest(
-      long accountId,
-      long tenantId,
-      String realmId,
-      String worldSlug,
-      String realmSlug,
-      String playableStateNamespaceId,
-      String playableStateScope,
-      long gameInstanceId,
-      long catalogRevision,
-      long pointerVersion) {
-    java.time.Instant evaluatedAt = java.time.Instant.now();
-    java.time.Instant expiresAt =
-        evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
-    return new JwtUtil(JWT_SECRET, 30000L)
-        .generateToken(
-            Long.toString(accountId),
-            tokenProperties.getConnectScopeExpirationMs(),
-            Map.ofEntries(
-                Map.entry("aud", "bootstrap-connect-scope"),
-                Map.entry("accountId", accountId),
-                Map.entry("tenantId", tenantId),
-                Map.entry("realmId", realmId),
-                Map.entry("worldSlug", worldSlug),
-                Map.entry("realmSlug", realmSlug),
-                Map.entry("playableStateNamespaceId", playableStateNamespaceId),
-                Map.entry("playableStateScope", playableStateScope),
-                Map.entry("gameInstanceId", gameInstanceId),
-                Map.entry("catalogRevision", catalogRevision),
-                Map.entry("pointerVersion", pointerVersion),
-                Map.entry("evaluatedAt", evaluatedAt.toString()),
-                Map.entry("connectScopeExpiresAt", expiresAt.toString())));
-  }
-
-  private String retainedConnectScopeForTest(
       Account account,
       long tenantId,
       String realmId,
