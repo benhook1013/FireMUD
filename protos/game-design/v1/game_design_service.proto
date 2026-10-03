@@ -31,6 +31,9 @@ service GameDesignService {
   rpc GetPublishedReleaseBundle(GetPublishedReleaseBundleRequest)
       returns (GetPublishedReleaseBundleResponse);
   rpc GetVersionState(GetVersionStateRequest) returns (GetVersionStateResponse);
+  // Exact current version state for one already-registered authored-world source.
+  rpc GetAuthoredWorldVersionState(GetAuthoredWorldVersionStateRequest)
+      returns (GetAuthoredWorldVersionStateResponse);
   rpc CompareAndSetVersionState(CompareAndSetVersionStateRequest)
       returns (CompareAndSetVersionStateResponse);
   rpc ResolveLaunchDescriptor(ResolveLaunchDescriptorRequest)
@@ -321,6 +324,53 @@ message GetVersionStateRequest {
 message GetVersionStateResponse {
   VersionStateSnapshot version_state = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+message GetAuthoredWorldVersionStateRequest {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  int64 version_id = 8;
+}
+
+message GetAuthoredWorldVersionStateResponse {
+  AuthoredWorldVersionStateEvidence evidence = 1;
+}
+
+message AuthoredWorldVersionStateEvidence {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string read_request_id = 3;
+  string canonical_tenant_id = 4;
+  string world_slug = 5;
+  string source_operation_id = 6;
+  string expected_source_evidence_digest = 7;
+  int64 version_id = 8;
+  AuthoredWorldSourceReceipt source_evidence = 9;
+  VersionLifecycleState version_state = 10;
+  int64 version_state_epoch = 11;
+  string evidence_digest = 12;
+}
+
+// Complete immutable registration receipt, without another RPC's transient read request ID.
+message AuthoredWorldSourceReceipt {
+  int32 schema_version = 1;
+  string target_namespace = 2;
+  string registration_request_id = 3;
+  string operation_id = 4;
+  string request_digest = 5;
+  string canonical_tenant_id = 6;
+  string tenant_slug = 7;
+  string world_slug = 8;
+  string world_display_name = 9;
+  int64 source_game_row_id = 10;
+  string source_game_tenant_key = 11;
+  string provenance_kind = 12;
+  string evidence_digest = 13;
 }
 
 message CompareAndSetVersionStateRequest {
