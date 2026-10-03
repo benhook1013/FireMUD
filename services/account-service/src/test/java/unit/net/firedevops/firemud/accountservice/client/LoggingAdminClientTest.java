@@ -1,5 +1,7 @@
 package net.firedevops.firemud.accountservice.client;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,12 +31,16 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.BlockingGrpcStubCustomizer;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
+import net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptOutcome;
+import net.firedevops.firemud.loggingadmin.v1.AccountAuditReceiptStatus;
 import net.firedevops.firemud.loggingadmin.v1.AccountAuditScope;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventRequest;
 import net.firedevops.firemud.loggingadmin.v1.CreateLogEventResponse;
 import net.firedevops.firemud.loggingadmin.v1.LoggingAdminServiceGrpc;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 
@@ -43,6 +49,26 @@ class LoggingAdminClientTest {
   private static final long ACCOUNT_ID = 10L;
   private static final long TRANSACTION_ID = 30L;
   private static final String PAYMENT_PAYLOAD = "{\"accountId\":10,\"transactionId\":30}";
+
+  @Test
+  void acceptsOnlyExactCommittedReceiptWithCurrentProjectionVersion() throws Exception {
+    var stub = mockStub();
+    when(stub.createLogEvent(any())).thenReturn(response(1));
+    LoggingAdminClient.AuditDeliveryResult result = newClient(stub).deliver(validEnvelope());
+    assertThat(result.receiptId()).isEqualTo("receipt-1");
+    assertThat(result.logEventId()).isEqualTo("projection-1");
+    assertThat(result.minimized()).isFalse();
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {0, 2, -1})
+  void rejectsMissingOrUnsupportedProjectionVersion(int version) throws Exception {
+    var stub = mockStub();
+    when(stub.createLogEvent(any())).thenReturn(response(version));
+    assertThatThrownBy(() -> newClient(stub).deliver(validEnvelope()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Account audit receiver did not prove a supported audit projection version");
+  }
 
   @Test
   void logPaymentIgnoresTransportFailureAndPreservesAuditEnvelope() throws Exception {
@@ -91,7 +117,7 @@ class LoggingAdminClientTest {
   void logPaymentIgnoresMismatchedReceiptAndPreservesAuditEnvelope() throws Exception {
     var stub = mockStub();
     when(stub.createLogEvent(any()))
-        .thenReturn(CreateLogEventResponse.newBuilder().setAuditEventId("other-event").build());
+        .thenReturn(response(1).toBuilder().setAuditEventId("other-event").build());
     LoggingAdminClient client = newClient(stub);
 
     assertDoesNotThrow(() -> client.logPayment(TENANT_ID, ACCOUNT_ID, TRANSACTION_ID));
@@ -103,7 +129,7 @@ class LoggingAdminClientTest {
   void deliverStillThrowsWhenTheReceiverReturnsMismatchedReceiptEvidence() throws Exception {
     var stub = mockStub();
     when(stub.createLogEvent(any()))
-        .thenReturn(CreateLogEventResponse.newBuilder().setAuditEventId("other-event").build());
+        .thenReturn(response(1).toBuilder().setAuditEventId("other-event").build());
     LoggingAdminClient client = newClient(stub);
 
     assertThrows(IllegalStateException.class, () -> client.deliver(validEnvelope()));
@@ -191,6 +217,23 @@ class LoggingAdminClientTest {
         1,
         AccountAuditDigest.ofPayload(payload),
         payload);
+  }
+
+  private static CreateLogEventResponse response(int projectionVersion) {
+    AccountAuditEnvelope envelope = validEnvelope();
+    return CreateLogEventResponse.newBuilder()
+        .setScope(AccountAuditScope.ACCOUNT_AUDIT_SCOPE_TENANT)
+        .setTenantId(Long.toString(TENANT_ID))
+        .setAuditEventId(envelope.auditEventId().toString())
+        .setReceiptId("receipt-1")
+        .setLogEventId("projection-1")
+        .setSchemaVersion(envelope.schemaVersion())
+        .setPayloadDigestVersion(envelope.payloadDigestVersion())
+        .setPayloadDigest(envelope.payloadDigest())
+        .setStatus(AccountAuditReceiptStatus.ACCOUNT_AUDIT_RECEIPT_STATUS_COMMITTED)
+        .setOutcome(AccountAuditReceiptOutcome.ACCOUNT_AUDIT_RECEIPT_OUTCOME_ACCEPTED)
+        .setAuditProjectionVersion(projectionVersion)
+        .build();
   }
 
   private static AccountAuditEnvelope envelopeWithScope(String scope, Long tenantId) {

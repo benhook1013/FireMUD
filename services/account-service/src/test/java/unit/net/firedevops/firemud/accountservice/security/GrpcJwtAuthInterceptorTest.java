@@ -9,7 +9,6 @@ import io.grpc.ServerCall;
 import io.grpc.Status;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.JwtUtil;
@@ -48,23 +47,15 @@ class GrpcJwtAuthInterceptorTest {
   }
 
   @Test
-  void allowsConfiguredUnauthenticatedRuntimeMethodWithoutToken() {
-    AuthTokenInterceptor runtimeAwareInterceptor =
-        new AuthTokenInterceptor(
-            jwtUtil,
-            Set.of(
-                AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName()));
-    TestServerCall call =
-        new TestServerCall(
-            AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName());
-    Metadata headers = new Metadata();
-
-    ServerCall.Listener<?> listener =
-        runtimeAwareInterceptor.interceptCall(
-            call, headers, (c, h) -> new ServerCall.Listener<>() {});
-
-    assertNotNull(listener);
-    assertEquals(null, call.status);
+  void rejectsRuntimeMethodsWithoutToken() {
+    for (String method :
+        List.of(
+            AccountServiceGrpc.getGetTenantMembershipForRuntimeMethod().getFullMethodName(),
+            AccountServiceGrpc.getGetTenantEntitlementsForRuntimeMethod().getFullMethodName())) {
+      TestServerCall call = new TestServerCall(method);
+      interceptor.interceptCall(call, new Metadata(), (c, h) -> new ServerCall.Listener<>() {});
+      assertEquals(Status.UNAUTHENTICATED.getCode(), call.status.getCode());
+    }
   }
 
   private static class TestServerCall extends ServerCall<Object, Object> {

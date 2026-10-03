@@ -183,12 +183,24 @@ Entry format:
   - Expected pattern: enable `set -o pipefail` before captured validation pipelines and verify the terminal build result and test reports; a log sink's success is not the validation process's success.
   - Outcome: the failed build was identified from its terminal report, not reported as passing. After the fixture correction, the guarded complete rerun passed; no production check or negative assertion was weakened.
 
+- `2026-10-03`: Assert fresh initialization before testing idempotence
+  - Context: the Compose mTLS certificate contract checked private authority-directory permissions only after running setup twice.
+  - Observation: the second call repaired the first call's incorrect permissions, so the passing contract masked a broken fresh-initialization postcondition.
+  - Expected pattern: assert the first-call postconditions before any verification or idempotence rerun, then separately prove the rerun preserves the valid fixture.
+  - Outcome: setup now restores owner-only authority permissions after generation, and the focused contract independently proves the first-call boundary and repeated-call preservation.
+
 - `2026-10-03`: Native process handles may be scoped to the launching agent
   - Context: Gameplay tried to transfer an already-running full CLI command's native process handle to a read-only sentinel.
   - Observation: the sentinel received `Unknown process id`, while the launching agent could still read the same live process. Shared filesystem access did not imply shared process-handle access; the review was neither restarted nor canceled.
   - Expected pattern: retain an existing native process wait in its launching agent. For delegated external waits, let the sentinel launch its own canonical read-only waiter for the exact durable trigger or CI run; never retry the evidence-producing operation merely because a handle is unavailable in another agent.
   - Current status: the launching Gameplay agent retained the live CLI wait. Whether cross-agent process handles are supported in other execution environments is unverified.
   - Reconsideration trigger: revisit if a future harness requires cross-platform handle portability or a canonical watcher fix is verified.
+
+- `2026-10-03`: A merge preview needs positive conflict evidence, not a marker-only filter
+  - Context: a read-only parent-forwarding inventory used this checkout's older three-argument `git merge-tree` and searched only for standard conflict markers.
+  - Observation: the inventory incorrectly called the merge clean; the actual isolated no-commit merge reported six documentation conflicts. The preview's `changed in both` records and command outcome had not been inspected.
+  - Expected pattern: verify the installed command's supported mode, inspect its complete conflict records and exit outcome, and treat an isolated actual merge as authoritative. Missing matches from a marker filter do not prove a conflict-free merge.
+  - Outcome: the claim was retracted before publication, and the documentation intersections are being resolved explicitly while both unique patches remain preserved.
 
 - `2026-10-03`: A terminal Hosted notification needs prompt owner consumption
   - Context: the exact-head #2898 Hosted review finished with five findings, but Gameplay delayed consuming the sentinel result while handling parent CI; adjudication and the public checkpoint followed about eleven minutes later.

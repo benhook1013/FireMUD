@@ -35,7 +35,7 @@
 Unless explicitly described as current behavior, the sections below define the target Gateway contract. Current implementation facts and gaps are:
 
 - Java `CanonicalGatewayRoutesConfiguration` is the current route authority, with environment overrides; the target route catalog and deny-by-default exposure rules still require convergence proof. It currently has no `/assets/**` route or asset-store route ID; published asset delivery remains target-only pending a separate approved public origin/provisioner, and private MinIO is not public delivery.
-- **Current Game Design route consequence:** the current coarse `/api/design/**` route forwards `/api/design/assets` through `StripPrefix=2` to Game Design's live `POST /assets` controller. That controller currently checks only privileged JWT/tenant access and has no Account hosted-terms/currentness gate, so official-hosted asset-upload readiness is blocked until Gateway denies this route or the exact Account-owned gate is implemented and proved.
+- **Current Game Design route consequence:** the Java route catalog forwards only `GET /api/design/ping` and `GET /api/design/templates` through `StripPrefix=2`. It does not forward `POST /api/design/assets` or `POST /api/design/templates`; their service-local controllers still lack the Account hosted-terms/currentness gate. Official-hosted creator-write readiness remains blocked until that exact owner-side gate and proof exist.
 - The current edge implements bounded connect-token handshake classes and replay handling, but this does not prove the complete target replay durability, rotation, or reconnect contract.
 - **Current drift:** the protected admin `JwtAuthFilter` parses shared-HMAC JWTs through `JwtUtil`. This is current implementation behavior only, is not a player-facing asymmetric-validation capability, and must not be confused with the target receiving-service boundary.
 - **Target boundary:** On protected admin routes, Gateway requires an `Authorization` header at ingress and forwards it without parsing or validating ordinary JWT contents; consuming services own asymmetric JWKS validation under [JWT and Token Contracts](../../system-architecture-jwt-and-token-contracts.md).
@@ -57,7 +57,7 @@ Unless explicitly described as current behavior, the sections below define the t
 
 - `/ws/game/**` -> Game Session Service.
 - `/api/admin/**` -> Logging & Admin Service.
-- `/api/design/**` -> Game Design Service.
+- `GET /api/design/ping` and `GET /api/design/templates` -> Game Design Service in the current Java catalog; additional `/api/design/**` exposure requires an explicit reviewed entry.
 - `/api/account/**` -> Account Service.
 - `/api/session/**` -> Game Session Service HTTP control-plane family.
 - `/api/social/**` -> Social Groups Service.

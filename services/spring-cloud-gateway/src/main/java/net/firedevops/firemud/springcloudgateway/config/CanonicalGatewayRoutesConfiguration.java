@@ -70,11 +70,19 @@ public class CanonicalGatewayRoutesConfiguration {
                 2,
                 "GET"),
             route(
-                "design",
+                "design-ping",
                 environment.getProperty(
                     "FIREMUD_GATEWAY_ROUTE_DESIGN_URI", "http://game-design-service:8080"),
-                "/api/design/**",
-                2),
+                "/api/design/ping",
+                2,
+                "GET"),
+            route(
+                "design-templates-read",
+                environment.getProperty(
+                    "FIREMUD_GATEWAY_ROUTE_DESIGN_URI", "http://game-design-service:8080"),
+                "/api/design/templates",
+                2,
+                "GET"),
             route(
                 "account-auth",
                 environment.getProperty(

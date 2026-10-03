@@ -64,6 +64,10 @@ message CreateLogEventResponse {
   string payload_digest = 9;
   AccountAuditReceiptStatus status = 10;
   AccountAuditReceiptOutcome outcome = 11;
+  // Version 1 attests the receipt/projection link. Positive delivery evidence also requires a
+  // COMMITTED receipt and matching receiver identities for the exact scoped outbox row, not payload replay.
+  // Zero or unsupported versions cannot verify delivery or historical producer provenance.
+  int32 audit_projection_version = 12;
 }
 
 message ReadLogEventReceiptRequest {
@@ -91,6 +95,10 @@ message ReadLogEventReceiptResponse {
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
   shared.v1.ErrorDetail error = 11;
+  // Same version-1 receipt/projection evidence rule as CreateLogEventResponse: a COMMITTED receipt
+  // with receiver identities matching the exact scoped outbox row; it is never payload replay proof.
+  // Zero or unsupported versions cannot verify delivery or historical producer provenance.
+  int32 audit_projection_version = 12;
 }
 
 enum AccountAuditScope {
