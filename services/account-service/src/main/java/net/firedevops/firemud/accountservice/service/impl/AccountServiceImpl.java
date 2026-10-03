@@ -54,6 +54,7 @@ import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.dto.VerifyEmailRequest;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountEmailLoginChallenge;
+import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
@@ -118,6 +119,7 @@ public class AccountServiceImpl implements AccountService {
       "Join the selected world before discovering characters";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
+  private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
   private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
 
@@ -220,13 +222,14 @@ public class AccountServiceImpl implements AccountService {
     } catch (IntegrityConstraintViolationException | DataIntegrityViolationException ex) {
       throw new AccountAlreadyExistsException(ex);
     }
+    AccountDto accountDto = accountMapper.toDto(saved);
     accountAuditOutboxRepository.append(
         UUID.randomUUID(),
         "platform",
         null,
         "ACCOUNT_REGISTERED",
-        "{\"accountId\":" + saved.getId() + "}");
-    return accountMapper.toDto(saved);
+        "{\"accountId\":\"" + accountDto.id() + "\"}");
+    return accountDto;
   }
 
   @Override
@@ -1982,6 +1985,34 @@ public class AccountServiceImpl implements AccountService {
     return accountRepository
         .findById(accountId)
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+  }
+
+  /** Resolves a canonical public identity at the Account persistence boundary only. */
+  @Override
+  @Transactional(readOnly = true)
+  public Long resolveAccountStorageId(UUID accountUuid) {
+    if (accountUuid == null || NIL_ACCOUNT_UUID.equals(accountUuid)) {
+      throw new IllegalArgumentException("A canonical non-nil Account UUID is required");
+    }
+    Account account =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    AccountIdentityProvenance provenance = account.getAccountUuidProvenance();
+    if (account.getId() == null
+        || account.getId() <= 0L
+        || account.getAccountUuid() == null
+        || NIL_ACCOUNT_UUID.equals(account.getAccountUuid())
+        || account.getAccountUuidSourceNumericId() == null
+        || !account.getId().equals(account.getAccountUuidSourceNumericId())
+        || (provenance != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
+            && provenance != AccountIdentityProvenance.ACCOUNT_V29_MIGRATION
+            && provenance != AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT)
+        || !accountUuid.equals(account.getAccountUuid())) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
+    return account.getId();
   }
 
   private boolean hasRealmAccessGrant(
