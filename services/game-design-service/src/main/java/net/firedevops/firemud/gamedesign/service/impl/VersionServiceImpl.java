@@ -11,7 +11,6 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.publication.PublicationDigestRequestBinding;
-import net.firedevops.firemud.gamedesign.client.AutomationScriptingClient;
 import net.firedevops.firemud.gamedesign.dto.DesignControlPlaneDigestDto;
 import net.firedevops.firemud.gamedesign.dto.PluginVersionStatusEventDto;
 import net.firedevops.firemud.gamedesign.dto.PublishParticipantDigestDto;
@@ -70,7 +69,6 @@ public class VersionServiceImpl implements VersionService {
   private final PublishedPluginVersionRepository publishedPluginVersionRepository;
   private final PluginVersionStatusEventRepository pluginVersionStatusEventRepository;
   private final VersionMapper versionMapper;
-  private final AutomationScriptingClient scriptingClient;
   private final PublishAttemptService publishAttemptService;
   private final PublishGateService publishGateService;
   private final ControlPlaneDigestService controlPlaneDigestService;
@@ -89,7 +87,6 @@ public class VersionServiceImpl implements VersionService {
       PublishedPluginVersionRepository publishedPluginVersionRepository,
       PluginVersionStatusEventRepository pluginVersionStatusEventRepository,
       VersionMapper versionMapper,
-      AutomationScriptingClient scriptingClient,
       PublishAttemptService publishAttemptService,
       PublishGateService publishGateService,
       ControlPlaneDigestService controlPlaneDigestService,
@@ -105,7 +102,6 @@ public class VersionServiceImpl implements VersionService {
     this.publishedPluginVersionRepository = publishedPluginVersionRepository;
     this.pluginVersionStatusEventRepository = pluginVersionStatusEventRepository;
     this.versionMapper = versionMapper;
-    this.scriptingClient = scriptingClient;
     this.publishAttemptService = publishAttemptService;
     this.publishGateService = publishGateService;
     this.controlPlaneDigestService = controlPlaneDigestService;
@@ -123,16 +119,12 @@ public class VersionServiceImpl implements VersionService {
   public VersionDto publishVersion(String tenantId, String notes, String publishRequestId) {
     logger.info("Publishing version for tenant {}", tenantId);
     PublicationDigestRequestBinding.validatePublicationIdentity(tenantId, publishRequestId);
-    if (temporalPublishOrchestrator.isPresent()) {
-      return temporalPublishOrchestrator
-          .get()
-          .publishFullVersion(tenantId, notes, publishRequestId);
-    }
-    return publishCommandService.publishFullVersion(
-        tenantId,
-        notes,
-        publishRequestId,
-        TemporalVersionPublishOrchestrator.workflowId(tenantId, publishRequestId));
+    TemporalVersionPublishOrchestrator orchestrator =
+        temporalPublishOrchestrator.orElseThrow(
+            () ->
+                new IllegalStateException(
+                    "PUBLISH_WORKFLOW_UNAVAILABLE: durable publication workflow is required"));
+    return orchestrator.publishFullVersion(tenantId, notes, publishRequestId);
   }
 
   @Override
@@ -166,15 +158,18 @@ public class VersionServiceImpl implements VersionService {
       throw ex.causeException();
     }
     if (reservation.status() == PublishAttemptStatus.SUCCEEDED) {
-      notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
       return reservation.versionDto();
     }
     if (reservation.status() == PublishAttemptStatus.FAILED) {
       throw replayFailedScriptPatch(reservation.failureCode(), reservation.failureMessage());
     }
+    if (!reservation.newlyCreated()) {
+      throw pendingScriptPatchReconciliation(
+          new ScriptPatchPublishFailureException(
+              "SCRIPT_PATCH_MANIFEST_UNAVAILABLE",
+              "SCRIPT_PATCH_MANIFEST_UNAVAILABLE: the prior publish attempt may have dispatched readiness without a verifiable affected-script manifest"));
+    }
 
-    boolean finalizationStarted = false;
-    boolean finalizationReturned = false;
     try {
       List<PublishParticipantDigestDto> participantDigests =
           publishGateService.collectScriptPatchParticipantDigests(
@@ -182,34 +177,10 @@ public class VersionServiceImpl implements VersionService {
       publishGateService.assertGatePassed(reservation.versionDto(), participantDigests);
       recordedParticipantDigestService.assertMatchesRecordedDigests(
           tenantId, PublishType.SCRIPT_PATCH, participantDigests);
-      finalizationStarted = true;
-      ScriptPatchFinalization finalization =
-          publishAttemptService.executeScriptPatchTransaction(
-              () -> finalizeScriptPatch(patchBinding, reservation, participantDigests, tenantId));
-      finalizationReturned = true;
-      if (finalization.status() == PublishAttemptStatus.SUCCEEDED) {
-        notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
-        return finalization.versionDto();
-      }
-      if (finalization.status() == PublishAttemptStatus.FAILED) {
-        throw replayFailedScriptPatch(finalization.failureCode(), finalization.failureMessage());
-      }
-      throw pendingScriptPatchFinalization(
-          new IllegalStateException("finalization returned a pending publish attempt"));
+      throw new ScriptPatchPublishFailureException(
+          "SCRIPT_PATCH_MANIFEST_UNAVAILABLE",
+          "SCRIPT_PATCH_MANIFEST_UNAVAILABLE: the reserved patch has no owner-verified affected-script manifest");
     } catch (RuntimeException ex) {
-      if (finalizationStarted && !finalizationReturned) {
-        if (ex instanceof PublishAttemptService.ScriptPatchTransactionException) {
-          // The transaction wrapper reports a definite failure from the callback.
-        } else {
-          // The transaction call did not return, so commit status is unknown. Keep the durable
-          // PENDING receipt for reconciliation rather than guessing whether cleanup is safe.
-          throw pendingScriptPatchFinalization(ex);
-        }
-      } else if (finalizationReturned) {
-        // A returned terminal receipt is authoritative; do not reinterpret its stored failure as
-        // a new attempt failure or run cleanup against it.
-        throw ex;
-      }
       RuntimeException operationFailure =
           ex instanceof PublishAttemptService.ScriptPatchTransactionException transactionFailure
               ? transactionFailure.causeException()
@@ -221,15 +192,14 @@ public class VersionServiceImpl implements VersionService {
                   .startsWith(PublishAttemptPendingReconciliationException.ERROR_CODE + ":"))) {
         throw operationFailure;
       }
-      if (!finalizationStarted
-          && PublicationFailureClassifier.isRetryableParticipantDependencyFailure(
-              operationFailure)) {
+      if (PublicationFailureClassifier.isRetryableParticipantDependencyFailure(operationFailure)) {
         throw new IllegalStateException(
             "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: participant dependency is temporarily unavailable; retry exact publish request",
             operationFailure);
       }
+      ScriptPatchFinalization failure;
       try {
-        ScriptPatchFinalization failure =
+        failure =
             publishAttemptService.executeScriptPatchTransaction(
                 () ->
                     failScriptPatch(
@@ -237,19 +207,25 @@ public class VersionServiceImpl implements VersionService {
                         reservation,
                         publishFailureCode(operationFailure),
                         publishFailureMessage(operationFailure)));
-        if (failure.status() == PublishAttemptStatus.SUCCEEDED) {
-          notifyScriptPatchVersionUpdate(tenantId, baseVersionId, scriptPatchVersion);
-          return failure.versionDto();
-        }
       } catch (PublishAttemptService.ScriptPatchTransactionException cleanupFailure) {
         RuntimeException cleanupOperationFailure = cleanupFailure.causeException();
         cleanupOperationFailure.addSuppressed(operationFailure);
-        throw cleanupOperationFailure;
+        throw pendingScriptPatchReconciliation(cleanupOperationFailure);
       } catch (RuntimeException cleanupFailure) {
         cleanupFailure.addSuppressed(operationFailure);
-        throw cleanupFailure;
+        throw pendingScriptPatchReconciliation(cleanupFailure);
       }
-      throw operationFailure;
+      if (failure.status() == PublishAttemptStatus.SUCCEEDED) {
+        return failure.versionDto();
+      }
+      if (failure.status() == PublishAttemptStatus.FAILED) {
+        if (Objects.equals(failure.failureCode(), publishFailureCode(operationFailure))
+            && Objects.equals(failure.failureMessage(), publishFailureMessage(operationFailure))) {
+          throw operationFailure;
+        }
+        throw replayFailedScriptPatch(failure.failureCode(), failure.failureMessage());
+      }
+      throw pendingScriptPatchReconciliation(operationFailure);
     }
   }
 
@@ -283,7 +259,8 @@ public class VersionServiceImpl implements VersionService {
             existingAttempt.getStatus(),
             versionMapper.toDto(publishedVersion),
             existingAttempt.getFailureCode(),
-            existingAttempt.getFailureMessage());
+            existingAttempt.getFailureMessage(),
+            false);
       }
       if (existingAttempt.getStatus() == PublishAttemptStatus.FAILED) {
         return new ScriptPatchReservation(
@@ -292,7 +269,8 @@ public class VersionServiceImpl implements VersionService {
             existingAttempt.getStatus(),
             null,
             existingAttempt.getFailureCode(),
-            existingAttempt.getFailureMessage());
+            existingAttempt.getFailureMessage(),
+            false);
       }
       if (existingAttempt.getStatus() != PublishAttemptStatus.PENDING) {
         throw new IllegalStateException("PUBLISH_ATTEMPT_INCONSISTENT: unknown attempt status");
@@ -308,7 +286,8 @@ public class VersionServiceImpl implements VersionService {
           existingAttempt.getStatus(),
           versionMapper.toDto(pendingVersion),
           null,
-          null);
+          null,
+          false);
     }
 
     if (!versionRepository
@@ -334,46 +313,7 @@ public class VersionServiceImpl implements VersionService {
     publishAttemptService.createScriptPatchAttempt(
         dto, publishWorkflowId, baseVersionId, patchBinding.requestDigest());
     return new ScriptPatchReservation(
-        publishWorkflowId, saved.getId(), PublishAttemptStatus.PENDING, dto, null, null);
-  }
-
-  private ScriptPatchFinalization finalizeScriptPatch(
-      PublicationDigestRequestBinding patchBinding,
-      ScriptPatchReservation reservation,
-      List<PublishParticipantDigestDto> participantDigests,
-      String tenantId) {
-    if (gameRepository.findByTenantIdForUpdate(tenantId) == null) {
-      throw new IllegalArgumentException("game not found");
-    }
-    PublishAttempt attempt =
-        publishAttemptService
-            .findByPublishWorkflowId(reservation.publishWorkflowId())
-            .orElseThrow(() -> new IllegalStateException("publish attempt not found"));
-    if (attempt.getStatus() == PublishAttemptStatus.SUCCEEDED) {
-      Version publishedVersion = requireAttemptVersion(attempt, patchBinding);
-      return new ScriptPatchFinalization(
-          attempt.getStatus(), versionMapper.toDto(publishedVersion), null, null);
-    }
-    if (attempt.getStatus() == PublishAttemptStatus.FAILED) {
-      return new ScriptPatchFinalization(
-          attempt.getStatus(), null, attempt.getFailureCode(), attempt.getFailureMessage());
-    }
-    Version saved = requireAttemptVersion(attempt, patchBinding);
-    if (saved.getVersionState() != VersionLifecycleState.DRAFT) {
-      throw new IllegalStateException(
-          "PUBLISH_ATTEMPT_PENDING_RECONCILIATION_REQUIRED: pending attempt does not reference a draft version");
-    }
-    publishAttemptService.recordScriptPatchParticipantDigests(
-        reservation.publishWorkflowId(), participantDigests);
-    saved.setVersionState(VersionLifecycleState.PUBLISHED);
-    saved.setVersionStateEpoch(saved.getVersionStateEpoch() + 1L);
-    saved.setUpdatedAt(LocalDateTime.now());
-    saved = versionRepository.save(saved);
-    recordedParticipantDigestService.recordVerifiedDigests(
-        tenantId, PublishType.SCRIPT_PATCH, reservation.publishWorkflowId(), participantDigests);
-    publishAttemptService.markScriptPatchSucceeded(reservation.publishWorkflowId());
-    return new ScriptPatchFinalization(
-        PublishAttemptStatus.SUCCEEDED, versionMapper.toDto(saved), null, null);
+        publishWorkflowId, saved.getId(), PublishAttemptStatus.PENDING, dto, null, null, true);
   }
 
   private ScriptPatchFinalization failScriptPatch(
@@ -416,7 +356,8 @@ public class VersionServiceImpl implements VersionService {
       PublishAttemptStatus status,
       VersionDto versionDto,
       String failureCode,
-      String failureMessage) {}
+      String failureMessage,
+      boolean newlyCreated) {}
 
   private record ScriptPatchFinalization(
       PublishAttemptStatus status,
@@ -481,23 +422,14 @@ public class VersionServiceImpl implements VersionService {
     }
   }
 
-  private ScriptPatchPublishFailureException pendingScriptPatchFinalization(
+  private ScriptPatchPublishFailureException pendingScriptPatchReconciliation(
       RuntimeException cause) {
     String errorCode = PublishAttemptPendingReconciliationException.ERROR_CODE;
     return new ScriptPatchPublishFailureException(
         errorCode,
         errorCode
-            + ": script-patch finalization outcome is unknown; retry the exact publish request",
+            + ": script-patch publication outcome is unknown; retry the exact publish request",
         cause);
-  }
-
-  private void notifyScriptPatchVersionUpdate(
-      String tenantId, Long baseVersionId, String scriptPatchVersion) {
-    runSafely(
-        "notify script patch version update",
-        () ->
-            scriptingClient.notifyScriptVersionUpdate(
-                tenantId, baseVersionId, scriptPatchVersion, List.of()));
   }
 
   @Override
@@ -878,6 +810,9 @@ public class VersionServiceImpl implements VersionService {
   }
 
   private String publishFailureCode(RuntimeException ex) {
+    if (ex instanceof ScriptPatchPublishFailureException scriptPatchFailure) {
+      return scriptPatchFailure.failureCode();
+    }
     if (ex instanceof PublishGateFailureException publishGateFailureException) {
       return publishGateFailureException.failureCode().name();
     }
@@ -1072,14 +1007,6 @@ public class VersionServiceImpl implements VersionService {
         version.getVersionState(),
         version.getVersionStateEpoch(),
         version.getUpdatedAt());
-  }
-
-  private void runSafely(String actionName, Runnable action) {
-    try {
-      action.run();
-    } catch (RuntimeException ex) {
-      logger.warn("Failed to {}", actionName, ex);
-    }
   }
 
   private static void requireText(String value, String fieldName) {

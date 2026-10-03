@@ -382,37 +382,17 @@ public class AutomationScriptingGrpcService
       requirePublicationRead();
       PublicationDigestRequestBinding binding = publicationBinding(request);
       binding.validateSupplied(request.getDerivedWorkflowIdentity(), request.getRequestDigest());
-      long baseVersionId = 0L;
-      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH) {
-        baseVersionId =
-            RequestIdValidation.requirePositiveLong(binding.baseVersionId(), "baseVersionId");
-      }
-      var digest =
-          binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION
-              ? scriptDesignDigestService.getDraftDesignDigestForVersion(
-                  binding.tenantId(), binding.versionId())
-              : scriptDesignDigestService.getDraftDesignDigestForScriptPatch(
-                  binding.tenantId(), baseVersionId, binding.scriptPatchVersion());
-      binding.requireOwnerScope(digest.tenantId(), digest.scopeValue());
-      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.SCRIPT_PATCH
-          && (digest.baseVersionId() <= 0L || baseVersionId != digest.baseVersionId())) {
-        throw new IllegalArgumentException(
-            "owner digest base_version_id does not match publication binding");
-      }
-      GetDraftDesignDigestResponse.Builder response =
+      responseObserver.onNext(
           GetDraftDesignDigestResponse.newBuilder()
-              .setTenantId(binding.tenantId())
-              .setAppliedCommitId(digest.appliedCommitId())
-              .setContentDigest(digest.contentDigest())
-              .setDigestSchemaVersion(digest.digestSchemaVersion());
-      if (binding.scopeKind() == PublicationDigestRequestBinding.ScopeKind.FULL_VERSION) {
-        response.setVersionId(binding.versionId());
-      } else {
-        response
-            .setScriptPatchVersion(binding.scriptPatchVersion())
-            .setBaseVersionId(Long.toString(digest.baseVersionId()));
-      }
-      responseObserver.onNext(response.build());
+              .setError(
+                  GrpcAppErrors.error(
+                      meterRegistry,
+                      logger,
+                      "GetDraftDesignDigest",
+                      "UNSUPPORTED_SCOPE",
+                      "Automation cannot attest this scope until its exact version mapping "
+                          + "and base-bound patch digest are available"))
+              .build());
       responseObserver.onCompleted();
     } catch (IllegalArgumentException ex) {
       responseObserver.onNext(
@@ -514,12 +494,36 @@ public class AutomationScriptingGrpcService
         NotifyScriptVersionUpdateResponse.newBuilder();
     try {
       requireAdminRole();
-      scriptVersionService.notifyUpdate(
-          request.getTenantId(),
-          request.getBaseVersionId(),
-          request.getScriptPatchVersion(),
-          request.getAffectedScriptsList());
-      response.setSuccess(true);
+      if (request.getAffectedScriptsCount() == 0) {
+        response
+            .setSuccess(false)
+            .setError(
+                GrpcAppErrors.error(
+                    meterRegistry,
+                    logger,
+                    "NotifyScriptVersionUpdate",
+                    "INVALID_ARGUMENT",
+                    "zero_handler_manifest_unverifiable"));
+        responseObserver.onNext(response.build());
+        responseObserver.onCompleted();
+        return;
+      }
+      boolean readinessAccepted =
+          scriptVersionService.notifyUpdate(
+              request.getTenantId(),
+              request.getBaseVersionId(),
+              request.getScriptPatchVersion(),
+              request.getAffectedScriptsList());
+      response.setSuccess(readinessAccepted);
+      if (!readinessAccepted) {
+        response.setError(
+            GrpcAppErrors.error(
+                meterRegistry,
+                logger,
+                "NotifyScriptVersionUpdate",
+                "FAILED_PRECONDITION",
+                "patch_readiness_not_current"));
+      }
     } catch (IllegalArgumentException ex) {
       response
           .setSuccess(false)
