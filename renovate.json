@@ -169,6 +169,19 @@
       "platformAutomerge": false
     },
     {
+      "description": "Keep Fabric8 on the Java Operator SDK-supported client line",
+      "matchManagers": [
+        "gradle"
+      ],
+      "matchPackageNames": [
+        "io.fabric8:kubernetes-client"
+      ],
+      "allowedVersions": "<8.0.0",
+      "prBodyNotes": [
+        "Fabric8 8 requires Jackson 3, while the selected Java Operator SDK core and Spring Boot starter officially support Fabric8 7.x. Advance this cap only with officially compatible Java Operator SDK core and Spring Boot starter releases and paired hosted identity controller image-startup proof."
+      ]
+    },
+    {
       "matchManagers": [
         "npm"
       ],
