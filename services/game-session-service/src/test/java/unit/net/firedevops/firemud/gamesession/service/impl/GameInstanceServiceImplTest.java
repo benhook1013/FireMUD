@@ -15,6 +15,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import io.micrometer.core.instrument.MeterRegistry;
@@ -43,6 +44,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 
 class GameInstanceServiceImplTest {
@@ -143,6 +145,103 @@ class GameInstanceServiceImplTest {
     verify(gameDesignClient, never()).resolveLaunchDescriptor(anyLong(), anyLong(), anyString());
     verify(repository, never()).save(any(GameInstance.class));
     assertEquals(0, store.size());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void startSessionRejectsUnresolvedLegacyOwnerBeforeMutation(boolean replaceExistingFirst) {
+    persistLegacyOwner(7L, 1L, "v1", "RUNNING", 9_007_199_254_740_993L);
+
+    LifecycleOutcomeException error =
+        assertThrows(
+            LifecycleOutcomeException.class,
+            () ->
+                service.startSession(
+                    new StartSessionRequest(1L, 3L, "cp-legacy-owner", OWNER_ACCOUNT_UUID),
+                    replaceExistingFirst));
+
+    assertEquals("OWNER_ACCOUNT_IDENTITY_UNAVAILABLE", error.code());
+    assertEquals(
+        "cannot start a session while tenant owner identity evidence is active or uncertain",
+        error.detailMessage());
+    assertEquals("RUNNING", store.get(7L).getStatus());
+    assertEquals(9_007_199_254_740_993L, store.get(7L).getLegacyOwnerAccountId());
+    assertEquals(1, store.size());
+    verify(repository).findUnresolvedActiveOwnerRowsByTenantIdForUpdate(1L);
+    verify(repository, never()).save(any(GameInstance.class));
+    verify(repository, never())
+        .findFirstByTenantIdAndOwnerAccountIdAndStatus(1L, OWNER_ACCOUNT_UUID, "RUNNING");
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
+  }
+
+  @Test
+  void startSessionRejectsEveryUncertainLegacyOwnerStatus() {
+    String[] uncertainStatuses = {"STARTING", "STOPPING", "UNRECOGNIZED", null};
+    long id = 20L;
+    for (String status : uncertainStatuses) {
+      persistLegacyOwner(id, 1L, "v1", status, 100L + id);
+
+      LifecycleOutcomeException error =
+          assertThrows(
+              LifecycleOutcomeException.class,
+              () ->
+                  service.startSession(
+                      new StartSessionRequest(1L, 3L, "cp-uncertain-owner", OWNER_ACCOUNT_UUID)));
+
+      assertEquals("OWNER_ACCOUNT_IDENTITY_UNAVAILABLE", error.code());
+      assertEquals(status, store.get(id).getStatus());
+      assertEquals(100L + id, store.get(id).getLegacyOwnerAccountId());
+      store.remove(id);
+      id++;
+    }
+
+    verify(repository, times(uncertainStatuses.length))
+        .findUnresolvedActiveOwnerRowsByTenantIdForUpdate(1L);
+    verify(repository, never()).save(any(GameInstance.class));
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
+  }
+
+  @Test
+  void startSessionAllowsTenantWithOnlyStoppedLegacyOwnerEvidence() {
+    persistLegacyOwner(7L, 1L, "v1", "STOPPED", 9_007_199_254_740_993L);
+
+    GameInstanceDto dto =
+        service.startSession(
+            new StartSessionRequest(1L, 3L, "cp-stopped-legacy-owner", OWNER_ACCOUNT_UUID));
+
+    assertEquals("RUNNING", dto.status());
+    assertEquals("STOPPED", store.get(7L).getStatus());
+    assertEquals(9_007_199_254_740_993L, store.get(7L).getLegacyOwnerAccountId());
+    assertEquals("RUNNING", store.get(dto.id()).getStatus());
+  }
+
+  @Test
+  void restartSessionRejectsMissingOrNonCanonicalOwnerBeforeMutation() {
+    String[] unresolvedOwnerIds = {
+      null, "42", "00000000-0000-0000-0000-000000000000", "123E4567-E89B-12D3-A456-426614174000"
+    };
+    long id = 20L;
+    for (String ownerAccountId : unresolvedOwnerIds) {
+      GameInstance instance = persistLegacyOwner(id, 1L, "v1", "STOPPED", 200L + id);
+      instance.setOwnerAccountId(ownerAccountId);
+      store.put(id, copyOf(instance));
+      long sessionId = id;
+
+      LifecycleOutcomeException error =
+          assertThrows(LifecycleOutcomeException.class, () -> service.restartSession(sessionId));
+
+      assertEquals("OWNER_ACCOUNT_IDENTITY_UNAVAILABLE", error.code());
+      assertEquals("STOPPED", store.get(sessionId).getStatus());
+      assertEquals(ownerAccountId, store.get(sessionId).getOwnerAccountId());
+      assertEquals(200L + sessionId, store.get(sessionId).getLegacyOwnerAccountId());
+      id++;
+    }
+
+    verify(repository, never()).save(any(GameInstance.class));
+    verifyNoInteractions(stateService);
+    verifyNoInteractions(worldManagementClient);
   }
 
   @Test
@@ -1064,6 +1163,31 @@ class GameInstanceServiceImplTest {
   }
 
   @Test
+  void stopSessionCompensationPreservesUnmappedNumericOwnerEvidence() {
+    persistLegacyOwner(10L, 1L, "v1", "RUNNING", 9_007_199_254_740_993L);
+    when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
+        .thenReturn(
+            GetWorldInstanceLifecycleResponse.newBuilder()
+                .setError(
+                    net.firedevops.firemud.shared.v1.ErrorDetail.newBuilder()
+                        .setCode("WORLD_LIFECYCLE_UNAVAILABLE")
+                        .setMessage("lifecycle read failed")
+                        .build())
+                .build());
+
+    assertThrows(IllegalStateException.class, () -> service.stopSession(10L));
+
+    assertEquals("RUNNING", store.get(10L).getStatus());
+    assertNull(store.get(10L).getOwnerAccountId());
+    assertEquals(9_007_199_254_740_993L, store.get(10L).getLegacyOwnerAccountId());
+    verify(stateService).deleteState(1L, 10L);
+    verify(stateService)
+        .saveState(argThat(state -> state.id() == 10L && "RUNNING".equals(state.status())));
+    verify(worldManagementClient, never())
+        .terminateWorldInstance(anyLong(), anyLong(), anyLong(), anyString(), anyString());
+  }
+
+  @Test
   void stopSessionUsesLifecycleAuthorityConstantWhenLifecycleReadTransportFails() {
     persistExisting(10L, 1L, "v1", null, OWNER_ACCOUNT_UUID, "RUNNING");
     when(worldManagementClient.getWorldInstanceLifecycle(1L, 10L))
@@ -1146,6 +1270,19 @@ class GameInstanceServiceImplTest {
               Long id = invocation.getArgument(0);
               GameInstance stored = store.get(id);
               return stored == null ? Optional.empty() : Optional.of(copyOf(stored));
+            });
+    when(repository.findUnresolvedActiveOwnerRowsByTenantIdForUpdate(anyLong()))
+        .thenAnswer(
+            invocation -> {
+              Long tenantId = invocation.getArgument(0);
+              return store.values().stream()
+                  .filter(instance -> tenantId.equals(instance.getTenantId()))
+                  .filter(instance -> instance.getOwnerAccountId() == null)
+                  .filter(
+                      instance ->
+                          instance.getStatus() == null || !"STOPPED".equals(instance.getStatus()))
+                  .map(GameInstanceServiceImplTest::copyOf)
+                  .toList();
             });
     when(repository.findFirstByTenantIdAndOwnerAccountIdAndStatus(
             any(Long.class), anyString(), any()))
@@ -1591,6 +1728,18 @@ class GameInstanceServiceImplTest {
         null,
         scriptPinEpoch,
         scriptPatchPinnedControlPlaneRequestId);
+  }
+
+  private GameInstance persistLegacyOwner(
+      Long id, Long tenantId, String runtimeVersion, String status, Long legacyOwnerAccountId) {
+    GameInstance instance = new GameInstance();
+    instance.setId(id);
+    instance.setTenantId(tenantId);
+    instance.setRuntimeVersion(runtimeVersion);
+    instance.setStatus(status);
+    instance.setLegacyOwnerAccountId(legacyOwnerAccountId);
+    store.put(id, copyOf(instance));
+    return copyOf(instance);
   }
 
   private GameInstance persistExisting(

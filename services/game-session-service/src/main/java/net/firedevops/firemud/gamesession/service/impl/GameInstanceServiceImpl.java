@@ -296,6 +296,14 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       StartSessionRequest request,
       ResolvedLaunchDescriptor resolvedLaunchDescriptor,
       boolean replaceExistingFirst) {
+    if (!repository
+        .findUnresolvedActiveOwnerRowsByTenantIdForUpdate(request.tenantId())
+        .isEmpty()) {
+      throw new LifecycleOutcomeException(
+          "OWNER_ACCOUNT_IDENTITY_UNAVAILABLE",
+          "cannot start a session while tenant owner identity evidence is active or uncertain");
+    }
+
     GameInstanceSnapshot existingRunningState = null;
     if (replaceExistingFirst) {
       existingRunningState =
@@ -374,6 +382,11 @@ public class GameInstanceServiceImpl implements GameInstanceService {
         repository
             .findById(sessionId)
             .orElseThrow(() -> new IllegalArgumentException("Session not found"));
+    if (!AccountIds.isCanonicalNonNilUuid(instance.getOwnerAccountId())) {
+      throw new LifecycleOutcomeException(
+          "OWNER_ACCOUNT_IDENTITY_UNAVAILABLE",
+          "cannot restart an instance without a canonical owner Account UUID");
+    }
     GameInstanceSnapshot previousState = snapshot(instance);
     instance.setStatus(STATUS_STARTING);
     repository.save(instance);

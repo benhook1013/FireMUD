@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.protobuf.UnknownFieldSet;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.time.Instant;
@@ -1926,6 +1927,47 @@ class PlayCommandHandlerTest {
     Mockito.verify(gameplayPresenceLifecycleService, never())
         .clearGameplayBinding(Mockito.any(), Mockito.anyString());
     Mockito.verify(sessionContextService, never()).save(Mockito.any());
+  }
+
+  @Test
+  void playWhenMembershipAuthorityTupleHasUnknownFieldsIsDeniedBeforeAdmission() {
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    when(accountClient.getTenantMembershipForRuntime(
+            Mockito.any(net.firedevops.firemud.shared.v1.PlayerExecutionContext.class)))
+        .thenAnswer(
+            invocation -> {
+              var response =
+                  freshMembership(
+                      net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                          .active(123L, 22L, "1"));
+              var tupleWithUnknownField =
+                  response.getAuthorityTuple().toBuilder()
+                      .setUnknownFields(
+                          UnknownFieldSet.newBuilder()
+                              .addField(
+                                  999, UnknownFieldSet.Field.newBuilder().addVarint(1L).build())
+                              .build())
+                      .build();
+              return net.firedevops.firemud.gamesession.support.RuntimeMembershipTestFixtures
+                  .echoRequestId(
+                      response.toBuilder().setAuthorityTuple(tupleWithUnknownField).build(),
+                      invocation.getArgument(0));
+            });
+
+    PlayCommandHandlingResult result =
+        handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo"));
+
+    assertThat(result.commandResult().accepted()).isFalse();
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+    assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
+        .isEqualTo("error.play.world-access-denied");
+    Mockito.verifyNoInteractions(entityManagementClient, sessionContextService);
+    Mockito.verify(gameplayPresenceLifecycleService, never())
+        .clearGameplayBinding(Mockito.any(), Mockito.anyString());
+    Mockito.verify(gameplayPresenceLifecycleService, never()).registerConnected(Mockito.any());
   }
 
   @Test

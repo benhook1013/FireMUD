@@ -103,6 +103,27 @@ public class GameInstanceRepository {
         .fetchOptional(this::toEntity);
   }
 
+  /**
+   * Reads and locks unresolved owner rows that are active or not known to be inert.
+   *
+   * <p>Callers must invoke this method inside the owner transaction that stages a new runtime. Rows
+   * without a canonical owner UUID are not matched to the requesting Account; they remain ambiguous
+   * evidence until a separately authorized reconciliation resolves them.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<GameInstance> findUnresolvedActiveOwnerRowsByTenantIdForUpdate(Long tenantId) {
+    return selectGameInstances()
+        .where(
+            GAME_INSTANCES
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAME_INSTANCES.OWNER_ACCOUNT_UUID.isNull())
+                .and(GAME_INSTANCES.STATUS.isNull().or(GAME_INSTANCES.STATUS.ne("STOPPED"))))
+        .orderBy(GAME_INSTANCES.ID.asc())
+        .forUpdate()
+        .fetch(this::toEntity);
+  }
+
   public List<GameInstance> findByStatus(String status) {
     return selectGameInstances()
         .where(GAME_INSTANCES.STATUS.eq(status))
