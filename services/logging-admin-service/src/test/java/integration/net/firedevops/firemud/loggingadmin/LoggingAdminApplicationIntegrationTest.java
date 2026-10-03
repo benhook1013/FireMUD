@@ -42,12 +42,12 @@ import net.firedevops.firemud.loggingadmin.service.LogQueryService;
 import net.firedevops.firemud.test.GatewayTestProperties;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.jooq.DSLContext;
-import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -224,19 +224,23 @@ class LoggingAdminApplicationIntegrationTest {
             () ->
                 insertMalformedProjection(
                     "b7abbe36-8a74-4527-b0d7-c3117de24001", null, 42L, null, 42L))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
     assertThatThrownBy(
             () ->
                 insertMalformedProjection(
                     "b7abbe36-8a74-4527-b0d7-c3117de24002", 1, 42L, null, null))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
     assertThatThrownBy(
             () ->
                 insertMalformedProjection(
                     "b7abbe36-8a74-4527-b0d7-c3117de24003", 2, null, new UUID(0L, 0L), null))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
     assertThatThrownBy(() -> insertMalformedProjection(null, null, 42L, null, null))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
 
     assertThat(dsl.fetchCount(LOG_EVENTS)).isEqualTo(before);
   }
