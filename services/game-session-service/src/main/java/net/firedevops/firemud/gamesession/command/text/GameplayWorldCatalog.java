@@ -345,8 +345,7 @@ public final class GameplayWorldCatalog {
     CatalogState snapshot = catalogStateFromPointers(healthyTenantPointers(pointers));
     // This RPC accepts a stable slug, not a response-local menu ordinal. Digit-only authored
     // slugs resolve by exact normalized slug rather than by list position.
-    return resolveStableWorld(
-        selector, unambiguousTenantWorlds(publicDiscoveryWorlds(snapshot)));
+    return resolveStableWorld(selector, unambiguousTenantWorlds(publicDiscoveryWorlds(snapshot)));
   }
 
   private Optional<WorldView> resolveStableWorld(String selector, List<WorldView> worlds) {
@@ -367,18 +366,6 @@ public final class GameplayWorldCatalog {
       // Fall back to slug matching.
     }
     return resolveWorldBySlug(selector, visibleWorlds);
-  }
-
-  private Optional<WorldView> resolveWorld(String selector, List<WorldView> worlds) {
-    try {
-      int index = Integer.parseInt(selector);
-      if (index >= 1 && index <= worlds.size()) {
-        return Optional.of(worlds.get(index - 1));
-      }
-    } catch (NumberFormatException ignored) {
-      // Fall back to slug matching.
-    }
-    return resolveWorldBySlug(selector, worlds);
   }
 
   private Optional<WorldView> resolveWorldBySlug(String selector, List<WorldView> worlds) {
@@ -1077,13 +1064,6 @@ public final class GameplayWorldCatalog {
         .toList();
   }
 
-  private static boolean isPlayerAddressable(RealmView realm) {
-    return realm != null
-        && realm.visible()
-        && realm.slug() != null
-        && !realm.slug().isBlank()
-        && realm.tenantId() > 0L;
-  }
   private boolean hasValidPublicProductionRealm(CatalogState catalogState, long tenantId) {
     return tenantId > 0L && catalogState.publicProductionCounts().getOrDefault(tenantId, 0L) == 1L;
   }
@@ -1414,8 +1394,7 @@ public final class GameplayWorldCatalog {
   }
 
   private static WorldView copyWorldView(WorldView input) {
-    List<RealmView> realms =
-        normalizedRealmViews(input.realms());
+    List<RealmView> realms = normalizedRealmViews(input.realms());
     return new WorldView(input.slug(), input.displayName(), realms);
   }
 
