@@ -4,7 +4,7 @@
 CREATE TABLE account_connect_token_issuance_operations (
     operation_id UUID PRIMARY KEY,
     account_id BIGINT NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
-    tenant_id UUID NOT NULL,
+    tenant_id BIGINT NOT NULL,
     connect_scope_hash VARCHAR(71) NOT NULL,
     request_id VARCHAR(128) NOT NULL,
     request_digest_version INTEGER NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE account_connect_token_issuance_operations (
         UNIQUE (account_id, tenant_id, connect_scope_hash, request_id),
     CONSTRAINT account_connect_token_issuance_identity_check
         CHECK (account_id > 0
-            AND tenant_id <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND tenant_id > 0
             AND length(btrim(request_id)) BETWEEN 1 AND 128
             AND length(connect_scope_hash) = 71
             AND connect_scope_hash ~ '^sha256:[0-9a-f]{64}$'
@@ -85,7 +85,7 @@ CREATE TABLE account_connect_token_response_envelopes (
     operation_id UUID PRIMARY KEY,
     operation_kind VARCHAR(32) NOT NULL,
     account_id BIGINT NOT NULL,
-    tenant_id UUID NOT NULL,
+    tenant_id BIGINT NOT NULL,
     connect_scope_hash VARCHAR(71) NOT NULL,
     request_id VARCHAR(128) NOT NULL,
     request_digest_version INTEGER NOT NULL,
@@ -107,7 +107,7 @@ CREATE TABLE account_connect_token_response_envelopes (
     CONSTRAINT account_connect_token_response_envelope_identity_check
         CHECK (operation_kind = 'CONNECT_TOKEN_ISSUANCE'
             AND account_id > 0
-            AND tenant_id <> '00000000-0000-0000-0000-000000000000'::UUID
+            AND tenant_id > 0
             AND length(connect_scope_hash) = 71
             AND connect_scope_hash ~ '^sha256:[0-9a-f]{64}$'
             AND length(btrim(request_id)) BETWEEN 1 AND 128
