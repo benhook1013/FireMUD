@@ -22,7 +22,6 @@ import net.firedevops.firemud.loggingadmin.repository.AccountAuditReceiptReposit
 import net.firedevops.firemud.loggingadmin.service.AuditReceiptNotFoundException;
 import net.firedevops.firemud.loggingadmin.service.AuditStorageUnavailableException;
 import net.firedevops.firemud.loggingadmin.service.LogEventService;
-import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,7 +49,8 @@ public class LogEventServiceImpl implements LogEventService {
       AccountAuditReceiptInsertResult result =
           repository.insertIfAbsent(request, UUID.randomUUID());
       return receiptOutcome(result.receipt(), request, result.inserted(), true);
-    } catch (DataAccessException ex) {
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException ex) {
       logger.warn("Account audit receipt write is unavailable: {}", ex.getClass().getSimpleName());
       throw new AuditStorageUnavailableException(ex);
     }
@@ -73,7 +73,8 @@ public class LogEventServiceImpl implements LogEventService {
       return receiptOutcome(receipt, request, false, payloadSupplied);
     } catch (AuditReceiptNotFoundException ex) {
       throw ex;
-    } catch (DataAccessException ex) {
+    } catch (org.jooq.exception.DataAccessException
+        | org.springframework.dao.DataAccessException ex) {
       logger.warn("Account audit receipt read is unavailable: {}", ex.getClass().getSimpleName());
       throw new AuditStorageUnavailableException(ex);
     }
