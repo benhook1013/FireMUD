@@ -449,6 +449,13 @@ public final class TelnetServer {
                 protected void initChannel(SocketChannel ch) {
                   InetSocketAddress remoteAddress = ch.remoteAddress();
                   String clientIp = extractIp(remoteAddress);
+                  if (tlsEnabled && !isTlsMaterialHealthy()) {
+                    logger.warn(
+                        "Rejecting Telnet TLS connection from {} because TLS material is unhealthy",
+                        clientIp != null ? clientIp : remoteAddress);
+                    ch.close();
+                    return;
+                  }
                   if (!tryAcquireSlot(clientIp)) {
                     logger.warn(
                         "Rejecting Telnet connection from {} due to connection limits",

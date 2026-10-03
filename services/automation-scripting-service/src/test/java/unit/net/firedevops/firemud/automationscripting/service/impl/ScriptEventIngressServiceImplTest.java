@@ -187,6 +187,7 @@ class ScriptEventIngressServiceImplTest {
         Mockito.mock(ScriptPatchPinProjectionService.class);
     ScriptPatchInstanceRolloutProjectionService rolloutProjectionService =
         Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class);
+    ScriptDefinitionRepository scriptDefinitionRepository = scriptDefinitionRepositoryForTests();
     PluginRuntimeStateService pluginRuntimeStateService =
         Mockito.mock(PluginRuntimeStateService.class);
     ScriptQuotaService quotaService = allowingQuotaService();
@@ -204,7 +205,7 @@ class ScriptEventIngressServiceImplTest {
             admissionStateService,
             pinProjectionService,
             rolloutProjectionService,
-            scriptDefinitionRepositoryForTests(),
+            scriptDefinitionRepository,
             pluginRuntimeStateService,
             quotaService,
             dryRunQuotaService);
@@ -232,7 +233,7 @@ class ScriptEventIngressServiceImplTest {
         admissionStateService,
         pinProjectionService,
         rolloutProjectionService,
-        scriptDefinitionRepositoryForTests(),
+        scriptDefinitionRepository,
         pluginRuntimeStateService,
         quotaService,
         dryRunQuotaService);
@@ -4682,7 +4683,7 @@ class ScriptEventIngressServiceImplTest {
   }
 
   @Test
-  void finalizedClaimIsReplayedWithoutResolvingOrFanningOut() {
+  void exactRetryReturnsStoredAdmissionWithoutNewWork() {
     ScriptEventIngressAuditRepository repository =
         Mockito.mock(ScriptEventIngressAuditRepository.class);
     ScriptEventIngressAudit finalized = new ScriptEventIngressAudit();
@@ -4891,6 +4892,65 @@ class ScriptEventIngressServiceImplTest {
         original.toBuilder()
             .setPayloadJson("{\"commandId\":\"cmd-2\",\"commandName\":\"LOOK\"}")
             .build();
+    ScriptEventIngressService.TriggerAdmission admission =
+        service.admit(changed, "game-session-service");
+
+    assertThat(admission.admitted()).isFalse();
+    assertThat(admission.reason()).isEqualTo("idempotency_conflict");
+    verify(repository, never()).save(Mockito.any());
+  }
+
+  @Test
+  void changedPatchBaseUnderExistingEventIdentityReturnsIdempotencyConflict() {
+    ScriptEventIngressAuditRepository repository =
+        Mockito.mock(ScriptEventIngressAuditRepository.class);
+    ScriptEventIngressAudit existing = new ScriptEventIngressAudit();
+    existing.setId(17L);
+    existing.setPluginActivationEpoch(4L);
+    existing.setLifecycleRevision(8L);
+    existing.setSourceState("TRIGGER_ADMITTED");
+    existing.setAdmitted(true);
+    existing.setAdmissionOutcome(TriggerAdmissionOutcome.TRIGGER_ADMISSION_OUTCOME_ADMITTED.name());
+    existing.setAdmissionReason("admitted_handlers_resolved");
+    TriggerScriptEventRequest original =
+        gameplayRequestBuilder()
+            .setTenantId("1")
+            .setGameInstanceId("game-1")
+            .setRegionId("region-1")
+            .setRegionEpoch(7)
+            .setEntityId("entity-1")
+            .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
+            .setEventType("onCommand")
+            .setScriptPatchVersion("patch-1")
+            .setPluginId("plugin-1")
+            .setPluginVersionId("plugin-v1")
+            .setScriptEventId("base-conflict-event")
+            .build();
+    existing.setRequestDigest(
+        ScriptEventIngressRequestDigest.compute(original, "v1", "game-session-service"));
+    when(repository.insertIfAbsentByIdentity(Mockito.any()))
+        .thenReturn(new ScriptEventIngressAuditRepository.IdempotentInsertResult(existing, false));
+    ScriptEventIngressService service =
+        new ScriptEventIngressServiceImpl(
+            repository,
+            Mockito.mock(ScriptEventBindingRepository.class),
+            Mockito.mock(ScriptWorkItemRepository.class),
+            Mockito.mock(ScriptEventAuditRepository.class),
+            new BuiltInScriptEventRegistryService(),
+            Mockito.mock(AutomationQueueService.class),
+            outputProperties(),
+            Mockito.mock(GameSessionControlPlaneClient.class),
+            admissionStateService(),
+            Mockito.mock(ScriptPatchPinProjectionService.class),
+            Mockito.mock(ScriptPatchInstanceRolloutProjectionService.class),
+            scriptDefinitionRepositoryForTests(),
+            Mockito.mock(PluginRuntimeStateService.class),
+            allowingQuotaService(),
+            allowingDryRunQuotaService());
+
+    TriggerScriptEventRequest changed =
+        original.toBuilder().setScriptPatchBaseVersionId(2L).build();
+
     ScriptEventIngressService.TriggerAdmission admission =
         service.admit(changed, "game-session-service");
 

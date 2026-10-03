@@ -1,14 +1,3 @@
 package net.firedevops.firemud.gamesession.presentation;
 
-public record FriendRosterSummaryViewOutput(
-    int totalCount,
-    int onlineCount,
-    int offlineCount,
-    int recentCount,
-    int publicCount,
-    int friendsOnlyCount,
-    int privateCount,
-    int sharedCount,
-    int isolatedCount,
-    int unspecifiedScopeCount)
-    implements PlayerOutputPayload {}
+public record FriendRosterSummaryViewOutput(int totalCount) implements PlayerOutputPayload {}

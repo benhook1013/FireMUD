@@ -112,6 +112,32 @@ class GameplayAdmissionPointerSnapshotsTest {
   }
 
   @Test
+  void retainedPointerWithUnknownStateScopeIsNotCompleteAuthority() {
+    GameplayAdmissionPointerSnapshot pointer =
+        new GameplayAdmissionPointerSnapshot(
+            "demo",
+            "Demo",
+            "production",
+            "Production",
+            1L,
+            11L,
+            7L,
+            true,
+            true,
+            false,
+            "LEGACY_UNKNOWN",
+            "ALLOW_NEW");
+
+    assertThat(GameplayAdmissionPointerSnapshots.hasCompleteRoutingBundle(pointer)).isFalse();
+    assertThat(GameplayAdmissionPointerSnapshots.singularCompletePointer(List.of(pointer)))
+        .isEmpty();
+    assertThat(
+            GameplayAdmissionPointerSnapshots.matchesCurrentRuntimeTarget(
+                List.of(pointer), 1L, 11L, "demo", "production", 7L))
+        .isFalse();
+  }
+
+  @Test
   void matchesCurrentRuntimeTargetRequiresCompleteRoutingSlugInputs() {
     GameplayAdmissionPointerSnapshot pointer =
         new GameplayAdmissionPointerSnapshot(

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -180,7 +181,43 @@ class EntityDigestBaselineMigrationServiceTest {
   }
 
   @Test
-  void migrateRejectsDraftBeforeEntityDigestOrAuditRead() {
+  void enumerationBlocksRetainedFullVersionBaselineForScriptOnlyVersion() {
+    EntityDigestBaselineMigrationService service = serviceWithMockWriter();
+    when(baselineRepository.findEntityV1FullVersionBatchAfterId(10L, 25))
+        .thenReturn(List.of(source));
+    Version scriptOnly = version();
+    scriptOnly.setScriptOnly(true);
+    when(versionRepository.findByTenantIdAndId(TENANT_ID, VERSION_ID))
+        .thenReturn(Optional.of(scriptOnly));
+
+    EntityDigestBaselineMigrationService.EntityV1Batch page =
+        service.enumerateEntityV1Batch(10L, 25);
+
+    assertEquals(BASELINE_ID, page.nextAfterBaselineId());
+    assertEquals(BASELINE_ID, page.baselines().get(0).baselineId());
+    assertEquals(TENANT_ID, page.baselines().get(0).tenantId());
+    assertEquals(VERSION_ID, page.baselines().get(0).versionId());
+    assertEquals(
+        EntityDigestBaselineMigrationService.ScopeStatus.BLOCKED_SCRIPT_ONLY,
+        page.baselines().get(0).status());
+    assertFalse(page.isEmptyAtCursor());
+
+    EntityDigestBaselineMigrationService.MigrationRejectedException preflightRejected =
+        assertThrows(
+            EntityDigestBaselineMigrationService.MigrationRejectedException.class,
+            () -> service.preflightScope(TENANT_ID, VERSION_ID));
+    assertEquals("VERSION_SCOPE_MISMATCH", preflightRejected.failureCode());
+    EntityDigestBaselineMigrationService.MigrationRejectedException migrationRejected =
+        assertThrows(
+            EntityDigestBaselineMigrationService.MigrationRejectedException.class,
+            () -> service.migrate(command));
+    assertEquals("VERSION_SCOPE_MISMATCH", migrationRejected.failureCode());
+    verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
+    verify(auditRepository, never()).insert(any());
+  }
+
+  @Test
+  void migrateRejectsNewDraftOperationBeforeEntityDigestOrBaselineRead() {
     Version draft = version();
     draft.setVersionState(VersionLifecycleState.DRAFT);
     when(versionRepository.findByTenantIdAndId(TENANT_ID, VERSION_ID))
@@ -193,7 +230,8 @@ class EntityDigestBaselineMigrationServiceTest {
 
     assertEquals("VERSION_DRAFT", rejected.failureCode());
     verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
-    verify(auditRepository, never()).findByOperationId(OPERATION_ID);
+    verify(auditRepository).findByOperationId(OPERATION_ID);
+    verify(baselineRepository, never()).findById(BASELINE_ID);
     verify(auditRepository, never()).insert(any());
   }
 
@@ -210,7 +248,8 @@ class EntityDigestBaselineMigrationServiceTest {
     stubInitialMigrationReads(persistedBaseline, persistedAudit);
     Version draftAtCommit = version();
     draftAtCommit.setVersionState(VersionLifecycleState.DRAFT);
-    when(versionRepository.findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration(
+            TENANT_ID, VERSION_ID))
         .thenReturn(Optional.of(draftAtCommit));
     when(entityManagementClient.getDraftDesignDigestForVersion(any()))
         .thenReturn(v2Digest("v2-content", "version:42"));
@@ -225,6 +264,48 @@ class EntityDigestBaselineMigrationServiceTest {
     assertTrue(persistedAudit.get() == null);
     verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
     verify(auditRepository, never()).insert(any());
+    verify(versionRepository)
+        .findByTenantIdAndIdForEntityDigestBaselineMigration(TENANT_ID, VERSION_ID);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID);
+  }
+
+  @Test
+  void migrateRejectsVersionEpochChangedDuringExternalDigestRead() {
+    AtomicReference<RecordedParticipantDigest> persistedBaseline = new AtomicReference<>(source);
+    AtomicReference<EntityDigestBaselineMigrationAudit> persistedAudit = new AtomicReference<>();
+    EntityDigestBaselineMigrationWriteService writer =
+        new EntityDigestBaselineMigrationWriteService(
+            baselineRepository, auditRepository, versionRepository);
+    EntityDigestBaselineMigrationService service =
+        new EntityDigestBaselineMigrationService(
+            baselineRepository, auditRepository, versionRepository, entityManagementClient, writer);
+    stubInitialMigrationReads(persistedBaseline, persistedAudit);
+    AtomicReference<Version> lockedVersion = new AtomicReference<>(version());
+    Version versionAfterInterveningTransition = version();
+    versionAfterInterveningTransition.setVersionStateEpoch(2L);
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration(
+            TENANT_ID, VERSION_ID))
+        .thenAnswer(invocation -> Optional.of(lockedVersion.get()));
+    when(entityManagementClient.getDraftDesignDigestForVersion(any()))
+        .thenAnswer(
+            invocation -> {
+              lockedVersion.set(versionAfterInterveningTransition);
+              return v2Digest("v2-content", "version:42");
+            });
+
+    EntityDigestBaselineMigrationService.MigrationRejectedException rejected =
+        assertThrows(
+            EntityDigestBaselineMigrationService.MigrationRejectedException.class,
+            () -> service.migrate(command));
+
+    assertEquals("VERSION_STATE_EPOCH_CHANGED", rejected.failureCode());
+    assertTrue(rejected.getMessage().contains("lifecycle changed"));
+    assertEquals(1, persistedBaseline.get().getDigestSchemaVersion());
+    assertTrue(persistedAudit.get() == null);
+    verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
+    verify(auditRepository, never()).insert(any());
+    verify(versionRepository)
+        .findByTenantIdAndIdForEntityDigestBaselineMigration(TENANT_ID, VERSION_ID);
   }
 
   @Test
@@ -238,7 +319,8 @@ class EntityDigestBaselineMigrationServiceTest {
         new EntityDigestBaselineMigrationService(
             baselineRepository, auditRepository, versionRepository, entityManagementClient, writer);
     stubInitialMigrationReads(persistedBaseline, persistedAudit);
-    when(versionRepository.findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration(
+            TENANT_ID, VERSION_ID))
         .thenReturn(Optional.of(version()));
     when(entityManagementClient.getDraftDesignDigestForVersion(any()))
         .thenReturn(v2Digest("v2-content", "version:42"));
@@ -280,6 +362,9 @@ class EntityDigestBaselineMigrationServiceTest {
     assertEquals(source.getLastVerifiedAt(), persistedBaseline.get().getLastVerifiedAt());
     assertEquals(source.getContentDigest(), persistedAudit.get().sourceContentDigest());
     assertEquals("v2-content", persistedAudit.get().observedContentDigest());
+    verify(versionRepository)
+        .findByTenantIdAndIdForEntityDigestBaselineMigration(TENANT_ID, VERSION_ID);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate(TENANT_ID, VERSION_ID);
   }
 
   @Test
@@ -300,6 +385,29 @@ class EntityDigestBaselineMigrationServiceTest {
     assertEquals("v2-content", result.contentDigest());
     verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
     verify(versionRepository).findByTenantIdAndId(TENANT_ID, VERSION_ID);
+  }
+
+  @Test
+  void exactRetryOfCommittedOperationStillReadsBackAfterVersionBecomesDraft() {
+    RecordedParticipantDigest migrated = migratedBaseline("v2-content", "version:42");
+    EntityDigestBaselineMigrationAudit audit = audit(source, migrated, AUDIT_ID, auditTime());
+    Version draft = version();
+    draft.setVersionState(VersionLifecycleState.DRAFT);
+    when(versionRepository.findByTenantIdAndId(TENANT_ID, VERSION_ID))
+        .thenReturn(Optional.of(draft));
+    when(auditRepository.findByOperationId(OPERATION_ID)).thenReturn(Optional.of(audit));
+    when(baselineRepository.findById(BASELINE_ID)).thenReturn(Optional.of(migrated));
+
+    EntityDigestBaselineMigrationService.MigrationResult result =
+        serviceWithMockWriter().migrate(command);
+
+    assertEquals(
+        EntityDigestBaselineMigrationService.MigrationDisposition.EXACT_RETRY,
+        result.disposition());
+    assertEquals("v2-content", result.contentDigest());
+    verify(entityManagementClient, never()).getDraftDesignDigestForVersion(any());
+    verify(auditRepository, never()).insert(any());
+    verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
   }
 
   @Test
@@ -391,7 +499,7 @@ class EntityDigestBaselineMigrationServiceTest {
               throw new IllegalStateException("connection lost after commit");
             })
         .when(writer)
-        .commit(any(), any(), any());
+        .commit(any(), any(), any(), anyLong());
     when(auditRepository.findByOperationId(OPERATION_ID))
         .thenAnswer(invocation -> Optional.ofNullable(persistedAudit.get()));
     when(baselineRepository.findById(BASELINE_ID))
@@ -424,7 +532,7 @@ class EntityDigestBaselineMigrationServiceTest {
               throw new IllegalStateException("guarded migration lost race");
             })
         .when(writer)
-        .commit(any(), any(), any());
+        .commit(any(), any(), any(), anyLong());
     when(auditRepository.findByOperationId(OPERATION_ID))
         .thenReturn(Optional.empty(), Optional.of(winnerAudit));
     when(baselineRepository.findById(BASELINE_ID))
@@ -452,7 +560,7 @@ class EntityDigestBaselineMigrationServiceTest {
         org.mockito.Mockito.mock(EntityDigestBaselineMigrationWriteService.class);
     doThrow(new IllegalStateException("commit acknowledgement lost"))
         .when(writer)
-        .commit(any(), any(), any());
+        .commit(any(), any(), any(), anyLong());
     when(auditRepository.findByOperationId(OPERATION_ID))
         .thenReturn(Optional.empty(), Optional.empty());
     when(baselineRepository.findById(BASELINE_ID)).thenReturn(Optional.of(source));

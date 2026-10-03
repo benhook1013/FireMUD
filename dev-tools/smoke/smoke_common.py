@@ -20,6 +20,11 @@ class TransientUpstreamSmokeFailure(ProbeOperationalFailure):
     """A startup-time upstream error that a bounded smoke retry may retry."""
 
 
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, _request, _response, _code, _message, _headers, _url):
+        return None
+
+
 RETRYABLE_STARTUP_COMMAND_LABELS = frozenset({"WORLDS", "LOGIN"})
 INVALID_COMMAND_LINE_ERROR = "commands must not contain embedded CR or LF"
 PLAINTEXT_TELNET_HOST_ERROR = (
@@ -180,7 +185,8 @@ def wait_for_account_schema(startup_wait_seconds, timeout_seconds):
 
 def http_readiness_up(readiness_url, timeout_seconds):
     try:
-        with urllib.request.urlopen(readiness_url, timeout=timeout_seconds) as response:
+        opener = urllib.request.build_opener(_NoRedirectHandler())
+        with opener.open(readiness_url, timeout=timeout_seconds) as response:
             if not 200 <= response.status < 300:
                 return False
             body = json.loads(response.read().decode("utf-8"))

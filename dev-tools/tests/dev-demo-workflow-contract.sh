@@ -84,6 +84,7 @@ for required in \
   '  game-logic-service' \
   '  account-service' \
   '  game-session-service' \
+  '  social-groups-service' \
   '  automation-scripting-service'; do
   contains_literal "$standalone_grpc_tls" "$required"
 done
@@ -156,6 +157,53 @@ if extract_source_range "$range_fixture" '^start$' '^end$' \
   echo "source range extraction accepted reversed markers" >&2
   exit 1
 fi
+
+# Execute the parser copied from the actual dev-demo bootstrap step. The
+# ClusterIP Service exposes port 80 but forwards to the Gateway pod on 8080.
+gateway_port_parser_test="$fixture_dir/test-gateway-port-parser.sh"
+{
+  extract_source_range "$workflow" '^          # BEGIN gateway port parser$' '^          # END gateway port parser$' \
+    | sed '1d; s/^          //'
+  cat <<'EOF'
+expect_gateway_port() {
+  local line="$1"
+  local expected="$2"
+  local output status
+  printf '%s\n' "$line" >"$PORT_FORWARD_LOG"
+  if output="$(parse_bootstrap_gateway_port "$PORT_FORWARD_LOG" 2>/dev/null)"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$expected" == reject ]]; then
+    [[ "$status" -ne 0 && -z "$output" ]] || {
+      echo "Gateway port parser accepted an invalid forwarding line: $line" >&2
+      exit 1
+    }
+  else
+    [[ "$status" -eq 0 && "$output" == "$expected" ]] || {
+      echo "Gateway port parser returned '$output' for '$line', expected '$expected'" >&2
+      exit 1
+    }
+  fi
+}
+
+expect_gateway_port 'Forwarding from 127.0.0.1:49152 -> 8080' 49152
+expect_gateway_port 'Forwarding from 127.0.0.1:1 -> 8080' 1
+expect_gateway_port 'Forwarding from 127.0.0.1:65535 -> 8080' 65535
+expect_gateway_port 'Forwarding from 127.0.0.1:00008 -> 8080' 8
+expect_gateway_port 'Forwarding from 127.0.0.1:49152 -> 80' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:49152 -> 8081' reject
+expect_gateway_port 'Forwarding from 0.0.0.0:49152 -> 8080' reject
+expect_gateway_port 'Forwarding from [::1]:49152 -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:not-a-port -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:0 -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:65536 -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:999999 -> 8080' reject
+expect_gateway_port 'arbitrary kubectl output' reject
+EOF
+} >"$gateway_port_parser_test"
+PORT_FORWARD_LOG="$fixture_dir/gateway-port-forward.log" bash "$gateway_port_parser_test"
 
 # Exercise the certificate workspace setup and EXIT cleanup directly. A caller
 # supplied root may contain unrelated files, so only the private child created
@@ -361,6 +409,35 @@ if ! grep -Eq '^Private-Key: \(2048 bit(, [0-9]+ primes)?\)$' <<<"$key_profile";
 fi
 openssl pkey -in "$certificate_fixture_dir/valid.key" -check -noout >/dev/null 2>&1 || {
   echo "generated publication key failed OpenSSL key validation" >&2
+  exit 1
+}
+"$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/social-groups.crt" "$certificate_fixture_dir/social-groups.key" \
+  pr-42 social-groups-service
+social_groups_sans="$(openssl x509 -in "$certificate_fixture_dir/social-groups.crt" \
+  -noout -ext subjectAltName)"
+grep -Fq 'URI:spiffe://firemud/ns/pr-42/sa/social-groups-service' \
+  <<<"$social_groups_sans" || {
+  echo "generated Social Groups certificate is missing its exact SPIFFE identity" >&2
+  exit 1
+}
+grep -Fq 'DNS:social-groups-service.pr-42.svc.cluster.local' \
+  <<<"$social_groups_sans" || {
+  echo "generated Social Groups certificate is missing its exact Service DNS SAN" >&2
+  exit 1
+}
+if "$ROOT_DIR/dev-tools/certs/generate-dev-certs.sh" --workload \
+  "$certificate_fixture_dir/ca.crt" "$certificate_fixture_dir/ca.key" \
+  "$certificate_fixture_dir/unsupported.crt" "$certificate_fixture_dir/unsupported.key" \
+  pr-42 unsupported-service >"$certificate_fixture_dir/unsupported.stdout" \
+  2>"$certificate_fixture_dir/unsupported.stderr"; then
+  echo "workload certificate helper accepted an unlisted service" >&2
+  exit 1
+fi
+grep -Fq 'unsupported gRPC workload identity: unsupported-service' \
+  "$certificate_fixture_dir/unsupported.stderr" || {
+  echo "workload certificate helper rejected an unknown service without the expected diagnostic" >&2
   exit 1
 }
 echo "dev-demo certificate fixture: canonical workload certificate generated" >&2
@@ -1721,6 +1798,7 @@ for required in (
     'firemud-grpc-${workload}|grpc-publication-${workload}|tls.crt,tls.key,ca.crt',
     'firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt',
     'firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt',
+    'firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt',
     '    game-design-service',
     '    world-management-service',
     '    entity-management-service',

@@ -48,51 +48,75 @@ class EntityDigestBaselineMigrationWriteServiceTest {
   void draftAtGuardedWriteBoundaryPreventsBaselineAndAuditWrites() {
     Version draft = new Version();
     draft.setVersionState(VersionLifecycleState.DRAFT);
-    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L))
         .thenReturn(java.util.Optional.of(draft));
 
     assertThrows(
         EntityDigestBaselineMigrationWriteService.DraftVersionException.class,
-        () -> service.commit(source, replacement, audit));
+        () -> service.commit(source, replacement, audit, 1L));
 
     verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
     verify(auditRepository, never()).insert(any());
+    verify(versionRepository).findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate("tenant-7", 42L);
   }
 
   @Test
   void compareAndSetAndAuditAreBothRequiredForCommit() {
     Version version = new Version();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
-    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+    version.setVersionStateEpoch(7L);
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L))
         .thenReturn(java.util.Optional.of(version));
     when(baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(source, replacement))
         .thenReturn(1);
 
-    service.commit(source, replacement, audit);
+    service.commit(source, replacement, audit, 7L);
 
     verify(baselineRepository).migrateEntityFullVersionBaselineIfUnchanged(source, replacement);
     verify(auditRepository).insert(audit);
+    verify(versionRepository).findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate("tenant-7", 42L);
+  }
+
+  @Test
+  void changedVersionStateEpochPreventsBaselineAndAuditWrites() {
+    Version version = new Version();
+    version.setVersionState(VersionLifecycleState.PUBLISHED);
+    version.setVersionStateEpoch(8L);
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L))
+        .thenReturn(java.util.Optional.of(version));
+
+    assertThrows(
+        EntityDigestBaselineMigrationWriteService.VersionStateEpochChangedException.class,
+        () -> service.commit(source, replacement, audit, 7L));
+
+    verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
+    verify(auditRepository, never()).insert(any());
   }
 
   @Test
   void changedRowPreventsAuditInsert() {
     Version version = new Version();
     version.setVersionState(VersionLifecycleState.PUBLISHED);
-    when(versionRepository.findByTenantIdAndIdForUpdate("tenant-7", 42L))
+    when(versionRepository.findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L))
         .thenReturn(java.util.Optional.of(version));
     when(baselineRepository.migrateEntityFullVersionBaselineIfUnchanged(source, replacement))
         .thenReturn(0);
 
-    assertThrows(IllegalStateException.class, () -> service.commit(source, replacement, audit));
+    assertThrows(IllegalStateException.class, () -> service.commit(source, replacement, audit, 1L));
 
     verify(auditRepository, never()).insert(any());
+    verify(versionRepository).findByTenantIdAndIdForEntityDigestBaselineMigration("tenant-7", 42L);
+    verify(versionRepository, never()).findByTenantIdAndIdForUpdate("tenant-7", 42L);
   }
 
   @Test
   void maintenanceOperationCannotReplacePublishProvenance() {
     replacement.setRecordedFromPublishWorkflowId("migration-op");
 
-    assertThrows(IllegalArgumentException.class, () -> service.commit(source, replacement, audit));
+    assertThrows(
+        IllegalArgumentException.class, () -> service.commit(source, replacement, audit, 1L));
 
     verify(baselineRepository, never()).migrateEntityFullVersionBaselineIfUnchanged(any(), any());
     verify(auditRepository, never()).insert(any());
