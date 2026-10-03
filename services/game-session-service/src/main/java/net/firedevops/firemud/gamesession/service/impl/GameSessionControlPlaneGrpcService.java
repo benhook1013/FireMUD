@@ -4,6 +4,12 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.sql.SQLException;
+import java.sql.SQLNonTransientConnectionException;
+import java.sql.SQLRecoverableException;
+import java.sql.SQLTimeoutException;
+import java.sql.SQLTransientConnectionException;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -80,6 +86,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.QueryTimeoutException;
+import org.springframework.dao.TransientDataAccessResourceException;
 import org.springframework.grpc.server.service.GrpcService;
 
 @GrpcService
@@ -140,6 +149,14 @@ public final class GameSessionControlPlaneGrpcService
     return ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_id");
   }
 
+  private long requireTenantAccess(String tenantId) {
+    long parsedTenantId = parseTenantId(tenantId);
+    if (!SessionContext.hasTenantAccess(parsedTenantId)) {
+      throw new AdminAuthorizationException("Tenant access required");
+    }
+    return parsedTenantId;
+  }
+
   private long parseGameInstanceId(String gameInstanceId) {
     return ControlPlaneRequestParser.parsePositiveLong(gameInstanceId, "game_instance_id");
   }
@@ -177,6 +194,48 @@ public final class GameSessionControlPlaneGrpcService
         operation,
         "FAILED_PRECONDITION",
         AUTOMATION_ADMISSION_RECEIVER_FENCE_UNAVAILABLE);
+  }
+
+  private ErrorDetail admissionPointerAuthorityUnavailableError(String operation) {
+    return authorityUnavailableError(operation, "Admission pointer authority unavailable");
+  }
+
+  private ErrorDetail authorityUnavailableError(String operation, String message) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, "AUTHORITY_UNAVAILABLE", message);
+  }
+
+  private static boolean isPersistenceAvailabilityFailure(Throwable failure) {
+    Throwable cause = failure;
+    for (int depth = 0; cause != null && depth < 32; depth++) {
+      if (cause instanceof DataAccessResourceFailureException
+          || cause instanceof QueryTimeoutException
+          || cause instanceof TransientDataAccessResourceException
+          || cause instanceof SQLNonTransientConnectionException
+          || cause instanceof SQLRecoverableException
+          || cause instanceof SQLTimeoutException
+          || cause instanceof SQLTransientConnectionException) {
+        return true;
+      }
+      if (cause instanceof SQLException sqlException) {
+        String sqlState = sqlException.getSQLState();
+        if (sqlState != null
+            && (sqlState.startsWith("08")
+                || "57014".equals(sqlState)
+                || "HYT00".equals(sqlState)
+                || "HYT01".equals(sqlState)
+                || "57P01".equals(sqlState)
+                || "57P02".equals(sqlState)
+                || "57P03".equals(sqlState))) {
+          return true;
+        }
+      }
+      Throwable next = cause.getCause();
+      if (next == cause) {
+        break;
+      }
+      cause = next;
+    }
+    return false;
   }
 
   @Override
@@ -348,8 +407,8 @@ public final class GameSessionControlPlaneGrpcService
       ListAdmissionPointersRequest request,
       StreamObserver<ListAdmissionPointersResponse> responseObserver) {
     try {
-      requireAdminRole();
-      responseObserver.onNext(admissionPointerControlPlaneService.listAdmissionPointers());
+      List<Long> tenantIds = validateAdmissionPointerListScope(request.getTenantIdsList());
+      responseObserver.onNext(admissionPointerControlPlaneService.listAdmissionPointers(tenantIds));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       ListAdmissionPointersResponse response =
@@ -358,21 +417,32 @@ public final class GameSessionControlPlaneGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (IllegalArgumentException ex) {
+      ListAdmissionPointersResponse response =
+          ListAdmissionPointersResponse.newBuilder()
+              .setError(invalidArgumentError("ListAdmissionPointers", ex))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (AdmissionPointerAuditUnavailableException ex) {
       logger.warn("ListAdmissionPointers authority unavailable", ex);
       ListAdmissionPointersResponse response =
           ListAdmissionPointersResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "ListAdmissionPointers",
-                      "AUTHORITY_UNAVAILABLE",
-                      "Admission pointer audit authority unavailable"))
+              .setError(admissionPointerAuthorityUnavailableError("ListAdmissionPointers"))
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
+      if (isPersistenceAvailabilityFailure(ex)) {
+        logger.warn("ListAdmissionPointers persistence unavailable", ex);
+        ListAdmissionPointersResponse response =
+            ListAdmissionPointersResponse.newBuilder()
+                .setError(admissionPointerAuthorityUnavailableError("ListAdmissionPointers"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       logger.error("ListAdmissionPointers failed", ex);
       ListAdmissionPointersResponse response =
           ListAdmissionPointersResponse.newBuilder()
@@ -383,13 +453,32 @@ public final class GameSessionControlPlaneGrpcService
     }
   }
 
+  private List<Long> validateAdmissionPointerListScope(List<String> tenantIds) {
+    if (tenantIds.isEmpty()) {
+      requireAdminRole();
+      return List.of();
+    }
+
+    List<Long> validatedTenantIds =
+        tenantIds.stream()
+            .map(tenantId -> ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_ids"))
+            .distinct()
+            .toList();
+    for (long tenantId : validatedTenantIds) {
+      if (!SessionContext.hasTenantAccess(tenantId)) {
+        throw new AdminAuthorizationException("Tenant access required for admission pointer list");
+      }
+    }
+    return validatedTenantIds;
+  }
+
   @Override
   @Timed(value = "gamesessionGrpc.controlPlane.listAdmissionPointerAudit")
   public void listAdmissionPointerAudit(
       ListAdmissionPointerAuditRequest request,
       StreamObserver<ListAdmissionPointerAuditResponse> responseObserver) {
     try {
-      requireAdminRole();
+      requireTenantAccess(request.getTenantId());
       responseObserver.onNext(
           admissionPointerControlPlaneService.listAdmissionPointerAudit(request));
       responseObserver.onCompleted();
@@ -414,6 +503,16 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
+      if (isPersistenceAvailabilityFailure(ex)) {
+        logger.warn("ListAdmissionPointerAudit persistence unavailable", ex);
+        ListAdmissionPointerAuditResponse response =
+            ListAdmissionPointerAuditResponse.newBuilder()
+                .setError(admissionPointerAuthorityUnavailableError("ListAdmissionPointerAudit"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       logger.error("ListAdmissionPointerAudit failed", ex);
       ListAdmissionPointerAuditResponse response =
           ListAdmissionPointerAuditResponse.newBuilder()
@@ -980,8 +1079,7 @@ public final class GameSessionControlPlaneGrpcService
       GetGameInstanceRuntimeStateRequest request,
       StreamObserver<GetGameInstanceRuntimeStateResponse> responseObserver) {
     try {
-      requireAdminRole();
-      long tenantId = parseTenantId(request.getTenantId());
+      long tenantId = requireTenantAccess(request.getTenantId());
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
               .setRuntimeState(
@@ -1017,6 +1115,18 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
+      if (isPersistenceAvailabilityFailure(ex)) {
+        logger.warn("GetGameInstanceRuntimeState persistence unavailable", ex);
+        GetGameInstanceRuntimeStateResponse response =
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setError(
+                    authorityUnavailableError(
+                        "GetGameInstanceRuntimeState", "Runtime state authority unavailable"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       logger.error("GetGameInstanceRuntimeState failed", ex);
       GetGameInstanceRuntimeStateResponse response =
           GetGameInstanceRuntimeStateResponse.newBuilder()
@@ -1145,10 +1255,10 @@ public final class GameSessionControlPlaneGrpcService
       ValidateInstanceCutoverCompatibilityRequest request,
       StreamObserver<ValidateInstanceCutoverCompatibilityResponse> responseObserver) {
     try {
-      requireAdminRole();
+      long tenantId = requireTenantAccess(request.getTenantId());
       responseObserver.onNext(
           versionUpgradeControlPlaneService.validateInstanceCutoverCompatibility(
-              parseTenantId(request.getTenantId()),
+              tenantId,
               parseGameInstanceId(request.getSourceGameInstanceId()),
               parseGameInstanceId(request.getTargetVersionId())));
       responseObserver.onCompleted();
@@ -1222,10 +1332,10 @@ public final class GameSessionControlPlaneGrpcService
       GetPreparedVersionUpgradeRequest request,
       StreamObserver<GetPreparedVersionUpgradeResponse> responseObserver) {
     try {
-      requireAdminRole();
+      long tenantId = requireTenantAccess(request.getTenantId());
       responseObserver.onNext(
           versionUpgradeControlPlaneService.getPreparedVersionUpgrade(
-              parseTenantId(request.getTenantId()), request.getPreparationId()));
+              tenantId, request.getPreparationId()));
       responseObserver.onCompleted();
     } catch (AdminAuthorizationException ex) {
       GetPreparedVersionUpgradeResponse response =
@@ -1242,6 +1352,19 @@ public final class GameSessionControlPlaneGrpcService
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (Exception ex) {
+      if (isPersistenceAvailabilityFailure(ex)) {
+        logger.warn("GetPreparedVersionUpgrade persistence unavailable", ex);
+        GetPreparedVersionUpgradeResponse response =
+            GetPreparedVersionUpgradeResponse.newBuilder()
+                .setError(
+                    authorityUnavailableError(
+                        "GetPreparedVersionUpgrade",
+                        "Prepared version upgrade authority unavailable"))
+                .build();
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
+        return;
+      }
       logger.error("GetPreparedVersionUpgrade failed", ex);
       GetPreparedVersionUpgradeResponse response =
           GetPreparedVersionUpgradeResponse.newBuilder()

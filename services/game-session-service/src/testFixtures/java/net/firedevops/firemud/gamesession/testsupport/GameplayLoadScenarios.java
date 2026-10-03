@@ -63,8 +63,8 @@ public final class GameplayLoadScenarios {
                       GameplayCrossServiceStack.SYNTHETIC_LOAD_ACTOR,
                       "Seed per-player load-test admission pointer",
                       "load-test:" + accountId,
-                      null,
-                      null,
+                      0L,
+                      0L,
                       null));
       long sessionId = firstAccountId + 10_000L + i + 1;
       String email = "player" + (i + 1) + "@example.com";

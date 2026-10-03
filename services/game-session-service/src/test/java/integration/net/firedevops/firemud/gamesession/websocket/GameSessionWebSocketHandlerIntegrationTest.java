@@ -41,6 +41,7 @@ import net.firedevops.firemud.gamesession.service.AccountRecentPresenceService;
 import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
@@ -1663,7 +1664,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
 
   private void bumpProductionAdmissionPointer(
       long newGameInstanceId, boolean requiresCharacterSelection) {
-    var currentPointer =
+    GameplayAdmissionPointerSnapshot currentPointer =
         gameplayAdmissionPointerAuthorityService.listPointers().stream()
             .filter(
                 pointer ->
@@ -1672,8 +1673,6 @@ class GameSessionWebSocketHandlerIntegrationTest {
                         && "production".equals(pointer.realmSlug()))
             .findFirst()
             .orElseThrow();
-    long expectedPointerVersion = currentPointer.pointerVersion();
-    long expectedCatalogRevision = currentPointer.catalogRevision();
     gameplayAdmissionPointerAuthorityService.upsertPointer(
         new GameplayAdmissionPointerMutation(
             "demo",
@@ -1689,9 +1688,9 @@ class GameSessionWebSocketHandlerIntegrationTest {
             "ALLOW_NEW",
             "integration-test",
             "cutover-proof",
-            "req-cutover-" + newGameInstanceId + "-" + expectedPointerVersion,
-            expectedPointerVersion,
-            expectedCatalogRevision,
+            "req-cutover-" + newGameInstanceId + "-" + currentPointer.pointerVersion(),
+            currentPointer.pointerVersion(),
+            currentPointer.catalogRevision(),
             "integration-test-prep-" + newGameInstanceId));
   }
 
@@ -1736,6 +1735,12 @@ class GameSessionWebSocketHandlerIntegrationTest {
             0L,
             0L,
             null));
+    assertThat(gameplayAdmissionPointerAuthorityService.listPointers())
+        .filteredOn(
+            pointer ->
+                pointer.tenantId() == 22L && pointer.visible() && pointer.publicProductionRealm())
+        .extracting(GameplayAdmissionPointerSnapshot::worldSlug)
+        .containsExactly("demo");
   }
 
   private static JsonNode json(String payload) {

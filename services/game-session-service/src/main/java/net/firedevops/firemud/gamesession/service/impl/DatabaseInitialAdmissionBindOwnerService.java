@@ -322,7 +322,7 @@ public class DatabaseInitialAdmissionBindOwnerService implements InitialAdmissio
     GameplayAdmissionPointer pointer = maybePointer.get();
     Optional<GameplayAdmissionPointerEvent> maybeAudit =
         eventRepository
-            .findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(
+            .findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(
                 attempt.tenantId(), catalog.worldSlug(), catalog.realmSlug())
             .stream()
             .filter(event -> Objects.equals(event.getId(), attempt.auditEventId()))

@@ -426,7 +426,13 @@ message AdmissionPointerControlPlaneEntry {
   string playable_state_namespace_id = 20;
 }
 
-message ListAdmissionPointersRequest {}
+message ListAdmissionPointersRequest {
+  // Empty requires a global privileged caller for the all-tenant read.
+  // Current authority accepts only positive decimal values; UUID-form tenant IDs remain
+  // unsupported until owner storage migrates to the canonical UUID-string tenantId.
+  // Each current numeric ID must be individually authorized by the forwarded caller context.
+  repeated string tenant_ids = 1;
+}
 
 message ListAdmissionPointersResponse {
   repeated AdmissionPointerControlPlaneEntry pointers = 1;
@@ -1152,9 +1158,14 @@ message SetAdmissionPointerRequest {
   string actor_principal = 11;
   string reason = 12;
   string control_plane_request_id = 13;
+  // Existing-row mutations require both expected revisions to match the current row. Creating a
+  // missing row is supported only with both fields explicitly present as zero. Optional presence
+  // does not enable the currently disabled public mutation RPC or imply valid mutation semantics.
   optional int64 expected_pointer_version = 14;
   string prepared_version_upgrade_id = 15;
   bool public_production_realm = 16;
+  // Must be supplied with expected_pointer_version under the same existing-row or creation rules.
+  optional int64 expected_catalog_revision = 17;
 }
 
 message SetAdmissionPointerResponse {
@@ -1171,7 +1182,12 @@ message ExecutePreparedVersionCutoverRequest {
   string actor_principal = 6;
   string reason = 7;
   string control_plane_request_id = 8;
+  // Existing-row mutations require both expected revisions to match the current row. Creating a
+  // missing row is supported only with both fields explicitly present as zero. Optional presence
+  // does not enable the currently disabled public mutation RPC or imply valid mutation semantics.
   optional int64 expected_pointer_version = 9;
+  // Must be supplied with expected_pointer_version under the same existing-row or creation rules.
+  optional int64 expected_catalog_revision = 10;
 }
 
 message ExecutePreparedVersionCutoverResponse {

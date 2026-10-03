@@ -559,9 +559,10 @@ public final class GameSessionGrpcService
       ListGameplayRealmsRequest request,
       StreamObserver<ListGameplayRealmsResponse> responseObserver) {
     try {
+      String worldSelector = requireWorldSelector(request.getWorldSlug());
       WorldView world =
           gameplayWorldCatalog
-              .resolvePublicWorldFromAuthoritySnapshot(request.getWorldSlug())
+              .resolvePublicWorldFromAuthoritySnapshot(worldSelector)
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.visibleRealms(world).stream()
@@ -839,6 +840,17 @@ public final class GameSessionGrpcService
         .setPlayableStateNamespaceId(
             requireIdentity(realm.playableStateNamespaceId(), "playableStateNamespaceId"))
         .build();
+  }
+
+  private static String requireWorldSelector(String worldSelector) {
+    if (worldSelector == null || worldSelector.isBlank()) {
+      throw new IllegalArgumentException("worldSlug is required");
+    }
+    String trimmed = worldSelector.trim();
+    if (!trimmed.matches("[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")) {
+      throw new IllegalArgumentException("worldSlug must be a valid selector");
+    }
+    return trimmed;
   }
 
   private static String requireIdentity(java.util.UUID identity, String fieldName) {

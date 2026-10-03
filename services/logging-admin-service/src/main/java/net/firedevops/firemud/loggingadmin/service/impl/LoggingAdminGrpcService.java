@@ -27,9 +27,6 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
       "Moderation actions are unavailable until the shared mutation gate is implemented";
   private static final String FEATURE_FLAG_TOGGLE_UNAVAILABLE_MESSAGE =
       "Feature-flag toggles are unavailable until the shared mutation gate is implemented";
-  private static final String ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE =
-      "Account audit receipt receiver is unavailable until the immutable receipt contract is "
-          + "implemented";
   private static final Set<String> MODERATION_POLICY_CALLERS =
       Set.of("game-session-service", "social-groups-service");
 
@@ -177,40 +174,10 @@ public class LoggingAdminGrpcService extends LoggingAdminServiceGrpc.LoggingAdmi
   @Timed(value = "loggingadminGrpc.createLogEvent")
   public void createLogEvent(
       CreateLogEventRequest request, StreamObserver<CreateLogEventResponse> responseObserver) {
-    try {
-      AdminRoleGuard.requireAdminRole();
-      GrpcAppErrors.error(
-          meterRegistry,
-          logger,
-          "CreateLogEvent",
-          "UNAVAILABLE",
-          ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE);
-    } catch (AdminAuthorizationException ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(
-                  GrpcAppErrors.error(
-                      meterRegistry,
-                      logger,
-                      "CreateLogEvent",
-                      "PERMISSION_DENIED",
-                      ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-      return;
-    } catch (Exception ex) {
-      CreateLogEventResponse response =
-          CreateLogEventResponse.newBuilder()
-              .setError(GrpcAppErrors.internal(meterRegistry, logger, "CreateLogEvent", ex))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-      return;
-    }
     responseObserver.onError(
         Status.UNAVAILABLE
-            .withDescription(ACCOUNT_AUDIT_RECEIVER_UNAVAILABLE_MESSAGE)
+            .withDescription(
+                "Typed account audit receipt receiver is unavailable in this service revision")
             .asRuntimeException());
   }
 

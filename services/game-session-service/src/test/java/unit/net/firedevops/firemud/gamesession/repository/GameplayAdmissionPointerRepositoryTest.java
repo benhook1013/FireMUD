@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
+import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -23,7 +24,7 @@ class GameplayAdmissionPointerRepositoryTest {
   void tenantScopedListFiltersRowsInTheDatabaseBeforeMapping() throws Exception {
     try (Connection connection =
         DriverManager.getConnection(
-            "jdbc:h2:mem:gameplay-pointer-tenant-list;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+            "jdbc:h2:mem:gameplay-pointer-tenant-list-by-tenant;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
       DSLContext dsl = DSL.using(connection, SQLDialect.H2);
       createSchema(dsl);
       GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
@@ -82,6 +83,27 @@ class GameplayAdmissionPointerRepositoryTest {
       assertEquals(99L, replaced.getGameInstanceId());
       assertEquals(sharedRealmId, replaced.getRealmId());
       assertEquals(sharedNamespaceId, replaced.getPlayableStateNamespaceId());
+    }
+  }
+
+  @Test
+  void tenantScopedPointerListExcludesOtherTenants() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-tenant-list-in;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createSchema(dsl);
+      GameplayAdmissionPointerRepository repository = new GameplayAdmissionPointerRepository(dsl);
+      repository.save(pointer(7L, 44L, "SHARED", "production"));
+      repository.save(pointer(8L, 55L, "SHARED", "production"));
+
+      var scoped = repository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of(8L));
+
+      assertEquals(1, scoped.size());
+      assertEquals(8L, scoped.getFirst().getTenantId());
+      assertEquals(2, repository.findAllByOrderByWorldSlugAscRealmSlugAsc().size());
+      assertEquals(
+          List.of(), repository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(List.of()));
     }
   }
 
@@ -172,6 +194,41 @@ class GameplayAdmissionPointerRepositoryTest {
       assertEquals(2L, persisted.getPointerVersion());
       assertEquals(2L, persisted.getCatalogRevision());
       assertEquals("Renamed Demo World", persisted.getWorldDisplayName());
+    }
+  }
+
+  @Test
+  void pointerAuditOrdersByEventIdWhenPodTimestampMovesBackward() throws Exception {
+    try (Connection connection =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:gameplay-pointer-audit-order;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1")) {
+      DSLContext dsl = DSL.using(connection, SQLDialect.H2);
+      createAuditSchema(dsl);
+      GameplayAdmissionPointerEventRepository repository =
+          new GameplayAdmissionPointerEventRepository(dsl);
+
+      GameplayAdmissionPointerEvent earlierWrite = pointerEvent("2026-09-29T10:00:00Z");
+      GameplayAdmissionPointerEvent firstSaved = repository.save(earlierWrite);
+      GameplayAdmissionPointerEvent laterWriteWithSkewedClock =
+          pointerEvent("2026-09-29T09:00:00Z");
+      GameplayAdmissionPointerEvent secondSaved = repository.save(laterWriteWithSkewedClock);
+      GameplayAdmissionPointerEvent otherTenantWrite = pointerEvent("2026-09-29T11:00:00Z");
+      otherTenantWrite.setTenantId(8L);
+      repository.save(otherTenantWrite);
+
+      var audit =
+          repository.findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(7L, "demo", "production");
+      var latest =
+          repository
+              .findLatestByTenantIdAndWorldSlugAndRealmSlug(7L, "demo", "production")
+              .orElseThrow();
+
+      assertEquals(2, audit.size());
+      assertEquals(secondSaved.getId(), audit.getFirst().getId());
+      assertEquals(firstSaved.getId(), audit.get(1).getId());
+      assertEquals(Instant.parse("2026-09-29T09:00:00Z"), audit.getFirst().getOccurredAt());
+      assertEquals(secondSaved.getId(), latest.getId());
+      assertEquals(Instant.parse("2026-09-29T09:00:00Z"), latest.getOccurredAt());
     }
   }
 
@@ -278,5 +335,56 @@ class GameplayAdmissionPointerRepositoryTest {
     dsl.execute(
         "CREATE UNIQUE INDEX uq_gameplay_admission_pointer_realm_id "
             + "ON gameplay_admission_pointer (realm_id)");
+  }
+
+  private static GameplayAdmissionPointerEvent pointerEvent(String occurredAt) {
+    GameplayAdmissionPointerEvent event = new GameplayAdmissionPointerEvent();
+    event.setWorldSlug("demo");
+    event.setRealmSlug("production");
+    event.setWorldDisplayName("Demo World");
+    event.setRealmDisplayName("Production");
+    event.setTenantId(7L);
+    event.setGameInstanceId(44L);
+    event.setPointerVersion(1L);
+    event.setCatalogRevision(1L);
+    event.setVisible(true);
+    event.setPublicProductionRealm(true);
+    event.setRequiresCharacterSelection(false);
+    event.setStateScope("SHARED");
+    event.setCharacterCreationPolicy("ALLOW_NEW");
+    event.setActorPrincipal("tester");
+    event.setReason("test");
+    event.setControlPlaneRequestId(UUID.randomUUID().toString());
+    event.setOccurredAt(Instant.parse(occurredAt));
+    return event;
+  }
+
+  private static void createAuditSchema(DSLContext dsl) {
+    dsl.execute(
+        """
+        CREATE TABLE gameplay_admission_pointer_event (
+          id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+          world_slug VARCHAR(120) NOT NULL,
+          realm_slug VARCHAR(120) NOT NULL,
+          world_display_name VARCHAR(200) NOT NULL,
+          realm_display_name VARCHAR(200) NOT NULL,
+          tenant_id BIGINT NOT NULL,
+          game_instance_id BIGINT NOT NULL,
+          pointer_version BIGINT NOT NULL,
+          catalog_revision BIGINT,
+          realm_id UUID,
+          playable_state_namespace_id UUID,
+          visible BOOLEAN NOT NULL,
+          public_production_realm BOOLEAN NOT NULL,
+          requires_character_selection BOOLEAN NOT NULL,
+          state_scope VARCHAR(32) NOT NULL,
+          character_creation_policy VARCHAR(32) NOT NULL,
+          actor_principal VARCHAR(200) NOT NULL,
+          reason VARCHAR(500) NOT NULL,
+          control_plane_request_id VARCHAR(120) NOT NULL,
+          prepared_version_upgrade_id VARCHAR(64),
+          occurred_at TIMESTAMP NOT NULL
+        )
+        """);
   }
 }

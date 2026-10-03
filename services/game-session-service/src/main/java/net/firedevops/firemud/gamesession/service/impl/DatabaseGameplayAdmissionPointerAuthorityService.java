@@ -3,8 +3,10 @@ package net.firedevops.firemud.gamesession.service.impl;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointer;
 import net.firedevops.firemud.gamesession.entity.GameplayAdmissionPointerEvent;
 import net.firedevops.firemud.gamesession.repository.GameplayAdmissionPointerEventRepository;
@@ -13,6 +15,7 @@ import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatc
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionCatalogPolicy;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuditEntry;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService.PointerAuditKey;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerMutation;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import org.springframework.stereotype.Service;
@@ -42,6 +45,14 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   @Transactional(readOnly = true)
   public List<GameplayAdmissionPointerSnapshot> listPointers() {
     return pointerRepository.findAllByOrderByWorldSlugAscRealmSlugAsc().stream()
+        .map(this::toSnapshot)
+        .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public List<GameplayAdmissionPointerSnapshot> listPointersForTenants(List<Long> tenantIds) {
+    return pointerRepository.findAllByTenantIdInOrderByWorldSlugAscRealmSlugAsc(tenantIds).stream()
         .map(this::toSnapshot)
         .toList();
   }
@@ -82,7 +93,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     Instant now = Instant.now();
     GameplayAdmissionPointer pointer =
         pointerRepository
-            .findByTenantIdAndWorldSlugAndRealmSlug(
+            .findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
                 mutation.tenantId(), mutation.worldSlug(), mutation.realmSlug())
             .orElseGet(GameplayAdmissionPointer::new);
     if (pointer.getId() != null
@@ -95,7 +106,7 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
       throw new IllegalArgumentException(
           "state_scope changes require a new playable-state lifecycle");
     }
-    enforceExpectedRevisions(
+    enforceExpectedVersions(
         pointer, mutation.expectedPointerVersion(), mutation.expectedCatalogRevision());
     if (pointer.getId() != null
         && runtimeTargetMatches(pointer, mutation)
@@ -167,32 +178,59 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
   public List<GameplayAdmissionPointerAuditEntry> listPointerAudit(
       long tenantId, String worldSlug, String realmSlug) {
     return eventRepository
-        .findByTenantIdAndWorldSlugAndRealmSlugOrderByOccurredAtDesc(tenantId, worldSlug, realmSlug)
+        .findByTenantIdAndWorldSlugAndRealmSlugOrderByIdDesc(tenantId, worldSlug, realmSlug)
         .stream()
-        .map(
-            event ->
-                new GameplayAdmissionPointerAuditEntry(
-                    event.getWorldSlug(),
-                    event.getRealmSlug(),
-                    event.getWorldDisplayName(),
-                    event.getRealmDisplayName(),
-                    event.getTenantId(),
-                    event.getGameInstanceId(),
-                    event.getPointerVersion(),
-                    event.isVisible(),
-                    event.isPublicProductionRealm(),
-                    event.isRequiresCharacterSelection(),
-                    event.getStateScope(),
-                    event.getCharacterCreationPolicy(),
-                    event.getActorPrincipal(),
-                    event.getReason(),
-                    event.getControlPlaneRequestId(),
-                    event.getPreparedVersionUpgradeId(),
-                    event.getCatalogRevision(),
-                    event.getRealmId(),
-                    event.getPlayableStateNamespaceId(),
-                    event.getOccurredAt()))
+        .map(this::toAuditEntry)
         .toList();
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Optional<GameplayAdmissionPointerAuditEntry> findLatestPointerAudit(
+      long tenantId, String worldSlug, String realmSlug) {
+    return eventRepository
+        .findLatestByTenantIdAndWorldSlugAndRealmSlug(tenantId, worldSlug, realmSlug)
+        .map(this::toAuditEntry);
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Map<PointerAuditKey, GameplayAdmissionPointerAuditEntry> findLatestPointerAudits(
+      List<PointerAuditKey> keys) {
+    if (keys.isEmpty()) {
+      return Map.of();
+    }
+    return eventRepository.findLatestByPointerKeys(keys).stream()
+        .collect(
+            Collectors.toMap(
+                event ->
+                    new PointerAuditKey(
+                        event.getTenantId(), event.getWorldSlug(), event.getRealmSlug()),
+                this::toAuditEntry));
+  }
+
+  private GameplayAdmissionPointerAuditEntry toAuditEntry(GameplayAdmissionPointerEvent event) {
+    return new GameplayAdmissionPointerAuditEntry(
+        event.getWorldSlug(),
+        event.getRealmSlug(),
+        event.getWorldDisplayName(),
+        event.getRealmDisplayName(),
+        event.getTenantId(),
+        event.getGameInstanceId(),
+        event.getPointerVersion(),
+        event.getCatalogRevision(),
+        event.getRealmId(),
+        event.getPlayableStateNamespaceId(),
+        event.isVisible(),
+        event.isPublicProductionRealm(),
+        event.isRequiresCharacterSelection(),
+        event.getStateScope(),
+        event.getCharacterCreationPolicy(),
+        event.getActorPrincipal(),
+        event.getReason(),
+        event.getControlPlaneRequestId(),
+        event.getPreparedVersionUpgradeId(),
+        event.getOccurredAt());
   }
 
   private GameplayAdmissionPointerSnapshot toSnapshot(GameplayAdmissionPointer pointer) {
@@ -260,32 +298,33 @@ public class DatabaseGameplayAdmissionPointerAuthorityService
     }
   }
 
-  private void enforceExpectedRevisions(
+  private void enforceExpectedVersions(
       GameplayAdmissionPointer pointer, Long expectedPointerVersion, Long expectedCatalogRevision) {
+    if (expectedPointerVersion == null || expectedCatalogRevision == null) {
+      throw new AdmissionPointerVersionMismatchException(
+          "expected_pointer_version and expected_catalog_revision are required");
+    }
     if (pointer.getId() == null) {
-      if (!isAbsentOrZero(expectedPointerVersion) || !isAbsentOrZero(expectedCatalogRevision)) {
+      if (expectedPointerVersion != 0L || expectedCatalogRevision != 0L) {
         throw new AdmissionPointerVersionMismatchException(
-            "new admission pointers require absent or zero initial revisions");
+            "new admission pointers require zero initial versions");
       }
       return;
     }
+    long currentPointerVersion =
+        pointer.getPointerVersion() == null ? -1L : pointer.getPointerVersion();
+    long currentCatalogRevision =
+        pointer.getCatalogRevision() == null ? -1L : pointer.getCatalogRevision();
     if (!isPositive(expectedPointerVersion)
-        || !Objects.equals(pointer.getPointerVersion(), expectedPointerVersion)) {
+        || !isPositive(expectedCatalogRevision)
+        || currentPointerVersion != expectedPointerVersion
+        || currentCatalogRevision != expectedCatalogRevision) {
       throw new AdmissionPointerVersionMismatchException(
-          "expected_pointer_version does not match current pointer version");
-    }
-    if (!isPositive(expectedCatalogRevision)
-        || !Objects.equals(pointer.getCatalogRevision(), expectedCatalogRevision)) {
-      throw new AdmissionPointerVersionMismatchException(
-          "expected_catalog_revision does not match current catalog revision");
+          "expected admission-pointer version pair does not match current pointer state");
     }
   }
 
   private boolean isPositive(Long value) {
     return value != null && value > 0L;
-  }
-
-  private boolean isAbsentOrZero(Long value) {
-    return value == null || value == 0L;
   }
 }

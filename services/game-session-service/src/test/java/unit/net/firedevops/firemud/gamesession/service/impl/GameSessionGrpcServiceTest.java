@@ -1197,6 +1197,69 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
+  void unknownNamedWorldReturnsInvalidArgument() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers()).thenReturn(List.of());
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    ListGameplayRealmsResponse response = listGameplayRealms(service, "unknown-world");
+
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals(0, response.getRealmsCount());
+  }
+
+  @Test
+  void malformedWorldSelectorRemainsInvalidArgument() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    GameSessionGrpcService service =
+        newService(
+            Mockito.mock(PingService.class),
+            Mockito.mock(GameInstanceService.class),
+            Mockito.mock(FeatureFlagService.class),
+            Mockito.mock(TextCommandInterpreter.class),
+            Mockito.mock(GameInstanceRepository.class),
+            pointerAuthorityService,
+            new GameplayWorldCatalog(pointerAuthorityService),
+            Mockito.mock(TickService.class),
+            new SimpleMeterRegistry(),
+            Mockito.mock(IpConnectionLimiter.class));
+
+    ListGameplayRealmsResponse response = listGameplayRealms(service, "not a world");
+
+    assertEquals("INVALID_ARGUMENT", response.getError().getCode());
+    assertEquals(0, response.getRealmsCount());
+  }
+
+  @Test
+  void listGameplayRealmsTrimsWorldSelectorBeforeAuthorityResolution() {
+    GameplayAdmissionPointerAuthorityService pointerAuthorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    Mockito.when(pointerAuthorityService.listPointers())
+        .thenReturn(List.of(authorityPointer("alpha", "live", 7L, 44L, true, true)));
+    GameSessionGrpcService service = catalogService(pointerAuthorityService);
+
+    ListGameplayRealmsResponse response = listGameplayRealms(service, "  alpha  ");
+
+    assertEquals("", response.getError().getCode());
+    assertEquals(1, response.getRealmsCount());
+    assertEquals("live", response.getRealms(0).getRealmSlug());
+    Mockito.verify(pointerAuthorityService).listPointers();
+  }
+
+  @Test
   void listGameplayRealmsMapsUnexpectedDependencyFailureToInternalAndCompletes() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);

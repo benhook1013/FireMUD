@@ -11,6 +11,9 @@ public record GameplayAdmissionPointerAuditEntry(
     long tenantId,
     long gameInstanceId,
     long pointerVersion,
+    Long catalogRevision,
+    UUID realmId,
+    UUID playableStateNamespaceId,
     boolean visible,
     boolean publicProductionRealm,
     boolean requiresCharacterSelection,
@@ -20,7 +23,4 @@ public record GameplayAdmissionPointerAuditEntry(
     String reason,
     String controlPlaneRequestId,
     String preparedVersionUpgradeId,
-    Long catalogRevision,
-    UUID realmId,
-    UUID playableStateNamespaceId,
     Instant occurredAt) {}

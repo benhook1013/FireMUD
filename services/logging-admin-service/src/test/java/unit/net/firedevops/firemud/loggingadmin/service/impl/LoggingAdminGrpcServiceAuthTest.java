@@ -3,15 +3,16 @@ package net.firedevops.firemud.loggingadmin.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.google.protobuf.ByteString;
+import com.google.protobuf.Timestamp;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import io.micrometer.core.instrument.Counter;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.util.List;
 import java.util.Map;
@@ -73,94 +74,19 @@ class LoggingAdminGrpcServiceAuthTest {
   }
 
   @Test
-  void createLogEventReturnsUnavailableWithoutDispatchingUntilReceiptReceiverExists() {
+  void createLogEventReturnsUnavailableForTypedRequestWithoutDispatch() {
     SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    ModerationService moderationService = Mockito.mock(ModerationService.class);
-    SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class), logEventService, moderationService, meterRegistry);
-
-    AtomicReference<Throwable> error = new AtomicReference<>();
-    java.util.concurrent.atomic.AtomicBoolean receivedResponse =
-        new java.util.concurrent.atomic.AtomicBoolean();
-    java.util.concurrent.atomic.AtomicBoolean completed =
-        new java.util.concurrent.atomic.AtomicBoolean();
-    service.createLogEvent(
-        CreateLogEventRequest.newBuilder().setTenantId("1").build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(CreateLogEventResponse value) {
-            receivedResponse.set(true);
-          }
-
-          @Override
-          public void onError(Throwable t) {
-            error.set(t);
-          }
-
-          @Override
-          public void onCompleted() {
-            completed.set(true);
-          }
-        });
-
-    assertNotNull(error.get());
-    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
-    String description = Status.fromThrowable(error.get()).getDescription();
-    assertEquals(
-        "Account audit receipt receiver is unavailable until the immutable receipt contract is "
-            + "implemented",
-        description);
-    assertTrue(description.length() <= 128);
-    assertFalse(receivedResponse.get());
-    assertFalse(completed.get());
-    assertEquals(1.0, meterRegistry.counter("grpc.app_error", "code", "UNAVAILABLE").count());
-    verifyNoInteractions(logEventService, moderationService);
+    assertCreateLogEventUnavailable(validCreateLogEventRequest(), logEventService);
   }
 
   @Test
-  void createLogEventMapsUnexpectedFailureToSanitizedInternalAndCompletes() {
-    SessionContext.setContext("1", List.of("platformAdmin"), Map.of());
+  void createLogEventFailsClosedBeforeTypedRequestValidation() {
     LogEventService logEventService = Mockito.mock(LogEventService.class);
-    ModerationService moderationService = Mockito.mock(ModerationService.class);
-    MeterRegistry meterRegistry = Mockito.mock(MeterRegistry.class);
-    Counter internalErrorCounter = Mockito.mock(Counter.class);
-    when(meterRegistry.counter("grpc.app_error", "code", "UNAVAILABLE"))
-        .thenThrow(new IllegalStateException("sensitive meter-registry diagnostic"));
-    when(meterRegistry.counter("grpc.app_error", "code", "INTERNAL"))
-        .thenReturn(internalErrorCounter);
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class), logEventService, moderationService, meterRegistry);
+    CreateLogEventRequest unsupportedDigestVersion =
+        validCreateLogEventRequest().toBuilder().setPayloadDigestVersion(2).build();
 
-    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
-    java.util.concurrent.atomic.AtomicBoolean completed =
-        new java.util.concurrent.atomic.AtomicBoolean();
-    service.createLogEvent(
-        CreateLogEventRequest.newBuilder().setTenantId("1").build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(CreateLogEventResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {
-            completed.set(true);
-          }
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("INTERNAL", ref.get().getError().getCode());
-    assertEquals("Internal error", ref.get().getError().getMessage());
-    assertFalse(ref.get().getError().getMessage().contains("sensitive"));
-    assertTrue(completed.get());
-    verifyNoInteractions(logEventService, moderationService);
+    assertCreateLogEventUnavailable(unsupportedDigestVersion, logEventService);
   }
 
   @Test
@@ -299,39 +225,6 @@ class LoggingAdminGrpcServiceAuthTest {
     assertEquals("INVALID_ARGUMENT", ref.get().getError().getCode());
     assertEquals("tenantId must be positive", ref.get().getError().getMessage());
     verifyNoInteractions(logQueryService);
-  }
-
-  @Test
-  void createLogEventRejectsUnauthorizedCallerBeforeUnavailableResponse() {
-    SessionContext.setContext("1", List.of("player"), Map.of());
-    LogEventService logEventService = Mockito.mock(LogEventService.class);
-    LoggingAdminGrpcService service =
-        new LoggingAdminGrpcService(
-            Mockito.mock(LogQueryService.class),
-            logEventService,
-            Mockito.mock(ModerationService.class),
-            new SimpleMeterRegistry());
-
-    AtomicReference<CreateLogEventResponse> ref = new AtomicReference<>();
-    service.createLogEvent(
-        CreateLogEventRequest.newBuilder().setTenantId("1").build(),
-        new StreamObserver<>() {
-          @Override
-          public void onNext(CreateLogEventResponse value) {
-            ref.set(value);
-          }
-
-          @Override
-          public void onError(Throwable t) {}
-
-          @Override
-          public void onCompleted() {}
-        });
-
-    assertNotNull(ref.get());
-    assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
-    assertEquals("Admin role required", ref.get().getError().getMessage());
-    verifyNoInteractions(logEventService);
   }
 
   @Test
@@ -677,5 +570,66 @@ class LoggingAdminGrpcServiceAuthTest {
     assertNotNull(ref.get());
     assertEquals("PERMISSION_DENIED", ref.get().getError().getCode());
     verifyNoInteractions(moderationService);
+  }
+
+  private static void assertCreateLogEventUnavailable(
+      CreateLogEventRequest request, LogEventService logEventService) {
+    ModerationService moderationService = Mockito.mock(ModerationService.class);
+    LoggingAdminGrpcService service =
+        new LoggingAdminGrpcService(
+            Mockito.mock(LogQueryService.class),
+            logEventService,
+            moderationService,
+            new SimpleMeterRegistry());
+
+    AtomicReference<CreateLogEventResponse> response = new AtomicReference<>();
+    AtomicReference<Throwable> error = new AtomicReference<>();
+    java.util.concurrent.atomic.AtomicBoolean completed =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    service.createLogEvent(
+        request,
+        new StreamObserver<>() {
+          @Override
+          public void onNext(CreateLogEventResponse value) {
+            response.set(value);
+          }
+
+          @Override
+          public void onError(Throwable throwable) {
+            error.set(throwable);
+          }
+
+          @Override
+          public void onCompleted() {
+            completed.set(true);
+          }
+        });
+
+    assertNull(response.get());
+    assertNotNull(error.get());
+    assertEquals(Status.Code.UNAVAILABLE, Status.fromThrowable(error.get()).getCode());
+    String description = Status.fromThrowable(error.get()).getDescription();
+    assertEquals(
+        "Typed account audit receipt receiver is unavailable in this service revision",
+        description);
+    assertTrue(description.length() <= 128);
+    assertFalse(completed.get());
+    verifyNoInteractions(logEventService, moderationService);
+  }
+
+  private static CreateLogEventRequest validCreateLogEventRequest() {
+    ByteString payload = ByteString.copyFromUtf8("{}");
+    return CreateLogEventRequest.newBuilder()
+        .setScope(
+            net.firedevops.firemud.loggingadmin.v1.AccountAuditScope.ACCOUNT_AUDIT_SCOPE_PLATFORM)
+        .setAuditEventId("d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3")
+        .setProducerService("account-service")
+        .setEventType("ACCOUNT_REGISTERED")
+        .setOccurredAt(Timestamp.newBuilder().setSeconds(1).build())
+        .setSchemaVersion(1)
+        .setPayload(payload)
+        .setPayloadDigestVersion(1)
+        .setPayloadDigest("sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a")
+        .build();
   }
 }
