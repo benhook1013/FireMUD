@@ -40,7 +40,9 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
   private static final String REALM_SLUG = "cas-realm";
 
   @Container
-  static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+  static PostgreSQLContainer<?> postgres =
+      new PostgreSQLContainer<>("postgres:16-alpine")
+          .withCommand("postgres", "-c", "fsync=off", "-c", "track_activity_query_size=128");
 
   @BeforeEach
   void migrateIsolatedContainerSchema() {
@@ -272,13 +274,15 @@ class GameplayAdmissionPointerCasPostgresIntegrationTest {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
     boolean blockedByWinner = false;
     while (System.nanoTime() < deadline) {
+      // Activity SQL can be truncated, so lock state and blocker PIDs are the oracle.
       var lockWaitRecord =
           Objects.requireNonNull(
               dsl.fetchOne(
                   "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ? "
-                      + "AND wait_event_type = 'Lock' AND query ILIKE '%FOR UPDATE%' "
+                      + "AND wait_event_type = 'Lock' "
                       + "AND ? = ANY(pg_blocking_pids(pid)))",
-                  waiterPid, blockerPid),
+                  waiterPid,
+                  blockerPid),
               "PostgreSQL lock-wait query returned no row");
       blockedByWinner =
           Objects.requireNonNull(
