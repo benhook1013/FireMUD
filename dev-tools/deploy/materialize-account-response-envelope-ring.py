@@ -930,7 +930,7 @@ def materialize(
         raise MaterializationError("source record environment ID does not match the expected environment")
     if source_record.target_namespace != namespace:
         raise MaterializationError("source record target namespace does not match the expected namespace")
-    authenticated_materializer_username = _verify_materializer_identity(kubectl, source_record.materializer_username)
+    expected_materializer_username = source_record.materializer_username
     source_generation = source_record.source_generation
     source_expires_at = source_record.source_expires_at
     source_created_at = source_record.source_created_at
@@ -948,6 +948,9 @@ def materialize(
     if expires_at <= current_time:
         raise MaterializationError("source generation has expired under the class maximum age")
 
+    # Verify the server-reported principal immediately before every Kubernetes
+    # Secret operation; kubectl context or credentials may change between calls.
+    authenticated_materializer_username = _verify_materializer_identity(kubectl, expected_materializer_username)
     secret = _read_secret(kubectl, namespace)
     existing: ExistingSecret | None = None
     if secret is not None:
@@ -1014,7 +1017,9 @@ def materialize(
         "-",
         "--output=json",
     ]
+    authenticated_materializer_username = _verify_materializer_identity(kubectl, expected_materializer_username)
     _run_kubectl(write_command, manifest_object)
+    authenticated_materializer_username = _verify_materializer_identity(kubectl, expected_materializer_username)
     readback = _read_secret(kubectl, namespace)
     readback_secret = _verify_readback(
         readback,

@@ -86,6 +86,8 @@ class FakeKubectl:
         self.raise_timeout = False
         self.raise_unicode_error = False
         self.identity_username = MATERIALIZER_USERNAME
+        self.identity_usernames: list[str] = []
+        self.identity_calls = 0
         self.identity_output: str | None = None
         self.identity_returncode = 0
         self.timeouts: list[int | None] = []
@@ -103,11 +105,17 @@ class FakeKubectl:
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid test output")
         if operation == "auth":
             self.identity_commands.append(list(command))
+            identity_username = (
+                self.identity_usernames[self.identity_calls]
+                if self.identity_calls < len(self.identity_usernames)
+                else self.identity_username
+            )
+            self.identity_calls += 1
             return SimpleNamespace(
                 returncode=self.identity_returncode,
                 stdout=self.identity_output
                 if self.identity_output is not None
-                else json.dumps({"status": {"userInfo": {"username": self.identity_username}}}),
+                else json.dumps({"status": {"userInfo": {"username": identity_username}}}),
                 stderr="identity provider error",
             )
         self.operations.append(operation)
@@ -245,12 +253,16 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
     def test_create_then_exact_retry_preserves_bytes_and_timestamps_without_write(self) -> None:
         created_receipt = self.run_materializer()
         self.assertTrue(created_receipt)
+        self.assertEqual(MATERIALIZER_USERNAME, created_receipt["materializerUsername"])
         created = json.loads(json.dumps(self.fake_kubectl.secret))
         self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
         self.assertEqual([30], self.fake_kubectl.timeouts[:1])
-        self.assertEqual(["auth", "get", "create", "get"], self.fake_kubectl.commands)
         self.assertEqual(
-            [["kubectl-test-double", "auth", "whoami", "-o", "json"]],
+            ["auth", "get", "auth", "create", "auth", "get"],
+            self.fake_kubectl.commands,
+        )
+        self.assertEqual(
+            [["kubectl-test-double", "auth", "whoami", "-o", "json"]] * 3,
             self.fake_kubectl.identity_commands,
         )
         annotations = created["metadata"]["annotations"]
@@ -274,6 +286,12 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             created_receipt["source"]["generation"],
             retry_receipt["source"]["generation"],
         )
+        self.assertEqual(
+            ["auth", "get", "auth", "create", "auth", "get", "auth", "get"],
+            self.fake_kubectl.commands,
+        )
+        self.assertEqual(4, len(self.fake_kubectl.identity_commands))
+        self.assertEqual(3, self.fake_kubectl.reads)
         self.assertEqual(created["metadata"]["uid"], retry_receipt["secret"]["uid"])
         self.assertEqual(created["metadata"]["resourceVersion"], retry_receipt["secret"]["resourceVersion"])
         self.assertNotIn(self.source_manifest.decode("ascii"), json.dumps(retry_receipt.as_dict()))
@@ -640,8 +658,13 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
 
     def test_identity_is_rechecked_before_each_exact_generation_retry(self) -> None:
         self.run_materializer()
-        self.fake_kubectl.identity_username = "system:serviceaccount:account-prod:account-service"
+        self.assertEqual(
+            ["auth", "get", "auth", "create", "auth", "get"],
+            self.fake_kubectl.commands,
+        )
         self.fake_kubectl.commands.clear()
+        self.fake_kubectl.identity_commands.clear()
+        self.fake_kubectl.identity_username = "system:serviceaccount:account-prod:account-service"
 
         with self.assertRaisesRegex(
             MATERIALIZER.MaterializationError,
@@ -650,7 +673,48 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
             self.run_materializer()
 
         self.assertEqual(["auth"], self.fake_kubectl.commands)
+        self.assertEqual(1, len(self.fake_kubectl.identity_commands))
         self.assertEqual(["get", "create", "get"], self.fake_kubectl.operations)
+
+    def test_identity_drift_after_initial_read_prevents_secret_mutation(self) -> None:
+        self.fake_kubectl.identity_usernames = [
+            MATERIALIZER_USERNAME,
+            "system:serviceaccount:account-prod:account-service",
+        ]
+
+        with self.assertRaisesRegex(
+            MATERIALIZER.MaterializationError,
+            "does not match the protected source record",
+        ):
+            self.run_materializer()
+
+        self.assertEqual(["auth", "get", "auth"], self.fake_kubectl.commands)
+        self.assertEqual(["get"], self.fake_kubectl.operations)
+        self.assertEqual(1, self.fake_kubectl.reads)
+        self.assertEqual([], self.fake_kubectl.mutations)
+        self.assertIsNone(self.fake_kubectl.secret)
+
+    def test_identity_drift_after_write_prevents_readback_and_receipt(self) -> None:
+        self.fake_kubectl.identity_usernames = [
+            MATERIALIZER_USERNAME,
+            MATERIALIZER_USERNAME,
+            "system:serviceaccount:account-prod:account-service",
+        ]
+
+        with self.assertRaisesRegex(
+            MATERIALIZER.MaterializationError,
+            "does not match the protected source record",
+        ):
+            self.run_materializer()
+
+        self.assertEqual(
+            ["auth", "get", "auth", "create", "auth"],
+            self.fake_kubectl.commands,
+        )
+        self.assertEqual(["get", "create"], self.fake_kubectl.operations)
+        self.assertEqual(1, self.fake_kubectl.reads)
+        self.assertEqual(1, len(self.fake_kubectl.mutations))
+        self.assertIsNotNone(self.fake_kubectl.secret)
 
     def test_same_generation_with_different_bytes_fails_without_write(self) -> None:
         self.run_materializer()
@@ -969,9 +1033,14 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(expected, MATERIALIZER.read_protected_source_record(self.source_path))
 
     def test_source_read_rejects_platform_without_no_follow_support(self) -> None:
-        with patch.object(MATERIALIZER.os, "O_NOFOLLOW", None):
-            with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "cannot enforce protected source custody"):
-                self.run_materializer()
+        with (
+            patch.object(MATERIALIZER.os, "O_NOFOLLOW", None),
+            self.assertRaisesRegex(
+                MATERIALIZER.MaterializationError,
+                "cannot enforce protected source custody",
+            ),
+        ):
+            self.run_materializer()
 
         self.assertEqual(0, self.fake_kubectl.reads)
         self.assertEqual([], self.fake_kubectl.mutations)
@@ -997,17 +1066,21 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         finally:
             os.chmod(custody_directory, 0o700)
 
-        with patch.object(MATERIALIZER.os, "getuid", return_value=os.getuid() + 1):
-            with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "directory must be owned"):
-                self.run_materializer()
-
-        with patch.object(
-            MATERIALIZER.os,
-            "getuid",
-            side_effect=(os.getuid(), os.getuid() + 1),
+        with (
+            patch.object(MATERIALIZER.os, "getuid", return_value=os.getuid() + 1),
+            self.assertRaisesRegex(MATERIALIZER.MaterializationError, "directory must be owned"),
         ):
-            with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "source record must be owned"):
-                self.run_materializer()
+            self.run_materializer()
+
+        with (
+            patch.object(
+                MATERIALIZER.os,
+                "getuid",
+                side_effect=(os.getuid(), os.getuid() + 1),
+            ),
+            self.assertRaisesRegex(MATERIALIZER.MaterializationError, "source record must be owned"),
+        ):
+            self.run_materializer()
 
         self.assertEqual(0, self.fake_kubectl.reads)
         self.assertEqual([], self.fake_kubectl.mutations)
