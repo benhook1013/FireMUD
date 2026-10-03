@@ -3893,6 +3893,7 @@ class AccountServiceImplTest {
 
     when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, "req-replay-1"))
         .thenReturn(Optional.of(new SessionService.ConnectTokenReplay(true, firstResult, "", "")));
+    org.mockito.Mockito.clearInvocations(sessionService);
 
     ConnectTokenResult replayed =
         service.issueConnectToken(
@@ -3903,6 +3904,20 @@ class AccountServiceImplTest {
     assertEquals(firstResult.expiresAt(), replayed.expiresAt());
     assertEquals(firstResult.requestId(), replayed.requestId());
     assertTrue(replayed.replayed());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(SessionService.ConnectTokenReplay.class),
+            org.mockito.ArgumentMatchers.anyLong());
 
     when(gameSessionClient.getAdmissionPointer(7L, "demo", "production"))
         .thenReturn(
@@ -3923,6 +3938,7 @@ class AccountServiceImplTest {
                 .setStateScope("SHARED")
                 .setCharacterCreationPolicy("ALLOW_NEW")
                 .build());
+    org.mockito.Mockito.clearInvocations(sessionService);
 
     AuthenticationException staleReplayException =
         assertThrows(
@@ -3933,6 +3949,79 @@ class AccountServiceImplTest {
                     new ConnectTokenRequest(connectScopeId, "req-replay-1")));
 
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", staleReplayException.getCode());
+    verifyCachedConnectTokenReplayDidNotWrite();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "MISSING,JOIN_REQUIRED",
+    "INACTIVE,JOIN_REQUIRED",
+    "NON_ADMITTING,CONNECT_TOKEN_REJECTED"
+  })
+  void issueConnectTokenRevalidatesMembershipBeforeCachedSuccessReplay(
+      String currentMembershipState, String expectedCode) {
+    CachedPublicConnectTokenReplay cached = prepareCachedPublicConnectTokenReplay();
+    if ("MISSING".equals(currentMembershipState)) {
+      when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+          .thenReturn(Optional.empty());
+    } else {
+      Account account = new Account();
+      account.setId(11L);
+      AccountTenantMembership currentMembership = membership(account, 7L);
+      if ("INACTIVE".equals(currentMembershipState)) {
+        currentMembership.setLifecycleState("INACTIVE");
+        currentMembership.setGameplayAdmissionAllowed(false);
+      } else {
+        currentMembership.setGameplayAdmissionAllowed(false);
+      }
+      when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+          .thenReturn(Optional.of(currentMembership));
+    }
+    org.mockito.Mockito.clearInvocations(accountTenantMembershipRepository);
+    org.mockito.Mockito.clearInvocations(sessionService);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    cached.bootstrapToken(),
+                    new ConnectTokenRequest(cached.connectScopeId(), cached.requestId())));
+
+    assertEquals(expectedCode, exception.getCode());
+    verify(accountTenantMembershipRepository).findByAccountIdAndTenantId(11L, 7L);
+    verifyCachedConnectTokenReplayDidNotWrite();
+  }
+
+  @ParameterizedTest
+  @CsvSource({"BLOCKED,TENANT_BILLING_BLOCKED", "UNAVAILABLE,ENTITLEMENT_UNAVAILABLE"})
+  void issueConnectTokenRevalidatesEntitlementBeforeCachedSuccessReplay(
+      String currentEntitlementState, String expectedCode) {
+    CachedPublicConnectTokenReplay cached = prepareCachedPublicConnectTokenReplay();
+    if ("BLOCKED".equals(currentEntitlementState)) {
+      Subscription canceled = new Subscription();
+      canceled.setId(22L);
+      canceled.setTenantId(7L);
+      canceled.setStatus("canceled");
+      when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(canceled));
+    } else {
+      when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of());
+    }
+    org.mockito.Mockito.clearInvocations(accountTenantMembershipRepository);
+    org.mockito.Mockito.clearInvocations(sessionService);
+
+    AuthenticationException exception =
+        assertThrows(
+            AuthenticationException.class,
+            () ->
+                service.issueConnectToken(
+                    cached.bootstrapToken(),
+                    new ConnectTokenRequest(cached.connectScopeId(), cached.requestId())));
+
+    assertEquals(expectedCode, exception.getCode());
+    org.mockito.Mockito.verify(accountTenantMembershipRepository, org.mockito.Mockito.never())
+        .findByAccountIdAndTenantId(11L, 7L);
+    verifyCachedConnectTokenReplayDidNotWrite();
   }
 
   @Test
@@ -6836,6 +6925,55 @@ class AccountServiceImplTest {
                 replay -> !replay.success() && errorCode.equals(replay.errorCode())),
             org.mockito.ArgumentMatchers.longThat(ttl -> ttl > 0L));
   }
+
+  private CachedPublicConnectTokenReplay prepareCachedPublicConnectTokenReplay() {
+    Account account = new Account();
+    account.setId(11L);
+    account.setUsername("demo");
+    account.setPasswordHash(hash("password"));
+    when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
+    when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
+    when(accountTenantMembershipRepository.findByAccountIdAndTenantId(11L, 7L))
+        .thenReturn(Optional.of(membership(account, 7L)));
+    Subscription active = new Subscription();
+    active.setId(22L);
+    active.setTenantId(7L);
+    active.setStatus("active");
+    when(subscriptionRepository.findByTenantId(7L)).thenReturn(java.util.List.of(active));
+
+    PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
+    when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
+    String connectScopeId =
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
+    String requestId = "req-cached-current-authority";
+    ConnectTokenRequest request = new ConnectTokenRequest(connectScopeId, requestId);
+    ConnectTokenResult storedResult =
+        service.issueConnectToken(bootstrap.bootstrapToken(), request);
+    when(sessionService.getConnectTokenReplay(7L, 11L, connectScopeId, requestId))
+        .thenReturn(Optional.of(new SessionService.ConnectTokenReplay(true, storedResult, "", "")));
+    return new CachedPublicConnectTokenReplay(
+        bootstrap.bootstrapToken(), connectScopeId, requestId);
+  }
+
+  private void verifyCachedConnectTokenReplayDidNotWrite() {
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeSession(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyLong());
+    org.mockito.Mockito.verify(sessionService, org.mockito.Mockito.never())
+        .storeConnectTokenReplay(
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyLong(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.any(SessionService.ConnectTokenReplay.class),
+            org.mockito.ArgumentMatchers.anyLong());
+  }
+
+  private record CachedPublicConnectTokenReplay(
+      String bootstrapToken, String connectScopeId, String requestId) {}
 
   private record PrivateConnectTokenContext(String bootstrapToken, String connectScopeId) {}
 
