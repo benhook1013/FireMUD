@@ -121,7 +121,7 @@ class LogEventServiceImplTest {
   @Test
   void missingReadbackThrowsForCanonicalNotFoundMapping() {
     CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
-    when(repository.findByIdentity(request, 0L)).thenReturn(Optional.empty());
+    when(repository.findByIdentity(request)).thenReturn(Optional.empty());
 
     assertThrows(AuditReceiptNotFoundException.class, () -> service.readLogEventReceipt(request));
   }
@@ -132,7 +132,9 @@ class LogEventServiceImplTest {
     CreateLogEventRequest unsupported =
         new CreateLogEventRequest(
             valid.scope(),
+            valid.tenantIdentityVersion(),
             valid.tenantId(),
+            valid.tenantUuid(),
             valid.auditEventId(),
             valid.producerService(),
             valid.eventType(),
@@ -147,12 +149,86 @@ class LogEventServiceImplTest {
   }
 
   @Test
+  void canonicalUuidIdentityIsReturnedAndComparedOnRetryAndReadback() {
+    UUID tenantUuid = UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21");
+    CreateLogEventRequest request =
+        uuidRequest(AccountAuditScope.TENANT, tenantUuid, Instant.EPOCH, "{}");
+    AccountAuditReceipt receipt =
+        receipt(request, request.payload().toByteArray(), "COMMITTED", "ACCEPTED");
+    when(repository.insertIfAbsent(eq(request), any(UUID.class)))
+        .thenReturn(new AccountAuditReceiptInsertResult(receipt, false));
+    when(repository.findByIdentity(request)).thenReturn(Optional.of(receipt));
+
+    var duplicate = service.createLogEvent(request);
+    var readback = service.readLogEventReceipt(request);
+
+    assertEquals(2, duplicate.tenantIdentityVersion());
+    assertEquals(tenantUuid, duplicate.tenantUuid());
+    assertEquals(AccountAuditReceiptOutcome.DUPLICATE, duplicate.outcome());
+    assertEquals(2, readback.tenantIdentityVersion());
+    assertEquals(tenantUuid, readback.tenantUuid());
+    assertEquals(LOG_EVENT_ID, readback.logEventId());
+  }
+
+  @Test
+  void changedTenantIdentityVersionConflictsWithRetainedReceiptMetadata() {
+    UUID tenantUuid = UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21");
+    CreateLogEventRequest original =
+        uuidRequest(AccountAuditScope.TENANT, tenantUuid, Instant.EPOCH, "{}");
+    CreateLogEventRequest changed = request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{}");
+    when(repository.insertIfAbsent(eq(changed), any(UUID.class)))
+        .thenReturn(
+            new AccountAuditReceiptInsertResult(
+                receipt(original, original.payload().toByteArray(), "COMMITTED", "ACCEPTED"),
+                false));
+
+    var result = service.createLogEvent(changed);
+
+    assertEquals(AccountAuditReceiptStatus.CONFLICT, result.status());
+    assertEquals(AccountAuditReceiptOutcome.IDEMPOTENCY_CONFLICT, result.outcome());
+  }
+
+  @Test
+  void missingOrContradictoryTenantIdentityFailsBeforeRepositoryAccess() {
+    CreateLogEventRequest validPlatform =
+        request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
+    CreateLogEventRequest missingVersion = withIdentity(validPlatform, 0, null, null);
+    CreateLogEventRequest mixedV1 =
+        withIdentity(
+            request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{}"),
+            1,
+            42L,
+            UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21"));
+    CreateLogEventRequest platformV2 =
+        withIdentity(
+            validPlatform, 2, null, UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21"));
+    CreateLogEventRequest numericV2 =
+        withIdentity(
+            request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{}"),
+            2,
+            42L,
+            UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21"));
+    CreateLogEventRequest nilV2 =
+        withIdentity(
+            request(AccountAuditScope.TENANT, 42L, Instant.EPOCH, "{}"), 2, null, new UUID(0L, 0L));
+
+    assertThrows(IllegalArgumentException.class, () -> service.createLogEvent(missingVersion));
+    assertThrows(IllegalArgumentException.class, () -> service.createLogEvent(mixedV1));
+    assertThrows(IllegalArgumentException.class, () -> service.createLogEvent(platformV2));
+    assertThrows(IllegalArgumentException.class, () -> service.createLogEvent(numericV2));
+    assertThrows(IllegalArgumentException.class, () -> service.createLogEvent(nilV2));
+    verifyNoInteractions(repository);
+  }
+
+  @Test
   void payloadDigestMismatchFailsBeforeRepositoryAccess() {
     CreateLogEventRequest valid = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
     CreateLogEventRequest mismatched =
         new CreateLogEventRequest(
             valid.scope(),
+            valid.tenantIdentityVersion(),
             valid.tenantId(),
+            valid.tenantUuid(),
             valid.auditEventId(),
             valid.producerService(),
             valid.eventType(),
@@ -172,6 +248,8 @@ class LogEventServiceImplTest {
     CreateLogEventRequest request =
         new CreateLogEventRequest(
             AccountAuditScope.PLATFORM,
+            1,
+            null,
             null,
             AUDIT_EVENT_ID,
             "account-service",
@@ -191,7 +269,9 @@ class LogEventServiceImplTest {
     ByteString payload = ByteString.copyFrom(payloadText, StandardCharsets.UTF_8);
     return new CreateLogEventRequest(
         scope,
+        1,
         tenantId,
+        null,
         AUDIT_EVENT_ID,
         "account-service",
         "ACCOUNT_REGISTERED",
@@ -202,6 +282,41 @@ class LogEventServiceImplTest {
         digest(payload.toByteArray()));
   }
 
+  private static CreateLogEventRequest uuidRequest(
+      AccountAuditScope scope, UUID tenantUuid, Instant occurredAt, String payloadText) {
+    ByteString payload = ByteString.copyFrom(payloadText, StandardCharsets.UTF_8);
+    return new CreateLogEventRequest(
+        scope,
+        2,
+        null,
+        tenantUuid,
+        AUDIT_EVENT_ID,
+        "account-service",
+        "ACCOUNT_REGISTERED",
+        occurredAt,
+        1,
+        payload,
+        1,
+        digest(payload.toByteArray()));
+  }
+
+  private static CreateLogEventRequest withIdentity(
+      CreateLogEventRequest request, int identityVersion, Long tenantId, UUID tenantUuid) {
+    return new CreateLogEventRequest(
+        request.scope(),
+        identityVersion,
+        tenantId,
+        tenantUuid,
+        request.auditEventId(),
+        request.producerService(),
+        request.eventType(),
+        request.occurredAt(),
+        request.schemaVersion(),
+        request.payload(),
+        request.payloadDigestVersion(),
+        request.payloadDigest());
+  }
+
   private static AccountAuditReceipt receipt(
       CreateLogEventRequest request, byte[] payload, String status, String outcome) {
     return new AccountAuditReceipt(
@@ -209,7 +324,9 @@ class LogEventServiceImplTest {
         LOG_EVENT_ID,
         RECEIPT_ID,
         request.scope().databaseValue(),
+        request.tenantIdentityVersion(),
         request.tenantId(),
+        request.tenantUuid(),
         request.auditEventId(),
         request.producerService(),
         request.eventType(),

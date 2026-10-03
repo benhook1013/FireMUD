@@ -6,9 +6,11 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -21,6 +23,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceipt;
 import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDigest;
@@ -392,8 +395,11 @@ class AccountJoinReconciliationServiceTest {
     when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
         .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
     stubActiveMembership(fixture);
+    AccountAuditEnvelope wrongDigestEnvelope =
+        spy(joinAuditEnvelope(WORLD_SLUG, TENANT_ID, correctPayloadDigest()));
+    doReturn(sha256("wrong")).when(wrongDigestEnvelope).payloadDigest();
     when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
-        .thenReturn(Optional.of(joinAuditEnvelope(WORLD_SLUG, TENANT_ID, sha256("wrong"))));
+        .thenReturn(Optional.of(wrongDigestEnvelope));
     when(fixture.joinOperations.recordReconciliationAttempt(
             REQUEST_ID, 0, 3, NOW, "JOIN_AUDIT_ENVELOPE_UNCLEAR", NOW.plusMillis(5_000)))
         .thenReturn(true);
@@ -416,7 +422,7 @@ class AccountJoinReconciliationServiceTest {
     when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
         .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
     stubActiveMembership(fixture);
-    String mismatchedPayload = joinAuditEnvelope("other-world", TENANT_ID, "unused").payload();
+    String mismatchedPayload = joinAuditPayload("other-world", TENANT_ID);
     when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
         .thenReturn(
             Optional.of(
@@ -755,6 +761,21 @@ class AccountJoinReconciliationServiceTest {
 
   private static AccountAuditEnvelope joinAuditEnvelope(
       String payloadWorldSlug, long payloadTenantId, String digest) {
+    String payload = joinAuditPayload(payloadWorldSlug, payloadTenantId);
+    return new AccountAuditEnvelope(
+        joinAuditEventId(),
+        "tenant",
+        AccountAuditTenantIdentity.retainedTenantV1(TENANT_ID),
+        "account-service",
+        "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
+        NOW.minusSeconds(10),
+        1,
+        1,
+        digest,
+        payload);
+  }
+
+  private static String joinAuditPayload(String payloadWorldSlug, long payloadTenantId) {
     String payload =
         "{\"accountId\":"
             + ACCOUNT_ID
@@ -769,17 +790,7 @@ class AccountJoinReconciliationServiceTest {
             + ",\"requestId\":\""
             + REQUEST_ID
             + "\"}";
-    return new AccountAuditEnvelope(
-        joinAuditEventId(),
-        "tenant",
-        TENANT_ID,
-        "account-service",
-        "ACCOUNT_JOINED_PUBLIC_PRODUCTION",
-        NOW.minusSeconds(10),
-        1,
-        1,
-        digest,
-        payload);
+    return payload;
   }
 
   private static UUID joinAuditEventId() {
@@ -788,8 +799,7 @@ class AccountJoinReconciliationServiceTest {
   }
 
   private static String correctPayloadDigest() {
-    return AccountAuditDigest.ofPayload(
-        joinAuditEnvelope(WORLD_SLUG, TENANT_ID, "unused").payload());
+    return AccountAuditDigest.ofPayload(joinAuditPayload(WORLD_SLUG, TENANT_ID));
   }
 
   private static String sha256(String value) {

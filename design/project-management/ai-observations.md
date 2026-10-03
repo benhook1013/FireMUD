@@ -267,3 +267,8 @@ Entry format:
   - Context: two bounded CI sentinels inspected a shortened or mistyped run identifier instead of the supplied full identifier and reported HTTP 404. That was not evidence that the authorized run was inaccessible or nonexistent.
   - Outcome: direct same-task corrections restored observation of the intended runs. The current run37030807027 is visible; its earlier lookup of37007080727 supplied no validation evidence. No repository or CI mutation was needed.
   - Expected pattern: copy the complete identifier from the assigned run URL, verify the returned run identifier and head SHA before attribution, and include the actually inspected identifier in a lookup-failure report. Do not escalate a mistyped-ID lookup as a platform-access failure or silently substitute a different run.
+
+- `2026-10-03`: Use the installed shared controller after SQLite cutover
+  - Context: an older stacked worktree's repo-local controller refused status with `SQLite cutover marker does not match database metadata`. This was a reader/version mismatch, not evidence about the PR's review or CI state.
+  - Outcome: the human-designated `/home/ben/.local/bin/firemud-pr-review` reports writer build 8 and is used for the readback instead. No private database, marker or review evidence was edited to bypass the refusal.
+  - Expected pattern: select the installed shared entrypoint named by the active brief, verify its version and preserve fail-closed cutover records; do not repair private metadata from an outdated checkout.

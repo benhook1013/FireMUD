@@ -47,6 +47,8 @@ message CreateLogEventRequest {
   bytes payload = 8;
   int32 payload_digest_version = 9;
   string payload_digest = 10;
+  int32 tenant_identity_version = 11;
+  string tenant_uuid = 12;
 }
 
 message CreateLogEventResponse {
@@ -60,6 +62,8 @@ message CreateLogEventResponse {
   string payload_digest = 8;
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
+  int32 tenant_identity_version = 11;
+  string tenant_uuid = 12;
 }
 
 message ReadLogEventReceiptRequest {
@@ -73,6 +77,8 @@ message ReadLogEventReceiptRequest {
   bytes payload = 8;
   int32 payload_digest_version = 9;
   string payload_digest = 10;
+  int32 tenant_identity_version = 11;
+  string tenant_uuid = 12;
 }
 
 message ReadLogEventReceiptResponse {
@@ -86,6 +92,8 @@ message ReadLogEventReceiptResponse {
   string payload_digest = 8;
   AccountAuditReceiptStatus status = 9;
   AccountAuditReceiptOutcome outcome = 10;
+  int32 tenant_identity_version = 11;
+  string tenant_uuid = 12;
 }
 
 enum AccountAuditScope {

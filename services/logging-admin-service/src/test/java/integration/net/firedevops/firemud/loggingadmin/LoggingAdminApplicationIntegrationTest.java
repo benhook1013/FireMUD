@@ -15,8 +15,10 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,6 +47,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -147,6 +150,117 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
+  void canonicalUuidReceiptIsIsolatedFromRetainedNumericIdentityAndMinimizesSafely() {
+    String eventId = "a4e2f840-e844-46a7-8d30-8d17a220ce44";
+    UUID tenantUuid = UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21");
+    String payload = "{\"accountId\":95,\"auditMarker\":\"uuid-retry-proof\"}";
+    CreateLogEventRequest numericRequest = tenantAuditRequest(eventId, payload);
+    CreateLogEventRequest uuidRequest = uuidTenantAuditRequest(eventId, tenantUuid, payload);
+
+    var retainedNumeric = logEventService.createLogEvent(numericRequest);
+    var acceptedUuid = logEventService.createLogEvent(uuidRequest);
+    var duplicateUuid = logEventService.createLogEvent(uuidRequest);
+    var conflictUuid =
+        logEventService.createLogEvent(
+            uuidTenantAuditRequest(eventId, tenantUuid, "{\"changed\":true}"));
+    var readback = logEventService.readLogEventReceipt(uuidRequest);
+
+    assertThat(acceptedUuid.tenantIdentityVersion()).isEqualTo(2);
+    assertThat(acceptedUuid.tenantId()).isNull();
+    assertThat(acceptedUuid.tenantUuid()).isEqualTo(tenantUuid);
+    assertThat(duplicateUuid.outcome()).isEqualTo(AccountAuditReceiptOutcome.DUPLICATE);
+    assertThat(duplicateUuid.receiptId()).isEqualTo(acceptedUuid.receiptId());
+    assertThat(conflictUuid.status()).isEqualTo(AccountAuditReceiptStatus.CONFLICT);
+    assertThat(readback.tenantUuid()).isEqualTo(tenantUuid);
+    assertThat(readback.logEventId()).isEqualTo(acceptedUuid.logEventId());
+    assertThat(acceptedUuid.logEventId()).isNotEqualTo(retainedNumeric.logEventId());
+
+    LogEventsRecord numericProjection =
+        dsl.selectFrom(LOG_EVENTS).where(LOG_EVENTS.ID.eq(retainedNumeric.logEventId())).fetchOne();
+    LogEventsRecord uuidProjection =
+        dsl.selectFrom(LOG_EVENTS).where(LOG_EVENTS.ID.eq(acceptedUuid.logEventId())).fetchOne();
+    AccountAuditReceiptsRecord uuidReceipt =
+        dsl.selectFrom(ACCOUNT_AUDIT_RECEIPTS)
+            .where(ACCOUNT_AUDIT_RECEIPTS.RECEIPT_ID.eq(UUID.fromString(acceptedUuid.receiptId())))
+            .fetchOne();
+    assertThat(numericProjection.getTenantId()).isEqualTo(42L);
+    assertThat(numericProjection.getTenantKey()).isEqualTo(42L);
+    assertThat(numericProjection.getTenantIdentityVersion()).isEqualTo(1);
+    assertThat(numericProjection.getTenantUuid()).isNull();
+    assertThat(uuidProjection.getTenantId()).isNull();
+    assertThat(uuidProjection.getTenantKey()).isNull();
+    assertThat(uuidProjection.getTenantIdentityVersion()).isEqualTo(2);
+    assertThat(uuidProjection.getTenantUuid()).isEqualTo(tenantUuid);
+    assertThat(uuidProjection.getMessage()).isEqualTo("Account audit event " + eventId);
+    assertThat(uuidProjection.getMessage()).doesNotContain("accountId", "uuid-retry-proof");
+    assertThat(uuidReceipt.getTenantId()).isNull();
+    assertThat(uuidReceipt.getTenantKey()).isNull();
+    assertThat(uuidReceipt.getTenantUuid()).isEqualTo(tenantUuid);
+    assertThat(uuidReceipt.getPayload()).isEqualTo(payload.getBytes(StandardCharsets.UTF_8));
+    assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isEqualTo(2);
+    assertThat(logQueryService.queryLogs(new QueryLogsRequest(42L, eventId)))
+        .containsExactly("Account audit event " + eventId);
+
+    dsl.update(ACCOUNT_AUDIT_RECEIPTS)
+        .set(ACCOUNT_AUDIT_RECEIPTS.PAYLOAD, (byte[]) null)
+        .set(ACCOUNT_AUDIT_RECEIPTS.STATUS, "MINIMIZED")
+        .set(ACCOUNT_AUDIT_RECEIPTS.OUTCOME, "NON_REPLAYABLE")
+        .where(ACCOUNT_AUDIT_RECEIPTS.RECEIPT_ID.eq(UUID.fromString(acceptedUuid.receiptId())))
+        .execute();
+
+    var minimizedReadback = logEventService.readLogEventReceipt(uuidRequest);
+    assertThat(minimizedReadback.tenantIdentityVersion()).isEqualTo(2);
+    assertThat(minimizedReadback.tenantUuid()).isEqualTo(tenantUuid);
+    assertThat(minimizedReadback.status()).isEqualTo(AccountAuditReceiptStatus.MINIMIZED);
+    assertThat(minimizedReadback.outcome()).isEqualTo(AccountAuditReceiptOutcome.NON_REPLAYABLE);
+    assertThat(uuidProjection.getMessage()).doesNotContain(payload);
+  }
+
+  @Test
+  void malformedPersistedIdentityCannotBypassDatabaseChecksOrGrowProjectionRows() {
+    int before = dsl.fetchCount(LOG_EVENTS);
+
+    assertThatThrownBy(
+            () ->
+                insertMalformedProjection(
+                    "b7abbe36-8a74-4527-b0d7-c3117de24001", null, 42L, null, 42L))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
+    assertThatThrownBy(
+            () ->
+                insertMalformedProjection(
+                    "b7abbe36-8a74-4527-b0d7-c3117de24002", 1, 42L, null, null))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
+    assertThatThrownBy(
+            () ->
+                insertMalformedProjection(
+                    "b7abbe36-8a74-4527-b0d7-c3117de24003", 2, null, new UUID(0L, 0L), null))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
+    assertThatThrownBy(() -> insertMalformedProjection(null, null, 42L, null, null))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .hasMessageContaining("chk_log_events_scope_tenant");
+
+    assertThat(dsl.fetchCount(LOG_EVENTS)).isEqualTo(before);
+  }
+
+  private void insertMalformedProjection(
+      String eventId, Integer identityVersion, Long tenantId, UUID tenantUuid, Long tenantKey) {
+    dsl.insertInto(LOG_EVENTS)
+        .set(LOG_EVENTS.SCOPE, "tenant")
+        .set(LOG_EVENTS.TENANT_IDENTITY_VERSION, identityVersion)
+        .set(LOG_EVENTS.TENANT_ID, tenantId)
+        .set(LOG_EVENTS.TENANT_KEY, tenantKey)
+        .set(LOG_EVENTS.TENANT_UUID, tenantUuid)
+        .set(LOG_EVENTS.AUDIT_EVENT_ID, eventId)
+        .set(LOG_EVENTS.TYPE, "ACCOUNT_AUDIT")
+        .set(LOG_EVENTS.MESSAGE, "Account audit event " + eventId)
+        .set(LOG_EVENTS.TIMESTAMP, LocalDateTime.now())
+        .execute();
+  }
+
+  @Test
   void platformAuditProjectionHasNoTenantAndIsExcludedFromTenantQuery() {
     String eventId = "41613d4b-3e66-4c9a-9f1c-7e02f54d0c34";
     String marker = "platform-only-marker";
@@ -195,9 +309,42 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
+  void canonicalUuidReceiptFailureRollsBackItsProjection() {
+    String eventId = "58d4fb8a-0910-42ab-8af1-80cf8c81b26a";
+    UUID tenantUuid = UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21");
+    dsl.execute(
+        "CREATE OR REPLACE FUNCTION fail_test_account_audit_receipt() RETURNS trigger "
+            + "LANGUAGE plpgsql AS $$ BEGIN IF NEW.audit_event_id = '"
+            + eventId
+            + "' THEN RAISE EXCEPTION 'injected receipt insert failure'; END IF; RETURN NEW; END $$");
+    dsl.execute(
+        "CREATE TRIGGER fail_test_account_audit_receipt BEFORE INSERT ON account_audit_receipts "
+            + "FOR EACH ROW EXECUTE FUNCTION fail_test_account_audit_receipt()");
+    try {
+      assertThatThrownBy(
+              () ->
+                  logEventService.createLogEvent(
+                      uuidTenantAuditRequest(
+                          eventId, tenantUuid, "{\"auditMarker\":\"rollback\"}")))
+          .isInstanceOf(AuditStorageUnavailableException.class);
+      assertThat(dsl.fetchCount(LOG_EVENTS, LOG_EVENTS.AUDIT_EVENT_ID.eq(eventId))).isZero();
+      assertThat(
+              dsl.fetchCount(
+                  ACCOUNT_AUDIT_RECEIPTS, ACCOUNT_AUDIT_RECEIPTS.AUDIT_EVENT_ID.eq(eventId)))
+          .isZero();
+    } finally {
+      dsl.execute(
+          "DROP TRIGGER IF EXISTS fail_test_account_audit_receipt ON account_audit_receipts");
+      dsl.execute("DROP FUNCTION IF EXISTS fail_test_account_audit_receipt()");
+    }
+  }
+
+  @Test
   void concurrentExactRetriesCreateOneProjectionAndReturnTheSameIdentifiers() throws Exception {
     String eventId = "4b7d9ee5-62f5-44dd-8b35-dcf6490d7404";
-    CreateLogEventRequest request = tenantAuditRequest(eventId, "{\"accountId\":94}");
+    CreateLogEventRequest request =
+        uuidTenantAuditRequest(
+            eventId, UUID.fromString("c7a1b80e-a5fa-4fc9-9fc4-cab3cbe44b21"), "{\"accountId\":94}");
     CountDownLatch start = new CountDownLatch(1);
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
@@ -247,7 +394,27 @@ class LoggingAdminApplicationIntegrationTest {
     ByteString payloadBytes = ByteString.copyFrom(payload, StandardCharsets.UTF_8);
     return new CreateLogEventRequest(
         scope,
+        1,
         tenantId,
+        null,
+        eventId,
+        "account-service",
+        "ACCOUNT_AUDIT_INTEGRATION_TEST",
+        Instant.parse("2026-09-24T00:00:00Z"),
+        1,
+        payloadBytes,
+        1,
+        digest(payloadBytes.toByteArray()));
+  }
+
+  private static CreateLogEventRequest uuidTenantAuditRequest(
+      String eventId, UUID tenantUuid, String payload) {
+    ByteString payloadBytes = ByteString.copyFrom(payload, StandardCharsets.UTF_8);
+    return new CreateLogEventRequest(
+        AccountAuditScope.TENANT,
+        2,
+        null,
+        tenantUuid,
         eventId,
         "account-service",
         "ACCOUNT_AUDIT_INTEGRATION_TEST",

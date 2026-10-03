@@ -35,6 +35,7 @@ public class LogEventServiceImpl implements LogEventService {
   private static final Logger logger = LoggingUtil.getLogger(LogEventServiceImpl.class);
   private static final String ACCOUNT_SERVICE = "account-service";
   private static final String SHA_256_PREFIX = "sha256:";
+  private static final UUID NIL_UUID = new UUID(0L, 0L);
 
   private final AccountAuditReceiptRepository repository;
 
@@ -61,11 +62,8 @@ public class LogEventServiceImpl implements LogEventService {
   public AccountAuditReceiptDto readLogEventReceipt(CreateLogEventRequest request) {
     validateEnvelope(request);
     try {
-      long tenantKey = request.tenantId() == null ? 0L : request.tenantId();
       AccountAuditReceipt receipt =
-          repository
-              .findByIdentity(request, tenantKey)
-              .orElseThrow(AuditReceiptNotFoundException::new);
+          repository.findByIdentity(request).orElseThrow(AuditReceiptNotFoundException::new);
       return receiptOutcome(receipt, request, false);
     } catch (AuditReceiptNotFoundException ex) {
       throw ex;
@@ -117,7 +115,9 @@ public class LogEventServiceImpl implements LogEventService {
       AccountAuditReceipt receipt, CreateLogEventRequest request) {
     Instant occurredAt = request.occurredAt();
     return receipt.scope().equals(request.scope().databaseValue())
+        && receipt.tenantIdentityVersion() == request.tenantIdentityVersion()
         && Objects.equals(receipt.tenantId(), request.tenantId())
+        && Objects.equals(receipt.tenantUuid(), request.tenantUuid())
         && receipt.auditEventId().equals(request.auditEventId())
         && receipt.producerService().equals(request.producerService())
         && receipt.eventType().equals(request.eventType())
@@ -136,7 +136,9 @@ public class LogEventServiceImpl implements LogEventService {
         "platform".equals(receipt.scope())
             ? net.firedevops.firemud.loggingadmin.dto.AccountAuditScope.PLATFORM
             : net.firedevops.firemud.loggingadmin.dto.AccountAuditScope.TENANT,
+        receipt.tenantIdentityVersion(),
         receipt.tenantId(),
+        receipt.tenantUuid(),
         receipt.auditEventId(),
         receipt.receiptId().toString(),
         receipt.logEventId(),
@@ -165,12 +167,29 @@ public class LogEventServiceImpl implements LogEventService {
     if (!isCanonicalUuid(request.auditEventId())) {
       throw new IllegalArgumentException("auditEventId must be a canonical UUID");
     }
-    if (request.scope() == net.firedevops.firemud.loggingadmin.dto.AccountAuditScope.PLATFORM) {
-      if (request.tenantId() != null) {
-        throw new IllegalArgumentException("tenantId must be absent for platform scope");
+    if (request.tenantIdentityVersion() == 1) {
+      if (request.tenantUuid() != null) {
+        throw new IllegalArgumentException("tenantUuid must be absent for tenant identity v1");
       }
-    } else if (request.tenantId() == null || request.tenantId() <= 0) {
-      throw new IllegalArgumentException("tenantId must be positive for tenant scope");
+      if (request.scope() == net.firedevops.firemud.loggingadmin.dto.AccountAuditScope.PLATFORM) {
+        if (request.tenantId() != null) {
+          throw new IllegalArgumentException("tenantId must be absent for platform scope");
+        }
+      } else if (request.tenantId() == null || request.tenantId() <= 0) {
+        throw new IllegalArgumentException("tenantId must be positive for tenant scope");
+      }
+    } else if (request.tenantIdentityVersion() == 2) {
+      if (request.scope() != net.firedevops.firemud.loggingadmin.dto.AccountAuditScope.TENANT) {
+        throw new IllegalArgumentException("tenant identity v2 requires tenant scope");
+      }
+      if (request.tenantId() != null) {
+        throw new IllegalArgumentException("tenantId must be absent for tenant identity v2");
+      }
+      if (request.tenantUuid() == null || NIL_UUID.equals(request.tenantUuid())) {
+        throw new IllegalArgumentException("tenantUuid must be a non-nil UUID for identity v2");
+      }
+    } else {
+      throw new IllegalArgumentException("tenantIdentityVersion must be 1 or 2");
     }
     if (request.payloadDigestVersion() != 1) {
       throw new IllegalArgumentException("payloadDigestVersion must be 1");

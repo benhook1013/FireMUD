@@ -117,6 +117,7 @@ class GameplayAdmissionPointerRepositoryTest {
           tenant_id BIGINT NOT NULL,
           game_instance_id BIGINT NOT NULL,
           pointer_version BIGINT NOT NULL,
+          representation_version INT NOT NULL DEFAULT 1,
           catalog_revision BIGINT NOT NULL,
           realm_id UUID,
           playable_state_namespace_id UUID,

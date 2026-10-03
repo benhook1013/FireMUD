@@ -11,11 +11,13 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
+import net.firedevops.firemud.accountservice.dto.AccountAuditTenantIdentity;
 import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOutboxRecord;
 import org.jooq.DSLContext;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Owner-local audit identity, immutable envelope, and durable delivery state. */
 @Repository
@@ -29,18 +31,74 @@ public class AccountAuditOutboxRepository {
     this.dsl = dsl;
   }
 
+  /** Source-only retained identity writer; every row it writes uses explicit tenant version 1. */
   public AccountAuditEnvelope append(
       UUID auditEventId, String scope, Long tenantId, String eventType, String payload) {
-    if (!("platform".equals(scope) && tenantId == null)
-        && !("tenant".equals(scope) && tenantId != null && tenantId > 0)) {
-      throw new IllegalArgumentException("Audit scope and tenant ID must match");
+    AccountAuditTenantIdentity identity = retainedIdentity(scope, tenantId);
+    return append(auditEventId, scope, identity, eventType, payload, false);
+  }
+
+  /**
+   * Appends version-2 canonical tenant identity in the active Account owner write transaction. This
+   * storage boundary does not establish source authenticity, membership, or admission.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public AccountAuditEnvelope appendCanonicalTenant(
+      UUID auditEventId, String canonicalTenantUuid, String eventType, String payload) {
+    requireReadWriteOwnerTransaction();
+    return append(
+        auditEventId,
+        "tenant",
+        AccountAuditTenantIdentity.canonicalTenantV2(canonicalTenantUuid),
+        eventType,
+        payload,
+        true);
+  }
+
+  /**
+   * Locks and returns only the exact original canonical envelope in the current owner transaction.
+   * A missing row returns empty; changed identity or immutable bytes fail closed.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<AccountAuditEnvelope> findExactCanonicalTenantEnvelopeForUpdate(
+      AccountAuditEnvelope expected) {
+    requireReadWriteOwnerTransaction();
+    if (expected == null
+        || expected.tenantIdentityVersion() != AccountAuditTenantIdentity.VERSION_2
+        || expected.payload() == null) {
+      throw new IllegalArgumentException("Exact canonical tenant audit envelope is required");
     }
+    var found =
+        dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
+            .where(ACCOUNT_AUDIT_OUTBOX.AUDIT_EVENT_ID.eq(expected.auditEventId()))
+            .forUpdate()
+            .fetchOptional(this::toEnvelope);
+    found.ifPresent(
+        actual -> {
+          if (!actual.equals(expected)) {
+            throw new IllegalStateException(
+                "Canonical Account audit identity conflicts with its immutable original envelope");
+          }
+        });
+    return found;
+  }
+
+  private AccountAuditEnvelope append(
+      UUID auditEventId,
+      String scope,
+      AccountAuditTenantIdentity identity,
+      String eventType,
+      String payload,
+      boolean canonicalWrite) {
+    identity.requireScope(scope);
     Instant occurredAt = Instant.now();
     String digest = AccountAuditDigest.ofPayload(payload);
     AccountAuditOutboxRecord row = dsl.newRecord(ACCOUNT_AUDIT_OUTBOX);
     row.setAuditEventId(auditEventId);
     row.setScope(scope);
-    row.setTenantId(tenantId);
+    row.setTenantId(identity.tenantId());
+    row.setTenantIdentityVersion(identity.version());
+    row.setTenantUuid(identity.tenantUuid());
     row.setProducerService("account-service");
     row.setEventType(eventType);
     row.setOccurredAt(toLocalDateTime(occurredAt));
@@ -51,7 +109,23 @@ public class AccountAuditOutboxRepository {
     row.setDeliveryStatus("PENDING");
     row.store();
     row.refresh();
-    return toEnvelope(row);
+    AccountAuditEnvelope stored = toEnvelope(row);
+    if (!stored.auditEventId().equals(auditEventId)
+        || !stored.scope().equals(scope)
+        || !stored.tenantIdentity().equals(identity)
+        || !stored.producerService().equals("account-service")
+        || !stored.eventType().equals(eventType)
+        || stored.schemaVersion() != 1
+        || stored.payloadDigestVersion() != 1
+        || !stored.payloadDigest().equals(digest)
+        || !payload.equals(stored.payload())) {
+      throw new IllegalStateException("Account audit outbox did not preserve its exact envelope");
+    }
+    if (canonicalWrite && stored.tenantIdentityVersion() != AccountAuditTenantIdentity.VERSION_2) {
+      throw new IllegalStateException(
+          "Account audit outbox did not preserve canonical identity version");
+    }
+    return stored;
   }
 
   public List<AccountAuditEnvelope> pending(int limit) {
@@ -136,7 +210,8 @@ public class AccountAuditOutboxRepository {
     return new AccountAuditEnvelope(
         row.getAuditEventId(),
         row.getScope(),
-        row.getTenantId(),
+        new AccountAuditTenantIdentity(
+            row.getTenantIdentityVersion(), row.getTenantId(), row.getTenantUuid()),
         row.getProducerService(),
         row.getEventType(),
         toInstant(row.getOccurredAt()),
@@ -144,5 +219,23 @@ public class AccountAuditOutboxRepository {
         row.getPayloadDigestVersion(),
         row.getPayloadDigest(),
         row.getPayload());
+  }
+
+  private static void requireReadWriteOwnerTransaction() {
+    if (!TransactionSynchronizationManager.isActualTransactionActive()
+        || TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+      throw new IllegalStateException(
+          "Canonical Account audit identity requires an active read-write owner transaction");
+    }
+  }
+
+  private static AccountAuditTenantIdentity retainedIdentity(String scope, Long tenantId) {
+    if ("platform".equals(scope) && tenantId == null) {
+      return AccountAuditTenantIdentity.platformV1();
+    }
+    if ("tenant".equals(scope) && tenantId != null && tenantId > 0) {
+      return AccountAuditTenantIdentity.retainedTenantV1(tenantId);
+    }
+    throw new IllegalArgumentException("Audit scope and retained tenant identity must match");
   }
 }
