@@ -1532,7 +1532,8 @@ class ControllerTests(unittest.TestCase):
         )
         for label, observation in cases:
             with self.subTest(evidence=label):
-                evidence = {(1, "hosted"): [observation]}
+                timeline = self.scope_timeline_evidence()
+                evidence = {(1, "hosted"): [observation, timeline]}
                 controller = self.make({1: pr(1, HEAD_1)}, evidence, heads={"feature-1": HEAD_1})
                 controller.set_stack([1])
 
@@ -1547,7 +1548,17 @@ class ControllerTests(unittest.TestCase):
 
                 self.assertIn(observation["checkpoint"], result["allocation"]["baseline_checkpoints"])
                 self.assertEqual(result["progress"]["in_flight"], 0)
-                self.assertEqual(evidence[(1, "hosted")], [observation])
+                snapshot = controller._bounded_allocation_evidence(
+                    controller._state().allocations["1:hosted"], evidence[(1, "hosted")]
+                )
+                self.assertEqual(snapshot["in_flight"], 0)
+                expected_error = (
+                    "an in-flight review has an incomplete or changed stack anchor"
+                    if label in {"missing anchor", "incomplete anchor", "mismatched head"}
+                    else "an awaiting Hosted request lacks verified posted identity"
+                )
+                self.assertEqual(snapshot["error"], expected_error)
+                self.assertEqual(evidence[(1, "hosted")], [observation, timeline])
                 self.assertNotEqual(controller._target("hosted", expected_pr=1).status, ReviewStatus.READY)
 
     def test_default_one_result_allocation_requeues_completed_taper_without_resetting_it(self):
