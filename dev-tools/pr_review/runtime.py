@@ -1191,7 +1191,7 @@ class LiveEvidence:
             response_id,
             next_trigger,
             record,
-            current_record_path,
+            current_record_path=current_record_path,
             repo=repo,
             pr_number=pr_number,
         )
@@ -1245,7 +1245,7 @@ class LiveEvidence:
                         captured_head,
                         record,
                         payload,
-                        path,
+                        current_record_path=path,
                     )
                     or proof
                 )

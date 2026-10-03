@@ -713,6 +713,40 @@ class SqliteProviderImportsTest(unittest.TestCase):
                 scope="broad",
             )
 
+    def test_reply_only_addressed_thread_import_uses_selected_archived_common_directory(self) -> None:
+        import test_pr_review_evidence_hosted as fixtures
+
+        archived_common = self.common / "archived-common"
+        empty_default = self.common / "empty-default"
+        empty_default.mkdir()
+        payload, record, record_path = fixtures.archived_addressed_reply_fixture(archived_common)
+        payload["data"]["repository"]["pullRequest"]["number"] = fixtures.PR
+        record["anchor"] = {
+            "child_head": fixtures.HEAD, "parent_identity": "develop",
+            "parent_head": fixtures.BASE, "merge_base": fixtures.BASE, "patch_id": "archived-patch",
+        }
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        checkpoint_at = "2026-09-23T00:03:00Z"
+        body = (f"Hosted: 0 found / 0 accepted / 0 routed · {fixtures.HEAD[:12]} · 1 files\n"
+                "<!-- firemud-hosted-review: 11 -->")
+        public_checkpoint = fixtures.comment(40, "owner", body, checkpoint_at)
+        payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].append(public_checkpoint)
+        checkpoint = pr_review.evidence.parse_checkpoint_comments([{
+            "id": 40, "body": body, "created_at": checkpoint_at,
+            "updated_at": checkpoint_at, "author_login": "owner",
+        }])[0][0]
+        with patch.object(pr_review.hosted, "_git_common_dir", return_value=empty_default):
+            imported = pr_review.sqlite_provider_imports.import_hosted_checkpoint(
+                self.records, repo=fixtures.REPO, pr_number=fixtures.PR,
+                checkpoint=checkpoint, actor="reviewer", common=archived_common,
+                scope="broad", hosted_payload=payload,
+            )
+        self.assertEqual(imported["provider_id"], "trigger:10")
+        self.assertEqual(imported["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(list(empty_default.iterdir()), [])
+        archived = json.loads(imported["archive_artifacts"]["metadata"])
+        self.assertEqual(archived["zero_reply_proof"]["commit_id"], fixtures.HEAD)
+
     def test_reply_only_zero_checkpoint_requires_exact_edited_trigger_reply(self) -> None:
         trigger_at = "2026-09-27T11:40:00Z"
         response_created = "2026-09-27T11:50:00Z"
@@ -824,6 +858,7 @@ class SqliteProviderImportsTest(unittest.TestCase):
             )
 
         self.assertEqual(zero_reply_proof.call_args.args[3:5], (REPO, PR))
+        self.assertEqual(zero_reply_proof.call_args.kwargs["current_record_path"], path)
         self.assertEqual(imported["provider_id"], "trigger:101")
         self.assertEqual(imported["counts"], {"found": 0, "accepted": 0, "routed": 0})
         self.assertEqual(set(imported["archive_artifacts"]), {"hosted_comments", "hosted_review", "metadata"})
