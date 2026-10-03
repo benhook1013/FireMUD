@@ -505,6 +505,9 @@ class GameplayWorldCatalogTest {
         .containsExactly("healthy");
     assertThat(catalog.resolveWorldFromAuthoritySnapshot("alpha")).isEmpty();
     assertThat(catalog.resolveWorldFromAuthoritySnapshot("healthy")).isPresent();
+    assertThatThrownBy(() -> catalog.resolvePublicWorldFromAuthoritySnapshot("alpha"))
+        .isInstanceOf(GameplayWorldCatalog.AuthorityPointerUnavailableException.class);
+    assertThat(catalog.resolvePublicWorldFromAuthoritySnapshot("healthy")).isPresent();
   }
 
   @Test
@@ -1811,6 +1814,17 @@ class GameplayWorldCatalogTest {
     assertThat(catalog.resolveWorldFromAuthoritySnapshot("123"))
         .hasValueSatisfying(world -> assertThat(world.slug()).isEqualTo("123"));
     assertThat(catalog.resolveWorldFromAuthoritySnapshot("2")).isEmpty();
+  }
+
+  @Test
+  void genericAuthorityResolverUsesStableSlugForWorldViewSuppliers() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldViews(
+            List.of(worldWithRealm("123", "production", 7L, true)));
+
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("123"))
+        .hasValueSatisfying(world -> assertThat(world.slug()).isEqualTo("123"));
+    assertThat(catalog.resolveWorldFromAuthoritySnapshot("1")).isEmpty();
   }
 
   @Test

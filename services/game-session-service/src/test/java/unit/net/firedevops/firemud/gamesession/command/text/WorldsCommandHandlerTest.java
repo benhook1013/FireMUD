@@ -998,17 +998,23 @@ class WorldsCommandHandlerTest {
     GameplayAdmissionPointerSnapshot pointerA = admissionPointer(1L);
     GameplayAdmissionPointerSnapshot pointerB = admissionPointer(2L);
     AtomicInteger pointerReads = new AtomicInteger();
-    Mockito.when(authorityService.listPointers()).thenReturn(List.of(pointerA));
+    Mockito.when(authorityService.listPointers())
+        .thenAnswer(
+            invocation -> {
+              pointerReads.incrementAndGet();
+              return List.of(pointerA);
+            });
     Mockito.when(authorityService.listPointersByTenant(22L))
         .thenAnswer(
             invocation -> {
               pointerReads.incrementAndGet();
               return List.of(pointerB);
             });
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
             new GameplayWorldCatalog(authorityService),
-            Mockito.mock(AccountClient.class),
+            accountClient,
             DirectTextConnectScopeSessionStore.inMemoryForTest());
 
     WorldsCommandHandler.CharacterBrowseResult result =
@@ -1018,6 +1024,7 @@ class WorldsCommandHandlerTest {
         .isEqualTo(
             WorldsCommandHandler.CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
     assertThat(pointerReads).hasValue(2);
+    Mockito.verifyNoInteractions(accountClient);
   }
 
   @Test
@@ -1919,6 +1926,7 @@ class WorldsCommandHandlerTest {
         .isEqualTo(GameplayWorldCatalog.PublicProductionRealmCardinality.EXACTLY_ONE);
     assertThat(catalog.readDiscoverySnapshot().output().worlds()).isEmpty();
     assertThat(catalog.resolvePublicWorld("demo")).isEmpty();
+    assertThat(catalog.resolvePublicWorldFromAuthoritySnapshot("demo")).isEmpty();
     Mockito.clearInvocations(accountClient);
 
     assertThat(localHandler.browseRealms(authenticatedSession(), "other"))

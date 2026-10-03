@@ -906,7 +906,7 @@ class GameSessionGrpcServiceTest {
   }
 
   @Test
-  void privateAdmissionRejectsPublicRealmHiddenBetweenCatalogAndExactPointerReads() {
+  void privateAdmissionRejectsWhenPublicRealmBecomesHiddenAndCatalogRedactsPrivateOnlyWorld() {
     GameplayAdmissionPointerAuthorityService pointerAuthorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     GameplayAdmissionPointerSnapshot privateRealm =
@@ -923,9 +923,8 @@ class GameSessionGrpcServiceTest {
     GetAdmissionPointerResponse pointerResponse =
         getAdmissionPointer(service, "7", "private", "preview");
 
-    assertFalse(catalogResponse.hasError());
-    assertEquals(1, catalogResponse.getRealmsCount());
-    assertEquals("preview", catalogResponse.getRealms(0).getRealmSlug());
+    assertEquals("INVALID_ARGUMENT", catalogResponse.getError().getCode());
+    assertEquals(0, catalogResponse.getRealmsCount());
     assertEquals("ADMISSION_POINTER_UNAVAILABLE", pointerResponse.getError().getCode());
     assertFalse(pointerResponse.hasAdmissionPointer());
     Mockito.verify(pointerAuthorityService, Mockito.times(2)).listPointers();
@@ -1563,6 +1562,7 @@ class GameSessionGrpcServiceTest {
     GameplayAdmissionPointerEventRepository eventRepository =
         Mockito.mock(GameplayAdmissionPointerEventRepository.class);
     AtomicReference<GameplayAdmissionPointer> currentPointer = new AtomicReference<>();
+    AtomicReference<List<Long>> storedRevisions = new AtomicReference<>();
     Mockito.when(
             pointerRepository.findByTenantIdAndWorldSlugAndRealmSlugForUpdate(
                 7L, "demo", "production"))
@@ -1574,6 +1574,25 @@ class GameSessionGrpcServiceTest {
               if (pointer.getId() == null) {
                 pointer.setId(11L);
               }
+              currentPointer.set(pointer);
+              storedRevisions.set(
+                  List.of(pointer.getPointerVersion(), pointer.getCatalogRevision()));
+              return pointer;
+            });
+    Mockito.when(
+            pointerRepository.updateExisting(
+                Mockito.any(GameplayAdmissionPointer.class), Mockito.anyLong(), Mockito.anyLong()))
+        .thenAnswer(
+            invocation -> {
+              GameplayAdmissionPointer pointer = invocation.getArgument(0);
+              Long expectedPointerVersion = invocation.getArgument(1);
+              Long expectedCatalogRevision = invocation.getArgument(2);
+              if (!List.of(expectedPointerVersion, expectedCatalogRevision)
+                  .equals(storedRevisions.get())) {
+                throw new IllegalStateException("Admission pointer CAS predicate did not match");
+              }
+              storedRevisions.set(
+                  List.of(pointer.getPointerVersion(), pointer.getCatalogRevision()));
               currentPointer.set(pointer);
               return pointer;
             });
@@ -1595,6 +1614,12 @@ class GameSessionGrpcServiceTest {
     assertEquals(1L, policyChanged.pointerVersion());
     assertEquals(2L, routeChanged.catalogRevision());
     assertEquals(2L, routeChanged.pointerVersion());
+    Mockito.verify(pointerRepository)
+        .updateExisting(
+            Mockito.any(GameplayAdmissionPointer.class), Mockito.eq(1L), Mockito.eq(1L));
+    Mockito.verify(pointerRepository)
+        .updateExisting(
+            Mockito.any(GameplayAdmissionPointer.class), Mockito.eq(1L), Mockito.eq(2L));
   }
 
   @Test

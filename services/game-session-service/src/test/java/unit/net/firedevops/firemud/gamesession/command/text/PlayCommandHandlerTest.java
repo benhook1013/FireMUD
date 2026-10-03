@@ -3907,6 +3907,7 @@ class PlayCommandHandlerTest {
         gameplayCatalogProperties.getWorlds().get(1).getRealms().get(0);
     selectedRealm.setTenantId(23L);
     selectedRealm.setPublicProductionRealm(true);
+    gameplayCatalogProperties.getWorlds().get(1).getRealms().get(1).setTenantId(23L);
     SessionContext context =
         new SessionContext(
             1L,

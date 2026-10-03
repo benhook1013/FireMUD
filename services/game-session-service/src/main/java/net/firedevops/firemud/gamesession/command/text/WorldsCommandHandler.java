@@ -581,14 +581,6 @@ public class WorldsCommandHandler {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
     GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
-    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog;
-    try {
-      currentRealmCatalog = worldCatalog.readRealmDiscoverySnapshot(world);
-    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
-      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
-    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
-      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
-    }
     Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeRealmSnapshot;
     try {
       maybeRealmSnapshot =
@@ -599,10 +591,6 @@ public class WorldsCommandHandler {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
     if (maybeRealmSnapshot.isEmpty()
-        || !maybeRealmSnapshot
-            .orElseThrow()
-            .catalogFingerprint()
-            .equals(currentRealmCatalog.catalogFingerprint())
         || !normalizeSelector(worldSelector)
             .equals(maybeRealmSnapshot.orElseThrow().requestedWorldSelector())) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
