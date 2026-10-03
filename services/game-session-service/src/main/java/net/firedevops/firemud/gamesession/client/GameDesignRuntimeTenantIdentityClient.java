@@ -12,12 +12,10 @@ import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
-import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.common.tenant.AuthoredWorldSourceGrpcCodec;
 import net.firedevops.firemud.common.tenant.GameSessionTenantAssociationEvidence;
 import net.firedevops.firemud.common.tenant.RuntimeTenantIdentityEvidence;
-import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceRequest;
-import net.firedevops.firemud.gamedesign.v1.ResolveAuthoredWorldSourceResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveLegacyGameSessionTenantAssociationResponse;
 import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityRequest;
@@ -136,59 +134,24 @@ public final class GameDesignRuntimeTenantIdentityClient
     UUID tenantUuid = parseCanonicalNonNilUuid(canonicalTenantId, "canonical tenant ID");
     UUID operationUuid = parseCanonicalNonNilUuid(operationId, "operation ID");
     UUID requestUuid = parseCanonicalNonNilUuid(requestId, "request ID");
-    AuthoredWorldSourceDigest.validateReadSelector(workloadNamespace, tenantUuid, worldSlug);
+    AuthoredWorldSourceGrpcCodec.ReadRequest readRequest =
+        new AuthoredWorldSourceGrpcCodec.ReadRequest(
+            workloadNamespace, requestUuid, operationUuid, tenantUuid, worldSlug);
     TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub currentStub = stub();
     if (currentStub == null) {
       throw new IllegalStateException(
           "Game Design authored-world source client is not initialized");
     }
-    ResolveAuthoredWorldSourceResponse response =
+    var response =
         currentStub
             .withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS)
-            .resolveAuthoredWorldSource(
-                ResolveAuthoredWorldSourceRequest.newBuilder()
-                    .setRequestId(requestUuid.toString())
-                    .setOperationId(operationUuid.toString())
-                    .setCanonicalTenantId(tenantUuid.toString())
-                    .setWorldSlug(worldSlug)
-                    .build());
-    if (!response.getUnknownFields().asMap().isEmpty()) {
-      throw new IllegalStateException("Authored-world source response contains unsupported fields");
-    }
-    AuthoredWorldSourceEvidence evidence;
+            .resolveAuthoredWorldSource(AuthoredWorldSourceGrpcCodec.toReadRequest(readRequest));
     try {
-      UUID echoedRequest = parseCanonicalNonNilUuid(response.getRequestId(), "response request ID");
-      if (!requestUuid.equals(echoedRequest)) {
-        throw new IllegalArgumentException("Authored-world source read request identity changed");
-      }
-      evidence =
-          new AuthoredWorldSourceEvidence(
-              response.getSchemaVersion(),
-              response.getTargetNamespace(),
-              parseCanonicalNonNilUuid(
-                  response.getRegistrationRequestId(), "registration request ID"),
-              parseCanonicalNonNilUuid(response.getOperationId(), "response operation ID"),
-              response.getRequestDigest(),
-              parseCanonicalNonNilUuid(
-                  response.getCanonicalTenantId(), "response canonical tenant ID"),
-              response.getTenantSlug(),
-              response.getWorldSlug(),
-              response.getWorldDisplayName(),
-              response.getSourceGameRowId(),
-              response.getSourceGameTenantKey(),
-              response.getProvenanceKind(),
-              response.getEvidenceDigest());
+      return AuthoredWorldSourceGrpcCodec.fromReadResponse(readRequest, response);
     } catch (IllegalArgumentException exception) {
-      throw new IllegalStateException("Authored-world source response is invalid", exception);
-    }
-    if (!workloadNamespace.equals(evidence.targetNamespace())
-        || !tenantUuid.equals(evidence.canonicalTenantId())
-        || !operationUuid.equals(evidence.operationId())
-        || !worldSlug.equals(evidence.worldSlug())) {
       throw new IllegalStateException(
-          "Authored-world source response does not match the exact request");
+          "Game Design authored-world source response is invalid", exception);
     }
-    return evidence;
   }
 
   /**

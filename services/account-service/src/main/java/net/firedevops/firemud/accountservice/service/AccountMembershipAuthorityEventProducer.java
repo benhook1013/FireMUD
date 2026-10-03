@@ -30,6 +30,7 @@ import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRe
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Event;
 import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.EventEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
+import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.CanonicalJoinOperationEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository.JoinOperation;
 import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountMembershipPairAuthorityRepository;
@@ -1618,6 +1619,88 @@ public class AccountMembershipAuthorityEventProducer {
     return head;
   }
 
+  /**
+   * Reads the exact event, checkpoint, and pair tuple for a pending canonical first JOIN.
+   *
+   * <p>The operation and UUID scope are immutable Account readback evidence. This method does not
+   * reconstruct the original bearer-bound digest, publish an event, or infer current authority from
+   * a constructed DTO.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Checkpoint requireCanonicalFirstJoinEvent(CanonicalJoinOperationEvidence operation) {
+    requireWritableOwnerTransaction();
+    if (operation == null || operation.requestId() == null || operation.requestId().isBlank()) {
+      throw new IllegalStateException("Canonical JOIN operation readback is required");
+    }
+    UUID accountUuid = operation.scopeEvidence().accountUuid();
+    UUID tenantUuid = operation.scopeEvidence().tenantUuid();
+    requireCanonicalUuidInput(accountUuid, "Account UUID");
+    requireCanonicalUuidInput(tenantUuid, "tenant UUID");
+
+    Identity identity = resolveCanonicalIdentity(accountUuid, tenantUuid);
+    CanonicalJoinOperationEvidence persistedOperation =
+        joinOperationRepository
+            .findCanonicalEvidenceByRequestId(operation.requestId())
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "Canonical JOIN operation journal evidence is absent"));
+    if (!persistedOperation.equals(operation)) {
+      throw new IllegalStateException(
+          "Canonical JOIN operation differs from its exact persisted journal readback");
+    }
+    requireCanonicalFirstJoinOperationReadback(identity, persistedOperation);
+
+    String streamKey = membershipStreamKey(identity);
+    Event event =
+        authorityOutboxRepository
+            .findEvent(streamKey, operation.requestId())
+            .orElseThrow(
+                () -> new IllegalStateException("Canonical JOIN has no matching V33 event"));
+    MembershipEvent verified = verifyStoredEvent(event, identity, operation.requestId());
+    if (event.outboxSequence() != 1L
+        || !Map.of(tenantUuid.toString(), "2").equals(verified.membershipVersion())
+        || !"1".equals(verified.membershipAuthorityGeneration())
+        || !verified.gameplayAdmissionAllowed()
+        || !"ACTIVE".equals(verified.membershipLifecycleState())
+        || !List.of("player").equals(verified.roles())
+        || verified.callerBoundAuthorityInvalidated()) {
+      throw new IllegalStateException(
+          "Canonical JOIN operation differs from its exact first-membership V33 event");
+    }
+
+    Checkpoint checkpoint =
+        authorityOutboxRepository
+            .readCheckpoint(streamKey)
+            .orElseThrow(
+                () -> new IllegalStateException("Canonical JOIN authority checkpoint is absent"));
+    if (checkpoint.outboxSequence() != 1L
+        || checkpoint.outboxSequence() != event.outboxSequence()
+        || !Objects.equals(checkpoint.sourceEventId(), event.eventId())
+        || !Objects.equals(checkpoint.sourceEventDigest(), event.eventDigest())) {
+      throw new IllegalStateException(
+          "Canonical JOIN checkpoint differs from its exact first-membership event");
+    }
+
+    PairAuthority pair =
+        pairAuthorityRepository
+            .readForUpdate(accountUuid, tenantUuid)
+            .orElseThrow(
+                () -> new IllegalStateException("Canonical JOIN pair authority is absent"));
+    if (!identity.provenance().equals(pair.provenance())
+        || !pair.membershipExists()
+        || pair.membershipVersion() != 2L
+        || pair.membershipAuthorityGeneration() != 1L
+        || pair.lastEventSequence() != 1L
+        || !Objects.equals(pair.lastEventId(), event.eventId())
+        || !Objects.equals(pair.lastEventDigest(), event.eventDigest())
+        || pair.lastTransitionInvalidated()) {
+      throw new IllegalStateException(
+          "Canonical JOIN pair authority differs from its exact first-membership event");
+    }
+    return checkpoint;
+  }
+
   private Checkpoint appendAndReadBack(
       Identity identity,
       String requestId,
@@ -2505,6 +2588,41 @@ public class AccountMembershipAuthorityEventProducer {
         || !identity.provenance().equals(scope.tenantProvenance())) {
       throw new IllegalStateException(
           "Canonical JOIN operation, target, or available public-join policy differs from its Account sources");
+    }
+  }
+
+  private void requireCanonicalFirstJoinOperationReadback(
+      Identity identity, CanonicalJoinOperationEvidence operation) {
+    var scope = operation.scopeEvidence();
+    if (operation.operationRepresentationVersion() != 2
+        || operation.scopeDigestVersion() != 2
+        || operation.intentDigestVersion() != 2
+        || !"PENDING".equals(operation.status())
+        || operation.outcome() != null
+        || operation.membershipId() != null
+        || operation.membershipVersion() != null
+        || operation.membershipAuthorityGeneration() != null
+        || !"AVAILABLE".equals(operation.entitlementAuthorityAvailability())
+        || !Boolean.TRUE.equals(operation.allowPublicJoin())
+        || operation.entitlementVersion() == null
+        || operation.entitlementVersion() <= 0L
+        || !Integer.valueOf(2).equals(operation.requestDigestVersion())
+        || operation.requestDigest() == null
+        || !("AVAILABLE".equals(operation.lastAttemptAuthorityAvailability())
+                && operation.lastAttemptFailureCode() == null
+            || "UNAVAILABLE".equals(operation.lastAttemptAuthorityAvailability())
+                && operation.lastAttemptFailureCode() != null
+                && !operation.lastAttemptFailureCode().isBlank())
+        || operation.callerBoundAuthorityInvalidated()
+        || operation.privateAccountId() != identity.accountId()
+        || !"PUBLIC_PRODUCTION".equals(scope.targetClass())
+        || !identity.accountUuid().equals(scope.accountUuid())
+        || !identity.tenantUuid().equals(scope.tenantUuid())
+        || !identity.provenance().equals(scope.tenantProvenance())
+        || !operation.scopeTokenHash().equals(scope.scopeTokenHash())
+        || !operation.connectScopeDigest().equals(scope.scopeDigest())) {
+      throw new IllegalStateException(
+          "Canonical JOIN operation or immutable source policy is not exact positive evidence");
     }
   }
 

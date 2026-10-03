@@ -2,15 +2,12 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.StatusRuntimeException;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 import net.firedevops.firemud.common.security.RequestIdValidation;
 import net.firedevops.firemud.entitymanagement.v1.ValidateEntityUpgradeMappingsResponse;
 import net.firedevops.firemud.gamedesign.v1.GetPublishedReleaseBundleResponse;
 import net.firedevops.firemud.gamedesign.v1.GetVersionStateResponse;
-import net.firedevops.firemud.gamedesign.v1.ResolveLaunchDescriptorResponse;
 import net.firedevops.firemud.gamesession.client.EntityManagementClient;
 import net.firedevops.firemud.gamesession.client.GameDesignClient;
 import net.firedevops.firemud.gamesession.client.WorldManagementClient;
@@ -50,78 +47,9 @@ public class InstanceCutoverCompatibilityServiceImpl
   @Transactional(readOnly = true)
   public InstanceCutoverCompatibilityDto validateInstanceCutoverCompatibility(
       long tenantId, long sourceGameInstanceId, long targetVersionId) {
-    GameInstance sourceInstance = requireSourceInstance(tenantId, sourceGameInstanceId);
-    long sourceVersionId = requireSourceVersionId(sourceInstance);
-    long gameTemplateId = requireGameTemplateId(sourceInstance);
-    List<String> reasons = new ArrayList<>();
-    List<String> checkedParticipants = new ArrayList<>();
-    List<CutoverParticipantCompatibilityDto> participantResults = new ArrayList<>();
-
-    ResolveLaunchDescriptorResponse descriptor =
-        resolveLaunchDescriptor(tenantId, gameTemplateId, sourceVersionId, targetVersionId);
-    if (descriptor.hasError()) {
-      String reason = errorSummary(descriptor.getError());
-      return new InstanceCutoverCompatibilityDto(
-          sourceVersionId,
-          targetVersionId,
-          null,
-          "INCOMPATIBLE",
-          List.of(reason),
-          List.of("GAME_DESIGN"),
-          Instant.now(),
-          null,
-          List.of(
-              new CutoverParticipantCompatibilityDto(
-                  "GAME_DESIGN",
-                  List.of(),
-                  List.of("launch_descriptor"),
-                  false,
-                  "INCOMPATIBLE",
-                  List.of(reason))));
-    }
-
-    String remapSetId = normalizeBlank(descriptor.getLaunchDescriptor().getRemapSetId());
-    checkedParticipants.add("GAME_DESIGN");
-    participantResults.add(validateGameDesignParticipant(tenantId, targetVersionId, reasons));
-
-    ValidateWorldUpgradeMappingsResponse worldValidation =
-        worldManagementClient.validateWorldUpgradeMappings(
-            tenantId, sourceGameInstanceId, targetVersionId, remapSetId);
-    checkedParticipants.add("WORLD");
-    participantResults.add(
-        new CutoverParticipantCompatibilityDto(
-            "WORLD",
-            worldValidation.getStateClassesCheckedList(),
-            worldValidation.getCheckedFamiliesList(),
-            worldValidation.getHasS2Rows(),
-            translateWorldResult(worldValidation),
-            collectReasons(worldValidation.getReasonsList(), worldValidation.getError())));
-    reasons.addAll(collectReasons(worldValidation.getReasonsList(), worldValidation.getError()));
-
-    ValidateEntityUpgradeMappingsResponse entityValidation =
-        entityManagementClient.validateEntityUpgradeMappings(
-            tenantId, sourceGameInstanceId, targetVersionId, remapSetId);
-    checkedParticipants.add("ENTITY");
-    participantResults.add(
-        new CutoverParticipantCompatibilityDto(
-            "ENTITY",
-            entityValidation.getStateClassesCheckedList(),
-            entityValidation.getCheckedFamiliesList(),
-            entityValidation.getHasS2Rows(),
-            translateEntityResult(entityValidation),
-            collectReasons(entityValidation.getReasonsList(), entityValidation.getError())));
-    reasons.addAll(collectReasons(entityValidation.getReasonsList(), entityValidation.getError()));
-
-    return new InstanceCutoverCompatibilityDto(
-        sourceVersionId,
-        targetVersionId,
-        descriptor.getLaunchDescriptor().getLaunchDescriptorId(),
-        summarizeOverallResult(participantResults),
-        reasons,
-        checkedParticipants,
-        Instant.now(),
-        remapSetId,
-        participantResults);
+    throw new IllegalArgumentException(
+        "AUTHORED_WORLD_LAUNCH_BINDING_REQUIRED: canonical authored-world launch binding is"
+            + " required");
   }
 
   private GameInstance requireSourceInstance(long tenantId, long sourceGameInstanceId) {
@@ -147,29 +75,8 @@ public class InstanceCutoverCompatibilityServiceImpl
     throw new IllegalArgumentException("Source game instance version metadata missing");
   }
 
-  private long requireGameTemplateId(GameInstance sourceInstance) {
-    if (sourceInstance.getGameTemplateId() == null) {
-      throw new IllegalArgumentException("Source game instance gameTemplateId missing");
-    }
-    return requirePositiveSourceMetadata(sourceInstance.getGameTemplateId(), "gameTemplateId");
-  }
-
   private long requirePositiveSourceMetadata(Long value, String fieldName) {
     return RequestIdValidation.requirePositiveLong(value.toString(), fieldName);
-  }
-
-  private ResolveLaunchDescriptorResponse resolveLaunchDescriptor(
-      long tenantId, long gameTemplateId, long sourceVersionId, long targetVersionId) {
-    try {
-      return gameDesignClient.resolveLaunchDescriptor(
-          tenantId,
-          gameTemplateId,
-          "cutover-compatibility-" + UUID.randomUUID(),
-          sourceVersionId,
-          targetVersionId);
-    } catch (StatusRuntimeException ex) {
-      throw new IllegalStateException("GAME_DESIGN_UNAVAILABLE: launch descriptor unavailable", ex);
-    }
   }
 
   private CutoverParticipantCompatibilityDto validateGameDesignParticipant(

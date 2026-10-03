@@ -901,7 +901,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 20
+    # Game Session runs composed owner proofs before its full checks and runtime JAR.
+    # Exact CI37121026340 exhausted 20m after those proofs passed, at JAR packaging.
+    timeout-minutes: ${{ matrix.module == 'game-session-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -955,8 +957,160 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepositoryIntegrationTest#databaseRejectsAssociationUpdatesDeletesTruncatesAndContradictorySourceInsert()' \
             game-design-service
 
+      - name: Run Game Design authored-source launch descriptor PostgreSQL and socket mTLS proof
+        if: ${{ matrix.module == 'game-design-service' }}
+        run: |
+          ./gradlew :game-design-service:integrationTest \
+            --tests integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \
+            :game-design-service:test \
+            --tests net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest \
+            -PfullCheck --continue --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \
+            --require-suite net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#resolvesPersistedSourceAndReplaysOriginalDescriptorAfterDefaultsAndVersionChange()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#concurrentExactRetriesPersistOneOriginalDescriptor()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#deterministicFailureIsFrozenAcrossDependencyChangeAndConcurrentExactRetries()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#corruptFailureReadbackRollsBackTheOutcomeInsert()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#concurrentSuccessAndFailureCandidatesPersistOnlyTheFirstOutcome()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#rolledBackDescriptorInsertLeavesNoCanonicalOrPrivateRequestClaim()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#v35MigrationPreservesRetainedUnboundDescriptorAndCanonicalResolveDeniesIt()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#exactGameSessionPeerResolvesAndEchoesTheFullCanonicalDescriptor()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#gameSessionAndWorldPeersReadExactDescriptorAndEchoReadRequestIdentity()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#worldPeerCannotResolveBeforeDescriptorProducerAccess()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#missingClientCertificateFailsWithTlsHandshakeEvidenceBeforeProducerAccess()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#jwtOnlyCallerWithoutClientCertificateFailsWithTlsHandshakeEvidence()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#wrongServiceCertificateCannotResolveOrReadEvenWithBearerMetadata()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#wrongNamespaceCertificateCannotResolveOrReadEvenWithBearerMetadata()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedCertificateWithoutWorkloadUriCannotResolveOrRead()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#malformedAndUnknownClosedRequestsFailBeforeDescriptorProducerAccess()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#bothProductionProfilesKeepOnlyExactLaunchDescriptorMethodsInGameDesignJwtBypass()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedClientResolvesAndReadsExactDescriptorOverPhysicalMtlsSocket(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedClientRejectsWrongGameDesignServerWorkloadAndNamespaceBeforeReturningEvidence(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#sharedClientCodecRejectsChangedDescriptorReadEchoAndDigestOverPhysicalSocket(Path)' \
+            game-design-service
+
+      - name: Upload Game Design authored-source launch descriptor proof results
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-authored-source-launch-descriptor-proof-${{ github.sha }}
+          path: |
+            services/game-design-service/build/test-results/integrationTest/TEST-*LaunchDescriptorServiceIntegrationTest.xml
+            services/game-design-service/build/test-results/test/TEST-*AuthoredWorldLaunchDescriptorMtlsTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run Game Design authored-source read socket mTLS proof
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
+        run: |
+          ./gradlew :game-design-service:test \
+            --tests net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#exactWorldAndGameSessionReadersResolveCompleteSourceReceiptThroughSharedClient(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#wrongServiceNamespaceAndSharedCertificatesAreDeniedBeforeOwnerRead()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#missingClientCertificateFailsWithTlsHandshakeEvidenceBeforeOwnerRead()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#jwtOnlyCallerWithoutClientCertificateFailsWithTlsHandshakeEvidence()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#validJwtWithTrustedCertificateButNoWorkloadUriIsDeniedByPeerGuard()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#sharedClientRefusesWrongGameDesignServerWorkloadAndNamespace(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#sharedClientRejectsChangedRequestEchoSourceDigestAndUnknownFieldsOverSocket(Path)' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#unknownReadRequestFieldsAreRejectedByProductionServiceBeforeOwnerRead()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest#productionYamlAndSocketGuardsKeepWorldAccessLimitedToExactSourceMethod()' \
+            game-design-service
+
+      - name: Upload Game Design authored-source read socket proof results
+        if: ${{ always() && matrix.module == 'game-design-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: game-design-authored-source-read-proof-${{ github.sha }}
+          path: services/game-design-service/build/test-results/test/TEST-*AuthoredWorldSourceMtlsTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run World authored-source intake PostgreSQL component proof
+        if: ${{ matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:integrationTest \
+            --tests net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#persistsCompleteFreshReceiptAndReusesExactTenantAssociationAcrossWorlds()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#deniesRetainedEvidenceAndChangedRequestOrTenantScopeBeforeAddingClaims()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#ownerTransactionRollbackLeavesNeitherAssociationNorReceipt()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#rejectsImmutableHistoryMutationAndTruncation()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#rejectsReadOnlyAndNonReadCommittedOwnerTransactionsWithoutClaims()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#concurrentExactRetriesReturnTheSingleCommittedReceipt()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#concurrentLegacyNumericClaimSerializesBeforeFreshSelectorAllocation()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeIntegrationTest#concurrentLegacyClaimAfterAllocationCannotTakeTheReservedSelector()' \
+            world-management-service
+
+      - name: Upload World authored-source intake proof results
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-authored-source-intake-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredSourceIntakeIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run World authored-source intake socket mTLS proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:test \
+            --tests net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#sameNamespaceGameDesignIntakesThenReadsExactReceiptOverSocketMtls()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#wrongWorkloadsAndWrongNamespaceAreDeniedBeforeDecodeOrOwnerAccess()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#sharedCertificateWithoutWorkloadUriCannotReachOwner()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#jwtOnlyAndPlaintextCallersFailAtThePhysicalTransportBoundary()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#clientRejectsAResponseFromTheWrongAuthenticatedWorldServerIdentity()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#changedEchoDigestAndUnknownFieldsAreRejectedAfterSocketResponse()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.tenant.WorldAuthoredSourceIntakeMtlsTest#publicWireMessagesNeverContainWorldPrivateNumericTenantKey()' \
+            world-management-service
+
+      - name: Upload World authored-source intake socket proof results
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-authored-source-intake-socket-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/test/TEST-*WorldAuthoredSourceIntakeMtlsTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run World authored-source intake PostgreSQL socket composition proof
+        if: ${{ !cancelled() && matrix.module == 'world-management-service' }}
+        run: |
+          ./gradlew :world-management-service:integrationTest \
+            --tests net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest \
+            -PfullCheck --no-build-cache --no-configuration-cache
+          bash dev-tools/validation/inspect-test-results.sh \
+            --strict \
+            --require-suite net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#commitsFreshWorldOwnerReceiptThenReturnsExactReceiptOverAuthenticatedSocket()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#reconcilesLostSuccessAcknowledgementWithExactRetryAndCommittedReadback()' \
+            --require-case 'net.firedevops.firemud.worldmanagement.WorldAuthoredSourceIntakeMtlsIntegrationTest#deniesWrongWorkloadAndChangedBindingWithoutOwnerMutation()' \
+            world-management-service
+
+      - name: Upload World authored-source intake PostgreSQL socket composition results
+        if: ${{ always() && matrix.module == 'world-management-service' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: world-authored-source-intake-postgres-socket-proof-${{ github.sha }}
+          path: services/world-management-service/build/test-results/integrationTest/TEST-*WorldAuthoredSourceIntakeMtlsIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Run Game Session authored-world intake PostgreSQL component proof
-        if: ${{ matrix.module == 'game-session-service' }}
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
         run: |
           ./gradlew :game-session-service:integrationTest \
             --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest \
@@ -967,7 +1121,19 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#registersAdditionalWorldsAndReplaysExactReceiptWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#requiresOwnerTransactionRollsBackClaimsAndReadsOnlyCommittedRows()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactIntakeRetriesReturnOneReceiptAndSlugRaceHasOneWinner()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceCommitsReadsBackAndReplaysExactStoredRequestWithoutAnotherSourceRead()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceRollbackAndRejectedSourceLeaveNoClaims()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceLostPostCommitReadbackRetryReturnsOriginalCommittedReceiptWithoutMutation()' \
             game-session-service
+
+      - name: Upload Game Session authored-world intake PostgreSQL proof results
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-session-authored-world-intake-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionAuthoredWorldSourceRepositoryIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Run Game Session retained tenant snapshot and association PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}
@@ -1273,13 +1439,20 @@ jobs:
         run: |
           ./gradlew :account-service:integrationTest \
             --tests integration.net.firedevops.firemud.accountservice.repository.AccountConnectScopeCanonicalIdentityIntegrationTest \
+            --tests integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest \
             -PfullCheck --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.accountservice.repository.AccountConnectScopeCanonicalIdentityIntegrationTest \
+            --require-suite integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectScopeCanonicalIdentityIntegrationTest#v2ScopesPreserveV1AndRequireExactUuidSourcesWithoutBearerOrNumericAliases()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectScopeCanonicalIdentityIntegrationTest#canonicalJoinJournalSharesRequestIdsAndRetainsPendingHashOnlyIntentEvidence()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectScopeCanonicalIdentityIntegrationTest#canonicalTerminalJournalPreservesHistoryAndOnlyStoresContractShapedOutcomes()' \
             --require-case 'integration.net.firedevops.firemud.accountservice.repository.AccountConnectScopeCanonicalIdentityIntegrationTest#concurrentCanonicalIntentAndPolicyRetriesRecoverOneImmutableRequestRow()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#completeHistoricalReadbackCommitsAfterExpiryAndLaterUnavailablePolicyAttempt()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#eventReadbackRejectsStalePendingDtoAfterJournalHasTerminalized()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#absentOrContradictoryOwnerEvidenceRemainsPendingWithoutReconciliationSideEffects()' \
+            --require-case 'integration.net.firedevops.firemud.accountservice.AccountCanonicalJoinReconciliationIntegrationTest#concurrentExactTerminalRetryAndReconcilerRetainOneHistoricalWriteSet()' \
             account-service
 
       - name: Upload Account canonical JOIN scope and intent PostgreSQL proof results
@@ -1287,7 +1460,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: account-canonical-join-scope-intent-postgresql-proof-${{ github.sha }}
-          path: services/account-service/build/test-results/integrationTest/TEST-*AccountConnectScopeCanonicalIdentityIntegrationTest.xml
+          path: |
+            services/account-service/build/test-results/integrationTest/TEST-*AccountConnectScopeCanonicalIdentityIntegrationTest.xml
+            services/account-service/build/test-results/integrationTest/TEST-*AccountCanonicalJoinReconciliationIntegrationTest.xml
           if-no-files-found: warn
           retention-days: 7
 

@@ -154,7 +154,8 @@ class GameDesignRuntimeTenantIdentityClientTest {
                       "world-one",
                       REQUEST_ID.toString()))
           .isInstanceOf(IllegalStateException.class)
-          .hasMessageContaining("does not match the exact request");
+          .hasCauseInstanceOf(IllegalArgumentException.class)
+          .hasRootCauseMessage("Authored-world source response does not match the exact request");
     }
   }
 

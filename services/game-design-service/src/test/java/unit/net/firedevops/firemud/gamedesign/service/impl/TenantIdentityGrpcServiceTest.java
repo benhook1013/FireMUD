@@ -57,6 +57,11 @@ class TenantIdentityGrpcServiceTest {
       "spiffe://firemud/ns/test/sa/game-session-service";
   private static final String WRONG_NAMESPACE_GAME_SESSION_PEER =
       "spiffe://firemud/ns/other/sa/game-session-service";
+  private static final String WORLD_MANAGEMENT_PEER =
+      "spiffe://firemud/ns/test/sa/world-management-service";
+  private static final String WRONG_NAMESPACE_WORLD_MANAGEMENT_PEER =
+      "spiffe://firemud/ns/other/sa/world-management-service";
+  private static final String GAME_DESIGN_PEER = "spiffe://firemud/ns/test/sa/game-design-service";
   private static final UUID CANONICAL_TENANT_ID =
       UUID.fromString("87426bb3-a733-43f0-9c8e-2e379cbdf7ec");
   private static final UUID FRESH_CREATION_REQUEST_ID =
@@ -93,17 +98,45 @@ class TenantIdentityGrpcServiceTest {
           "test");
 
   @Test
-  void authoredSourceReadRequiresExactGameSessionPeerBeforeOwnerAccess() {
+  void authoredSourceReadRejectsUnrelatedOrWrongNamespacePeersBeforeOwnerAccess() {
     for (String peer :
         new String[] {
-          null, ACCOUNT_PEER, ACCOUNT_MIGRATOR_PEER, WRONG_NAMESPACE_GAME_SESSION_PEER
+          null,
+          ACCOUNT_PEER,
+          ACCOUNT_MIGRATOR_PEER,
+          WRONG_NAMESPACE_GAME_SESSION_PEER,
+          WRONG_NAMESPACE_WORLD_MANAGEMENT_PEER,
+          GAME_DESIGN_PEER
         }) {
       AuthoredSourceObserver observer = authoredSourceCall(authoredSourceRequest(), peer);
       assertEquals(Status.Code.PERMISSION_DENIED, observer.errorCode);
       assertNull(observer.value);
       assertFalse(observer.completed);
     }
+    AuthoredSourceObserver malformedRequestWithWrongPeer =
+        authoredSourceCall(
+            authoredSourceRequest().toBuilder().setRequestId("malformed").build(),
+            GAME_DESIGN_PEER);
+    assertEquals(Status.Code.PERMISSION_DENIED, malformedRequestWithWrongPeer.errorCode);
     verifyNoInteractions(authoredWorldRepository);
+  }
+
+  @Test
+  void authoredSourceReadAllowsExactSameNamespaceWorldManagementPeer() {
+    AuthoredWorldSourceEvidence evidence = authoredSourceEvidence("test");
+    when(authoredWorldRepository.read(FRESH_OPERATION_ID, RUNTIME_TENANT_ID, "world-one", "test"))
+        .thenReturn(Optional.of(evidence));
+
+    AuthoredSourceObserver observer =
+        authoredSourceCall(authoredSourceRequest(), WORLD_MANAGEMENT_PEER);
+
+    assertNull(observer.errorCode);
+    assertTrue(observer.completed);
+    assertNotNull(observer.value);
+    assertEquals(RUNTIME_REQUEST_ID.toString(), observer.value.getRequestId());
+    assertEquals(evidence.evidenceDigest(), observer.value.getEvidenceDigest());
+    verify(authoredWorldRepository)
+        .read(FRESH_OPERATION_ID, RUNTIME_TENANT_ID, "world-one", "test");
   }
 
   @Test

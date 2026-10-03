@@ -1,14 +1,18 @@
 package net.firedevops.firemud.gamedesign.service;
 
+import java.util.UUID;
+import net.firedevops.firemud.common.gamedesign.AuthoredWorldLaunchDescriptorEvidence;
 import net.firedevops.firemud.gamedesign.dto.ResolvedLaunchDescriptorDto;
 
 public interface LaunchDescriptorService {
   ResolvedLaunchDescriptorDto resolveLaunchDescriptor(
-      String tenantId,
-      long gameTemplateId,
+      AuthoredWorldLaunchDescriptorEvidence.Request request);
+
+  ResolvedLaunchDescriptorDto getLaunchDescriptor(
+      UUID readRequestId,
+      UUID canonicalTenantId,
+      String worldSlug,
       String controlPlaneRequestId,
-      String requestedScriptPatchVersion,
-      Long sourceVersionId,
-      Long targetVersionId,
-      String requestedRuntimeFlagsJson);
+      String expectedRequestDigest,
+      String expectedResultDigest);
 }
