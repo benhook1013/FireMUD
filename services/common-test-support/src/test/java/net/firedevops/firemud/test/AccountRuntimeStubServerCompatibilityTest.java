@@ -79,14 +79,20 @@ class AccountRuntimeStubServerCompatibilityTest {
         assertThat(existingButNonAdmitting.getMembershipExists()).isTrue();
         assertThat(existingButNonAdmitting.getGameplayAdmissionAllowed()).isFalse();
         assertThat(existingButNonAdmitting.getMembershipLifecycleState()).isEqualTo("ACTIVE");
-        assertThat(existingButNonAdmitting.getMembershipAuthorityGeneration()).isEqualTo(1L);
+        assertThat(existingButNonAdmitting.getMembershipAuthorityGeneration()).isEqualTo("1");
+        assertThat(existingButNonAdmitting.getMembershipVersionMap())
+            .containsEntry(existingButNonAdmitting.getTenantId(), "1");
 
         server.setMembershipExists(false);
         var missing = stub.getTenantMembershipForRuntime(membershipRequest("7", "11"));
         assertThat(missing.getMembershipExists()).isFalse();
         assertThat(missing.getGameplayAdmissionAllowed()).isFalse();
         assertThat(missing.getMembershipLifecycleState()).isEqualTo("MISSING");
-        assertThat(missing.getMembershipAuthorityGeneration()).isZero();
+        assertThat(missing.getMembershipAuthorityGeneration()).isEqualTo("1");
+        assertThat(missing.getMembershipVersionMap()).containsEntry(missing.getTenantId(), "1");
+        assertThat(missing.getOutboxSourceEvidenceList()).isEmpty();
+        assertThat(missing.getOutboxCheckpointsList())
+            .allSatisfy(checkpoint -> assertThat(checkpoint.getOutboxSequence()).isEqualTo("0"));
 
         server.setRealmAccessGranted(false);
         PlayerExecutionContext caller =
@@ -129,7 +135,7 @@ class AccountRuntimeStubServerCompatibilityTest {
         assertThat(afterJoin.getMembershipExists()).isTrue();
         assertThat(afterJoin.getGameplayAdmissionAllowed()).isTrue();
         assertThat(afterJoin.getMembershipLifecycleState()).isEqualTo("ACTIVE");
-        assertThat(afterJoin.getMembershipAuthorityGeneration()).isEqualTo(1L);
+        assertThat(afterJoin.getMembershipAuthorityGeneration()).isEqualTo("1");
 
         var realmGrant =
             stub.getRealmAccessGrantForRuntime(
@@ -261,9 +267,16 @@ class AccountRuntimeStubServerCompatibilityTest {
   private static GetTenantMembershipForRuntimeRequest membershipRequest(
       String accountId, String tenantId) {
     return GetTenantMembershipForRuntimeRequest.newBuilder()
-        .setAccountId(accountId)
-        .setTenantId(tenantId)
-        .setRequestId("membership-request")
+        .setPlayerContext(
+            PlayerExecutionContext.newBuilder()
+                .setAccountId(accountId)
+                .setTenantId(tenantId)
+                .setRealmId(REALM_ID)
+                .setGameInstanceId("33")
+                .setSessionId("session-1")
+                .setPlayableStateNamespaceId(NAMESPACE_ID)
+                .setPlayableStateScope("SHARED")
+                .setRequestId("membership-request"))
         .build();
   }
 }

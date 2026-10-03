@@ -313,6 +313,20 @@ class AccountClientTest {
         .build();
   }
 
+  private static PlayerExecutionContext runtimeMembershipContext(
+      String accountId, String tenantId, String requestId) {
+    return PlayerExecutionContext.newBuilder()
+        .setAccountId(accountId)
+        .setTenantId(tenantId)
+        .setRealmId("4c4b57d8-e3a2-48fe-9977-e7df0fdce901")
+        .setPlayableStateNamespaceId("realm-state-30")
+        .setPlayableStateScope("SHARED")
+        .setGameInstanceId("40")
+        .setSessionId("42")
+        .setRequestId(requestId)
+        .build();
+  }
+
   @Test
   void authenticateReturnsUnavailableWhenStubIsNotInitialized() throws Exception {
     AuthenticateResponse response = newClient(null).authenticate("demo@example.com", "swordfish");
@@ -479,33 +493,36 @@ class AccountClientTest {
     when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
     GetTenantMembershipForRuntimeResponse expected =
         GetTenantMembershipForRuntimeResponse.newBuilder()
-            .setAccountId("42")
-            .setTenantId("7")
+            .setAccountId("00000000-0000-0000-0000-000000000042")
+            .setTenantId("00000000-0000-0000-0000-000000000007")
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
-            .setMembershipVersion(12L)
+            .putMembershipVersion("00000000-0000-0000-0000-000000000007", "12")
+            .setMembershipAuthorityGeneration("4")
+            .setRequestAccountId("42")
+            .setRequestTenantId("7")
             .setEvaluatedAt("2026-07-31T00:00:00Z")
             .build();
     when(stub.getTenantMembershipForRuntime(any(GetTenantMembershipForRuntimeRequest.class)))
         .thenReturn(expected);
     AccountClient client = newClient(stub);
+    PlayerExecutionContext playerContext = runtimeMembershipContext("42", "7", "request-1");
 
     GetTenantMembershipForRuntimeResponse actual =
-        client.getTenantMembershipForRuntime("42", "7", null);
+        client.getTenantMembershipForRuntime(playerContext);
 
     ArgumentCaptor<GetTenantMembershipForRuntimeRequest> captor =
         ArgumentCaptor.forClass(GetTenantMembershipForRuntimeRequest.class);
     verify(stub).getTenantMembershipForRuntime(captor.capture());
-    assertThat(captor.getValue().getAccountId()).isEqualTo("42");
-    assertThat(captor.getValue().getTenantId()).isEqualTo("7");
-    assertThat(captor.getValue().getRequestId()).isEmpty();
+    assertThat(captor.getValue().getPlayerContext()).isEqualTo(playerContext);
     assertThat(actual).isEqualTo(expected);
   }
 
   @Test
   void runtimeMembershipReturnsCanonicalUnavailableWhenStubIsMissing() throws Exception {
     GetTenantMembershipForRuntimeResponse response =
-        newClient(null).getTenantMembershipForRuntime("42", "7", "request-1");
+        newClient(null)
+            .getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
@@ -529,11 +546,11 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
     GetTenantMembershipForRuntimeResponse expected =
         GetTenantMembershipForRuntimeResponse.newBuilder()
-            .setAccountId("42")
-            .setTenantId("7")
+            .setAccountId("00000000-0000-0000-0000-000000000042")
+            .setTenantId("00000000-0000-0000-0000-000000000007")
             .setMembershipExists(true)
             .setGameplayAdmissionAllowed(true)
-            .setMembershipVersion(12L)
+            .putMembershipVersion("00000000-0000-0000-0000-000000000007", "12")
             .build();
     when(fixture
             .retryStub()
@@ -541,7 +558,9 @@ class AccountClientTest {
         .thenReturn(expected);
 
     GetTenantMembershipForRuntimeResponse actual =
-        fixture.client().getTenantMembershipForRuntime("42", "7", "request-1");
+        fixture
+            .client()
+            .getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
 
     assertThat(actual).isEqualTo(expected);
     verify(fixture.initialStub())
@@ -564,7 +583,9 @@ class AccountClientTest {
         .thenThrow(new StatusRuntimeException(Status.UNAVAILABLE));
 
     GetTenantMembershipForRuntimeResponse response =
-        fixture.client().getTenantMembershipForRuntime("42", "7", "request-1");
+        fixture
+            .client()
+            .getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");
@@ -645,7 +666,7 @@ class AccountClientTest {
     AccountClient client = newClient(stub, channelFactory);
 
     GetTenantMembershipForRuntimeResponse response =
-        client.getTenantMembershipForRuntime("42", "7", "request-1");
+        client.getTenantMembershipForRuntime(runtimeMembershipContext("42", "7", "request-1"));
 
     assertThat(response.getError().getCode()).isEqualTo(AuthenticationErrorCodes.UNAVAILABLE);
     assertThat(response.getError().getMessage()).isEqualTo("Membership authority unavailable");

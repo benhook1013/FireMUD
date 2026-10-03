@@ -10,10 +10,8 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import net.firedevops.firemud.common.runtime.RuntimeIdentity;
@@ -179,84 +177,22 @@ public final class GameplayHandshakeFilter implements WebFilter, Ordered {
       JwtClaims.SignedGameplayRoutingClaims routingClaims =
           JwtClaims.requireSignedGameplayRoutingClaims(
               payload, "Connect token account subject mismatch");
-      String accountId = Long.toString(routingClaims.accountId());
       RoutingBundle routingBundle = parseRuntimeRoutingBundleFromClaims(routingClaims);
       String tenantId = Long.toString(routingClaims.tenantId());
       String gameInstanceId = Long.toString(routingClaims.gameInstanceId());
-      String connectScopeId = requiredClaim(payload, "connectScopeId");
-      String requestId = requiredClaim(payload, "requestId");
-      String jti = requiredClaim(payload, "jti");
-      return recordReplayOrReject(jti, payload.getExpiration().getTime())
-          .then(
-              Mono.defer(
-                  () -> {
-                    if (mismatched(exchange, "X-Tenant-Id", tenantId)
-                        || mismatched(exchange, "X-Game-Instance-Id", gameInstanceId)
-                        || mismatchedRoutingBundle(exchange, routingBundle)) {
-                      return reject(exchange, CONNECT_SCOPE_MISMATCH, "connect scope mismatch");
-                    }
+      requiredClaim(payload, "connectScopeId");
+      requiredClaim(payload, "requestId");
+      requiredClaim(payload, "jti");
+      if (mismatched(exchange, "X-Tenant-Id", tenantId)
+          || mismatched(exchange, "X-Game-Instance-Id", gameInstanceId)
+          || mismatchedRoutingBundle(exchange, routingBundle)) {
+        return reject(exchange, CONNECT_SCOPE_MISMATCH, "connect scope mismatch");
+      }
 
-                    Instant verifiedAt = Instant.now();
-                    String connectContext =
-                        jwtUtil.generateToken(
-                            accountId,
-                            Map.ofEntries(
-                                Map.entry("accountId", accountId),
-                                Map.entry("tenantId", tenantId),
-                                Map.entry("worldSlug", routingBundle.worldSlug()),
-                                Map.entry("realmSlug", routingBundle.realmSlug()),
-                                Map.entry("gameInstanceId", gameInstanceId),
-                                Map.entry("pointerVersion", routingBundle.pointerVersion()),
-                                Map.entry("connectScopeId", connectScopeId),
-                                Map.entry("connectTokenJti", jti),
-                                Map.entry("connectRequestId", requestId),
-                                Map.entry("verifiedAt", verifiedAt.toEpochMilli()),
-                                Map.entry("expiresAt", payload.getExpiration().getTime()),
-                                Map.entry("gatewayRequestId", exchange.getRequest().getId())));
-
-                    return chain.filter(
-                        mutate(
-                            exchange,
-                            headers -> {
-                              headers.remove(CONNECT_TOKEN_HEADER);
-                              removeConnectTokenCookie(headers);
-                              headers.remove(HANDSHAKE_ERROR_CLASS_HEADER);
-                              headers.remove(HANDSHAKE_ERROR_REASON_HEADER);
-                              headers.set(CONNECT_CONTEXT_HEADER, connectContext);
-                              headers.set(CONNECTION_MODE_HEADER, CONNECTION_MODE_FIRST_PARTY_WEB);
-                              headers.set(
-                                  TRANSPORT_SESSION_HEADER,
-                                  Long.toUnsignedString(
-                                      stablePositiveLong(exchange.getRequest().getId())));
-                              headers.set("X-Tenant-Id", tenantId);
-                              headers.set("X-Game-Instance-Id", gameInstanceId);
-                              headers.set(WORLD_SLUG_HEADER, routingBundle.worldSlug());
-                              headers.set(REALM_SLUG_HEADER, routingBundle.realmSlug());
-                              headers.set(POINTER_VERSION_HEADER, routingBundle.pointerVersion());
-                            }));
-                  }))
-          .onErrorResume(
-              ReplayRejectedException.class,
-              ex -> {
-                return reject(exchange, CONNECT_TOKEN_REPLAYED, "connect token replayed");
-              })
-          .onErrorResume(
-              ReplayProtectionUnavailableException.class,
-              ex -> {
-                return reject(
-                    exchange,
-                    CONNECT_REPLAY_PROTECTION_UNAVAILABLE,
-                    "connect replay protection unavailable");
-              })
-          .onErrorResume(
-              IllegalArgumentException.class,
-              ex -> {
-                return reject(
-                    exchange,
-                    CONNECT_TOKEN_REJECTED,
-                    CONNECT_TOKEN_INVALID_CONTENT,
-                    "connect token rejected");
-              });
+      // No independently published Gateway Ed25519 signing key/provider is wired yet. The old
+      // JwtUtil/HMAC context was not a valid substitute, so valid first-party tokens remain denied
+      // before replay state is mutated until that owner boundary is available.
+      return reject(exchange, "POLICY_DENY", "connect context signing keys are unavailable");
     } catch (ExpiredJwtException ex) {
       return reject(exchange, CONNECT_TOKEN_EXPIRED, "connect token expired");
     } catch (JwtException ex) {

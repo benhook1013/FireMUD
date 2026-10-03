@@ -4,6 +4,11 @@ import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.grpc.stub.StreamObserver;
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
 import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AccountServiceGrpc;
@@ -33,6 +38,15 @@ import net.firedevops.firemud.account.v1.PingRequest;
 import net.firedevops.firemud.account.v1.PingResponse;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpRequest;
 import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
+import net.firedevops.firemud.account.v1.RuntimeAccountSecurityCutoff;
+import net.firedevops.firemud.account.v1.RuntimeAuthorityTuple;
+import net.firedevops.firemud.account.v1.RuntimeMembershipBaseline;
+import net.firedevops.firemud.account.v1.RuntimeOutboxCheckpoint;
+import net.firedevops.firemud.account.v1.RuntimeOutboxSourceEvidence;
+import net.firedevops.firemud.account.v1.RuntimePrivateRealmGrantVersion;
+import net.firedevops.firemud.account.v1.RuntimeTenantBillingCutoff;
+import net.firedevops.firemud.account.v1.RuntimeTenantBillingCutoffEntry;
+import net.firedevops.firemud.account.v1.RuntimeTenantBillingCutoffMap;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
@@ -41,12 +55,18 @@ import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
 import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto;
+import net.firedevops.firemud.accountservice.dto.RuntimeMembershipSnapshotDto.MembershipBaseline;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry;
+import net.firedevops.firemud.accountservice.service.AccountMembershipAuthorityEventProducer.OutboxSourceEvidence;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
 import net.firedevops.firemud.accountservice.service.exception.AccountAlreadyExistsException;
 import net.firedevops.firemud.accountservice.service.exception.AuthenticationException;
 import net.firedevops.firemud.common.EmailCanonicalization;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
+import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec.AuthorityTuple;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
@@ -459,6 +479,271 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                     "This request cannot establish an authorized player and target binding"))
             .build());
     responseObserver.onCompleted();
+  }
+
+  /** Encodes the held-back typed producer candidate; the RPC handler above intentionally denies. */
+  static GetTenantMembershipForRuntimeResponse encodeRuntimeMembershipCandidate(
+      net.firedevops.firemud.shared.v1.PlayerExecutionContext playerContext,
+      RuntimeMembershipSnapshotDto snapshot) {
+    requireCompleteRuntimePlayerContext(playerContext);
+    long requestAccountId = parseCanonicalPositiveId(playerContext.getAccountId(), "account ID");
+    long requestTenantId = parseCanonicalPositiveId(playerContext.getTenantId(), "tenant ID");
+    if (requestAccountId != snapshot.requestAccountId()
+        || requestTenantId != snapshot.requestTenantId()) {
+      throw new IllegalArgumentException(
+          "Runtime membership producer result differs from its caller target");
+    }
+    requireRuntimeMembershipEvidence(snapshot);
+
+    MembershipBaseline baseline = snapshot.membershipBaseline();
+    GetTenantMembershipForRuntimeResponse.Builder response =
+        GetTenantMembershipForRuntimeResponse.newBuilder()
+            .setAccountId(snapshot.accountUuid())
+            .setTenantId(snapshot.tenantUuid())
+            .setRequestAccountId(playerContext.getAccountId())
+            .setRequestTenantId(playerContext.getTenantId())
+            .setRequestId(playerContext.getRequestId())
+            .setGameplayAdmissionAllowed(snapshot.gameplayAdmissionAllowed())
+            .setMembershipExists(snapshot.membershipExists())
+            .setMembershipLifecycleState(baseline.membershipLifecycleState())
+            .putAllMembershipVersion(baseline.membershipVersion())
+            .setMembershipAuthorityGeneration(baseline.membershipAuthorityGeneration())
+            .setMembershipBaseline(
+                RuntimeMembershipBaseline.newBuilder()
+                    .setMembershipLifecycleState(baseline.membershipLifecycleState())
+                    .putAllMembershipVersion(baseline.membershipVersion())
+                    .setMembershipAuthorityGeneration(baseline.membershipAuthorityGeneration()))
+            .setAuthorityTuple(toRuntimeAuthorityTuple(snapshot.authorityTuple()))
+            .setIssuanceFence(snapshot.issuanceFence())
+            .setEvaluatedAt(snapshot.evaluatedAt().toString())
+            .addAllRoles(snapshot.roles());
+    for (OutboxCheckpointEntry checkpoint : snapshot.outboxCheckpoints()) {
+      response.addOutboxCheckpoints(
+          RuntimeOutboxCheckpoint.newBuilder()
+              .setOutboxStreamKey(checkpoint.outboxStreamKey())
+              .setOutboxSequence(checkpoint.outboxSequence()));
+    }
+    for (OutboxSourceEvidence evidence : snapshot.outboxSourceEvidence()) {
+      response.addOutboxSourceEvidence(
+          RuntimeOutboxSourceEvidence.newBuilder()
+              .setOutboxStreamKey(evidence.outboxStreamKey())
+              .setOutboxSequence(evidence.outboxSequence())
+              .setEventId(evidence.eventId())
+              .setEventDigest(evidence.eventDigest())
+              .setCanonicalEventJson(evidence.canonicalEventJson()));
+    }
+    return response.build();
+  }
+
+  private static void requireCompleteRuntimePlayerContext(
+      net.firedevops.firemud.shared.v1.PlayerExecutionContext playerContext) {
+    if (playerContext == null
+        || !hasText(playerContext.getAccountId())
+        || !hasText(playerContext.getTenantId())
+        || !hasText(playerContext.getRealmId())
+        || !hasText(playerContext.getPlayableStateNamespaceId())
+        || !hasText(playerContext.getPlayableStateScope())
+        || !hasText(playerContext.getGameInstanceId())
+        || !hasText(playerContext.getSessionId())
+        || !hasText(playerContext.getRequestId())) {
+      throw new IllegalArgumentException(
+          "Runtime membership caller and target context is incomplete");
+    }
+    requireCanonicalUuid(playerContext.getRealmId(), "realm ID");
+    if (!"SHARED".equals(playerContext.getPlayableStateScope())
+        && !"ISOLATED".equals(playerContext.getPlayableStateScope())) {
+      throw new IllegalArgumentException("Runtime membership target scope is invalid");
+    }
+    parseCanonicalPositiveId(playerContext.getAccountId(), "account ID");
+    parseCanonicalPositiveId(playerContext.getTenantId(), "tenant ID");
+    parseCanonicalPositiveId(playerContext.getGameInstanceId(), "game instance ID");
+    parseCanonicalPositiveId(playerContext.getSessionId(), "session ID");
+  }
+
+  private static void requireRuntimeMembershipEvidence(RuntimeMembershipSnapshotDto snapshot) {
+    snapshot.requireConsistentSourceEvent();
+    String tenantUuid = snapshot.tenantUuid();
+    Map<String, String> version = snapshot.membershipBaseline().membershipVersion();
+    AuthorityTuple tuple = snapshot.authorityTuple();
+    if (version.size() != 1
+        || !version.containsKey(tenantUuid)
+        || !tuple.tenantAuthorityGeneration().keySet().equals(java.util.Set.of(tenantUuid))
+        || !tuple.membershipAuthorityGeneration().keySet().equals(java.util.Set.of(tenantUuid))
+        || !snapshot
+            .membershipBaseline()
+            .membershipAuthorityGeneration()
+            .equals(tuple.membershipAuthorityGeneration().get(tenantUuid))
+        || !snapshot.issuanceFence().matches("[1-9][0-9]*")) {
+      throw new IllegalArgumentException("Runtime membership authority evidence is incomplete");
+    }
+    ArrayList<OutboxCheckpointEntry> ordered = new ArrayList<>(snapshot.outboxCheckpoints());
+    ordered.sort(
+        Comparator.comparing(
+            OutboxCheckpointEntry::outboxStreamKey, AccountGrpcService::compareUnsignedUtf8));
+    if (!ordered.equals(snapshot.outboxCheckpoints()) || ordered.size() != 4) {
+      throw new IllegalArgumentException(
+          "Runtime membership checkpoints are not complete and ordered");
+    }
+
+    String membershipStreamKey =
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+            + "membership/"
+            + snapshot.accountUuid()
+            + "/"
+            + tenantUuid;
+    String accountStreamKey =
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "account/" + snapshot.accountUuid();
+    String issuerStreamKey =
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX
+            + "issuer/"
+            + AccountServiceImpl.ACCOUNT_JWT_ISSUER;
+    String tenantStreamKey =
+        MembershipAuthorityEventV1Codec.EVENT_STREAM_PREFIX + "tenant/" + tenantUuid;
+    List<OutboxCheckpointEntry> expectedZeroCheckpoints =
+        orderedCheckpoints(
+            List.of(
+                new OutboxCheckpointEntry(accountStreamKey, "0"),
+                new OutboxCheckpointEntry(issuerStreamKey, "0"),
+                new OutboxCheckpointEntry(membershipStreamKey, "0"),
+                new OutboxCheckpointEntry(tenantStreamKey, "0")));
+    if (!snapshot.membershipExists()) {
+      if (!"MISSING".equals(snapshot.membershipBaseline().membershipLifecycleState())
+          || snapshot.gameplayAdmissionAllowed()
+          || !snapshot.roles().isEmpty()
+          || !snapshot.outboxCheckpoints().equals(expectedZeroCheckpoints)
+          || !snapshot.outboxSourceEvidence().isEmpty()) {
+        throw new IllegalArgumentException("Sequence-zero membership snapshot is not nonadmitting");
+      }
+      return;
+    }
+
+    List<OutboxCheckpointEntry> expectedPositiveCheckpoints =
+        orderedCheckpoints(
+            List.of(
+                new OutboxCheckpointEntry(accountStreamKey, "0"),
+                new OutboxCheckpointEntry(issuerStreamKey, "0"),
+                new OutboxCheckpointEntry(
+                    membershipStreamKey,
+                    snapshot.outboxCheckpoints().stream()
+                        .filter(item -> item.outboxStreamKey().equals(membershipStreamKey))
+                        .map(OutboxCheckpointEntry::outboxSequence)
+                        .findFirst()
+                        .orElse("0")),
+                new OutboxCheckpointEntry(tenantStreamKey, "0")));
+    if (!"ACTIVE".equals(snapshot.membershipBaseline().membershipLifecycleState())
+        || !snapshot.gameplayAdmissionAllowed()
+        || !snapshot.roles().contains("player")
+        || !snapshot.outboxCheckpoints().equals(expectedPositiveCheckpoints)
+        || snapshot.outboxSourceEvidence().size() != 1) {
+      throw new IllegalArgumentException("Positive runtime membership snapshot is incomplete");
+    }
+    OutboxSourceEvidence source = snapshot.outboxSourceEvidence().getFirst();
+    OutboxCheckpointEntry membershipCheckpoint =
+        expectedPositiveCheckpoints.stream()
+            .filter(item -> item.outboxStreamKey().equals(membershipStreamKey))
+            .findFirst()
+            .orElseThrow();
+    if (!membershipStreamKey.equals(source.outboxStreamKey())
+        || !membershipCheckpoint.outboxSequence().equals(source.outboxSequence())
+        || !source.eventId().matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+        || !source.eventDigest().matches("sha256:[0-9a-f]{64}")) {
+      throw new IllegalArgumentException(
+          "Runtime membership event source differs from its checkpoint");
+    }
+  }
+
+  private static RuntimeAuthorityTuple toRuntimeAuthorityTuple(AuthorityTuple tuple) {
+    RuntimeAuthorityTuple.Builder result =
+        RuntimeAuthorityTuple.newBuilder()
+            .setIssuerAuthGeneration(tuple.issuerAuthGeneration())
+            .setAccountAuthorityGeneration(tuple.accountAuthorityGeneration())
+            .putAllTenantAuthorityGeneration(tuple.tenantAuthorityGeneration())
+            .putAllMembershipAuthorityGeneration(tuple.membershipAuthorityGeneration());
+    tuple.privateRealmGrantVersions().stream()
+        .map(
+            grant ->
+                RuntimePrivateRealmGrantVersion.newBuilder()
+                    .setTenantId(grant.tenantId())
+                    .setWorldSlug(grant.worldSlug())
+                    .setRealmSlug(grant.realmSlug())
+                    .setPlaytestLifecycleId(grant.playtestLifecycleId())
+                    .setGrantVersion(grant.grantVersion()))
+        .forEach(result::addPrivateRealmGrantVersions);
+    tuple
+        .accountSecurityCutoff()
+        .ifPresent(
+            cutoff ->
+                result.setAccountSecurityCutoff(
+                    RuntimeAccountSecurityCutoff.newBuilder()
+                        .setAccountAuthorityGeneration(cutoff.accountAuthorityGeneration())
+                        .setOutboxStreamKey(cutoff.outboxStreamKey())
+                        .setOutboxSequence(cutoff.outboxSequence())));
+    tuple
+        .tenantBillingCutoff()
+        .ifPresent(
+            cutoffs -> {
+              RuntimeTenantBillingCutoffMap.Builder billing =
+                  RuntimeTenantBillingCutoffMap.newBuilder();
+              new TreeMap<>(cutoffs)
+                  .forEach(
+                      (tenantId, cutoff) ->
+                          billing.addEntries(
+                              RuntimeTenantBillingCutoffEntry.newBuilder()
+                                  .setTenantId(tenantId)
+                                  .setCutoff(
+                                      RuntimeTenantBillingCutoff.newBuilder()
+                                          .setTenantAuthorityGeneration(
+                                              cutoff.tenantAuthorityGeneration())
+                                          .setTenantBillingSequence(cutoff.tenantBillingSequence())
+                                          .setOutboxStreamKey(cutoff.outboxStreamKey())
+                                          .setOutboxSequence(cutoff.outboxSequence()))));
+              result.setTenantBillingCutoff(billing);
+            });
+    return result.build();
+  }
+
+  private static List<OutboxCheckpointEntry> orderedCheckpoints(
+      List<OutboxCheckpointEntry> checkpoints) {
+    return checkpoints.stream()
+        .sorted(
+            Comparator.comparing(
+                OutboxCheckpointEntry::outboxStreamKey, AccountGrpcService::compareUnsignedUtf8))
+        .toList();
+  }
+
+  private static int compareUnsignedUtf8(String first, String second) {
+    byte[] left = first.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    byte[] right = second.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    int length = Math.min(left.length, right.length);
+    for (int index = 0; index < length; index++) {
+      int comparison =
+          Integer.compare(Byte.toUnsignedInt(left[index]), Byte.toUnsignedInt(right[index]));
+      if (comparison != 0) {
+        return comparison;
+      }
+    }
+    return Integer.compare(left.length, right.length);
+  }
+
+  private static long parseCanonicalPositiveId(String value, String field) {
+    if (!hasText(value) || !value.matches("[1-9][0-9]*")) {
+      throw new IllegalArgumentException("Runtime membership " + field + " is invalid");
+    }
+    try {
+      return Long.parseLong(value);
+    } catch (NumberFormatException exception) {
+      throw new IllegalArgumentException("Runtime membership " + field + " is invalid", exception);
+    }
+  }
+
+  private static void requireCanonicalUuid(String value, String field) {
+    if (!hasText(value) || !UUID.fromString(value).toString().equals(value)) {
+      throw new IllegalArgumentException("Runtime membership " + field + " is invalid");
+    }
+  }
+
+  private static boolean hasText(String value) {
+    return value != null && !value.isBlank();
   }
 
   @Override

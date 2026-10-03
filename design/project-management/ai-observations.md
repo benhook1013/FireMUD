@@ -86,6 +86,16 @@ Entry format:
   - Context: the Account response-envelope Secret materializer emitted canonical UTC timestamps with trailing fractional zeroes removed. A broad developer-tool run intermittently failed its CLI readback although focused tests using whole-second timestamps passed.
   - Observation: this runner's Python `datetime.fromisoformat` rejected a valid five-digit fractional-second timestamp such as `.00101Z` after offset normalization. A timestamp round-trip sweep reproduced the defect, and the parser was changed to accept the contract's one-to-six fractional digits explicitly; the full 112-test developer-tool suite then passed.
   - Expected pattern: test exact writer-to-reader timestamp round trips across fractional precisions, including live-clock output, before treating a source-generation/freshness readback as reliable.
+- `2026-09-27`: Hosted database task success may lack per-case proof artifacts
+  - Context: Unit 1B Account integration tests skipped locally without Docker. Hosted runs executed the integration task and passed on corrected code, but the uploaded artifact contained JaCoCo output without JUnit XML for the named PostgreSQL case.
+  - Observation: task-level execution and success are useful composed evidence, but they do not independently identify which newly corrected database methods ran or whether any were skipped.
+  - Expected pattern: retain and upload the exact integration JUnit XML alongside coverage artifacts when individual database regressions are needed as proof; until then report task-level success separately from per-case execution.
+
+- `2026-09-27`: Proto-touching Gradle proof may need configuration cache disabled
+  - Context: a combined Account and Game Session focused check regenerated protobuf sources after a membership wire change.
+  - Observation: Gradle 9.5.1 reached Java/test work but failed while storing its configuration cache because the protobuf plugin's `GenerateProtoTask` captured unsupported project and source-directory objects. The same canonical tasks passed with `--no-configuration-cache`; the first failed exit was not valid test proof even though some tasks had run.
+  - Expected pattern: for proto-affecting validation, pass `--no-configuration-cache` when this plugin error appears, retain the canonical task paths and service locks, and report the successful rerun rather than treating partial task output as a green gate.
+
 - `2026-09-26`: Necessary procedural migration preflights may use jOOQ ignore markers
   - Context: Account V25's duplicate-detection preflight requires a PostgreSQL `DO` block and wraps it in `-- [jooq ignore start]` and `-- [jooq ignore stop]` markers.
   - Observation: this qualifies the 2026-09-20 expected pattern: declarative constraints remain preferred when sufficient, but a necessary procedural preflight can be excluded from jOOQ parsing while retaining separate PostgreSQL migration proof.
@@ -254,3 +264,21 @@ Entry format:
   - Context: a #2881 push yielded asynchronously and later returned a generic remote rejection. Dependent PR-body and CI operations were issued before consuming that result, so CI run `36703184951` targeted the old published head instead of the prepared correction.
   - Observation: the rejection's cause was not reported. Fresh remote readback confirmed no head change; a non-force retry then published the correction. The stale-head run was explicitly cancelled and excluded from proof.
   - Expected pattern: finish the push, verify the exact published SHA, and only then describe it as published or dispatch its CI. Independent operations may run concurrently; operations depending on publication must remain ordered even when tool calls yield.
+
+- `2026-10-01`: Fixture names do not establish exclusive ownership
+  - Context: #2911 removed unreachable legacy HMAC first-party success fixtures. A Redis value store named for first-party context also served normal gameplay presence; its mock/stubs were removed with the obsolete cases.
+  - Observation: local Docker-backed integration cases skipped, so compilation and module checks did not expose the lost shared support. Exact-head CI ran the cases and all 16 WebSocket scenarios failed at a null value-operations collaborator, before the intended assertions. The fixture support was restored without restoring HMAC admission; executed correction proof remains required.
+  - Expected pattern: trace every consumer of a shared fixture before removing it, use neutral names for shared support, and preserve an exact executed integration gate when cleanup affects skipped local tests. A green compiled/skipped gate is not proof that fixture dependencies were retained.
+
+- `2026-10-01`: Shared WebSocket fixture correction gained exact executed proof
+  - Outcome: exact #2911 head `b7766564d` in CI run `36769172597` executed all 16 required WebSocket integration cases with no skips or failures, including the named complete-signed-context no-mutation denial. This closes the executed correction-proof gap above, not the independent real first-party credential or live browser proof.
+
+- `2026-10-01`: Stack ancestors may not support the tail's test-proof CLI
+  - Context: Account counter-exhaustion tests belong to #2876, whose test-result inspector is diagnostic-only; the strict required-suite/case interface exists only in its later descendant.
+  - Observation: inspection before publication caught an unsupported strict CI step in the older ancestor. The uncommitted step was removed and the required execution gate placed in #2911, preserving source-test ownership without copying future tooling into the ancestor. Local PostgreSQL skips remain explicitly unproved.
+  - Expected pattern: verify a workflow command against that exact branch's tooling version, not the latest tail; gate composed runtime proof where the required tool exists, then keep owning-PR and composed-descendant proof distinct.
+
+- `2026-10-01`: Observe the earliest actual transaction in PostgreSQL contention proof
+  - Context: the complete Account snapshot/first-JOIN test held the Account row `FOR UPDATE` and waited for JOIN's explicit Account-lock spy. JOIN first inserts its PENDING intent, whose foreign-key check can already wait on that same row.
+  - Observation: exact CI timed out at the later spy, not at a source invariant. Instrumenting the actual intent-insert backend before the real insert retained the exact `pg_blocking_pids` correlation and complete before/after DTO assertions; corrected CI `36778631119` executed the race once successfully. Worker exceptions are surfaced rather than hidden behind a latch timeout.
+  - Expected pattern: trace earlier foreign-key and deferred-trigger work before selecting a concurrency signal; prove the exact blocked backend/owner relation and do not fix a misplaced signal by extending timeouts or changing production transaction order.

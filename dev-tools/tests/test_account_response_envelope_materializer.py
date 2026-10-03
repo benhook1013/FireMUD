@@ -82,6 +82,7 @@ class FakeKubectl:
         self.reads = 0
         self.mutate_readback = False
         self.fail_operation: str | None = None
+        self.lose_response_after_operation: str | None = None
         self.raise_timeout = False
         self.raise_unicode_error = False
         self.identity_username = MATERIALIZER_USERNAME
@@ -149,6 +150,13 @@ class FakeKubectl:
             request_object["metadata"]["uid"] = self.secret["metadata"]["uid"]
         request_object["metadata"]["resourceVersion"] = resource_version
         self.secret = request_object
+        if self.lose_response_after_operation == operation:
+            self.lose_response_after_operation = None
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="connection lost after accepted mutation",
+            )
         if self.mutate_readback:
             self.secret["data"][MATERIALIZER.SECRET_KEY] = base64.b64encode(b"tampered").decode("ascii")
         if self.readback_uid is not None:
@@ -278,7 +286,9 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
         self.assertEqual(created, self.fake_kubectl.secret)
         self.assertEqual("create", created_receipt["operation"])
-        self.assertEqual("retry", retry_receipt["operation"])
+        self.assertEqual("create", retry_receipt["operation"])
+        self.assertEqual(created_receipt.canonical_bytes, retry_receipt.canonical_bytes)
+        self.assertEqual(created_receipt.content_digest, retry_receipt.content_digest)
         self.assertEqual(
             created_receipt["source"]["generation"],
             retry_receipt["source"]["generation"],
@@ -292,6 +302,27 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(created["metadata"]["uid"], retry_receipt["secret"]["uid"])
         self.assertEqual(created["metadata"]["resourceVersion"], retry_receipt["secret"]["resourceVersion"])
         self.assertNotIn(self.source_manifest.decode("ascii"), json.dumps(retry_receipt.as_dict()))
+
+    def test_lost_create_result_retry_returns_same_receipt_without_second_write(self) -> None:
+        expected_kubectl = FakeKubectl()
+        with patch.object(MATERIALIZER.subprocess, "run", side_effect=expected_kubectl):
+            expected_receipt = self.run_materializer()
+
+        self.fake_kubectl.lose_response_after_operation = "create"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "Kubernetes operation failed"):
+            self.run_materializer()
+
+        self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
+        self.assertIsNotNone(self.fake_kubectl.secret)
+        lost_result_secret = copy.deepcopy(self.fake_kubectl.secret)
+
+        retry_receipt = self.run_materializer(now=NOW + dt.timedelta(minutes=1))
+
+        self.assertFalse(retry_receipt)
+        self.assertEqual(["create"], [operation for operation, _ in self.fake_kubectl.mutations])
+        self.assertEqual(lost_result_secret, self.fake_kubectl.secret)
+        self.assertEqual(expected_receipt.canonical_bytes, retry_receipt.canonical_bytes)
+        self.assertEqual(expected_receipt.content_digest, retry_receipt.content_digest)
 
     def test_exact_retry_receipt_is_stable_and_canonical_digest_changes_with_a_field(self) -> None:
         self.run_materializer()
@@ -362,6 +393,34 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         for evidence in malformed:
             with self.subTest(evidence=evidence[:48]), self.assertRaises(MATERIALIZER.MaterializationError):
                 self.verify_receipt(evidence)
+
+    def test_read_side_receipt_verifier_rejects_retry_and_operation_predecessor_mismatch(self) -> None:
+        created_receipt = self.run_materializer()
+        retry_shape = created_receipt.as_dict()
+        retry_shape["operation"] = "retry"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "operation is invalid"):
+            self.verify_receipt(self.canonical_receipt(retry_shape))
+
+        wrong_create_operation = created_receipt.as_dict()
+        wrong_create_operation["operation"] = "rotate"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "operation does not match source predecessor"):
+            self.verify_receipt(self.canonical_receipt(wrong_create_operation))
+
+        self.write_source_record(
+            manifest=manifest_for(active="k2", ids=("k1", "k2")),
+            generation="custody-generation-2",
+            created_at=NEXT_SOURCE_CREATED_AT,
+            previous_generation="custody-generation-1",
+        )
+        rotated_receipt = self.run_materializer(now=NOW + dt.timedelta(hours=2))
+        wrong_rotate_operation = rotated_receipt.as_dict()
+        wrong_rotate_operation["operation"] = "create"
+        with self.assertRaisesRegex(MATERIALIZER.MaterializationError, "operation does not match source predecessor"):
+            self.verify_receipt(
+                self.canonical_receipt(wrong_rotate_operation),
+                expected_source_generation="custody-generation-2",
+                expected_predecessor_generation="custody-generation-1",
+            )
 
     def test_read_side_receipt_verifier_rejects_tampered_digest_and_noncanonical_bytes(self) -> None:
         receipt = self.run_materializer()
@@ -810,7 +869,9 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
 
         retry_receipt = self.run_materializer(now=NOW + dt.timedelta(hours=3))
         self.assertFalse(retry_receipt)
-        self.assertEqual("retry", retry_receipt["operation"])
+        self.assertEqual("rotate", retry_receipt["operation"])
+        self.assertEqual(rotation_receipt.canonical_bytes, retry_receipt.canonical_bytes)
+        self.assertEqual(rotation_receipt.content_digest, retry_receipt.content_digest)
 
         self.assertEqual(2, len(self.fake_kubectl.mutations))
         self.assertEqual(rotated, self.fake_kubectl.secret)

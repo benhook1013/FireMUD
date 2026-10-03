@@ -319,15 +319,13 @@ public final class AccountClient
   }
 
   public GetTenantMembershipForRuntimeResponse getTenantMembershipForRuntime(
-      String accountId, String tenantId, String requestId) {
+      PlayerExecutionContext playerContext) {
     if (stub() == null) {
       return membershipAuthorityUnavailable();
     }
     GetTenantMembershipForRuntimeRequest request =
         GetTenantMembershipForRuntimeRequest.newBuilder()
-            .setAccountId(accountId)
-            .setTenantId(tenantId)
-            .setRequestId(requestId == null ? "" : requestId)
+            .setPlayerContext(Objects.requireNonNull(playerContext, "playerContext is required"))
             .build();
     try {
       return callStub().getTenantMembershipForRuntime(request);

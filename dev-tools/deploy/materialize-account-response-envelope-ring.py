@@ -762,11 +762,7 @@ def verify_materialization_receipt(
         raise MaterializationError("materialization receipt version is unsupported")
     if record["receiptType"] != RECEIPT_TYPE:
         raise MaterializationError("materialization receipt type is not the Account ring format")
-    if not isinstance(record["operation"], str) or record["operation"] not in {
-        "create",
-        "rotate",
-        "retry",
-    }:
+    if not isinstance(record["operation"], str) or record["operation"] not in {"create", "rotate"}:
         raise MaterializationError("materialization receipt operation is invalid")
 
     source = record["source"]
@@ -800,6 +796,9 @@ def verify_materialization_receipt(
             validate_source_generation(source["predecessorGeneration"])
     except (MaterializationError, AttributeError) as exc:
         raise MaterializationError("materialization receipt source or target binding is invalid") from exc
+    expected_operation = "create" if source["predecessorGeneration"] is None else "rotate"
+    if record["operation"] != expected_operation:
+        raise MaterializationError("materialization receipt operation does not match source predecessor")
     if not isinstance(source["manifestDigest"], str) or not re.fullmatch(
         r"sha256:[0-9a-f]{64}", source["manifestDigest"]
     ):
@@ -878,14 +877,12 @@ def verify_materialization_receipt(
 def _materialization_receipt(
     *,
     changed: bool,
-    operation: str,
     source: SourceRecord,
     source_manifest_digest: str,
     authenticated_materializer_username: str,
     current: ExistingSecret,
 ) -> MaterializationReceipt:
-    if operation not in {"create", "rotate", "retry"}:
-        raise MaterializationError("materialization receipt operation is invalid")
+    operation = "create" if source.previous_source_generation is None else "rotate"
     if current.source_generation != source.source_generation:
         raise MaterializationError("materialization receipt source generation is inconsistent")
     if current.previous_source_generation != source.previous_source_generation:
@@ -983,7 +980,6 @@ def materialize(
                 raise MaterializationError("same source generation has different manifest bytes")
             return _materialization_receipt(
                 changed=False,
-                operation="retry",
                 source=source_record,
                 source_manifest_digest=_sha256_digest(source_bytes),
                 authenticated_materializer_username=authenticated_materializer_username,
@@ -1051,7 +1047,6 @@ def materialize(
     )
     return _materialization_receipt(
         changed=True,
-        operation="create" if existing is None else "rotate",
         source=source_record,
         source_manifest_digest=_sha256_digest(source_bytes),
         authenticated_materializer_username=authenticated_materializer_username,

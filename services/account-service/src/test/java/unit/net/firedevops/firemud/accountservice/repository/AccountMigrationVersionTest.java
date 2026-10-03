@@ -26,19 +26,30 @@ class AccountMigrationVersionTest {
     assertThat(migrations)
         .contains(
             "V28__account_audit_delivery_backoff.sql",
+            "V35__account_connect_token_issuance_storage.sql",
             "V37__verified_audit_projection_evidence.sql",
+            "V37.1__account_bare_login_exchange_storage.sql",
             "V38__account_join_reconciliation.sql",
             "V40__account_membership_transition_receipts.sql",
             "V41__protect_account_membership_transition_receipts.sql")
         .doesNotContain(
             "V28__account_join_reconciliation.sql",
             "V28__account_membership_transition_receipts.sql",
-            "V28.1__account_membership_transition_receipts.sql");
+            "V28.1__account_membership_transition_receipts.sql",
+            "V37__account_bare_login_exchange_storage.sql");
     assertThat(migrations.stream().map(AccountMigrationVersionTest::version).toList())
         .as("Flyway rejects two different migration descriptions with the same version")
         .doesNotHaveDuplicates();
     assertThat(version("V28__account_audit_delivery_backoff.sql"))
         .isEqualTo(version("V28__account_join_reconciliation.sql"));
+    assertThat(version("V35__account_connect_token_issuance_storage.sql"))
+        .isLessThan(version("V37.1__account_bare_login_exchange_storage.sql"));
+    assertThat(version("V37__verified_audit_projection_evidence.sql"))
+        .isLessThan(version("V37.1__account_bare_login_exchange_storage.sql"));
+    assertThat(version("V37.1__account_bare_login_exchange_storage.sql"))
+        .isLessThan(version("V38__account_join_reconciliation.sql"));
+    assertThat(version("V38__account_join_reconciliation.sql"))
+        .isLessThan(MigrationVersion.fromVersion("39.1"));
     assertThat(version("V40__account_membership_transition_receipts.sql"))
         .isGreaterThan(version("V38__account_join_reconciliation.sql"))
         .isGreaterThan(MigrationVersion.fromVersion("39.1"));

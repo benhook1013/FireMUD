@@ -137,21 +137,90 @@ message VerifyEmailLoginOtpRequest {
 }
 
 message GetTenantMembershipForRuntimeRequest {
-  string account_id = 1;
-  string tenant_id = 2;
-  string request_id = 3;
+  reserved 1, 2, 3;
+  reserved "account_id", "tenant_id", "request_id";
+  shared.v1.PlayerExecutionContext player_context = 4;
 }
 
 message GetTenantMembershipForRuntimeResponse {
   string account_id = 1;
   string tenant_id = 2;
   bool gameplay_admission_allowed = 3;
-  uint64 membership_version = 4;
+  map<string, string> membership_version = 4;
   string evaluated_at = 5;
   shared.v1.ErrorDetail error = 6;
   bool membership_exists = 7;
   string membership_lifecycle_state = 8;
-  uint64 membership_authority_generation = 9;
+  string membership_authority_generation = 9;
+  RuntimeAuthorityTuple authority_tuple = 11;
+  string issuance_fence = 12;
+  repeated RuntimeOutboxCheckpoint outbox_checkpoints = 13;
+  repeated RuntimeOutboxSourceEvidence outbox_source_evidence = 14;
+  repeated string roles = 15;
+  RuntimeMembershipBaseline membership_baseline = 17;
+  string request_account_id = 18;
+  string request_tenant_id = 19;
+  string request_id = 20;
+}
+
+message RuntimeMembershipBaseline {
+  string membership_lifecycle_state = 1;
+  map<string, string> membership_version = 2;
+  string membership_authority_generation = 3;
+}
+
+message RuntimeAuthorityTuple {
+  string issuer_auth_generation = 1;
+  string account_authority_generation = 2;
+  map<string, string> tenant_authority_generation = 3;
+  map<string, string> membership_authority_generation = 4;
+  repeated RuntimePrivateRealmGrantVersion private_realm_grant_versions = 5;
+  RuntimeAccountSecurityCutoff account_security_cutoff = 6;
+  RuntimeTenantBillingCutoffMap tenant_billing_cutoff = 7;
+}
+
+message RuntimePrivateRealmGrantVersion {
+  string tenant_id = 1;
+  string world_slug = 2;
+  string realm_slug = 3;
+  string playtest_lifecycle_id = 4;
+  string grant_version = 5;
+}
+
+message RuntimeAccountSecurityCutoff {
+  string account_authority_generation = 1;
+  string outbox_stream_key = 2;
+  string outbox_sequence = 3;
+}
+
+message RuntimeTenantBillingCutoffMap {
+  repeated RuntimeTenantBillingCutoffEntry entries = 1;
+}
+
+message RuntimeTenantBillingCutoffEntry {
+  string tenant_id = 1;
+  RuntimeTenantBillingCutoff cutoff = 2;
+}
+
+message RuntimeTenantBillingCutoff {
+  string tenant_authority_generation = 1;
+  string tenant_billing_sequence = 2;
+  string outbox_stream_key = 3;
+  string outbox_sequence = 4;
+}
+
+message RuntimeOutboxCheckpoint {
+  string outbox_stream_key = 1;
+  string outbox_sequence = 2;
+}
+
+message RuntimeOutboxSourceEvidence {
+  string outbox_stream_key = 1;
+  string outbox_sequence = 2;
+  string event_id = 3;
+  string event_digest = 4;
+  // Exact canonical Account event bytes, carried separately from its two-field checkpoint.
+  string canonical_event_json = 5;
 }
 
 message GetRealmAccessGrantForRuntimeRequest {
