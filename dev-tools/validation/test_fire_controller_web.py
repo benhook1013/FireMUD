@@ -557,11 +557,216 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
         self.assertTrue(mobile_rules)
         self.assertFalse(any("run-age" in rule or "run-runtime" in rule for rule in mobile_rules))
 
+    def test_review_progress_cards_use_projection_without_status_chatter_or_reconciliation(self):
+        def rule(kind, label, *, minimum=0, maximum=None, completed=0, required_remaining=0,
+                 maximum_remaining=None, in_flight=0, request_slots_remaining=1, description=None):
+            value = {
+                "kind": kind, "label": label, "minimum": minimum, "maximum": maximum,
+                "completed": completed, "required_remaining": required_remaining,
+                "maximum_remaining": maximum_remaining, "in_flight": in_flight,
+                "request_slots_remaining": request_slots_remaining,
+            }
+            if description is not None:
+                value["description"] = description
+            return value
+
+        def progress(status, label, governing_rule, reason=None):
+            value = {"status": status, "label": label, "rule": governing_rule}
+            if reason is not None:
+                value["reason"] = reason
+            return value
+
+        def activity(total=0, recent=None):
+            return {"total": total, "recent": recent or []}
+
+        def row(channels, *, hosted=None, cli=None, hosted_activity=None, cli_activity=None,
+                preparation=None):
+            value = {
+                "channels": channels,
+                "review_activity": {
+                    "hosted": hosted_activity or activity(),
+                    "cli": cli_activity or activity(),
+                },
+            }
+            progress_by_channel = {
+                channel: selected for channel, selected in (("hosted", hosted), ("cli", cli))
+                if selected is not None
+            }
+            if progress_by_channel:
+                value["review_progress"] = progress_by_channel
+            if preparation is not None:
+                value["preparation"] = preparation
+            return value
+
+        description = "Early taper is allowed; running reviews count as unfinished & <current>."
+        hosted_round = {
+            "raw": 3, "accepted": 2, "routed": 0, "attributable": True,
+            "current_head": True, "non_counting": False,
+            "completed_at": (self.now - timedelta(hours=1)).isoformat(),
+        }
+        queue = {
+            42: row(
+                {"hosted": "READY", "cli": "HELD"},
+                preparation={"status": "UNRECONCILED", "label": "Needs reconciliation",
+                             "reason": "PRIVATE-RECONCILIATION-SENTINEL"},
+                hosted=progress("counting", "1 completed review", rule("normal", "Normal taper"),
+                                reason="Parent moved; needs reconciliation."),
+                cli=progress("active", "Review in progress", rule(
+                    "maximum", "Maximum 2 rounds remaining", maximum=2, maximum_remaining=2,
+                    in_flight=1, request_slots_remaining=0, description=description,
+                )),
+                hosted_activity=activity(2, [hosted_round]),
+                cli_activity=activity(1, [{**hosted_round, "raw": 1, "accepted": 0}]),
+            ),
+            43: row(
+                {"hosted": "HUMAN_STOPPED", "cli": "READY"},
+                cli=progress("cooldown", "Cooldown", rule(
+                    "normal", "Normal taper", description="Provider cooldown does not add a completed round."
+                )),
+                cli_activity=activity(0),
+            ),
+            44: row(
+                {"hosted": "HELD", "cli": "HELD"},
+                hosted=progress("pending_fixes", "Accepted fixes pending", rule(
+                    "required", "2 required rounds remaining", minimum=2, maximum=2,
+                    required_remaining=2, maximum_remaining=2,
+                )),
+                hosted_activity=activity(2),
+            ),
+            45: row(
+                {"hosted": "HUMAN_STOPPED", "cli": "COMPLETE"},
+                hosted=progress("human_stop", "Human stop", rule("human_stop", "Human stop")),
+                cli=progress("taper_met", "Taper met", rule("normal", "Normal taper")),
+            ),
+            46: row(
+                {"hosted": "COMPLETE", "cli": "CAP_AUDITED_STOP"},
+                hosted=progress("required_complete", "Required rounds complete", rule(
+                    "required", "3 required rounds", minimum=3, maximum=3, completed=3,
+                )),
+                cli=progress("maximum_reached", "Maximum reached", rule(
+                    "maximum", "Maximum 2 rounds", maximum=2, completed=2,
+                )),
+            ),
+            47: row(
+                {"hosted": "PARENT_MOVED", "cli": "UNRECONCILED"},
+                hosted_activity=activity(4), cli_activity=activity(2),
+            ),
+            48: row(
+                {"hosted": "HELD", "cli": "HELD"},
+                hosted=progress("not_checked", "Progress not checked", rule(
+                    "maximum", "Maximum 4 rounds remaining", maximum=4, maximum_remaining=4,
+                )),
+                hosted_activity=activity(9),
+            ),
+        }
+        base = self.data["stack"][0]
+        data = {**self.data, "stack": [
+            {**base, "number": number, "title": f"Adapter PR {number}", "stage": "Review progress"}
+            for number in queue
+        ]}
+        review = {
+            "available": True, "ordered_prs": list(queue), "queue": queue,
+            "review_targets": {
+                "hosted": {"pr": 42, "status": "READY"},
+                "cli": {"pr": 43, "status": "READY"},
+            },
+        }
+        github = {
+            "available": True, "states": {},
+            "lifecycle": {number: "OPEN" for number in queue}, "merged_at": {}, "stats": {},
+        }
+        document = self.page.render(data, review, self.now, github)
+
+        front = document.split('<section class="front-board"', 1)[1].split("</section>", 1)[0]
+        self.assertNotIn('class="front-controller-state"', front)
+        self.assertNotIn("<strong>Controller</strong>", front)
+        self.assertIn("Diff size", front)
+        self.assertIn("Progress:</strong> 1 completed review", front)
+        self.assertIn("Rule:</strong> Normal taper", front)
+
+        row_42 = document.split('<li id="pr-42"', 1)[1].split("</li>", 1)[0]
+        row_43 = document.split('<li id="pr-43"', 1)[1].split("</li>", 1)[0]
+        self.assertIn('<span class="queue-status queue-status-front">REVIEW FRONT</span>', row_42)
+        self.assertIn('<span class="queue-status queue-status-front">REVIEW FRONT</span>', row_43)
+        status_line = row_42.split('<div class="pr-status-line">', 1)[1].split("</div>", 1)[0]
+        self.assertEqual(
+            '<span class="queue-status queue-status-front">REVIEW FRONT</span>', status_line,
+        )
+        self.assertNotIn("Hosted ready to request", row_42)
+        self.assertNotIn("CLI new request blocked", row_42)
+        self.assertNotIn("CLI ready to request", row_43)
+        self.assertNotIn("Needs reconciliation", document)
+        self.assertNotIn("needs reconciliation", document.casefold())
+        self.assertNotIn("parent changed", document.casefold())
+        self.assertNotIn("PRIVATE-RECONCILIATION-SENTINEL", document)
+        self.assertNotIn('"review_progress"', document)
+        self.assertNotIn('"preparation"', document)
+
+        for text in (
+            "Maximum 2 rounds remaining", "Cooldown", "2 required rounds remaining",
+            "Accepted fixes pending", "Human stop", "Taper met", "Required rounds complete",
+            "Maximum reached", "Maximum 4 rounds remaining",
+        ):
+            self.assertIn(text, document)
+        self.assertIn('title="Early taper is allowed; running reviews count as unfinished &amp; &lt;current&gt;."', document)
+        self.assertIn('aria-label="Progress: Review in progress; governing rule: Maximum 2 rounds remaining; '
+                      'Early taper is allowed; running reviews count as unfinished &amp; &lt;current&gt;."', document)
+        self.assertIn("Progress not checked", document)
+        fallback = self.page.render_activity_cards(queue[47], self.now)
+        self.assertEqual(2, fallback.count("<strong>Progress:</strong> Progress not checked"))
+        self.assertEqual(2, fallback.count("<strong>Rule:</strong> Policy not checked"))
+        self.assertIn('<span>2 completed</span>', row_42)
+        self.assertIn('<span>3/2/0</span><time class="round-age"', row_42)
+        self.assertLess(row_42.index("Rule:</strong> Normal taper"), row_42.index('<div class="round-pills">'))
+        self.assertIn(".activity-progress { display: flex; flex-wrap: wrap;", document)
+
+        detail = self.page.render_review_detail(
+            data, review, self.now, 42,
+            history={"state": "empty", "runs": [], "findings": [], "routes": [], "decisions": []},
+        )
+        self.assertIn("Maximum 2 rounds remaining", detail)
+        self.assertIn("Review in progress", detail)
+        self.assertIn("Policy not checked", self.page.render_activity_cards(queue[47], self.now))
+        self.assertNotIn("Needs reconciliation", detail)
+
+    def test_merged_channel_cards_preserve_history_without_request_progress(self):
+        queue_item = {
+            "merged": True,
+            "review_activity": {"hosted": {"total": 2, "recent": []},
+                                "cli": {"total": 1, "recent": []}},
+            "review_progress": {"hosted": {"label": "Needs review", "rule": {"label": "Normal taper"}}},
+        }
+        cards = self.page.render_activity_cards(queue_item, self.now)
+        self.assertIn("2 completed", cards)
+        self.assertIn("1 completed", cards)
+        self.assertNotIn("activity-progress", cards)
+        self.assertNotIn("Needs review", cards)
+        queue_item["merged"] = False
+        self.assertNotIn("activity-progress", self.page.render_activity_cards(
+            queue_item, self.now, show_progress=False))
+
     def test_full_copy_server_serves_private_routes_and_runtime_only_links(self):
+        review = {
+            "available": True, "ordered_prs": [42], "review_targets": {},
+            "queue": {42: {
+                "channels": {"hosted": "PARENT_MOVED", "cli": "UNRECONCILED"},
+                "review_activity": {"hosted": {"total": 2, "recent": []},
+                                    "cli": {"total": 0, "recent": []}},
+                "review_progress": {"hosted": {
+                    "status": "HELD", "label": "Reviewing",
+                    "rule": {"label": "Maximum 2 rounds remaining",
+                             "description": "Remaining rounds include any running or reserved round."},
+                }},
+            }},
+        }
+        document = self.page.render(
+            self.data, review, self.now, self.github, jobs=self.public_jobs,
+            lanes_snapshot=self.public_lanes,
+        )
         store = FakeStore()
         with tempfile.TemporaryDirectory() as temporary:
             index = Path(temporary) / "index.html"
-            index.write_text(self.document, encoding="utf-8")
+            index.write_text(document, encoding="utf-8")
             progress = Path(temporary) / "progress.html"
             progress.write_text(self.map_document, encoding="utf-8")
             server = self.server_module.StatusServer(
@@ -584,6 +789,11 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
                 response = connection.getresponse()
                 local_page = response.read().decode("utf-8")
                 self.assertEqual(response.status, 200)
+                self.assertIn("Maximum 2 rounds remaining", local_page)
+                self.assertIn("Progress:</strong> Reviewing", local_page)
+                self.assertIn("Progress:</strong> Progress not checked", local_page)
+                self.assertNotIn("parent changed", local_page.casefold())
+                self.assertNotIn("needs reconciliation", local_page.casefold())
                 self.assertIn('href="/jobs/job-1"', local_page)
                 self.assertIn('href="/inbox/Gameplay"', local_page)
                 self.assertNotIn('href="/jobs/job-1"', index.read_text(encoding="utf-8"))

@@ -9,7 +9,16 @@ diff --git a/render.py b/render.py
  from zoneinfo import ZoneInfo
 
  from mast import render_mast
-@@ -372,6 +373,9 @@
+@@ -80,6 +81,8 @@
+ ACTIVITY_CSS = """.activity-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; margin-top: .7rem; }
+ .activity-card { min-width: 0; padding: .6rem .75rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-muted); }
+ .activity-top { display: flex; justify-content: space-between; gap: .5rem; font-size: .8rem; }
++.activity-progress { display: flex; flex-wrap: wrap; gap: .12rem .7rem; margin: .24rem 0 0; color: #626b77; font-size: .68rem; line-height: 1.3; overflow-wrap: anywhere; }
++.activity-progress strong { color: #434c57; font-weight: 700; }
+ .activity-caption { display: block; color: #626b77; font-size: .7rem; margin-top: .32rem; }
+ .activity-note { margin: .3rem 0 0; color: #626b77; font-size: .68rem; line-height: 1.25; overflow-wrap: anywhere; }
+ .round-pills { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .35rem; font-size: .77rem; }
+@@ -372,6 +375,9 @@
      return html.escape(str(value), quote=True)
 
 
@@ -19,7 +28,7 @@ diff --git a/render.py b/render.py
  def presentation_channels(row: dict) -> dict:
      """Expose an authoritative audited allocation stop in request presentation."""
      channels = row.get("channels", {})
-@@ -556,7 +560,7 @@
+@@ -556,7 +562,7 @@
      return f"{safe(subject)} checked {relative_time(observed, now)}"
 
 
@@ -28,7 +37,7 @@ diff --git a/render.py b/render.py
      source = "Repository PR-review controller"
      unavailable = {"available": False, "source": source, "as_of": now.isoformat(), "reason": "No review-status tool configured"}
      if tool is None:
-@@ -594,17 +598,19 @@
+@@ -594,17 +600,19 @@
              if type(number) is not int or number in queue or not isinstance(item["head"], str):
                  raise ValueError("invalid review stack record")
              queue[number] = item
@@ -51,7 +60,7 @@ diff --git a/render.py b/render.py
              "mode": report.get("mode"),
              "controller_status": report.get("status"),
              "detail_window": report.get("detail_window", {}),
-@@ -613,7 +619,7 @@
+@@ -613,7 +621,7 @@
              "ordered_prs": ordered_prs,
          }
      except (ValueError, KeyError, TypeError, AttributeError):
@@ -60,7 +69,7 @@ diff --git a/render.py b/render.py
 
 
  def _timestamp_key(value: object) -> str | None:
-@@ -958,31 +964,24 @@
+@@ -958,31 +966,24 @@
 
 
  def controller_stack(data: dict, review: dict, github: dict, now: datetime) -> dict:
@@ -97,7 +106,7 @@ diff --git a/render.py b/render.py
      ordered = [item["number"] for item in data["stack"]]
      queue = review.get("queue", {})
      lifecycle = github.get("lifecycle", {})
-@@ -1006,10 +1005,7 @@
+@@ -1006,10 +1007,7 @@
                      selected.add(number)
      if selected:
          return selected
@@ -109,7 +118,7 @@ diff --git a/render.py b/render.py
 
 
  def selected_review_front(data: dict, review: dict, github: dict) -> int | None:
-@@ -1480,6 +1476,13 @@
+@@ -1480,6 +1478,13 @@
      return ""
 
 
@@ -123,7 +132,7 @@ diff --git a/render.py b/render.py
  def _decision_identity(record: dict) -> tuple[str, object]:
      decision_id = record.get("decision_id")
      if decision_id is not None and decision_id != "":
-@@ -1633,6 +1636,11 @@
+@@ -1633,6 +1638,11 @@
      target_pr = route.get("target_pr")
      source = f'PR #{route_source_pr}' if type(route_source_pr) is int and route_source_pr > 0 else "Unknown source"
      target = f'PR #{target_pr}' if type(target_pr) is int and target_pr > 0 else "Unassigned target"
@@ -135,7 +144,7 @@ diff --git a/render.py b/render.py
      kind, status = _route_status(route)
      label = f"Route {number}" if number is not None else "Route"
      route_id = _record_text(route.get("route_id"))
-@@ -1812,11 +1820,12 @@
+@@ -1812,11 +1822,12 @@
          duration = _run_duration_label(run, attempts)
          age_html = _run_age_html(run, now)
          runtime_html = f'<span class="run-runtime" title="Runtime">Runtime {duration}</span>' if duration else ""
@@ -149,7 +158,7 @@ diff --git a/render.py b/render.py
              f'<span class="record-counts">{_run_counts(run)}</span>'
              f'</summary>'
          )
-@@ -2087,7 +2096,7 @@
+@@ -2087,7 +2098,7 @@
  .route-body {{ margin-top: .35rem; }} .route-topline {{ display: block; }} .route-id {{ color: var(--muted); font-size: .78rem; overflow-wrap: anywhere; }}
  .route-finding-title {{ display: block; margin: .25rem 0 0 1rem; font-weight: 750; overflow-wrap: anywhere; }}
  .route-reference {{ display: block; overflow-wrap: anywhere; }} .route-reference .route-topline {{ display: inline; }}
@@ -158,7 +167,7 @@ diff --git a/render.py b/render.py
  .route-description, .route-outcome {{ margin: .3rem 0; overflow-wrap: anywhere; }} .route-description {{ color: var(--muted); }}
  .route-history {{ margin-top: .35rem; overflow-wrap: anywhere; }} .route-history > summary {{ width: fit-content; color: var(--muted); cursor: pointer; font-size: .82rem; }}
  .route-history ul {{ margin: .25rem 0 0; padding-left: 1.2rem; }} .route-history li {{ margin-top: .2rem; }}
-@@ -2106,7 +2115,7 @@
+@@ -2106,7 +2117,7 @@
  .run-header strong {{ color: #333d48; }}
  .run-header .record-counts {{ margin-left: auto; }}
  .run-runtime {{ color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }}
@@ -167,7 +176,61 @@ diff --git a/render.py b/render.py
  @media (max-width: 760px) {{ .run-header .record-counts {{ margin-left: 0; }} }}
  .run-header .record-counts span {{ padding: .14rem .55rem; border: 1px solid; border-radius: 999px; font-weight: 650; }}
  .run-header .record-counts .review-count-found {{ background: #edf0f4; border-color: #c7cdd5; color: #43505d; }}
-@@ -2286,11 +2295,89 @@
+@@ -2147,7 +2158,8 @@
+ </main><script id="review-run-toggles">{REVIEW_TOGGLE_SCRIPT}</script><script id="local-refresh-progress">{REFRESH_SCRIPT}</script><script id="relative-age-updates">{AGE_SCRIPT}</script></body></html>'''
+
+
+-def render_activity_cards(queue_item: dict | None, now: datetime, *, independent_card: str = "") -> str:
++def render_activity_cards(queue_item: dict | None, now: datetime, *, independent_card: str = "",
++                          show_progress: bool = True) -> str:
+     """Render the current compact Hosted/CLI round summaries for reuse on detail pages."""
+     activity_cards = []
+     if queue_item and isinstance(queue_item.get("review_activity"), dict):
+@@ -2218,9 +2230,43 @@
+                 total = 0
+             total_label = (f"at least {total} recorded" if incomplete_history and total
+                            else "history unavailable" if incomplete_history else f"{total} completed")
++            review_progress = queue_item.get("review_progress")
++            channel_progress = review_progress.get(channel) if isinstance(review_progress, dict) else None
++            progress_label = (
++                channel_progress.get("label")
++                if isinstance(channel_progress, dict) and isinstance(channel_progress.get("label"), str)
++                and channel_progress["label"].strip()
++                else "Progress not checked"
++            )
++            rule = channel_progress.get("rule") if isinstance(channel_progress, dict) else None
++            rule_label = (
++                rule.get("label")
++                if isinstance(rule, dict) and isinstance(rule.get("label"), str) and rule["label"].strip()
++                else "Policy not checked"
++            )
++            rule_description = (
++                rule.get("description")
++                if isinstance(rule, dict) and isinstance(rule.get("description"), str)
++                and rule["description"].strip() else None
++            )
++            accessible_progress = f"Progress: {progress_label}; governing rule: {rule_label}"
++            if rule_description:
++                accessible_progress += f"; {rule_description}"
++            progress_accessibility = (
++                f' role="group" aria-label="{safe(accessible_progress)}"'
++                + (f' title="{safe(rule_description)}"' if rule_description else "")
++            )
++            progress_html = (
++                f'<div class="activity-progress"{progress_accessibility}>'
++                f'<span><strong>Progress:</strong> {safe(progress_label)}</span>'
++                f'<span><strong>Rule:</strong> {safe(rule_label)}</span></div>'
++            )
++            if not show_progress or queue_item.get("merged") is True:
++                progress_html = ""
+             activity_cards.append(
+                 f'<div class="activity-card"><div class="activity-top"><strong>{channel_name}</strong>'
+                 f'<span>{safe(total_label)}</span></div>'
++                f'{progress_html}'
+                 f'<div class="round-pills">{"".join(pills) if pills else "Unavailable" if incomplete_history else "None yet"}</div>{activity_note}</div>'
+             )
+     cards = "".join(activity_cards) + independent_card
+@@ -2286,11 +2332,89 @@
              temporary_path.unlink(missing_ok=True)
 
 
@@ -260,7 +323,108 @@ diff --git a/render.py b/render.py
          raise ValueError("status file needs an ordered stack and Gameplay, Document, General lanes")
      if len({item["number"] for item in stack}) != len(stack):
          raise ValueError("duplicate PR in stack")
-@@ -2490,31 +2577,38 @@
+@@ -2318,7 +2442,6 @@
+         len(stack) + 1,
+     )
+     front_size_html = "Diff size unavailable"
+-    front_controller_html = '<span class="front-controller-unavailable">Hosted/CLI states unavailable</span>'
+     front_activity_grid = ""
+     for position, item in enumerate(stack, 1):
+         number = item["number"]
+@@ -2342,26 +2465,7 @@
+         channels = presentation_channels(queue_item) if queue_item else {}
+         label_channels = channel_label_states(queue_item, channels) if queue_item else {}
+         states = [label_channels.get(channel) for channel in ("hosted", "cli")] if isinstance(label_channels, dict) else []
+-        named_states = []
+-        for channel, state in zip(("hosted", "cli"), states):
+-            if not isinstance(state, str) or not state:
+-                continue
+-            label_state = label_channels.get(channel, state)
+-            activity_label = channel_activity_label(queue_item, channel, label_state)
+-            label = activity_label or channel_label(channel, label_state, number, review.get("review_targets", {}))
+-            reason = held_request_reason(review, channel, number, label_state)
+-            if activity_label and reason == f"{number} has an active review or reservation in a review channel":
+-                reason = None
+-            named_states.append(f"{label} · {reason}" if reason else label)
+-        has_controller_states = len(named_states) == 2
+-        if has_controller_states:
+-            controller_text = " · ".join(named_states)
+-        elif named_states:
+-            missing_channel = "CLI" if isinstance(states[0], str) and states[0] else "Hosted"
+-            controller_text = f'{" · ".join(named_states)} · Review state unavailable ({missing_channel})'
+-        else:
+-            controller_text = "Review state unavailable"
+-        controller_status_html = f'<span class="sub">{safe(controller_text)}</span>'
++        has_controller_states = sum(isinstance(state, str) and bool(state) for state in states) == 2
+         merged_time = None
+         if lifecycle == "MERGED":
+             merged_at = github.get("merged_at", {}).get(number)
+@@ -2374,16 +2478,13 @@
+             status_html = f'<span class="sub">{channel_html}</span>'
+             queue_badge_html = '<span class="queue-status queue-status-merged">MERGED</span>'
+         elif lifecycle == "CLOSED":
+-            status_html = (
+-                '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
+-                f'{controller_status_html}'
+-            )
++            status_html = '<span class="sub"><strong>Closed</strong> · Historical review record</span>'
+             queue_badge_html = '<span class="queue-status queue-status-closed">CLOSED</span>'
+         elif lifecycle == "OPEN" and github.get("states", {}).get(number) is True:
+-            status_html = controller_status_html
++            status_html = ""
+             queue_badge_html = '<span class="queue-status queue-status-draft">DRAFT</span>'
+         elif queue_item:
+-            status_html = controller_status_html
++            status_html = ""
+             if number in front_numbers:
+                 badge_label, badge_class = "REVIEW FRONT", "front"
+             elif has_controller_states and any(state in ACTIVE_REVIEW_STATES for state in states):
+@@ -2396,7 +2497,7 @@
+                 badge_label, badge_class = "QUEUED", "queued"
+             queue_badge_html = f'<span class="queue-status queue-status-{badge_class}">{badge_label}</span>'
+         else:
+-            status_html = controller_status_html
++            status_html = ""
+             queue_badge_html = (
+                 '<span class="queue-status queue-status-front">REVIEW FRONT</span>'
+                 if number in front_numbers else
+@@ -2404,23 +2505,12 @@
+                 if number == next_pr else
+                 '<span class="queue-status queue-status-pending">PENDING</span>'
+             )
+-        channels_closed = bool(states) and all(state in REVIEW_FINISHED_STATES for state in states)
+-        if lifecycle != "MERGED" and queue_item and queue_item.get("detail_level") == "identity_only" and not channels_closed:
+-            evidence = queue_item.get("evidence_status")
+-            label = (
+-                "Review evidence stale after identity or parent movement"
+-                if evidence == "stale" else "Review evidence not checked in this refresh"
+-            )
+-            status_html += f'<span class="sub">{label} · identity only</span>'
+-        elif lifecycle != "MERGED" and queue_item and queue_item.get("detail_level") == "unknown" and not channels_closed:
+-            status_html += '<span class="sub">Review evidence unavailable · identity unknown</span>'
+         history = (histories or {}).get(number)
+         activity_grid = render_activity_cards(
+-            queue_item, now, independent_card=render_independent_activity(history, now))
++            queue_item, now, independent_card=render_independent_activity(history, now),
++            show_progress=lifecycle != "MERGED")
+         if number == front_number:
+             front_size_html = size_html
+-            if lifecycle != "MERGED" and has_controller_states:
+-                front_controller_html = f'<span class="front-controller-state">{safe(controller_text)}</span>'
+             front_activity_grid = activity_grid
+         row_classes = []
+         if lifecycle == "MERGED":
+@@ -2481,40 +2571,45 @@
+             f'{safe(front_item["title"])}</span></a></h2>'
+             f'</div><div class="front-evidence">'
+             f'<div class="front-facts"><div class="front-fact"><strong>Diff size</strong>'
+-            f'<span class="sub front-fact-value">{front_size_html}</span></div>'
+-            f'<div class="front-fact"><strong>Controller</strong>'
+-            f'{front_controller_html}</div></div>'
++            f'<span class="sub front-fact-value">{front_size_html}</span></div></div>'
+             f'{front_activity_grid or "<p>Review activity unavailable</p>"}'
+             f'<a class="front-review-detail-link" href="review/pr-{front_item["number"]}.html">Review details ↗</a>'
+             f'</div>'
              f'</section>'
          )
      cards = []
@@ -324,7 +488,7 @@ diff --git a/render.py b/render.py
      refreshed_at = (
          f'<time class="relative-age" datetime="{safe(now.isoformat())}" '
          f'title="{safe(local_time(now))}">just now</time>'
-@@ -2545,7 +2639,9 @@
+@@ -2545,7 +2640,9 @@
          "" if history_only else
          '<section id="workers"><div class="section-head"><h2>Worker lanes</h2>'
          '<p>Current focus across active workstreams</p></div>'
@@ -335,6 +499,23 @@ diff --git a/render.py b/render.py
      )
      queue_heading = "Queue history" if history_only else "Configured review queue"
      queue_link = (
+@@ -2560,7 +2657,6 @@
+ <div><dt>Reviewing</dt><dd>request is active</dd></div>
+ <div><dt>Cooldown</dt><dd>provider rate limit</dd></div>
+ <div><dt>Blocked</dt><dd>new request is held; a specific reason appears on the row when supplied</dd></div>
+-<div><dt>Parent changed / needs reconciliation</dt><dd>re-prove branch before requesting</dd></div>
+ <div><dt>Human bypass / Review closed</dt><dd>intentionally stopped or completed</dd></div>
+ </dl>'''
+     )
+@@ -2636,7 +2732,7 @@
+ .front-copy h2 {{ margin: 1rem 0; font-size: clamp(1.5rem,3vw,2.75rem); line-height: 1.1; letter-spacing: -.04em; overflow-wrap: anywhere; }}
+ .front-number {{ display: block; margin-bottom: .65rem; color: #ffc390; font-size: clamp(3rem,6vw,5.5rem); line-height: .95; letter-spacing: -.07em; }}
+ .front-copy h2 a {{ color: #fff; text-decoration: none; }} .front-copy h2 a:hover {{ text-decoration: underline; }}
+-.front-facts {{ display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .6rem; width: 100%; }}
++.front-facts {{ display: grid; grid-template-columns: minmax(0,1fr); gap: .6rem; width: 100%; }}
+ .front-fact {{ display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .6rem .75rem; border: 1px solid #f4c9c7; border-radius: 9px; background: var(--surface); color: var(--ink); font-size: .8rem; }}
+ .front-fact > strong {{ color: #37414a; font-size: .8rem; font-weight: 700; }}
+ .front-facts .sub {{ display: inline; margin: 0; font-size: .78rem; color: var(--ink); }}
 @@ -2693,6 +2789,21 @@
  .queue-status-closed {{ background: #e7e9ed; border-color: #b9bec7; color: #454b56; }}
  .queue-stage > .stack li.merged .pr-main > a {{ color: #392451; }}
