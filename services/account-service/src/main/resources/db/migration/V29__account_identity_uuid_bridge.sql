@@ -49,6 +49,10 @@ RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
 BEGIN
+    IF NEW.account_uuid_provenance = 'ACCOUNT_V29_MIGRATION' THEN
+        RAISE EXCEPTION 'ACCOUNT_V29_MIGRATION provenance is reserved for retained rows'
+            USING ERRCODE = '23514', CONSTRAINT = 'accounts_identity_migration_insert_only';
+    END IF;
     NEW.account_uuid_source_numeric_id := NEW.id;
     RETURN NEW;
 END;
