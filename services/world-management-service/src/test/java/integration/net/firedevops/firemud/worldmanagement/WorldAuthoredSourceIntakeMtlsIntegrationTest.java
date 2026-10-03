@@ -467,7 +467,7 @@ class WorldAuthoredSourceIntakeMtlsIntegrationTest {
     String displayName = "World " + worldSlug;
     long sourceGameRowId =
         Math.abs(UUID.randomUUID().getMostSignificantBits() % 1_000_000_000L) + 1L;
-    String sourceGameTenantKey = "source-key-" + UUID.randomUUID();
+    String sourceGameTenantKey = "src-" + UUID.randomUUID().toString().replace("-", "");
     String sourceRequestDigest =
         AuthoredWorldSourceDigest.requestDigest(
             NAMESPACE, registrationRequestId, tenantId, tenantSlug, worldSlug, displayName);

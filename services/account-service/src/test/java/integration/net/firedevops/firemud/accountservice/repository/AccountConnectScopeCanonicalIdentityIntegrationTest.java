@@ -944,6 +944,7 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                     retainedRequestId),
             "Retained V1 JOIN operation must exist before V50");
     flyway(fixture.dataSource(), fixture.schema(), "50").migrate();
+    flyway(fixture.dataSource(), fixture.schema(), "51").migrate();
 
     AccountConnectScopeRepository scopes = scopeRepository(fixture).scopes();
     AccountJoinOperationRepository operations =
@@ -1014,6 +1015,20 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     assertThat(availableAgain.entitlementAuthorityAvailability()).isEqualTo("AVAILABLE");
     assertThat(availableAgain.lastAttemptAuthorityAvailability()).isEqualTo("AVAILABLE");
     assertThat(availableAgain.lastAttemptFailureCode()).isNull();
+    CanonicalJoinOperationEvidence latestUnavailableAttempt =
+        fixture
+            .transaction()
+            .execute(
+                status ->
+                    operations.recordCanonicalPolicyUnavailable(
+                        committedRequestId,
+                        unexpiredScope,
+                        callerBinding,
+                        "ENTITLEMENT_UNAVAILABLE"));
+    assertThat(latestUnavailableAttempt.requestDigest()).isEqualTo(availableAgain.requestDigest());
+    assertThat(latestUnavailableAttempt.entitlementVersion()).isEqualTo(19L);
+    assertThat(latestUnavailableAttempt.lastAttemptAuthorityAvailability())
+        .isEqualTo("UNAVAILABLE");
 
     Long membershipId =
         fixture
@@ -1038,7 +1053,13 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     assertThat(committed.membershipId()).isEqualTo(membershipId);
     assertThat(committed.membershipVersion()).isEqualTo(2L);
     assertThat(committed.membershipAuthorityGeneration()).isEqualTo(1L);
-    assertThat(committed.scopeEvidence()).isEqualTo(availableAgain.scopeEvidence());
+    assertThat(committed.entitlementAuthorityAvailability()).isEqualTo("AVAILABLE");
+    assertThat(committed.allowPublicJoin()).isTrue();
+    assertThat(committed.entitlementVersion()).isEqualTo(19L);
+    assertThat(committed.requestDigestVersion()).isEqualTo(2);
+    assertThat(committed.lastAttemptAuthorityAvailability()).isEqualTo("UNAVAILABLE");
+    assertThat(committed.lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_UNAVAILABLE");
+    assertThat(committed.scopeEvidence()).isEqualTo(unavailableAfterPolicy.scopeEvidence());
     CanonicalJoinOperationEvidence committedRetry =
         fixture
             .transaction()
@@ -1070,6 +1091,16 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                             + "WHERE request_id = ?",
                         committedRequestId))
         .isInstanceOf(DataAccessException.class);
+    assertTerminalJournalCheckRejectsNullField(
+        fixture, "last_attempt_failure_code = '   '", committedRequestId);
+    assertTerminalJournalCheckRejectsNullField(
+        fixture, "last_attempt_authority_availability = 'AVAILABLE'", committedRequestId);
+    assertThat(
+            fixture
+                .transaction()
+                .execute(status -> operations.findCanonicalEvidenceByRequestId(committedRequestId))
+                .orElseThrow())
+        .isEqualTo(committed);
     assertTerminalJournalCheckRejectsNullField(fixture, "outcome = NULL", committedRequestId);
     assertTerminalJournalCheckRejectsNullField(
         fixture, "outcome_membership_version = NULL", committedRequestId);
@@ -1141,6 +1172,17 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                         null));
     assertThat(failedRetry).isEqualTo(failed);
     assertTerminalJournalCheckRejectsNullField(fixture, "outcome = NULL", deniedRequestId);
+    assertTerminalJournalCheckRejectsNullField(
+        fixture,
+        "last_attempt_authority_availability = 'UNAVAILABLE', "
+            + "last_attempt_failure_code = 'ENTITLEMENT_TIMEOUT'",
+        deniedRequestId);
+    assertThat(
+            fixture
+                .transaction()
+                .execute(status -> operations.findCanonicalEvidenceByRequestId(deniedRequestId))
+                .orElseThrow())
+        .isEqualTo(failed);
 
     String unavailableRequestId = "canonical-join-terminal-unavailable";
     fixture
@@ -1471,15 +1513,39 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
     assertThat(canonicalTerminalReadback).contains(committed);
     assertThat(v1OperationProjection(fixture.setupDsl(), retainedRequestId))
         .containsExactlyEntriesOf(retainedOperationBefore);
-    Record retainedOperationAfterV50 =
+    Record retainedOperationAfterV51 =
         Objects.requireNonNull(
             fixture
                 .setupDsl()
                 .fetchOne(
                     "SELECT * FROM account_join_operations WHERE request_id = ?",
                     retainedRequestId),
-            "Retained V1 JOIN operation must exist after V50");
-    assertThat(retainedOperationAfterV50.intoMap())
+            "Retained V1 JOIN operation must exist after V51");
+    assertThat(retainedOperationAfterV51.intoMap())
+        .containsExactlyEntriesOf(retainedOperationBeforeV50.intoMap());
+    assertTerminalJournalCheckRejectsNullField(
+        fixture,
+        "status = 'COMMITTED', outcome = 'JOINED', membership_id = "
+            + membershipId
+            + ", outcome_membership_version = 2, "
+            + "outcome_membership_authority_generation = 1, entitlement_version = 19, "
+            + "allow_public_join = TRUE, entitlement_authority_availability = 'AVAILABLE', "
+            + "request_digest_version = 1, request_digest = 'sha256:"
+            + "c".repeat(64)
+            + "', last_attempt_authority_availability = 'UNAVAILABLE', "
+            + "last_attempt_failure_code = 'LEGACY_UNAVAILABLE'",
+        retainedRequestId);
+    assertThat(v1OperationProjection(fixture.setupDsl(), retainedRequestId))
+        .containsExactlyEntriesOf(retainedOperationBefore);
+    Record retainedOperationAfterRejectedTerminalDiagnostic =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne(
+                    "SELECT * FROM account_join_operations WHERE request_id = ?",
+                    retainedRequestId),
+            "Retained V1 JOIN operation must remain after rejected terminal diagnostics");
+    assertThat(retainedOperationAfterRejectedTerminalDiagnostic.intoMap())
         .containsExactlyEntriesOf(retainedOperationBeforeV50.intoMap());
   }
 

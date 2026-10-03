@@ -2,19 +2,31 @@ package integration.net.firedevops.firemud.gamesession.repository;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.nio.file.Path;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceDigest;
 import net.firedevops.firemud.common.tenant.AuthoredWorldSourceEvidence;
+import net.firedevops.firemud.gamesession.client.GameDesignRuntimeTenantIdentityClient;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.IntakeReceipt;
+import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.InvalidIntakeEvidenceException;
 import net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepository.RegistrationConflictException;
+import net.firedevops.firemud.gamesession.service.GameSessionAuthoredWorldIntakeService;
 import org.flywaydb.core.Flyway;
 import org.jooq.DSLContext;
 import org.jooq.SQLDialect;
@@ -25,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -217,6 +230,249 @@ class GameSessionAuthoredWorldSourceRepositoryIntegrationTest {
     assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isZero();
     assertThat(fixture.dsl.fetchCount(INTAKES)).isZero();
     assertThat(fixture.repository.read(uuid(301), uuid(4), "one-world", NAMESPACE)).isEmpty();
+  }
+
+  @Test
+  void serviceCommitsReadsBackAndReplaysExactStoredRequestWithoutAnotherSourceRead() {
+    Fixture fixture = fixture();
+    UUID tenantId = uuid(70);
+    UUID intakeRequestId = uuid(71);
+    AuthoredWorldSourceEvidence source =
+        source(tenantId, uuid(171), uuid(271), "service-tenant", "service-world", "Service World");
+    // This mocked client is synthetic owner evidence; it does not exercise Game Design transport.
+    GameDesignRuntimeTenantIdentityClient syntheticClient =
+        mock(GameDesignRuntimeTenantIdentityClient.class);
+    when(syntheticClient.resolveAuthoredWorldSource(
+            eq(tenantId.toString()),
+            eq(source.operationId().toString()),
+            eq(source.worldSlug()),
+            anyString()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return source;
+            });
+    GameSessionAuthoredWorldIntakeService service =
+        new GameSessionAuthoredWorldIntakeService(
+            syntheticClient, fixture.repository, fixture.transactionManager, NAMESPACE);
+
+    IntakeReceipt first =
+        service.intake(intakeRequestId, tenantId, source.operationId(), source.worldSlug());
+    String bindingXmin =
+        fixture.xmin(
+            "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+            NAMESPACE,
+            tenantId);
+    String intakeXmin =
+        fixture.xmin(
+            "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                + "WHERE target_namespace = ? AND intake_request_id = ?",
+            NAMESPACE,
+            intakeRequestId);
+
+    assertThat(service.intake(intakeRequestId, tenantId, source.operationId(), source.worldSlug()))
+        .isEqualTo(first);
+    assertThatThrownBy(
+            () ->
+                service.intake(intakeRequestId, uuid(99), source.operationId(), source.worldSlug()))
+        .isInstanceOf(RegistrationConflictException.class);
+    assertThatThrownBy(
+            () -> service.intake(intakeRequestId, tenantId, uuid(99), source.worldSlug()))
+        .isInstanceOf(RegistrationConflictException.class);
+    assertThatThrownBy(
+            () -> service.intake(intakeRequestId, tenantId, source.operationId(), "other-world"))
+        .isInstanceOf(RegistrationConflictException.class);
+    assertThat(
+            fixture.repository.read(first.operationId(), tenantId, source.worldSlug(), NAMESPACE))
+        .contains(first);
+    assertThat(
+            fixture.xmin(
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                tenantId))
+        .isEqualTo(bindingXmin);
+    assertThat(
+            fixture.xmin(
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                    + "WHERE target_namespace = ? AND intake_request_id = ?",
+                NAMESPACE,
+                intakeRequestId))
+        .isEqualTo(intakeXmin);
+    verify(syntheticClient, times(1))
+        .resolveAuthoredWorldSource(
+            eq(tenantId.toString()),
+            eq(source.operationId().toString()),
+            eq(source.worldSlug()),
+            anyString());
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isEqualTo(1);
+  }
+
+  @Test
+  void serviceRollbackAndRejectedSourceLeaveNoClaims() {
+    Fixture fixture = fixture();
+    UUID tenantId = uuid(72);
+    UUID intakeRequestId = uuid(73);
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenantId, uuid(172), uuid(272), "rollback-tenant", "rollback-world", "Rollback World");
+    // This mocked client supplies explicitly synthetic immutable source evidence for composition.
+    GameDesignRuntimeTenantIdentityClient syntheticClient =
+        mock(GameDesignRuntimeTenantIdentityClient.class);
+    AtomicReference<AuthoredWorldSourceEvidence> upstreamEvidence = new AtomicReference<>(source);
+    when(syntheticClient.resolveAuthoredWorldSource(
+            eq(tenantId.toString()),
+            eq(source.operationId().toString()),
+            eq(source.worldSlug()),
+            anyString()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              return upstreamEvidence.get();
+            });
+    GameSessionAuthoredWorldSourceRepository rollbackRepository =
+        new GameSessionAuthoredWorldSourceRepository(fixture.dsl) {
+          @Override
+          public IntakeReceipt register(UUID requestId, AuthoredWorldSourceEvidence evidence) {
+            super.register(requestId, evidence);
+            throw new IllegalStateException("simulated failure after local writes");
+          }
+        };
+    GameSessionAuthoredWorldIntakeService rollbackService =
+        new GameSessionAuthoredWorldIntakeService(
+            syntheticClient, rollbackRepository, fixture.transactionManager, NAMESPACE);
+
+    assertThatThrownBy(
+            () ->
+                rollbackService.intake(
+                    intakeRequestId, tenantId, source.operationId(), source.worldSlug()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("simulated failure after local writes");
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isZero();
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isZero();
+    assertThat(fixture.repository.readByIntakeRequest(NAMESPACE, intakeRequestId)).isEmpty();
+
+    UUID rejectedRequestId = uuid(74);
+    AuthoredWorldSourceEvidence wrongScope =
+        source(
+            tenantId,
+            uuid(174),
+            source.operationId(),
+            "rollback-tenant",
+            "other-world",
+            "Other World");
+    upstreamEvidence.set(wrongScope);
+    GameSessionAuthoredWorldIntakeService rejectionService =
+        new GameSessionAuthoredWorldIntakeService(
+            syntheticClient, fixture.repository, fixture.transactionManager, NAMESPACE);
+    assertThatThrownBy(
+            () ->
+                rejectionService.intake(
+                    rejectedRequestId, tenantId, source.operationId(), source.worldSlug()))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("does not match intake");
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isZero();
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isZero();
+    assertThat(fixture.repository.readByIntakeRequest(NAMESPACE, rejectedRequestId)).isEmpty();
+  }
+
+  @Test
+  void serviceLostPostCommitReadbackRetryReturnsOriginalCommittedReceiptWithoutMutation() {
+    Fixture fixture = fixture();
+    UUID tenantId = uuid(75);
+    UUID intakeRequestId = uuid(76);
+    AuthoredWorldSourceEvidence source =
+        source(
+            tenantId,
+            uuid(175),
+            uuid(275),
+            "lost-readback-tenant",
+            "lost-readback-world",
+            "Lost Readback World");
+    GameDesignRuntimeTenantIdentityClient syntheticClient =
+        mock(GameDesignRuntimeTenantIdentityClient.class);
+    AtomicInteger sourceReads = new AtomicInteger();
+    when(syntheticClient.resolveAuthoredWorldSource(
+            eq(tenantId.toString()),
+            eq(source.operationId().toString()),
+            eq(source.worldSlug()),
+            anyString()))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+              sourceReads.incrementAndGet();
+              return source;
+            });
+
+    AtomicInteger committedReadbacks = new AtomicInteger();
+    GameSessionAuthoredWorldSourceRepository readbackUnavailableOnce =
+        new GameSessionAuthoredWorldSourceRepository(fixture.dsl) {
+          @Override
+          public Optional<IntakeReceipt> read(
+              UUID operationId, UUID canonicalTenantId, String worldSlug, String namespace) {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+            if (committedReadbacks.getAndIncrement() == 0) {
+              return Optional.empty();
+            }
+            return super.read(operationId, canonicalTenantId, worldSlug, namespace);
+          }
+        };
+    GameSessionAuthoredWorldIntakeService service =
+        new GameSessionAuthoredWorldIntakeService(
+            syntheticClient, readbackUnavailableOnce, fixture.transactionManager, NAMESPACE);
+
+    assertThatThrownBy(
+            () ->
+                service.intake(intakeRequestId, tenantId, source.operationId(), source.worldSlug()))
+        .isInstanceOf(InvalidIntakeEvidenceException.class)
+        .hasMessageContaining("missing after commit readback");
+
+    IntakeReceipt committed =
+        fixture.repository.readByIntakeRequest(NAMESPACE, intakeRequestId).orElseThrow();
+    assertThat(committed.source()).isEqualTo(source);
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isEqualTo(1);
+    String bindingXmin =
+        fixture.xmin(
+            "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+            NAMESPACE,
+            tenantId);
+    String intakeXmin =
+        fixture.xmin(
+            "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                + "WHERE target_namespace = ? AND intake_request_id = ?",
+            NAMESPACE,
+            intakeRequestId);
+
+    assertThat(service.intake(intakeRequestId, tenantId, source.operationId(), source.worldSlug()))
+        .isEqualTo(committed);
+    assertThat(sourceReads.get()).isEqualTo(1);
+    assertThat(committedReadbacks.get()).isEqualTo(1);
+    assertThat(
+            fixture.xmin(
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                tenantId))
+        .isEqualTo(bindingXmin);
+    assertThat(
+            fixture.xmin(
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                    + "WHERE target_namespace = ? AND intake_request_id = ?",
+                NAMESPACE,
+                intakeRequestId))
+        .isEqualTo(intakeXmin);
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isEqualTo(1);
+    verify(syntheticClient, times(1))
+        .resolveAuthoredWorldSource(
+            eq(tenantId.toString()),
+            eq(source.operationId().toString()),
+            eq(source.worldSlug()),
+            anyString());
   }
 
   @Test
@@ -484,7 +740,8 @@ class GameSessionAuthoredWorldSourceRepositoryIntegrationTest {
     TransactionTemplate transactions = new TransactionTemplate(transactionManager);
     DSLContext dsl =
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
-    return new Fixture(dsl, new GameSessionAuthoredWorldSourceRepository(dsl), transactions);
+    return new Fixture(
+        dsl, new GameSessionAuthoredWorldSourceRepository(dsl), transactionManager, transactions);
   }
 
   private void assertConflict(Runnable registration) {
@@ -515,6 +772,7 @@ class GameSessionAuthoredWorldSourceRepositoryIntegrationTest {
   private record Fixture(
       DSLContext dsl,
       GameSessionAuthoredWorldSourceRepository repository,
+      DataSourceTransactionManager transactionManager,
       TransactionTemplate transactions) {
     IntakeReceipt register(UUID intakeRequestId, AuthoredWorldSourceEvidence source) {
       IntakeReceipt receipt =

@@ -1108,7 +1108,7 @@ jobs:
           retention-days: 7
 
       - name: Run Game Session authored-world intake PostgreSQL component proof
-        if: ${{ matrix.module == 'game-session-service' }}
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
         run: |
           ./gradlew :game-session-service:integrationTest \
             --tests integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest \
@@ -1119,7 +1119,19 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#registersAdditionalWorldsAndReplaysExactReceiptWithoutMutation()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#requiresOwnerTransactionRollsBackClaimsAndReadsOnlyCommittedRows()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#concurrentExactIntakeRetriesReturnOneReceiptAndSlugRaceHasOneWinner()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceCommitsReadsBackAndReplaysExactStoredRequestWithoutAnotherSourceRead()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceRollbackAndRejectedSourceLeaveNoClaims()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceLostPostCommitReadbackRetryReturnsOriginalCommittedReceiptWithoutMutation()' \
             game-session-service
+
+      - name: Upload Game Session authored-world intake PostgreSQL proof results
+        if: ${{ !cancelled() && matrix.module == 'game-session-service' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: game-session-authored-world-intake-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: services/game-session-service/build/test-results/integrationTest/TEST-*GameSessionAuthoredWorldSourceRepositoryIntegrationTest.xml
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Run Game Session retained tenant snapshot and association PostgreSQL component proof
         if: ${{ matrix.module == 'game-session-service' }}

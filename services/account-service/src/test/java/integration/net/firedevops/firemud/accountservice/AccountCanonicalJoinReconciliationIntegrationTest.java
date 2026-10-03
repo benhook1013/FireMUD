@@ -249,6 +249,8 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
       CanonicalJoinOperationEvidence retried = retry.get(30, TimeUnit.SECONDS);
       assertThat(retried.status()).isEqualTo("COMMITTED");
       assertThat(retried.outcome()).isEqualTo("JOINED");
+      assertThat(retried.lastAttemptAuthorityAvailability()).isEqualTo("UNAVAILABLE");
+      assertThat(retried.lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_TIMEOUT");
       assertThat(exactTerminalRetry(fixture)).isEqualTo(retried);
     } finally {
       start.countDown();
@@ -258,6 +260,8 @@ class AccountCanonicalJoinReconciliationIntegrationTest {
     CanonicalJoinOperationEvidence committed = readOperation(fixture);
     assertThat(committed.status()).isEqualTo("COMMITTED");
     assertThat(committed.outcome()).isEqualTo("JOINED");
+    assertThat(committed.lastAttemptAuthorityAvailability()).isEqualTo("UNAVAILABLE");
+    assertThat(committed.lastAttemptFailureCode()).isEqualTo("ENTITLEMENT_TIMEOUT");
     assertThat(evidenceCounts(fixture)).isEqualTo(before);
   }
 
