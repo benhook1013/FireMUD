@@ -200,6 +200,12 @@ spec:
             - name: FIREMUD_GRPC_CA_CERT_PATH
               value: /grpc-trust/ca.crt
             {{- else }}
+{{- if eq $service.name "logging-admin-service" }}
+            - name: FIREMUD_GRPC_WORKLOAD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+{{- end }}
 {{ include "firemud.grpcTlsEnv" $ | nindent 12 }}
             {{- end }}
             {{- end }}

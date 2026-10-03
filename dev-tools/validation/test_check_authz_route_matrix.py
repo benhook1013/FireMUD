@@ -2801,6 +2801,30 @@ class AuthzRouteMatrixValidationTest(unittest.TestCase):
         self.validator.validate_route_statuses(document["routes"], statuses, errors)
         self.assertEqual([], errors)
 
+    def test_account_audit_readback_is_routable_but_ingress_stays_gated(self):
+        document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
+        create = route_for(document, "logging-admin-service", "CreateLogEvent")
+        readback = route_for(document, "logging-admin-service", "ReadLogEventReceipt")
+
+        self.assertEqual("target_not_currently_routable", create["route_status"])
+        self.assertEqual("current_openapi_operator_surface", readback["route_status"])
+        auth_fields = (
+            "classification",
+            "auth_path",
+            "issued_token_state",
+            "accepted_token_profiles",
+            "token_type",
+            "token_issuer",
+            "token_audience",
+            "method_policy",
+            "allowed_callers",
+            "mtls_callers",
+            "end_user_token_required",
+        )
+        create_auth = {field: create[field] for field in auth_fields}
+        readback_auth = {field: readback[field] for field in auth_fields}
+        self.assertEqual(create_auth, readback_auth)
+
     def test_required_fields_use_snake_case(self):
         document = self.validator.yaml.safe_load(MATRIX.read_text(encoding="utf-8"))
         errors = []
