@@ -2026,6 +2026,16 @@ jobs:
             --require-suite net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#postJoinSnapshotCarriesCurrentCompositeSourcesWithoutRewritingMembershipEvent()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#membershipSourceReaderReadsRetainedInactiveRetryAndReactivationWithoutMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#activeMembershipCaptureCommitsBesideSyntheticV35SourceAndExactReadbackDoesNotRewriteIt()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderReturnsExactRedactedReadbackWithoutMutation()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderRejectsMissingCaptureForValidCommittedSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderRechecksDeadlineAfterAuthorityRead()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#bareLoginCurrentAuthorityReaderRejectsSourceAfterAccountAuthorityAndFenceAdvance()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#captureRollbackLeavesNeitherCaptureNorPartialCommittedSource()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#absentAndInactiveMembershipRejectCaptureWithoutInitializingOrRejoining()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#capturedEvidenceCannotBeReplacedByChangedIdentityDigestOrFenceValues()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#directRepositoryRejectsCaptureForAnotherPersistedAccountUuid()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#populatedCaptureIsImmutableAndTerminalSourceCannotBeBackfilled()' \
             account-service
 
       - name: Upload Account current recipient source composition PostgreSQL proof
