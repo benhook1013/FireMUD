@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CERT_DIR="${1:-$SCRIPT_DIR}"
 GENERATOR="$SCRIPT_DIR/generate-dev-certs.sh"
 WORKLOAD_NAMESPACE="local"

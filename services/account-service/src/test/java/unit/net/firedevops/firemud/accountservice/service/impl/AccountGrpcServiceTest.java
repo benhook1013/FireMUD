@@ -671,7 +671,11 @@ class AccountGrpcServiceTest {
             new GrpcPeerIdentity(
                 "spiffe://firemud/ns/test/sa/world-management-service",
                 WORKLOAD_NAMESPACE,
-                "world-management-service"));
+                "world-management-service"),
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/other/sa/game-session-service",
+                "other",
+                "game-session-service"));
     for (GrpcPeerIdentity peer : rejectedPeers) {
       PingService pingService = Mockito.mock(PingService.class);
       AccountService accountService = Mockito.mock(AccountService.class);

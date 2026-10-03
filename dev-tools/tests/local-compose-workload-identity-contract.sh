@@ -77,6 +77,36 @@ assert_invalid_existing_bundle_is_preserved() {
   assert_mode 640 "$unmanaged_file"
 }
 
+# Defaults derived from a copied checkout must use its physical path even
+# when each helper is invoked through a symlinked checkout ancestor.
+default_path_fixture="$CERT_DIR/default-path-fixture"
+default_path_checkout="$default_path_fixture/checkout"
+default_path_alias="$default_path_fixture/checkout-alias"
+mkdir -p "$default_path_checkout/dev-tools/certs"
+for helper in ensure-dev-certs.sh generate-dev-certs.sh clean-dev-certs.sh; do
+  cp "$ROOT_DIR/dev-tools/certs/$helper" "$default_path_checkout/dev-tools/certs/$helper"
+done
+ln -s "$default_path_checkout" "$default_path_alias"
+default_path_cert_dir="$default_path_checkout/dev-tools/certs"
+default_path_alias_cert_dir="$default_path_alias/dev-tools/certs"
+bash "$default_path_alias_cert_dir/generate-dev-certs.sh"
+[[ -f "$default_path_cert_dir/ca.crt" && -f "$default_path_cert_dir/server.crt" ]] || {
+  echo "default certificate generation did not write into the copied physical checkout" >&2
+  exit 1
+}
+bash "$default_path_alias_cert_dir/ensure-dev-certs.sh"
+[[ -f "$default_path_cert_dir/local-runtime/default/client.crt" ]] || {
+  echo "default certificate setup did not write into the copied physical checkout" >&2
+  exit 1
+}
+bash "$default_path_alias_cert_dir/clean-dev-certs.sh"
+[[ ! -e "$default_path_cert_dir/ca.crt" \
+  && ! -e "$default_path_cert_dir/local-runtime" \
+  && ! -e "$default_path_cert_dir/workloads" ]] || {
+  echo "default certificate cleanup did not clean the copied physical checkout" >&2
+  exit 1
+}
+
 assert_workload_certificate() {
   local workload="$1"
   local certificate="$CERT_DIR/local-runtime/$workload/workloads/$workload.crt"

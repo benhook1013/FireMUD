@@ -77,6 +77,28 @@ public class AccountJoinOperationRepository {
         .fetch(AccountJoinOperationRepository::toJoinOperation);
   }
 
+  /** Counts due PENDING operations without loading rows or taking per-account locks. */
+  public long countDuePendingReconciliation(Instant now) {
+    if (now == null) {
+      throw new IllegalArgumentException("JOIN reconciliation time is required");
+    }
+    Long count =
+        dsl.select(org.jooq.impl.DSL.count().cast(Long.class))
+            .from(ACCOUNT_JOIN_OPERATIONS)
+            .where(
+                ACCOUNT_JOIN_OPERATIONS
+                    .STATUS
+                    .eq("PENDING")
+                    .and(
+                        ACCOUNT_JOIN_OPERATIONS.NEXT_RECONCILIATION_ATTEMPT_AT.le(
+                            toLocalDateTime(now))))
+            .fetchOne(0, Long.class);
+    if (count == null) {
+      throw new IllegalStateException("JOIN reconciliation due-operation count was unavailable");
+    }
+    return count;
+  }
+
   /**
    * Records one reconciliation attempt only if the pending row still has the observed attempt count
    * and due time. The count saturates at the configured diagnostic threshold. A false result means

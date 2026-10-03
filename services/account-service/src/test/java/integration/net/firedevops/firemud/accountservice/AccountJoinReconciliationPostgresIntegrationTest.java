@@ -139,6 +139,37 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   }
 
   @Test
+  void dueAggregateCountsOnlyPendingRowsDueAtTheCapturedTime() {
+    Instant capturedNow = Instant.now().plusSeconds(10);
+    long baselineCount = joinOperationRepository.countDuePendingReconciliation(capturedNow);
+
+    JoinFixture due = committedEvidencePendingFixture();
+    JoinFixture future = committedEvidencePendingFixture();
+    JoinFixture terminal = fixture("active");
+    JoinPublicProductionResult terminalResult = join(terminal);
+    assertThat(terminalResult.success()).isTrue();
+    assertThat(terminalResult.outcomeCode()).isEqualTo("JOINED");
+
+    LocalDateTime futureDueAt =
+        LocalDateTime.ofInstant(capturedNow.plusSeconds(3_600), ZoneOffset.UTC);
+    assertThat(
+            dsl.execute(
+                "UPDATE account_join_operations SET next_reconciliation_attempt_at = ? WHERE request_id = ? AND status = 'PENDING'",
+                futureDueAt,
+                future.requestId()))
+        .isEqualTo(1);
+
+    assertThat(joinOperationRepository.countDuePendingReconciliation(capturedNow))
+        .isEqualTo(baselineCount + 1);
+    List<JoinOperation> duePage =
+        joinOperationRepository.findDuePendingReconciliation(capturedNow, 100);
+    assertThat(duePage).extracting(JoinOperation::requestId).contains(due.requestId());
+    assertThat(duePage)
+        .extracting(JoinOperation::requestId)
+        .doesNotContain(future.requestId(), terminal.requestId());
+  }
+
+  @Test
   void exactPersistedEvidenceRecoversExpiredScopeAndSameRequestRetryWithoutDuplicates() {
     JoinFixture fixture = fixture("active");
     JoinPublicProductionResult original = join(fixture);
