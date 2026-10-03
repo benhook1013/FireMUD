@@ -6,8 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,6 +32,9 @@ import net.firedevops.firemud.worldmanagement.client.GameDesignClient;
 import net.firedevops.firemud.worldmanagement.config.WorldProperties;
 import net.firedevops.firemud.worldmanagement.dto.PreparedWorldInstanceRequest;
 import net.firedevops.firemud.worldmanagement.entity.Room;
+import net.firedevops.firemud.worldmanagement.entity.RoomExit;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstance;
+import net.firedevops.firemud.worldmanagement.entity.RoomInstanceExit;
 import net.firedevops.firemud.worldmanagement.entity.WorldInstance;
 import net.firedevops.firemud.worldmanagement.entity.Zone;
 import net.firedevops.firemud.worldmanagement.repository.RegionInstanceRepository;
@@ -42,6 +48,7 @@ import net.firedevops.firemud.worldmanagement.repository.ZoneInstanceRepository;
 import net.firedevops.firemud.worldmanagement.repository.ZoneRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
@@ -159,13 +166,30 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   @Test
-  void prepareWorldInstancePersistsPreparingLifecycle() {
+  void prepareWorldInstanceMaterializesSeededRoomIdentityAndActivatesOwnerLifecycle() {
+    Room starterRoom = templateRoom(42L, 1021L);
+    starterRoom.setName("Candle-lit Antechamber");
+    Room secondaryRoom = templateRoom(42L, 2045L);
+    secondaryRoom.setName("Smith's Annex");
+    when(roomRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(List.of(starterRoom, secondaryRoom));
+    when(roomExitRepository.findByTenantIdAndVersionIdOrderByIdAsc(42L, 11L))
+        .thenReturn(
+            List.of(
+                templateExit(42L, 11L, starterRoom, secondaryRoom, "NORTH"),
+                templateExit(42L, 11L, secondaryRoom, starterRoom, "SOUTH")));
+    AtomicReference<WorldInstance> storedInstance = new AtomicReference<>();
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
-        .thenReturn(Optional.empty());
+        .thenAnswer(invocation -> Optional.ofNullable(storedInstance.get()));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              WorldInstance worldInstance = invocation.getArgument(0);
+              storedInstance.set(worldInstance);
+              return worldInstance;
+            });
 
-    var snapshot =
+    var prepared =
         service.prepareWorldInstance(
             new PreparedWorldInstanceRequest(
                 42L,
@@ -181,11 +205,43 @@ class WorldLifecycleCommandServiceImplTest {
                 "prb:42:11:77",
                 77L));
 
-    assertEquals("PREPARING", snapshot.status());
-    assertEquals(1L, snapshot.lifecycleEpoch());
+    assertEquals("PREPARING", prepared.status());
+    assertEquals(1L, prepared.lifecycleEpoch());
+    assertEquals(42L, storedInstance.get().getTenantId());
+    assertEquals(101L, storedInstance.get().getGameInstanceId());
+    assertEquals(11L, storedInstance.get().getVersionId());
+    assertEquals(0L, storedInstance.get().getRowVersion());
     verify(regionInstanceRepository).save(any());
     verify(zoneInstanceRepository).save(any());
-    verify(roomInstanceRepository).save(any());
+    ArgumentCaptor<RoomInstance> roomCaptor = ArgumentCaptor.forClass(RoomInstance.class);
+    verify(roomInstanceRepository, times(2)).save(roomCaptor.capture());
+    List<RoomInstance> rooms = roomCaptor.getAllValues();
+    assertEquals(
+        List.of(1021L, 2045L), rooms.stream().map(RoomInstance::getRoomInstanceRowId).toList());
+    assertEquals(
+        List.of(1021L, 2045L), rooms.stream().map(RoomInstance::getTemplateRoomId).toList());
+    assertEquals(List.of(42L, 42L), rooms.stream().map(RoomInstance::getTenantId).toList());
+    assertEquals(List.of(101L, 101L), rooms.stream().map(RoomInstance::getGameInstanceId).toList());
+
+    ArgumentCaptor<RoomInstanceExit> exitCaptor = ArgumentCaptor.forClass(RoomInstanceExit.class);
+    verify(roomInstanceExitRepository, times(2)).save(exitCaptor.capture());
+    assertEquals(
+        List.of("NORTH", "SOUTH"),
+        exitCaptor.getAllValues().stream().map(RoomInstanceExit::getDirection).toList());
+    assertEquals(
+        List.of(1021L, 2045L),
+        exitCaptor.getAllValues().stream()
+            .map(exit -> exit.getFromRoomInstance().getRoomInstanceRowId())
+            .toList());
+    assertEquals(
+        List.of(2045L, 1021L),
+        exitCaptor.getAllValues().stream()
+            .map(exit -> exit.getToRoomInstance().getRoomInstanceRowId())
+            .toList());
+
+    var activated = service.activatePreparedWorldInstance(42L, 101L, prepared.lifecycleEpoch());
+    assertEquals("ACTIVE", activated.status());
+    assertEquals(2L, activated.lifecycleEpoch());
   }
 
   @Test
@@ -283,6 +339,30 @@ class WorldLifecycleCommandServiceImplTest {
     verify(worldInstanceRepository).save(instance);
     verify(worldEventRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
     verify(roomInstanceExitRepository).deleteByTenantIdAndGameInstanceId(42L, 101L);
+  }
+
+  @Test
+  void terminationDoesNotCrossAnUnresolvedInitialAdmissionBindHold() {
+    WorldInstance instance = activeWorldInstance();
+    stubPersistedWorldInstance(instance);
+    when(worldInstanceRepository.hasNonterminalInitialAdmissionBindHold(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              assertTrue(localTransactionActive.get());
+              return true;
+            });
+
+    IllegalArgumentException error =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop"));
+
+    assertTrue(error.getMessage().startsWith("INITIAL_ADMISSION_BIND_HOLD_ACTIVE:"));
+    assertEquals("ACTIVE", instance.getStatus());
+    verify(entityManagementClient, org.mockito.Mockito.never())
+        .cleanupRuntimeInstance(anyLong(), anyLong(), anyString());
+    verify(worldInstanceRepository).findByTenantIdAndGameInstanceIdForUpdate(42L, 101L);
+    verify(worldInstanceRepository, org.mockito.Mockito.never()).save(any(WorldInstance.class));
   }
 
   @Test
@@ -429,6 +509,8 @@ class WorldLifecycleCommandServiceImplTest {
     terminating.setTerminationRequestId("term-1");
     terminating.setLifecycleEpoch(3L);
     when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.of(instance), Optional.of(terminating));
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance), Optional.of(terminating));
     when(worldInstanceRepository.save(any(WorldInstance.class)))
         .thenAnswer(
@@ -598,6 +680,17 @@ class WorldLifecycleCommandServiceImplTest {
               }
               return Optional.of(copyWorldInstance(persisted.get()));
             });
+    AtomicBoolean firstLockedFind = new AtomicBoolean(true);
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
+        .thenAnswer(
+            invocation -> {
+              if (localTransactionActive.get()) {
+                worldInstanceReadInLocalTransaction.set(true);
+              }
+              return firstLockedFind.compareAndSet(true, false)
+                  ? Optional.of(initiallyLoaded)
+                  : Optional.of(copyWorldInstance(persisted.get()));
+            });
     when(worldInstanceRepository.save(any(WorldInstance.class)))
         .thenAnswer(
             invocation -> {
@@ -651,6 +744,17 @@ class WorldLifecycleCommandServiceImplTest {
     room.setName("Login Hall");
     room.setDescription("A narrow testing hall.");
     return room;
+  }
+
+  private RoomExit templateExit(
+      long tenantId, long versionId, Room fromRoom, Room toRoom, String direction) {
+    RoomExit exit = new RoomExit();
+    exit.setTenantId(tenantId);
+    exit.setVersionId(versionId);
+    exit.setFromRoom(fromRoom);
+    exit.setToRoom(toRoom);
+    exit.setDirection(direction);
+    return exit;
   }
 
   private Zone templateZone(long tenantId, long zoneId) {

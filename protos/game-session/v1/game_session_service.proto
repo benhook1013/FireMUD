@@ -38,6 +38,9 @@ service GameSessionControlPlaneService {
       returns (GetGameSessionPinConvergenceResponse);
   rpc GetGameInstanceRuntimeState(GetGameInstanceRuntimeStateRequest)
       returns (GetGameInstanceRuntimeStateResponse);
+  // Read exact durable owner proof for a World-owned initial-admission hold.
+  rpc GetInitialAdmissionBindProof(GetInitialAdmissionBindProofRequest)
+      returns (GetInitialAdmissionBindProofResponse);
   rpc ValidateBuiltInCommandAlias(ValidateBuiltInCommandAliasRequest)
       returns (ValidateBuiltInCommandAliasResponse);
   rpc ListAdmissionPointers(ListAdmissionPointersRequest)
@@ -439,6 +442,56 @@ message ListAdmissionPointerAuditRequest {
 message ListAdmissionPointerAuditResponse {
   repeated AdmissionPointerControlPlaneEntry audit = 1;
   shared.v1.ErrorDetail error = 2;
+}
+
+enum InitialAdmissionBindOwnerProofOutcome {
+  INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_UNSPECIFIED = 0;
+  INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_COMMITTED = 1;
+  INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ABORTED = 2;
+  INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_NOT_FOUND = 3;
+  INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_PENDING = 4;
+  INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_UNAVAILABLE = 5;
+  INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ERROR = 6;
+}
+
+message GetInitialAdmissionBindProofRequest {
+  string hold_id = 1;
+  string hold_fence = 2;
+  string tenant_id = 3;
+  string realm_uuid = 4;
+  string playable_state_namespace_uuid = 5;
+  entity_management.v1.PlayableStateScope playable_state_scope = 6;
+  string game_instance_id = 7;
+  string version_id = 8;
+  int64 active_lifecycle_epoch = 9;
+  string initial_admission_request_id = 10;
+  string request_digest = 11;
+  bool expected_no_prior_pointer = 12;
+  int64 expected_catalog_revision = 13;
+}
+
+message GetInitialAdmissionBindProofResponse {
+  // Echoes the complete request tuple so World can reject proof for another hold or target.
+  string hold_id = 1;
+  string hold_fence = 2;
+  string tenant_id = 3;
+  string realm_uuid = 4;
+  string playable_state_namespace_uuid = 5;
+  entity_management.v1.PlayableStateScope playable_state_scope = 6;
+  string game_instance_id = 7;
+  string version_id = 8;
+  int64 active_lifecycle_epoch = 9;
+  string initial_admission_request_id = 10;
+  string request_digest = 11;
+  bool expected_no_prior_pointer = 12;
+  int64 expected_catalog_revision = 13;
+  InitialAdmissionBindOwnerProofOutcome outcome = 14;
+  string owner_proof_id = 15;
+  string pointer_audit_id = 16;
+  int64 pointer_version = 17;
+  string pointer_audit_request_digest = 18;
+  bool future_commit_prevented = 19;
+  shared.v1.ErrorDetail error = 20;
 }
 
 message GetGameplayCommandStatusRequest {

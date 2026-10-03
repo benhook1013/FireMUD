@@ -22,6 +22,9 @@ SMOKE_COMPOSE_UP_ATTEMPTS="${SMOKE_COMPOSE_UP_ATTEMPTS:-3}"
 SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS="${SMOKE_COMPOSE_UP_RETRY_DELAY_SECONDS:-5}"
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
+export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH=/app/run-owned-initial-admission-capability.json
+unset FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH
 
 export TERM="${TERM:-dumb}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-plain}"
@@ -220,6 +223,7 @@ fi
 claim_run_owned_compose_project
 export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
 bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
+ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
 compose_up_with_retry
 bash "$HEALTH_CHECK_SCRIPT" "${COMPOSE_FILES[@]}"
