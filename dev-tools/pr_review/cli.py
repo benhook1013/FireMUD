@@ -307,6 +307,8 @@ def _parser() -> argparse.ArgumentParser:
     subagent_start.add_argument("--pr", required=True, type=_positive_int)
     subagent_start.add_argument("--run-id", help="stable caller identity; generated when omitted")
     subagent_start.add_argument("--reviewer", required=True)
+    subagent_start.add_argument("--model", required=True, help="actual model identifier from tool metadata")
+    subagent_start.add_argument("--reasoning-effort", help="actual reasoning effort, when known")
     subagent_start.add_argument("--scope", required=True, choices=("broad", "narrow"))
     subagent_start.add_argument("--coverage-limit", action="append", default=[])
     subagent_start.add_argument("--head", help="reviewed commit, if the pass is pinned to one")
@@ -1142,6 +1144,8 @@ def _dispatch_records(args: argparse.Namespace) -> tuple[Any, int]:
                 candidate_sha=args.head,
                 metadata={
                     "reviewer": args.reviewer,
+                    "model": args.model,
+                    **({"reasoning_effort": args.reasoning_effort} if args.reasoning_effort else {}),
                     "scope": args.scope,
                     "coverage_limits": args.coverage_limit,
                 },

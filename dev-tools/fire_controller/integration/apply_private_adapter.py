@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Apply or verify the narrow private status-site adapter against exact source fingerprints."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+PATCH = Path(__file__).with_name("private-status-site.patch")
+BASELINE = {
+    "render.py": "8e66c84f5919cdbf9e2c77cafb8e6d1c1cf2ae333b20e172c433f66f8c42ab02",
+    "server.py": "f882ad287c87d23c79a3f6fdda08aa0e10b89853a228a54b943b8575bff0c193",
+    "publish-hetzner.py": "0fd388caf3a5919ff5e4242009e6fc26e9d95a4e39d0df76b09f79d7647416de",
+    "render_progress.py": "4f9fe30c9d8d6ba0f433445625758e494af60d28069dc49d2fd056e3d39a2adb",
+}
+EXPECTED_FILES = frozenset(BASELINE)
+POST_PATCH = {
+    "render.py": "a0a62f0d254a7553d1caaec16a15b82ca134b93e3e5599caae8a0f6460a8c1f9",
+    "server.py": "2dc5418179804dfacb0247dc5ac48fc9f7e435aaca3a82ca3fbf06583418f010",
+    "publish-hetzner.py": "6d3a4dad2de8cdccd760aaaa17843926cbbeb97db4b392d17227c6162dee4298",
+    "render_progress.py": "cc8b1318f51d281f2502825d17abee6962dbd49608b35f696a37cea055e3df35",
+}
+
+
+def fingerprint(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def check_source(site: Path, expected: dict[str, str]) -> None:
+    mismatches = []
+    for name, digest in expected.items():
+        source = site / name
+        if not source.is_file():
+            mismatches.append(f"{name}: missing")
+            continue
+        observed = fingerprint(source)
+        if observed != digest:
+            mismatches.append(f"{name}: expected {digest}, found {observed}")
+    if mismatches:
+        raise ValueError("website source fingerprint mismatch; refusing to apply or verify: "
+                         + "; ".join(mismatches))
+
+
+def check_patch_scope() -> None:
+    content = PATCH.read_text(encoding="utf-8")
+    files = set(re.findall(r"(?m)^diff --git a/([^\s]+) b/([^\s]+)$", content))
+    normalized = {left for left, right in files if left == right}
+    if normalized != EXPECTED_FILES or any(left != right for left, right in files):
+        raise ValueError("adapter patch must modify only render.py, server.py, publish-hetzner.py, and render_progress.py")
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source-site", required=True, type=Path,
+                        help="current private website source used for the fingerprint comparison")
+    parser.add_argument("--site-copy", required=True, type=Path,
+                        help="isolated copy of the private status website")
+    parser.add_argument("--verify", action="store_true", help="verify the post-patch source fingerprints")
+    args = parser.parse_args(argv)
+    source = args.source_site.resolve()
+    site = args.site_copy.resolve()
+    if source == site:
+        parser.error("refusing to modify the original private website; pass an isolated copy")
+    if not source.is_dir():
+        parser.error(f"website source does not exist: {source}")
+    if not site.is_dir():
+        parser.error(f"website copy does not exist: {site}")
+    try:
+        check_patch_scope()
+        check_source(source, BASELINE)
+        if args.verify:
+            check_source(site, POST_PATCH)
+            print("private adapter fingerprints verified")
+            return 0
+        check_source(site, BASELINE)
+        checked = subprocess.run(
+            ["git", "apply", "--check", str(PATCH)],
+            cwd=site,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if checked.returncode:
+            raise ValueError(f"patch does not apply cleanly: {checked.stderr.strip()}")
+        applied = subprocess.run(
+            ["git", "apply", str(PATCH)],
+            cwd=site,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if applied.returncode:
+            raise ValueError(f"patch application failed: {applied.stderr.strip()}")
+        check_source(site, POST_PATCH)
+    except (OSError, ValueError) as error:
+        print(f"private adapter: {error}", file=sys.stderr)
+        return 2
+    print("private adapter applied to isolated website copy")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
