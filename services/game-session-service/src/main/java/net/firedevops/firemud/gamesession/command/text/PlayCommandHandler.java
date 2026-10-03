@@ -3,8 +3,8 @@ package net.firedevops.firemud.gamesession.command.text;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Clock;
 import java.time.Instant;
-import java.time.format.DateTimeParseException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +77,7 @@ public class PlayCommandHandler {
   private final GameplayPresenceLifecycleService gameplayPresenceLifecycleService;
   private final ScriptEventPublisher scriptEventPublisher;
   private final MeterRegistry meterRegistry;
+  private final Clock authorityEvaluationClock;
   private final Counter takeoverCounter;
   private final Counter resumeCounter;
 
@@ -95,6 +96,38 @@ public class PlayCommandHandler {
       ScriptEventPublisher scriptEventPublisher,
       MeterRegistry meterRegistry,
       DirectTextConnectScopeSessionStore connectScopeSessionStore) {
+    this(
+        sessionAuthenticationService,
+        sessionContextService,
+        sessionRoutingNormalizationService,
+        gameplayWorldCatalog,
+        gameLogicProperties,
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        firstPartyConnectContextRegistry,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher,
+        meterRegistry,
+        connectScopeSessionStore,
+        Clock.systemUTC());
+  }
+
+  PlayCommandHandler(
+      SessionAuthenticationService sessionAuthenticationService,
+      SessionContextService sessionContextService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService,
+      GameplayWorldCatalog gameplayWorldCatalog,
+      GameLogicProperties gameLogicProperties,
+      AccountClient accountClient,
+      EntityManagementClient entityManagementClient,
+      ModerationPolicyClient moderationPolicyClient,
+      FirstPartyConnectContextRegistry firstPartyConnectContextRegistry,
+      GameplayPresenceLifecycleService gameplayPresenceLifecycleService,
+      ScriptEventPublisher scriptEventPublisher,
+      MeterRegistry meterRegistry,
+      DirectTextConnectScopeSessionStore connectScopeSessionStore,
+      Clock authorityEvaluationClock) {
     this.sessionAuthenticationService =
         Objects.requireNonNull(
             sessionAuthenticationService, "sessionAuthenticationService must not be null");
@@ -125,6 +158,9 @@ public class PlayCommandHandler {
     this.scriptEventPublisher =
         Objects.requireNonNull(scriptEventPublisher, "scriptEventPublisher must not be null");
     this.meterRegistry = Objects.requireNonNull(meterRegistry, "meterRegistry must not be null");
+    this.authorityEvaluationClock =
+        Objects.requireNonNull(
+            authorityEvaluationClock, "authorityEvaluationClock must not be null");
     this.takeoverCounter = this.meterRegistry.counter(TAKEOVER_METRIC);
     this.resumeCounter = this.meterRegistry.counter(RESUME_METRIC);
   }
@@ -195,6 +231,8 @@ public class PlayCommandHandler {
             null,
             null,
             ex);
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return admissionPointerUnavailableFailure(tenantTag, null);
       }
       WorldSelectorResolution worldSelection =
           resolvePlayWorld(context, requestedSelection.worldSelector(), currentCatalog);
@@ -1152,7 +1190,8 @@ public class PlayCommandHandler {
             response.getTenantId(),
             context.accountId(),
             selectedRealm.tenantId())
-        || !isFreshAuthorityEvaluation(response.getEvaluatedAt())) {
+        || !AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock)) {
       return false;
     }
     if (!response.getMembershipExists()) {
@@ -1182,7 +1221,8 @@ public class PlayCommandHandler {
             response.getAccountId(), response.getTenantId(), context.accountId(), realm.tenantId())
         && world.slug().equals(response.getWorldSlug())
         && realm.slug().equals(response.getRealmSlug())
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
+        && AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock);
   }
 
   private boolean isValidEntitlement(
@@ -1190,20 +1230,8 @@ public class PlayCommandHandler {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
-  }
-
-  private boolean isFreshAuthorityEvaluation(String evaluatedAt) {
-    if (!StringUtils.hasText(evaluatedAt)) {
-      return false;
-    }
-    try {
-      Instant evaluated = Instant.parse(evaluatedAt);
-      Instant now = Instant.now();
-      return !evaluated.isAfter(now) && !evaluated.isBefore(now.minusSeconds(15));
-    } catch (DateTimeParseException ex) {
-      return false;
-    }
+        && AuthorityEvaluationFreshness.isFresh(
+            response.getEvaluatedAt(), authorityEvaluationClock);
   }
 
   private boolean hasMatchingAuthorityIdentity(

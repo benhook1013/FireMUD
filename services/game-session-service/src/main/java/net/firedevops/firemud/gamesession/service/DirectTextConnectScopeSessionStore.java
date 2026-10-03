@@ -158,27 +158,25 @@ public final class DirectTextConnectScopeSessionStore {
             .filter(scope -> scope.expiresAt().toEpochMilli() > nowMillis)
             .map(scope -> storeScope(scope, nowMillis))
             .toList();
-    long expiresAt =
-        storedScopes.stream()
-            .mapToLong(StoredScopedRealm::expiresAtEpochMs)
-            .max()
-            .orElse(now.plus(WORLDS_SNAPSHOT_TTL).toEpochMilli());
     String key = worldIdentityKey(tenantId, worldSlug);
     mutate(
         caller.sessionId(),
         nowMillis,
         current -> {
           LobbyRecord record = current == null ? LobbyRecord.empty(caller.sessionId()) : current;
+          if (record.sessionId() != caller.sessionId()) {
+            throw new ConflictingIdentityException("lobby record transport session did not match");
+          }
+          if (record.accountId() > 0L && record.accountId() != caller.accountId()) {
+            record = LobbyRecord.empty(caller.sessionId());
+          }
           Map<String, List<StoredScopedRealm>> byWorld = new HashMap<>(record.scopesByWorld());
           byWorld.remove(key);
           if (!storedScopes.isEmpty()) {
             byWorld.put(key, storedScopes);
           }
           Map<String, StoredRealmsSnapshot> realmsByWorld = new HashMap<>(record.realmsByWorld());
-          realmsByWorld.put(
-              key,
-              new StoredRealmsSnapshot(
-                  tenantId, worldSlug, requestedSelector, "", expiresAt, List.of()));
+          realmsByWorld.remove(key);
           return new LobbyRecord(
               caller.sessionId(),
               caller.accountId(),

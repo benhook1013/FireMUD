@@ -45,14 +45,18 @@ public class WorldInstanceRepository {
   }
 
   public boolean hasNonterminalInitialAdmissionBindHold(Long tenantId, Long gameInstanceId) {
-    return Boolean.TRUE.equals(
-        dsl.fetchValue(
+    Record result =
+        dsl.fetchOne(
             "SELECT EXISTS (SELECT 1 FROM initial_admission_bind_hold "
                 + "WHERE tenant_id = ? AND game_instance_id = ? "
                 + "AND status IN ('PENDING', 'RECONCILIATION_REQUIRED'))",
-            Boolean.class,
             tenantId,
-            gameInstanceId));
+            gameInstanceId);
+    if (result == null) {
+      throw new IllegalStateException(
+          "INITIAL_ADMISSION_BIND_HOLD_LOOKUP_FAILED: lifecycle hold lookup returned no row");
+    }
+    return Boolean.TRUE.equals(result.get(0, Boolean.class));
   }
 
   public Optional<WorldInstance> findById(Long id) {

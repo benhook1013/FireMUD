@@ -2,7 +2,13 @@ package net.firedevops.firemud.gamesession.service.impl;
 
 import io.micrometer.core.annotation.Timed;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.LoggingUtil;
 import net.firedevops.firemud.common.saga.SagaBuilder;
@@ -21,6 +27,7 @@ import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.mapper.GameInstanceMapper;
 import net.firedevops.firemud.gamesession.repository.GameInstanceRepository;
 import net.firedevops.firemud.gamesession.service.GameInstanceService;
+import net.firedevops.firemud.gamesession.service.RunOwnedInitialLaunchResult;
 import net.firedevops.firemud.gamesession.service.SessionStateService;
 import net.firedevops.firemud.worldmanagement.v1.ActivatePreparedWorldInstanceResponse;
 import net.firedevops.firemud.worldmanagement.v1.FailPreparedWorldInstanceResponse;
@@ -47,6 +54,8 @@ public class GameInstanceServiceImpl implements GameInstanceService {
   private static final String STATUS_RUNNING = "RUNNING";
   private static final String STATUS_STOPPING = "STOPPING";
   private static final String STATUS_STOPPED = "STOPPED";
+  private static final String RUN_OWNED_LAUNCH_DIGEST_SCHEMA =
+      "firemud.run-owned-initial-launch/v1";
   private static final String SUPPORTED_RELEASE_ATTESTATION_SCHEMA_VERSION = "v1";
   private static final String WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE =
       "world activation authority unavailable";
@@ -225,6 +234,123 @@ public class GameInstanceServiceImpl implements GameInstanceService {
       logger.warn("Failed to record started game session metric", metricFailure);
     }
     return finalized;
+  }
+
+  /**
+   * Starts or resumes a local fixture launch under a durable, tenant/request-bound owner identity.
+   * This method has no transport binding; the run-owned fixture coordinator is its only caller.
+   */
+  @Override
+  @Timed(value = "gamesession.run_owned_initial_launch")
+  public RunOwnedInitialLaunchResult startRunOwnedInitialLaunch(StartSessionRequest request) {
+    validateRunOwnedLaunchRequest(request);
+    ResolvedLaunchDescriptor resolvedLaunchDescriptor = preflightLaunch(request);
+    requireDescriptorMatchesRequest(request, resolvedLaunchDescriptor);
+    String requestDigest = runOwnedLaunchRequestDigest(request);
+    GameInstance reserved =
+        inTransaction(
+            () -> reserveRunOwnedInitialLaunch(request, resolvedLaunchDescriptor, requestDigest),
+            "reserve run-owned initial launch");
+    long gameInstanceId = reserved.getId();
+    requireRunOwnedTargetCanResume(reserved);
+
+    if (STATUS_RUNNING.equals(reserved.getStatus())) {
+      long activeEpoch = requireRunOwnedRecordedActiveEpoch(reserved);
+      WorldInstanceLifecycleSnapshot current =
+          readRunOwnedWorldLifecycle(reserved, request, resolvedLaunchDescriptor);
+      if (current.getStatus()
+          == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING) {
+        throw new IllegalStateException(
+            "RUN_OWNED_INITIAL_LAUNCH_STATE_MISMATCH: running owner row is not ACTIVE in World");
+      }
+      if (current.getStatus()
+          != WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE) {
+        throw runOwnedWorldStatusFailure(current.getStatus());
+      }
+      requireRunOwnedActiveEpoch(current, activeEpoch);
+      sessionStateService.saveState(withStatus(snapshot(reserved), STATUS_RUNNING));
+      GameInstance completed =
+          inTransaction(
+              () ->
+                  completeRunOwnedInitialLaunch(
+                      request,
+                      requestDigest,
+                      resolvedLaunchDescriptor,
+                      gameInstanceId,
+                      activeEpoch),
+              "complete run-owned initial launch retry");
+      return new RunOwnedInitialLaunchResult(snapshot(completed), activeEpoch);
+    }
+
+    validateStartDependencies();
+
+    WorldInstanceLifecycleSnapshot prepared =
+        prepareRunOwnedWorldInstance(reserved, resolvedLaunchDescriptor, request);
+    if (prepared.getStatus()
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING) {
+      reserved =
+          inTransaction(
+              () ->
+                  recordRunOwnedPreparingEpoch(
+                      request,
+                      requestDigest,
+                      resolvedLaunchDescriptor,
+                      gameInstanceId,
+                      prepared.getLifecycleEpoch()),
+              "record run-owned preparing epoch");
+    } else {
+      reserved =
+          reloadRunOwnedInitialLaunch(
+              request, requestDigest, resolvedLaunchDescriptor, gameInstanceId);
+    }
+
+    WorldInstanceLifecycleSnapshot current =
+        readRunOwnedWorldLifecycle(reserved, request, resolvedLaunchDescriptor);
+    long activeEpoch;
+    if (current.getStatus()
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING) {
+      if (STATUS_RUNNING.equals(reserved.getStatus())) {
+        throw new IllegalStateException(
+            "RUN_OWNED_INITIAL_LAUNCH_STATE_MISMATCH: running owner row is not ACTIVE in World");
+      }
+      if (reserved.getRunOwnedStartActiveEpoch() != null) {
+        throw new IllegalStateException(
+            "RUN_OWNED_INITIAL_LAUNCH_STATE_MISMATCH: starting owner row already has an active epoch");
+      }
+      long preparingEpoch = requireRunOwnedPreparingEpoch(reserved);
+      activeEpoch = Math.addExact(preparingEpoch, 1L);
+      if (current.getLifecycleEpoch() != preparingEpoch) {
+        throw new IllegalStateException(
+            "WORLD_LIFECYCLE_EPOCH_MISMATCH: PREPARING epoch differs from the durable launch fence");
+      }
+      if (STATUS_STARTING.equals(reserved.getStatus())) {
+        sessionStateService.saveState(withStatus(snapshot(reserved), STATUS_STARTING));
+      }
+      activateAndReadBackRunOwnedWorld(
+          reserved, request, resolvedLaunchDescriptor, preparingEpoch, activeEpoch);
+    } else if (current.getStatus()
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE) {
+      long preparingEpoch = requireRunOwnedPreparingEpoch(reserved);
+      activeEpoch = Math.addExact(preparingEpoch, 1L);
+      if (reserved.getRunOwnedStartActiveEpoch() != null
+          && reserved.getRunOwnedStartActiveEpoch() != activeEpoch) {
+        throw new IllegalStateException(
+            "WORLD_LIFECYCLE_EPOCH_MISMATCH: ACTIVE epoch differs from the durable activation result");
+      }
+      requireRunOwnedActiveEpoch(current, activeEpoch);
+    } else {
+      throw runOwnedWorldStatusFailure(current.getStatus());
+    }
+
+    GameInstanceDto runningState = withStatus(snapshot(reserved), STATUS_RUNNING);
+    sessionStateService.saveState(runningState);
+    GameInstance completed =
+        inTransaction(
+            () ->
+                completeRunOwnedInitialLaunch(
+                    request, requestDigest, resolvedLaunchDescriptor, gameInstanceId, activeEpoch),
+            "complete run-owned initial launch");
+    return new RunOwnedInitialLaunchResult(snapshot(completed), activeEpoch);
   }
 
   @Override
@@ -587,6 +713,490 @@ public class GameInstanceServiceImpl implements GameInstanceService {
     instance.setOwnerAccountId(snapshot.ownerAccountId());
     instance.setTenantId(snapshot.tenantId());
     repository.save(instance);
+  }
+
+  private void validateRunOwnedLaunchRequest(StartSessionRequest request) {
+    if (request == null) {
+      throw new IllegalArgumentException("run-owned initial launch request is required");
+    }
+    RequestIdValidation.requirePositiveLong(request.tenantId(), "tenantId");
+    RequestIdValidation.requirePositiveLong(request.gameTemplateId(), "gameTemplateId");
+    RequestIdValidation.requirePositiveLong(request.ownerAccountId(), "ownerAccountId");
+    if (request.controlPlaneRequestId() == null
+        || request.controlPlaneRequestId().isBlank()
+        || request.controlPlaneRequestId().length() > 128) {
+      throw new IllegalArgumentException(
+          "controlPlaneRequestId must contain 1 to 128 nonblank characters");
+    }
+  }
+
+  private static String runOwnedLaunchRequestDigest(StartSessionRequest request) {
+    StringBuilder preimage = new StringBuilder();
+    appendDigestField(preimage, "schema", RUN_OWNED_LAUNCH_DIGEST_SCHEMA);
+    appendDigestField(preimage, "tenantId", Long.toString(request.tenantId()));
+    appendDigestField(preimage, "gameTemplateId", Long.toString(request.gameTemplateId()));
+    appendDigestField(preimage, "controlPlaneRequestId", request.controlPlaneRequestId());
+    appendDigestField(preimage, "ownerAccountId", Long.toString(request.ownerAccountId()));
+    appendDigestField(preimage, "replaceExistingFirst", "false");
+    try {
+      return HexFormat.of()
+          .formatHex(
+              MessageDigest.getInstance("SHA-256")
+                  .digest(preimage.toString().getBytes(StandardCharsets.UTF_8)));
+    } catch (NoSuchAlgorithmException exception) {
+      throw new IllegalStateException("SHA-256 unavailable", exception);
+    }
+  }
+
+  private static void appendDigestField(StringBuilder preimage, String name, String value) {
+    int nameByteLength = name.getBytes(StandardCharsets.UTF_8).length;
+    int valueByteLength = value.getBytes(StandardCharsets.UTF_8).length;
+    preimage
+        .append(nameByteLength)
+        .append(':')
+        .append(name)
+        .append(valueByteLength)
+        .append(':')
+        .append(value);
+  }
+
+  private void requireDescriptorMatchesRequest(
+      StartSessionRequest request, ResolvedLaunchDescriptor descriptor) {
+    if (descriptor.tenantId() != request.tenantId()
+        || descriptor.gameTemplateId() != request.gameTemplateId()
+        || !request.controlPlaneRequestId().equals(descriptor.controlPlaneRequestId())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_REQUEST_MISMATCH: resolved descriptor is not bound to this request");
+    }
+    if (descriptor.launchDescriptorId() == null
+        || descriptor.launchDescriptorId().isBlank()
+        || descriptor.versionId() <= 0L
+        || descriptor.releaseBundleId() <= 0L
+        || descriptor.versionStateEpoch() <= 0L
+        || descriptor.generationConfigRevision() == null
+        || descriptor.generationConfigRevision().isBlank()
+        || descriptor.publishedReleaseBundleRef() == null
+        || descriptor.publishedReleaseBundleRef().isBlank()
+        || !releaseBundleRef(
+                request.tenantId(), descriptor.versionId(), descriptor.releaseBundleId())
+            .equals(descriptor.publishedReleaseBundleRef())) {
+      throw new IllegalArgumentException(
+          "LAUNCH_DESCRIPTOR_INCOMPLETE: resolved descriptor is missing exact published inputs");
+    }
+  }
+
+  private GameInstance reserveRunOwnedInitialLaunch(
+      StartSessionRequest request, ResolvedLaunchDescriptor descriptor, String requestDigest) {
+    repository.lockRunOwnedStartIdentity(request.tenantId(), request.controlPlaneRequestId());
+    Optional<GameInstance> existing =
+        repository.findByTenantIdAndRunOwnedStartRequestIdForUpdate(
+            request.tenantId(), request.controlPlaneRequestId());
+    if (existing.isPresent()) {
+      requireSameRunOwnedInitialLaunch(existing.get(), request, descriptor, requestDigest);
+      return existing.get();
+    }
+
+    GameInstance instance = new GameInstance();
+    instance.setTenantId(request.tenantId());
+    instance.setRuntimeVersion(Long.toString(descriptor.versionId()));
+    instance.setGameTemplateId(request.gameTemplateId());
+    instance.setLaunchDescriptorId(descriptor.launchDescriptorId());
+    instance.setVersionId(descriptor.versionId());
+    instance.setReleaseBundleId(descriptor.releaseBundleId());
+    instance.setVersionStateEpoch(descriptor.versionStateEpoch());
+    instance.setGenerationConfigRevision(descriptor.generationConfigRevision());
+    instance.setRemapSetId(descriptor.remapSetId());
+    instance.setOwnerAccountId(request.ownerAccountId());
+    instance.setStatus(STATUS_STARTING);
+    instance.setRunOwnedStartRequestId(request.controlPlaneRequestId());
+    instance.setRunOwnedStartRequestDigest(requestDigest);
+    instance.setRunOwnedStartPublishedReleaseBundleRef(descriptor.publishedReleaseBundleRef());
+    return repository.save(instance);
+  }
+
+  private void requireSameRunOwnedInitialLaunch(
+      GameInstance instance,
+      StartSessionRequest request,
+      ResolvedLaunchDescriptor descriptor,
+      String requestDigest) {
+    if (!request.controlPlaneRequestId().equals(instance.getRunOwnedStartRequestId())
+        || !requestDigest.equals(instance.getRunOwnedStartRequestDigest())
+        || !Objects.equals(instance.getTenantId(), request.tenantId())
+        || !Objects.equals(instance.getOwnerAccountId(), request.ownerAccountId())
+        || !Objects.equals(instance.getGameTemplateId(), request.gameTemplateId())
+        || !Objects.equals(instance.getRuntimeVersion(), Long.toString(descriptor.versionId()))
+        || !Objects.equals(instance.getLaunchDescriptorId(), descriptor.launchDescriptorId())
+        || !Objects.equals(instance.getVersionId(), descriptor.versionId())
+        || !Objects.equals(instance.getReleaseBundleId(), descriptor.releaseBundleId())
+        || !Objects.equals(instance.getVersionStateEpoch(), descriptor.versionStateEpoch())
+        || !Objects.equals(
+            instance.getGenerationConfigRevision(), descriptor.generationConfigRevision())
+        || !Objects.equals(instance.getRemapSetId(), descriptor.remapSetId())
+        || !Objects.equals(
+            instance.getRunOwnedStartPublishedReleaseBundleRef(),
+            descriptor.publishedReleaseBundleRef())) {
+      throw new IllegalStateException(
+          "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_CONFLICT: request or resolved descriptor changed");
+    }
+  }
+
+  private void requireRunOwnedTargetCanResume(GameInstance instance) {
+    if (instance.getId() == null
+        || instance.getRunOwnedStartRequestId() == null
+        || instance.getRunOwnedStartRequestDigest() == null) {
+      throw new IllegalStateException(
+          "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: durable request identity is incomplete");
+    }
+    if (!STATUS_STARTING.equals(instance.getStatus())
+        && !STATUS_RUNNING.equals(instance.getStatus())) {
+      throw new IllegalStateException(
+          "RUN_OWNED_INITIAL_LAUNCH_TARGET_NOT_RESUMABLE: existing instance is not starting or running");
+    }
+    if (STATUS_RUNNING.equals(instance.getStatus())) {
+      requireRunOwnedRecordedActiveEpoch(instance);
+    }
+  }
+
+  private long requireRunOwnedRecordedActiveEpoch(GameInstance instance) {
+    long preparingEpoch = requireRunOwnedPreparingEpoch(instance);
+    Long activeEpoch = instance.getRunOwnedStartActiveEpoch();
+    if (activeEpoch == null || activeEpoch <= 0L) {
+      throw new IllegalStateException(
+          "RUN_OWNED_INITIAL_LAUNCH_EPOCH_UNAVAILABLE: running instance has no active epoch proof");
+    }
+    if (activeEpoch != Math.addExact(preparingEpoch, 1L)) {
+      throw new IllegalStateException(
+          "WORLD_LIFECYCLE_EPOCH_MISMATCH: durable ACTIVE epoch differs from the prepare fence");
+    }
+    return activeEpoch;
+  }
+
+  private GameInstance recordRunOwnedPreparingEpoch(
+      StartSessionRequest request,
+      String requestDigest,
+      ResolvedLaunchDescriptor descriptor,
+      long gameInstanceId,
+      long preparingEpoch) {
+    if (preparingEpoch <= 0L) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_MALFORMED: lifecycle epoch must be positive");
+    }
+    GameInstance instance =
+        repository
+            .findByTenantIdAndGameInstanceIdForUpdate(request.tenantId(), gameInstanceId)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
+    requireSameRunOwnedInitialLaunch(instance, request, descriptor, requestDigest);
+    Long recordedEpoch = instance.getRunOwnedStartPreparingEpoch();
+    if (recordedEpoch != null) {
+      if (recordedEpoch != preparingEpoch) {
+        throw new IllegalStateException(
+            "WORLD_LIFECYCLE_EPOCH_MISMATCH: PREPARING epoch changed across retries");
+      }
+      return instance;
+    }
+    if (instance.getRunOwnedStartActiveEpoch() != null) {
+      throw new IllegalStateException(
+          "RUN_OWNED_INITIAL_LAUNCH_EPOCH_MISMATCH: active epoch exists without its prepare fence");
+    }
+    instance.setRunOwnedStartPreparingEpoch(preparingEpoch);
+    return repository.save(instance);
+  }
+
+  private GameInstance reloadRunOwnedInitialLaunch(
+      StartSessionRequest request,
+      String requestDigest,
+      ResolvedLaunchDescriptor descriptor,
+      long gameInstanceId) {
+    return inTransaction(
+        () -> {
+          GameInstance instance =
+              repository
+                  .findByTenantIdAndGameInstanceIdForUpdate(request.tenantId(), gameInstanceId)
+                  .orElseThrow(
+                      () ->
+                          new IllegalStateException(
+                              "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
+          requireSameRunOwnedInitialLaunch(instance, request, descriptor, requestDigest);
+          return instance;
+        },
+        "reload run-owned initial launch");
+  }
+
+  private GameInstance completeRunOwnedInitialLaunch(
+      StartSessionRequest request,
+      String requestDigest,
+      ResolvedLaunchDescriptor descriptor,
+      long gameInstanceId,
+      long activeEpoch) {
+    GameInstance instance =
+        repository
+            .findByTenantIdAndGameInstanceIdForUpdate(request.tenantId(), gameInstanceId)
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "RUN_OWNED_INITIAL_LAUNCH_IDENTITY_UNAVAILABLE: instance row is missing"));
+    requireSameRunOwnedInitialLaunch(instance, request, descriptor, requestDigest);
+    long expectedActiveEpoch = Math.addExact(requireRunOwnedPreparingEpoch(instance), 1L);
+    if (activeEpoch != expectedActiveEpoch) {
+      throw new IllegalStateException(
+          "WORLD_LIFECYCLE_EPOCH_MISMATCH: ACTIVE epoch differs from the durable activation fence");
+    }
+    if (instance.getRunOwnedStartActiveEpoch() != null
+        && instance.getRunOwnedStartActiveEpoch() != activeEpoch) {
+      throw new IllegalStateException(
+          "WORLD_LIFECYCLE_EPOCH_MISMATCH: ACTIVE epoch changed across retries");
+    }
+    if (!STATUS_STARTING.equals(instance.getStatus())
+        && !STATUS_RUNNING.equals(instance.getStatus())) {
+      throw new IllegalStateException(
+          "RUN_OWNED_INITIAL_LAUNCH_TARGET_NOT_RESUMABLE: existing instance is not starting or running");
+    }
+    instance.setRunOwnedStartActiveEpoch(activeEpoch);
+    instance.setStatus(STATUS_RUNNING);
+    return repository.save(instance);
+  }
+
+  private long requireRunOwnedPreparingEpoch(GameInstance instance) {
+    Long epoch = instance.getRunOwnedStartPreparingEpoch();
+    if (epoch == null || epoch <= 0L) {
+      throw new IllegalStateException(
+          "RUN_OWNED_INITIAL_LAUNCH_EPOCH_UNAVAILABLE: exact PREPARING epoch is not durable");
+    }
+    return epoch;
+  }
+
+  private WorldInstanceLifecycleSnapshot prepareRunOwnedWorldInstance(
+      GameInstance instance, ResolvedLaunchDescriptor descriptor, StartSessionRequest request) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException(WORLD_PREPARATION_AUTHORITY_UNAVAILABLE);
+    }
+    final PrepareWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.prepareWorldInstance(
+              request.tenantId(),
+              instance.getId(),
+              request.gameTemplateId(),
+              request.controlPlaneRequestId(),
+              descriptor.launchDescriptorId(),
+              descriptor.versionId(),
+              instance.getScriptPatchVersion(),
+              descriptor.runtimeFlagsJson(),
+              descriptor.generationConfigRevision(),
+              descriptor.releaseBundleId(),
+              descriptor.publishedReleaseBundleRef(),
+              descriptor.versionStateEpoch(),
+              descriptor.remapSetId());
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException(WORLD_PREPARATION_AUTHORITY_UNAVAILABLE, exception);
+    }
+    if (response == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
+    if (response.hasError()) {
+      throw new IllegalStateException(
+          response.getError().getCode() + ": " + response.getError().getMessage());
+    }
+    WorldInstanceLifecycleSnapshot snapshot =
+        requireWorldSnapshot(
+            response.hasWorldInstance(),
+            response.getWorldInstance(),
+            request.tenantId(),
+            instance.getId(),
+            null);
+    requireRunOwnedWorldDescriptor(snapshot, request, descriptor, instance.getId());
+    requireKnownRunOwnedWorldStatus(snapshot.getStatus());
+    return snapshot;
+  }
+
+  private WorldInstanceLifecycleSnapshot readRunOwnedWorldLifecycle(
+      GameInstance instance, StartSessionRequest request, ResolvedLaunchDescriptor descriptor) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException(WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE);
+    }
+    final GetWorldInstanceLifecycleResponse response;
+    try {
+      response =
+          worldManagementClient.getWorldInstanceLifecycle(request.tenantId(), instance.getId());
+    } catch (RuntimeException exception) {
+      throw new IllegalStateException(WORLD_LIFECYCLE_AUTHORITY_UNAVAILABLE, exception);
+    }
+    if (response == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
+    if (response.hasError()) {
+      throw new IllegalStateException(
+          response.getError().getCode() + ": " + response.getError().getMessage());
+    }
+    WorldInstanceLifecycleSnapshot snapshot =
+        requireWorldSnapshot(
+            response.hasWorldInstance(),
+            response.getWorldInstance(),
+            request.tenantId(),
+            instance.getId(),
+            null);
+    requireRunOwnedWorldDescriptor(snapshot, request, descriptor, instance.getId());
+    requireKnownRunOwnedWorldStatus(snapshot.getStatus());
+    return snapshot;
+  }
+
+  private WorldInstanceLifecycleSnapshot activateAndReadBackRunOwnedWorld(
+      GameInstance instance,
+      StartSessionRequest request,
+      ResolvedLaunchDescriptor descriptor,
+      long preparingEpoch,
+      long activeEpoch) {
+    if (worldManagementClient == null) {
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE);
+    }
+    final ActivatePreparedWorldInstanceResponse response;
+    try {
+      response =
+          worldManagementClient.activatePreparedWorldInstance(
+              request.tenantId(), instance.getId(), preparingEpoch);
+    } catch (RuntimeException activationFailure) {
+      return reconcileRunOwnedActivationFailure(
+          instance, request, descriptor, preparingEpoch, activeEpoch, activationFailure);
+    }
+    if (response == null) {
+      throw new IllegalStateException(WORLD_AUTHORITY_MALFORMED_RESPONSE_NULL);
+    }
+    if (response.hasError()) {
+      return reconcileRunOwnedActivationFailure(
+          instance,
+          request,
+          descriptor,
+          preparingEpoch,
+          activeEpoch,
+          new IllegalStateException(
+              response.getError().getCode() + ": " + response.getError().getMessage()));
+    }
+    WorldInstanceLifecycleSnapshot activated =
+        requireWorldSnapshot(
+            response.hasWorldInstance(),
+            response.getWorldInstance(),
+            request.tenantId(),
+            instance.getId(),
+            WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE);
+    requireRunOwnedWorldDescriptor(activated, request, descriptor, instance.getId());
+    requireRunOwnedActiveEpoch(activated, activeEpoch);
+
+    WorldInstanceLifecycleSnapshot readback =
+        readRunOwnedWorldLifecycle(instance, request, descriptor);
+    if (readback.getStatus()
+        != WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE) {
+      throw runOwnedWorldStatusFailure(readback.getStatus());
+    }
+    requireRunOwnedActiveEpoch(readback, activeEpoch);
+    return readback;
+  }
+
+  private WorldInstanceLifecycleSnapshot reconcileRunOwnedActivationFailure(
+      GameInstance instance,
+      StartSessionRequest request,
+      ResolvedLaunchDescriptor descriptor,
+      long preparingEpoch,
+      long activeEpoch,
+      RuntimeException activationFailure) {
+    WorldInstanceLifecycleSnapshot current =
+        readRunOwnedWorldLifecycle(instance, request, descriptor);
+    if (current.getStatus()
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE) {
+      requireRunOwnedActiveEpoch(current, activeEpoch);
+      return current;
+    }
+    if (current.getStatus()
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_PREPARING) {
+      if (current.getLifecycleEpoch() != preparingEpoch) {
+        throw new IllegalStateException(
+            "WORLD_LIFECYCLE_EPOCH_MISMATCH: PREPARING epoch differs from the durable launch fence",
+            activationFailure);
+      }
+      throw new IllegalStateException(WORLD_ACTIVATION_AUTHORITY_UNAVAILABLE, activationFailure);
+    }
+    throw runOwnedWorldStatusFailure(current.getStatus());
+  }
+
+  private void requireRunOwnedWorldDescriptor(
+      WorldInstanceLifecycleSnapshot snapshot,
+      StartSessionRequest request,
+      ResolvedLaunchDescriptor descriptor,
+      long gameInstanceId) {
+    final long tenantId;
+    final long instanceId;
+    final long templateId;
+    final long versionId;
+    final long releaseBundleId;
+    try {
+      tenantId = RequestIdValidation.requirePositiveLong(snapshot.getTenantId(), "tenantId");
+      instanceId =
+          RequestIdValidation.requirePositiveLong(snapshot.getGameInstanceId(), "gameInstanceId");
+      templateId =
+          RequestIdValidation.requirePositiveLong(snapshot.getGameTemplateId(), "gameTemplateId");
+      versionId = RequestIdValidation.requirePositiveLong(snapshot.getVersionId(), "versionId");
+      releaseBundleId =
+          RequestIdValidation.requirePositiveLong(snapshot.getReleaseBundleId(), "releaseBundleId");
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_MALFORMED: " + exception.getMessage(), exception);
+    }
+    if (tenantId != request.tenantId()
+        || instanceId != gameInstanceId
+        || templateId != request.gameTemplateId()
+        || !request.controlPlaneRequestId().equals(snapshot.getControlPlaneRequestId())
+        || !descriptor.launchDescriptorId().equals(snapshot.getLaunchDescriptorId())
+        || versionId != descriptor.versionId()
+        || releaseBundleId != descriptor.releaseBundleId()
+        || !descriptor.generationConfigRevision().equals(snapshot.getGenerationConfigRevision())
+        || !descriptor.publishedReleaseBundleRef().equals(snapshot.getPublishedReleaseBundleRef())
+        || snapshot.getVersionStateEpoch() != descriptor.versionStateEpoch()
+        || !Objects.equals(
+            normalizeBlank(descriptor.remapSetId()), normalizeBlank(snapshot.getRemapSetId()))) {
+      throw new IllegalStateException(
+          "WORLD_AUTHORITY_DESCRIPTOR_MISMATCH: lifecycle readback differs from the resolved launch descriptor");
+    }
+  }
+
+  private void requireKnownRunOwnedWorldStatus(WorldInstanceLifecycleStatus status) {
+    if (status == null
+        || status == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_UNSPECIFIED
+        || status == WorldInstanceLifecycleStatus.UNRECOGNIZED) {
+      throw new IllegalStateException("WORLD_AUTHORITY_MALFORMED: lifecycle status is unavailable");
+    }
+  }
+
+  private void requireRunOwnedActiveEpoch(
+      WorldInstanceLifecycleSnapshot snapshot, long expectedActiveEpoch) {
+    if (snapshot.getLifecycleEpoch() != expectedActiveEpoch) {
+      throw new IllegalStateException(
+          "WORLD_LIFECYCLE_EPOCH_MISMATCH: ACTIVE epoch differs from the durable activation result");
+    }
+  }
+
+  private RuntimeException runOwnedWorldStatusFailure(WorldInstanceLifecycleStatus status) {
+    if (status
+        == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_FAILED_PRE_ACTIVATION) {
+      return new LifecycleOutcomeException(
+          "WORLD_INSTANCE_LIFECYCLE_FAILED_PRE_ACTIVATION",
+          "run-owned instance failed before activation and remains terminal for this request");
+    }
+    if (status == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATING) {
+      return new LifecycleOutcomeException(
+          "WORLD_TERMINATION_IN_PROGRESS", "run-owned instance termination is in progress");
+    }
+    if (status == WorldInstanceLifecycleStatus.WORLD_INSTANCE_LIFECYCLE_STATUS_TERMINATED) {
+      return new LifecycleOutcomeException(
+          "WORLD_INSTANCE_TERMINATED", "run-owned instance is already terminated");
+    }
+    return new IllegalStateException(
+        "WORLD_AUTHORITY_MALFORMED: lifecycle status cannot resume initial launch");
+  }
+
+  private String normalizeBlank(String value) {
+    return value == null || value.isBlank() ? null : value;
   }
 
   private GameInstanceDto withStatus(GameInstanceDto snapshot, String status) {

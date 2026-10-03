@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
-from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
+from pr_review import cli_attempts, evidence, github, hosted, runtime, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
 from pr_review.sqlite_finding_text import _safe_finding_detail
 from pr_review.sqlite_provider_imports import _cli_detail, _cli_finding_title, _cli_headline
@@ -78,6 +78,134 @@ def trigger_record(head: str = HEAD):
             "command": hosted.FULL_COMMAND,
         },
     }
+
+
+def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = True):
+    trigger_at = "2026-09-23T00:02:00Z"
+    old_trigger_at = "2026-09-23T00:00:50Z"
+    old_started_at = "2026-09-23T00:00:40Z"
+    old_finished_at = "2026-09-23T00:01:15Z"
+    old_body = "An archived CodeRabbit finding.\n\n<!-- cr-comment:v1:0123456789abcdef01234567 -->"
+    addressed_body = f"{old_body}\n\n✅ Addressed in commits {'c' * 7} to {HEAD[:7]}"
+    inline = {
+        "databaseId": 30,
+        "author": {"login": "coderabbitai[bot]"},
+        "body": addressed_body,
+        "createdAt": "2026-09-23T00:01:10Z",
+        "updatedAt": "2026-09-23T00:02:15Z",
+    }
+    old_review = {
+        "databaseId": 20,
+        "author": {"login": "coderabbitai[bot]"},
+        "body": "<!-- walkthrough_start -->\nReviewing the archived candidate.",
+        "state": "COMMENTED",
+        "submittedAt": old_finished_at,
+        "commit": {"oid": BASE},
+    }
+    old_comments = {
+        "comments": [
+            comment(9, "owner", hosted.FULL_COMMAND, old_trigger_at),
+        ],
+        "review_threads": (
+            [
+                {
+                    "comments": {
+                        "nodes": [
+                            {
+                                **inline,
+                                "body": old_body,
+                                "createdAt": inline["createdAt"],
+                                "updatedAt": old_finished_at,
+                            }
+                        ]
+                    }
+                }
+            ]
+            if include_baseline
+            else []
+        ),
+    }
+    old_metadata = {
+        "state": "completed",
+        "terminal": True,
+        "attributable": True,
+        "repository": REPO,
+        "pull_request": PR,
+        "head_sha": BASE,
+        "trigger_id": 9,
+        "response_id": 20,
+        "observed_at": old_finished_at,
+    }
+
+    state_dir = common / "firemud" / "pr-review-stack.json"
+    state_dir.mkdir(parents=True)
+    database = common / "firemud" / "pr-review-stack.sqlite3"
+    SqliteStateStore(database).update(lambda state: state)
+    records = SqliteReviewRecords(database)
+    records.bootstrap()
+    records.start_attempt(
+        attempt_id="old-hosted-attempt",
+        source_pr=PR,
+        channel="hosted",
+        candidate_sha=BASE,
+        started_at=old_started_at,
+    )
+    records.finish_attempt(
+        "old-hosted-attempt",
+        state="completed",
+        finished_at=old_finished_at,
+        trigger_id="9",
+        provider_review_id="20",
+        artifacts={
+            "hosted_review": json.dumps([old_review]),
+            "hosted_comments": json.dumps(old_comments),
+            "metadata": json.dumps(old_metadata),
+        },
+    )
+    records.start_attempt(
+        attempt_id="current-hosted-attempt",
+        source_pr=PR,
+        channel="hosted",
+        candidate_sha=HEAD,
+        started_at="2026-09-23T00:01:50Z",
+        metadata={"repository": REPO},
+    )
+
+    trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
+    summary = comment(
+        12,
+        "coderabbitai[bot]",
+        "No actionable comments were generated in the recent review.\n"
+        f"Reviewing files that changed from the base of the PR and between {BASE} and {HEAD}.",
+        "2026-09-23T00:01:40Z",
+    )
+    summary["updatedAt"] = "2026-09-23T00:02:30Z"
+    response = comment(
+        11,
+        "coderabbitai[bot]",
+        "<!-- This is an auto-generated reply by CodeRabbit -->\n"
+        f"<!-- CodeRabbit review command invocation: v2:{'a' * 64} -->\n"
+        "<details>\n<summary>✅ Action performed</summary>\n"
+        "Full review finished.\n</details>",
+        "2026-09-23T00:02:08Z",
+    )
+    response["updatedAt"] = "2026-09-23T00:02:20Z"
+    payload = review_payload(
+        [trigger, summary, response],
+        threads=[{"comments": {"nodes": [inline]}}],
+    )
+    record = trigger_record()
+    record["sqlite_attempt_id"] = "current-hosted-attempt"
+    record["trigger"].update(
+        {
+            "id": 10,
+            "created_at": trigger_at,
+            "url": trigger["url"],
+        }
+    )
+    record_path = hosted.default_trigger_record_path(REPO, PR, common)
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    return payload, record, record_path
 
 
 class GithubAndEvidenceTests(unittest.TestCase):
@@ -1748,6 +1876,147 @@ class HostedEvidenceTests(unittest.TestCase):
         bool_record["trigger"]["id"] = True
         with self.assertRaisesRegex(ValueError, "invalid full-review identity"):
             hosted.trigger_state(REPO, PR, review_payload([trigger, finished]), bool_record)
+
+    def test_finished_reply_accepts_only_exact_archived_addressed_thread_updates(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            common = hosted._trigger_record_common_for_path(record_path, REPO, PR)
+            self.assertIsNotNone(common)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            records = SqliteReviewRecords(database)
+            current_attempt = records.attempt("current-hosted-attempt")
+            self.assertEqual(current_attempt["state"], "started")
+            current_row = next(
+                item for item in records.attempt_history(PR) if item["attempt_id"] == "current-hosted-attempt"
+            )
+            self.assertIsNone(current_row["trigger_id"])
+
+            state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+        self.assertEqual(state.state, "completed")
+        self.assertTrue(state.attributed)
+        self.assertEqual(state.response_id, 11)
+
+    def test_runtime_zero_reply_proof_uses_custom_trigger_record_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            checkpoint = evidence.Checkpoint(
+                comment_id=40,
+                created_at="2026-09-23T00:03:00Z",
+                type="Hosted",
+                raw_found=0,
+                accepted=0,
+                reviewed_sha=HEAD,
+                file_count=1,
+                correction=False,
+                updated_at=None,
+                run_id=None,
+                hosted_review_id=11,
+            )
+
+            proof = runtime.LiveEvidence._hosted_zero_reply_proof(
+                checkpoint,
+                11,
+                None,
+                REPO,
+                PR,
+                HEAD,
+                record,
+                payload,
+                record_path,
+            )
+
+        self.assertIsNotNone(proof)
+        self.assertEqual(proof["review_id"], 11)
+
+    def test_finished_reply_fails_closed_on_archive_lookup_filesystem_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            with patch.object(hosted, "state_path", side_effect=PermissionError("state directory inaccessible")):
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+        self.assertEqual(state.state, "ambiguous")
+        self.assertFalse(state.attributed)
+
+    def test_finished_reply_does_not_promote_ambiguous_or_mismatched_current_attempt(self):
+        cases = (("ambiguous", "10"), ("ambiguous", "99"), ("completed", "99"))
+        for attempt_state, trigger_id in cases:
+            with (
+                self.subTest(state=attempt_state, trigger_id=trigger_id),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+                common = hosted._trigger_record_common_for_path(record_path, REPO, PR)
+                self.assertIsNotNone(common)
+                database = common / "firemud" / "pr-review-stack.sqlite3"
+                records = SqliteReviewRecords(database)
+                records.finish_attempt(
+                    "current-hosted-attempt",
+                    state=attempt_state,
+                    finished_at="2026-09-23T00:02:08Z",
+                    trigger_id=trigger_id,
+                    provider_review_id="11",
+                    artifacts={
+                        "hosted_review": "[]",
+                        "hosted_comments": json.dumps({"comments": []}),
+                        "metadata": json.dumps({"state": attempt_state}),
+                    },
+                )
+
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+                self.assertEqual(state.state, "ambiguous")
+                self.assertFalse(state.attributed)
+
+    def test_finished_reply_keeps_unproven_or_changed_thread_output_ambiguous(self):
+        cases = (
+            ("unknown baseline", False, None),
+            ("modified archived body", True, "modified_body"),
+            ("addressed range ends on another head", True, "mismatched_range"),
+            ("new inline comment", True, "new_comment"),
+            ("positive finding count", True, "positive_count"),
+            ("incomplete coverage", True, "incomplete_coverage"),
+            ("mismatched summary head", True, "mismatched_summary_head"),
+        )
+        for label, include_baseline, mutation in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                payload, record, record_path = archived_addressed_reply_fixture(
+                    Path(directory), include_baseline=include_baseline
+                )
+                thread_nodes = payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0][
+                    "comments"
+                ]["nodes"]
+                if mutation == "modified_body":
+                    thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(
+                        "An archived CodeRabbit finding.", "A changed CodeRabbit finding."
+                    )
+                elif mutation == "mismatched_range":
+                    thread_nodes[0]["body"] = thread_nodes[0]["body"].replace(
+                        f"to {HEAD[:7]}", f"to {BASE[:7]}"
+                    )
+                elif mutation == "new_comment":
+                    thread_nodes.append(
+                        {
+                            "databaseId": 31,
+                            "author": {"login": "coderabbitai[bot]"},
+                            "body": "A new inline finding.",
+                            "createdAt": "2026-09-23T00:02:16Z",
+                            "updatedAt": "2026-09-23T00:02:16Z",
+                        }
+                    )
+                elif mutation in {"positive_count", "incomplete_coverage", "mismatched_summary_head"}:
+                    issue_comments = payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+                    summary = next(item for item in issue_comments if item["databaseId"] == 12)
+                    if mutation == "positive_count":
+                        summary["body"] += "\n**Actionable comments posted: 1**"
+                    elif mutation == "incomplete_coverage":
+                        summary["body"] += "\nFiles not reviewed: 3."
+                    else:
+                        summary["body"] = summary["body"].replace(HEAD, BASE)
+
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+                self.assertEqual(state.state, "ambiguous")
 
     def test_active_acknowledgement_does_not_hide_clean_finished_result(self):
         trigger = comment(10, "owner", hosted.FULL_COMMAND, "2026-09-23T00:01:00Z")

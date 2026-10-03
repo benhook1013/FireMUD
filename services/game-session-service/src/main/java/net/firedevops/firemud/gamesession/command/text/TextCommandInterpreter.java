@@ -235,20 +235,16 @@ public class TextCommandInterpreter {
 
   public TextCommandInterpretationResult interpret(
       String sessionId, String rawLine, boolean requiresSoloTick) {
-    String firstToken = rawLine == null ? "" : rawLine.trim().split("\\s+", 2)[0];
-    if (TextCommandType.fromToken(firstToken) == TextCommandType.LOGOUT) {
-      return interpretLogoutWithoutNormalization(
-          sessionId, parser.parse(rawLine, registry), requiresSoloTick);
+    TextCommand baseCommand = parser.parse(rawLine, registry);
+    if (baseCommand.type() == TextCommandType.LOGOUT) {
+      return interpretLogoutWithoutNormalization(sessionId, baseCommand, requiresSoloTick);
     }
     Optional<SessionContext> context =
         sessionAuthenticationService.resolveSessionContext(sessionId);
     TextCommandRegistry activeRegistry = registryFor(context);
-    return interpret(
-        sessionId,
-        parser.parse(rawLine, activeRegistry),
-        requiresSoloTick,
-        context,
-        activeRegistry);
+    TextCommand activeCommand =
+        admittedRegistryResolver == null ? baseCommand : parser.parse(rawLine, activeRegistry);
+    return interpret(sessionId, activeCommand, requiresSoloTick, context, activeRegistry);
   }
 
   public TextCommandInterpretationResult interpret(

@@ -710,6 +710,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import hashlib
+import json
 from pathlib import Path
 
 import yaml
@@ -721,6 +723,7 @@ preview_annotator = Path(sys.argv[3]).read_text(encoding="utf-8")
 dev_demo_workflow = yaml.safe_load(Path(sys.argv[4]).read_text(encoding="utf-8"))
 publisher_workflow = yaml.safe_load(Path(sys.argv[5]).read_text(encoding="utf-8"))
 credential_source_text = Path(sys.argv[6]).read_text(encoding="utf-8")
+repository_root = Path(sys.argv[1]).parents[2]
 janitor_workflow = yaml.safe_load(Path(sys.argv[7]).read_text(encoding="utf-8"))
 mode_action = yaml.safe_load(Path(sys.argv[8]).read_text(encoding="utf-8"))
 runtime_workflow = yaml.safe_load(Path(sys.argv[9]).read_text(encoding="utf-8"))
@@ -2963,6 +2966,46 @@ assert credential_source_text.count('" || return 1') >= 7
 assert credential_source_text.count('load_firemud_secret "$firemud_secret_json" || exit 1') == 2
 assert credential_source_text.count('load_minio_secret "$minio_secret_json" || exit 1') == 2
 assert credential_source_text.count('load_jwt_signing_secret "$jwt_signing_secret_json" || exit 1') == 2
+renderer_cases = (
+    (
+        "dev-tools/hosted/preview/render-preview-values.py",
+        ("123", "pr-123", "pr-123", "pr-123.preview.firedevops.net", "fixture", "32000"),
+    ),
+    (
+        "dev-tools/hosted/dev-demo/render-dev-demo-values.py",
+        ("dev", "dev", "dev.preview.firedevops.net", "fixture", "32016"),
+    ),
+)
+for renderer_name, renderer_args in renderer_cases:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        rendered_values_path = Path(temp_dir) / "hosted-values.yaml"
+        subprocess.run(
+            [
+                sys.executable,
+                str(repository_root / renderer_name),
+                str(repository_root / "k8s/helm/firemud/values-hosted-shared.example.yaml"),
+                str(rendered_values_path),
+                *renderer_args,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        rendered_values = yaml.safe_load(rendered_values_path.read_text(encoding="utf-8"))
+    jwt_values = rendered_values["previewStack"]["jwt"]
+    signing_key = jwt_values["signingKey"]
+    diagnostic_jwks = json.loads(jwt_values["jwksJson"])
+    expected_diagnostic_jwks = {
+        "keys": [],
+        "firemudDiagnostic": {
+            "purpose": "shared-hmac-secret-path-fingerprint",
+            "sha256": hashlib.sha256(signing_key.encode("utf-8")).hexdigest(),
+        },
+    }
+    if diagnostic_jwks != expected_diagnostic_jwks:
+        raise SystemExit(f"{renderer_name} emitted noncanonical diagnostic JWKS")
+    if signing_key in jwt_values["jwksJson"]:
+        raise SystemExit(f"{renderer_name} included signing material in diagnostic JWKS")
 assert 'report_existing_secret_rejection "$secret_name" "key ${key} is empty or malformed"' in credential_source_text
 for ambient_result_flow in (
     "if read_secret_if_present",

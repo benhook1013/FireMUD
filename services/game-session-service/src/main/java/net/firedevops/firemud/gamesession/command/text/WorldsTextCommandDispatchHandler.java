@@ -61,6 +61,9 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
           "INVALID_ARGUMENT", "Transport session is unavailable. Reconnect and try again.");
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return errorResult("AUTH_UNAVAILABLE", "World list is temporarily unavailable.");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return errorResult(
+          "ADMISSION_POINTER_UNAVAILABLE", "World routing is unavailable. Retry WORLDS.");
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return errorResult("AUTH_UNAVAILABLE", "World list is temporarily unavailable.");

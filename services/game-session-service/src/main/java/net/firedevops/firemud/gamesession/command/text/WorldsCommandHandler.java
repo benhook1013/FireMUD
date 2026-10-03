@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.Clock;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -97,10 +98,22 @@ public class WorldsCommandHandler {
       catalogSnapshot = worldCatalog.readDiscoverySnapshot();
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
     if (selection instanceof WorldSelectorResolution.Invalid) {
+      try {
+        // A tenant with invalid public-production cardinality is intentionally omitted from the
+        // discovery snapshot. Recheck the no-caller public projection to distinguish that
+        // fail-closed state from an ordinary unknown selector before returning INVALID_SELECTOR.
+        worldCatalog.resolvePublicWorldFromAuthoritySnapshot(worldSelector);
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+        return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+      }
       return RealmBrowseResult.invalidSelector();
     }
     if (selection instanceof WorldSelectorResolution.Stale) {
@@ -480,20 +493,7 @@ public class WorldsCommandHandler {
     return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
         && response.getEntitlementVersion() > 0L
         && response.getTenantBillingSequence() > 0L
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
-  }
-
-  private boolean isFreshAuthorityEvaluation(String evaluatedAt) {
-    if (!StringUtils.hasText(evaluatedAt)) {
-      return false;
-    }
-    try {
-      Instant evaluated = Instant.parse(evaluatedAt);
-      Instant now = Instant.now();
-      return !evaluated.isAfter(now) && !evaluated.isBefore(now.minusSeconds(15));
-    } catch (DateTimeParseException ex) {
-      return false;
-    }
+        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
   }
 
   private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
@@ -516,7 +516,7 @@ public class WorldsCommandHandler {
             response.getTenantId(),
             sessionContext.accountId(),
             realm.tenantId())
-        && isFreshAuthorityEvaluation(response.getEvaluatedAt());
+        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
   }
 
   private boolean hasMatchingAuthorityIdentity(
@@ -559,17 +559,36 @@ public class WorldsCommandHandler {
       catalogSnapshot = worldCatalog.readDiscoverySnapshot();
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
-    if (selection instanceof WorldSelectorResolution.Invalid
-        || selection instanceof WorldSelectorResolution.Stale) {
+    if (selection instanceof WorldSelectorResolution.Invalid) {
+      try {
+        worldCatalog.resolvePublicWorldFromAuthoritySnapshot(worldSelector);
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+        return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+      }
+      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
+    }
+    if (selection instanceof WorldSelectorResolution.Stale) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     if (selection instanceof WorldSelectorResolution.Unavailable) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
     GameplayWorldCatalog.WorldView world = ((WorldSelectorResolution.Selected) selection).world();
+    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog;
+    try {
+      currentRealmCatalog = worldCatalog.readRealmDiscoverySnapshot(world);
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+    }
     Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeRealmSnapshot;
     try {
       maybeRealmSnapshot =
@@ -579,25 +598,28 @@ public class WorldsCommandHandler {
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
-    if (maybeRealmSnapshot.isEmpty()) {
+    if (maybeRealmSnapshot.isEmpty()
+        || !maybeRealmSnapshot
+            .orElseThrow()
+            .catalogFingerprint()
+            .equals(currentRealmCatalog.catalogFingerprint())
+        || !normalizeSelector(worldSelector)
+            .equals(maybeRealmSnapshot.orElseThrow().requestedWorldSelector())) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     DirectTextConnectScopeSessionStore.RealmsSnapshot realmSnapshot =
         maybeRealmSnapshot.orElseThrow();
-    if (!normalizeSelector(worldSelector).equals(realmSnapshot.requestedWorldSelector())) {
-      return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
-    }
-    Optional<GameplayWorldCatalog.RealmDiscoverySnapshot> currentRealmCatalog;
+    Optional<GameplayWorldCatalog.RealmDiscoverySnapshot> revalidatedRealmCatalog;
     try {
-      currentRealmCatalog =
+      revalidatedRealmCatalog =
           worldCatalog.revalidateRealmDiscoverySnapshot(world, realmSnapshot.ordinalTargets());
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
     }
-    if (currentRealmCatalog.isEmpty()
+    if (revalidatedRealmCatalog.isEmpty()
         || !realmSnapshot
             .catalogFingerprint()
-            .equals(currentRealmCatalog.orElseThrow().catalogFingerprint())) {
+            .equals(revalidatedRealmCatalog.orElseThrow().catalogFingerprint())) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     Optional<DirectTextConnectScopeSessionStore.JoinScope> maybeJoinScope;
@@ -628,6 +650,8 @@ public class WorldsCommandHandler {
       hasPublicProductionRealm = worldCatalog.hasValidPublicProductionRealm(tenantId);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     if (!hasPublicProductionRealm) {
       return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
@@ -767,10 +791,19 @@ public class WorldsCommandHandler {
       catalogSnapshot = worldCatalog.readDiscoverySnapshot();
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     WorldSelectorResolution selection =
         resolveLobbyWorld(sessionContext, worldSelector, catalogSnapshot);
     if (selection instanceof WorldSelectorResolution.Invalid) {
+      try {
+        worldCatalog.resolvePublicWorldFromAuthoritySnapshot(worldSelector);
+      } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+        return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+      } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+        return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
+      }
       return CharacterBrowseResult.invalidWorld();
     }
     if (selection instanceof WorldSelectorResolution.Stale) {
@@ -844,7 +877,7 @@ public class WorldsCommandHandler {
             response.getTenantId(),
             sessionContext.accountId(),
             realm.tenantId())
-        || !isFreshAuthorityEvaluation(response.getEvaluatedAt())) {
+        || !AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC())) {
       return false;
     }
     if (!response.getMembershipExists()) {

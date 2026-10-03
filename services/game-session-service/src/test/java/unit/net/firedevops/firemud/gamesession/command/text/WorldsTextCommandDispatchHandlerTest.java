@@ -19,6 +19,8 @@ import net.firedevops.firemud.gamesession.presentation.RealmBrowseViewOutput;
 import net.firedevops.firemud.gamesession.presentation.TextPlayerOutputRenderer;
 import net.firedevops.firemud.gamesession.presentation.WorldsViewOutput;
 import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionStore;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
+import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
@@ -71,6 +73,55 @@ class WorldsTextCommandDispatchHandlerTest {
                         && "WORLDS".equals(gameplayCommand.getCommandText())
                         && gameplayCommand.getCommandId() != null
                         && gameplayCommand.getCommandId().startsWith("worlds-")));
+  }
+
+  @Test
+  void worldsMapsPointerOutageAndMalformedAuthorityToDistinctErrors() {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    when(authorityService.listPointers())
+        .thenThrow(new IllegalStateException("pointer authority unavailable"))
+        .thenReturn(
+            List.of(
+                new GameplayAdmissionPointerSnapshot(
+                    "demo",
+                    "Demo World",
+                    "production",
+                    "Live Realm",
+                    0L,
+                    11L,
+                    1L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW",
+                    1L,
+                    UUID.randomUUID(),
+                    UUID.randomUUID())));
+    AccountClient accountClient = Mockito.mock(AccountClient.class);
+    WorldsTextCommandDispatchHandler scopedHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(
+                new GameplayWorldCatalog(authorityService),
+                entityManagementClient,
+                accountClient,
+                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+            scriptEventPublisher);
+    TextCommandDispatchRequest request =
+        new TextCommandDispatchRequest(
+            "7",
+            new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
+            false,
+            Optional.empty());
+
+    TextCommandInterpretationResult outageResult = scopedHandler.handle(request);
+    TextCommandInterpretationResult malformedResult = scopedHandler.handle(request);
+
+    assertThat(outageResult.commandResult().errorCode()).isEqualTo("AUTH_UNAVAILABLE");
+    assertThat(malformedResult.commandResult().errorCode())
+        .isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
   }
 
   @Test
@@ -360,7 +411,7 @@ class WorldsTextCommandDispatchHandlerTest {
         .thenReturn(
             IssueDirectTextConnectScopeResponse.newBuilder()
                 .setConnectScopeId("opaque-account-scope")
-                .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build());
     when(accountClient.joinPublicProductionMembership(
             Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(Instant.class)))
@@ -511,11 +562,11 @@ class WorldsTextCommandDispatchHandlerTest {
         .thenReturn(
             IssueDirectTextConnectScopeResponse.newBuilder()
                 .setConnectScopeId("opaque-account-scope-1")
-                .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build(),
             IssueDirectTextConnectScopeResponse.newBuilder()
                 .setConnectScopeId("opaque-account-scope-2")
-                .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build());
     when(accountClient.joinPublicProductionMembership(
             Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(Instant.class)))
@@ -764,7 +815,7 @@ class WorldsTextCommandDispatchHandlerTest {
         .thenReturn(
             IssueDirectTextConnectScopeResponse.newBuilder()
                 .setConnectScopeId("opaque-account-scope")
-                .setConnectScopeExpiresAt("2030-01-01T00:00:00Z")
+                .setConnectScopeExpiresAt(Instant.now().plusSeconds(60).toString())
                 .build());
     when(accountClient.joinPublicProductionMembership(
             Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(Instant.class)))

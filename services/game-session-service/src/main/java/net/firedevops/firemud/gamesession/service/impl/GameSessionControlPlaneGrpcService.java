@@ -10,11 +10,17 @@ import java.sql.SQLRecoverableException;
 import java.sql.SQLTimeoutException;
 import java.sql.SQLTransientConnectionException;
 import java.util.List;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.regex.Pattern;
 import net.firedevops.firemud.common.grpc.GrpcAppErrors;
 import net.firedevops.firemud.common.security.AdminAuthorizationException;
 import net.firedevops.firemud.common.security.AdminRoleGuard;
 import net.firedevops.firemud.common.security.SessionContext;
 import net.firedevops.firemud.gamesession.service.AdmissionPointerVersionMismatchException;
+import net.firedevops.firemud.gamesession.service.InitialAdmissionBindHoldBinding;
+import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProof;
+import net.firedevops.firemud.gamesession.service.InitialAdmissionBindOwnerProofReader;
 import net.firedevops.firemud.gamesession.service.impl.GameSessionAdmissionPointerControlPlaneService.AdmissionPointerMutationPreconditionException;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentRequest;
 import net.firedevops.firemud.gamesession.v1.EnqueueAutomationCommandIfAbsentResponse;
@@ -27,6 +33,8 @@ import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceRequest
 import net.firedevops.firemud.gamesession.v1.GetGameSessionPinConvergenceResponse;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetGameplayCommandStatusResponse;
+import net.firedevops.firemud.gamesession.v1.GetInitialAdmissionBindProofRequest;
+import net.firedevops.firemud.gamesession.v1.GetInitialAdmissionBindProofResponse;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionRequest;
 import net.firedevops.firemud.gamesession.v1.GetPinnedScriptPatchVersionResponse;
 import net.firedevops.firemud.gamesession.v1.GetPreparedVersionUpgradeRequest;
@@ -39,6 +47,7 @@ import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultRequest;
 import net.firedevops.firemud.gamesession.v1.GetRemoteFollowupResultResponse;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusRequest;
 import net.firedevops.firemud.gamesession.v1.GetRuntimeOwnershipStatusResponse;
+import net.firedevops.firemud.gamesession.v1.InitialAdmissionBindOwnerProofOutcome;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditRequest;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointerAuditResponse;
 import net.firedevops.firemud.gamesession.v1.ListAdmissionPointersRequest;
@@ -101,6 +110,10 @@ public final class GameSessionControlPlaneGrpcService
   private final GameSessionOperatorControlPlaneService operatorControlPlaneService;
   private final GameSessionVersionUpgradeControlPlaneService versionUpgradeControlPlaneService;
   private final MeterRegistry meterRegistry;
+  private InitialAdmissionBindOwnerProofReader initialAdmissionBindOwnerProofReader;
+  private InitialAdmissionBindOwnerReadWorkloadGuard initialAdmissionBindOwnerReadWorkloadGuard;
+
+  private static final Pattern SHA_256 = Pattern.compile("[0-9a-f]{64}");
 
   @Value("${game.tick-duration-ms:1000}")
   private long tickDurationMs = 1000L;
@@ -121,6 +134,15 @@ public final class GameSessionControlPlaneGrpcService
     this.operatorControlPlaneService = operatorControlPlaneService;
     this.versionUpgradeControlPlaneService = versionUpgradeControlPlaneService;
     this.meterRegistry = meterRegistry;
+  }
+
+  @Autowired
+  public void configureInitialAdmissionBindOwnerReadBoundary(
+      InitialAdmissionBindOwnerProofReader proofReader,
+      @Value("${firemud.grpc.workload-namespace:}") String workloadNamespace) {
+    this.initialAdmissionBindOwnerProofReader = proofReader;
+    this.initialAdmissionBindOwnerReadWorkloadGuard =
+        new InitialAdmissionBindOwnerReadWorkloadGuard(workloadNamespace);
   }
 
   private long parseTenantId(String tenantId) {
@@ -175,12 +197,11 @@ public final class GameSessionControlPlaneGrpcService
   }
 
   private ErrorDetail admissionPointerAuthorityUnavailableError(String operation) {
-    return GrpcAppErrors.error(
-        meterRegistry,
-        logger,
-        operation,
-        "AUTHORITY_UNAVAILABLE",
-        "Admission pointer authority unavailable");
+    return authorityUnavailableError(operation, "Admission pointer authority unavailable");
+  }
+
+  private ErrorDetail authorityUnavailableError(String operation, String message) {
+    return GrpcAppErrors.error(meterRegistry, logger, operation, "AUTHORITY_UNAVAILABLE", message);
   }
 
   private static boolean isPersistenceAvailabilityFailure(Throwable failure) {
@@ -215,6 +236,169 @@ public final class GameSessionControlPlaneGrpcService
       cause = next;
     }
     return false;
+  }
+
+  @Override
+  @Timed(value = "gamesessionGrpc.controlPlane.getInitialAdmissionBindProof")
+  public void getInitialAdmissionBindProof(
+      GetInitialAdmissionBindProofRequest request,
+      StreamObserver<GetInitialAdmissionBindProofResponse> responseObserver) {
+    GetInitialAdmissionBindProofResponse.Builder response =
+        request == null
+            ? GetInitialAdmissionBindProofResponse.newBuilder()
+            : echoInitialAdmissionBindTuple(request);
+    try {
+      if (request == null) {
+        throw new IllegalArgumentException("request is required");
+      }
+      if (initialAdmissionBindOwnerProofReader == null
+          || initialAdmissionBindOwnerReadWorkloadGuard == null) {
+        throw new AdminAuthorizationException(
+            "Initial admission owner proof boundary is not configured");
+      }
+      initialAdmissionBindOwnerReadWorkloadGuard.requireWorldManagementOwnerReadCaller();
+      InitialAdmissionBindHoldBinding binding = parseInitialAdmissionBindTuple(request);
+      InitialAdmissionBindOwnerProof proof = initialAdmissionBindOwnerProofReader.read(binding);
+      if (proof == null) {
+        throw new IllegalStateException("Initial admission owner proof read returned no result");
+      }
+      if (!matchesExactInitialAdmissionBindTuple(binding, proof)) {
+        throw new IllegalStateException(
+            "Initial admission owner proof did not match the requested hold tuple");
+      }
+      response
+          .setOutcome(toWireOutcome(proof.outcome()))
+          .setOwnerProofId(nullToEmpty(proof.ownerProofId()))
+          .setPointerAuditId(nullToEmpty(proof.pointerAuditId()))
+          .setPointerVersion(proof.pointerVersion())
+          .setPointerAuditRequestDigest(nullToEmpty(proof.pointerAuditRequestDigest()))
+          .setFutureCommitPrevented(proof.futureCommitPrevented());
+    } catch (AdminAuthorizationException exception) {
+      response.setError(authorizationError("GetInitialAdmissionBindProof", exception));
+    } catch (IllegalArgumentException exception) {
+      response.setError(invalidArgumentError("GetInitialAdmissionBindProof", exception));
+    } catch (Exception exception) {
+      logger.error("GetInitialAdmissionBindProof failed", exception);
+      response.setError(GrpcAppErrors.error(meterRegistry, "INTERNAL", "Internal error"));
+    }
+    responseObserver.onNext(response.build());
+    responseObserver.onCompleted();
+  }
+
+  private GetInitialAdmissionBindProofResponse.Builder echoInitialAdmissionBindTuple(
+      GetInitialAdmissionBindProofRequest request) {
+    return GetInitialAdmissionBindProofResponse.newBuilder()
+        .setHoldId(request.getHoldId())
+        .setHoldFence(request.getHoldFence())
+        .setTenantId(request.getTenantId())
+        .setRealmUuid(request.getRealmUuid())
+        .setPlayableStateNamespaceUuid(request.getPlayableStateNamespaceUuid())
+        .setPlayableStateScopeValue(request.getPlayableStateScopeValue())
+        .setGameInstanceId(request.getGameInstanceId())
+        .setVersionId(request.getVersionId())
+        .setActiveLifecycleEpoch(request.getActiveLifecycleEpoch())
+        .setInitialAdmissionRequestId(request.getInitialAdmissionRequestId())
+        .setRequestDigest(request.getRequestDigest())
+        .setExpectedNoPriorPointer(request.getExpectedNoPriorPointer())
+        .setExpectedCatalogRevision(request.getExpectedCatalogRevision());
+  }
+
+  private InitialAdmissionBindHoldBinding parseInitialAdmissionBindTuple(
+      GetInitialAdmissionBindProofRequest request) {
+    if (request == null) {
+      throw new IllegalArgumentException("request is required");
+    }
+    String scope =
+        switch (request.getPlayableStateScope()) {
+          case PLAYABLE_STATE_SCOPE_SHARED -> "SHARED";
+          case PLAYABLE_STATE_SCOPE_ISOLATED -> "ISOLATED";
+          case PLAYABLE_STATE_SCOPE_UNSPECIFIED, UNRECOGNIZED ->
+              throw new IllegalArgumentException("playable_state_scope is unsupported");
+        };
+    if (request.getInitialAdmissionRequestId().isBlank()
+        || request.getInitialAdmissionRequestId().length() > 128) {
+      throw new IllegalArgumentException("initial_admission_request_id is invalid");
+    }
+    if (!SHA_256.matcher(request.getRequestDigest()).matches()) {
+      throw new IllegalArgumentException("request_digest must be lowercase SHA-256 hex");
+    }
+    if (!request.getExpectedNoPriorPointer()) {
+      throw new IllegalArgumentException("expected_no_prior_pointer must be true");
+    }
+    return new InitialAdmissionBindHoldBinding(
+        requireCanonicalUuid(request.getHoldId(), "hold_id"),
+        requireCanonicalUuid(request.getHoldFence(), "hold_fence"),
+        ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenant_id"),
+        requireCanonicalUuid(request.getRealmUuid(), "realm_uuid"),
+        requireCanonicalUuid(
+            request.getPlayableStateNamespaceUuid(), "playable_state_namespace_uuid"),
+        scope,
+        ControlPlaneRequestParser.parsePositiveLong(
+            request.getGameInstanceId(), "game_instance_id"),
+        ControlPlaneRequestParser.parsePositiveLong(request.getVersionId(), "version_id"),
+        ControlPlaneRequestParser.requirePositive(
+            request.getActiveLifecycleEpoch(), "active_lifecycle_epoch"),
+        request.getInitialAdmissionRequestId(),
+        request.getRequestDigest(),
+        true,
+        ControlPlaneRequestParser.requirePositive(
+            request.getExpectedCatalogRevision(), "expected_catalog_revision"));
+  }
+
+  private boolean matchesExactInitialAdmissionBindTuple(
+      InitialAdmissionBindHoldBinding binding, InitialAdmissionBindOwnerProof proof) {
+    return Objects.equals(binding.holdId(), proof.holdId())
+        && Objects.equals(binding.holdFence(), proof.holdFence())
+        && binding.tenantId() == proof.tenantId()
+        && Objects.equals(binding.realmUuid(), proof.realmUuid())
+        && Objects.equals(binding.playableStateNamespaceUuid(), proof.playableStateNamespaceUuid())
+        && Objects.equals(binding.playableStateScope(), proof.playableStateScope())
+        && binding.gameInstanceId() == proof.gameInstanceId()
+        && binding.versionId() == proof.versionId()
+        && binding.activeLifecycleEpoch() == proof.activeLifecycleEpoch()
+        && Objects.equals(binding.initialAdmissionRequestId(), proof.initialAdmissionRequestId())
+        && Objects.equals(binding.requestDigest(), proof.requestDigest())
+        && binding.expectedNoPriorPointer() == proof.expectedNoPriorPointer()
+        && binding.expectedCatalogRevision() == proof.expectedCatalogRevision();
+  }
+
+  private String requireCanonicalUuid(String value, String fieldName) {
+    try {
+      if (value == null || !UUID.fromString(value).toString().equals(value)) {
+        throw new IllegalArgumentException(fieldName + " must be a canonical UUID");
+      }
+      return value;
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalArgumentException(fieldName + " must be a canonical UUID", exception);
+    }
+  }
+
+  private InitialAdmissionBindOwnerProofOutcome toWireOutcome(
+      InitialAdmissionBindOwnerProof.Outcome outcome) {
+    if (outcome == null) {
+      return InitialAdmissionBindOwnerProofOutcome.INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ERROR;
+    }
+    return switch (outcome) {
+      case COMMITTED ->
+          InitialAdmissionBindOwnerProofOutcome
+              .INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_COMMITTED;
+      case ABORTED ->
+          InitialAdmissionBindOwnerProofOutcome.INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ABORTED;
+      case NOT_FOUND ->
+          InitialAdmissionBindOwnerProofOutcome
+              .INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_NOT_FOUND;
+      case PENDING ->
+          InitialAdmissionBindOwnerProofOutcome.INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_PENDING;
+      case UNAVAILABLE ->
+          InitialAdmissionBindOwnerProofOutcome
+              .INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_UNAVAILABLE;
+      case ERROR ->
+          InitialAdmissionBindOwnerProofOutcome.INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ERROR;
+    };
+  }
+
+  private String nullToEmpty(String value) {
+    return value == null ? "" : value;
   }
 
   @Override
@@ -278,6 +462,7 @@ public final class GameSessionControlPlaneGrpcService
     List<Long> validatedTenantIds =
         tenantIds.stream()
             .map(tenantId -> ControlPlaneRequestParser.parsePositiveLong(tenantId, "tenant_ids"))
+            .distinct()
             .toList();
     for (long tenantId : validatedTenantIds) {
       if (!SessionContext.hasTenantAccess(tenantId)) {
@@ -934,7 +1119,9 @@ public final class GameSessionControlPlaneGrpcService
         logger.warn("GetGameInstanceRuntimeState persistence unavailable", ex);
         GetGameInstanceRuntimeStateResponse response =
             GetGameInstanceRuntimeStateResponse.newBuilder()
-                .setError(admissionPointerAuthorityUnavailableError("GetGameInstanceRuntimeState"))
+                .setError(
+                    authorityUnavailableError(
+                        "GetGameInstanceRuntimeState", "Runtime state authority unavailable"))
                 .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
@@ -1169,7 +1356,10 @@ public final class GameSessionControlPlaneGrpcService
         logger.warn("GetPreparedVersionUpgrade persistence unavailable", ex);
         GetPreparedVersionUpgradeResponse response =
             GetPreparedVersionUpgradeResponse.newBuilder()
-                .setError(admissionPointerAuthorityUnavailableError("GetPreparedVersionUpgrade"))
+                .setError(
+                    authorityUnavailableError(
+                        "GetPreparedVersionUpgrade",
+                        "Prepared version upgrade authority unavailable"))
                 .build();
         responseObserver.onNext(response);
         responseObserver.onCompleted();
