@@ -828,6 +828,9 @@ public class PlayCommandHandler {
     if (!response.hasMembershipBaseline() || !response.hasAuthorityTuple()) {
       return false;
     }
+    if (!response.getAuthorityTuple().getUnknownFields().asMap().isEmpty()) {
+      return false;
+    }
     if (!isCanonicalUuid(response.getAccountId()) || !isCanonicalUuid(response.getTenantId())) {
       return false;
     }
