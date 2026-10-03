@@ -101,8 +101,11 @@ class WorldsTextCommandDispatchHandlerTest {
                 .addCharacters(
                     net.firedevops.firemud.entitymanagement.v1.Character.newBuilder()
                         .setId("7001")
+                        .setTenantId("22")
+                        .setAccountId("123")
                         .setName("Emberline")
                         .setLevel(12)
+                        .setPlayableStateScope(PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED)
                         .build())
                 .build());
     SessionContext context =
@@ -122,6 +125,8 @@ class WorldsTextCommandDispatchHandlerTest {
         .singleElement()
         .extracting(output -> output.payload())
         .isInstanceOf(CharacterBrowseViewOutput.class);
+    Mockito.verify(entityManagementClient)
+        .listCharactersByAccount("22", "123", "41", PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     Mockito.verify(scriptEventPublisher)
         .publishCommandEvent(
             Mockito.eq(context),

@@ -6,4 +6,6 @@ public record RuntimeMembershipDto(
     boolean membershipExists,
     boolean gameplayAdmissionAllowed,
     long membershipVersion,
+    String membershipLifecycleState,
+    long membershipAuthorityGeneration,
     String evaluatedAt) {}

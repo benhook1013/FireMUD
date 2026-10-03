@@ -4,6 +4,8 @@ import de.mkammerer.argon2.Argon2;
 import de.mkammerer.argon2.Argon2Factory;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
@@ -42,16 +44,19 @@ public class TestDataSeeder implements ApplicationRunner {
   @Override
   @Transactional
   public void run(ApplicationArguments args) {
+    Optional<Account> existingDemoAccount = accountRepository.findByEmail(DEMO_EMAIL);
+    if (existingDemoAccount.isPresent()
+        && !DEMO_EMAIL.equals(existingDemoAccount.orElseThrow().getEmail())) {
+      throw new IllegalStateException("Demo account identity does not match configured email");
+    }
     Account account =
-        accountRepository
-            .findByEmail(DEMO_EMAIL)
-            .orElseGet(
-                () -> {
-                  Account seeded = new Account();
-                  seeded.setUsername(DEMO_USERNAME);
-                  seeded.setEmail(DEMO_EMAIL);
-                  return seeded;
-                });
+        existingDemoAccount.orElseGet(
+            () -> {
+              Account seeded = new Account();
+              seeded.setUsername(DEMO_USERNAME);
+              seeded.setEmail(DEMO_EMAIL);
+              return seeded;
+            });
 
     account.setUsername(DEMO_USERNAME);
     account.setEmail(DEMO_EMAIL);
@@ -60,12 +65,27 @@ public class TestDataSeeder implements ApplicationRunner {
     account.setEmailVerified(true);
     account = accountRepository.save(account);
 
-    if (!accountTenantMembershipRepository.existsByAccountIdAndTenantId(
-        account.getId(), DEMO_TENANT_ID)) {
-      AccountTenantMembership membership = new AccountTenantMembership();
-      membership.setAccount(account);
-      membership.setTenantId(DEMO_TENANT_ID);
+    AccountTenantMembership membership =
+        accountTenantMembershipRepository
+            .findByAccountIdAndTenantId(account.getId(), DEMO_TENANT_ID)
+            .orElse(null);
+    if (membership == null) {
+      AccountTenantMembership seededMembership = new AccountTenantMembership();
+      seededMembership.setAccount(account);
+      seededMembership.setTenantId(DEMO_TENANT_ID);
+      seededMembership.setGameplayAdmissionAllowed(true);
+      seededMembership.setLifecycleState("ACTIVE");
+      seededMembership.setMembershipVersion(1);
+      seededMembership.setMembershipAuthorityGeneration(1);
+      seededMembership.setAuthorityProvenance("SEEDED_DEMO");
+      accountTenantMembershipRepository.save(seededMembership);
+    } else if (isQuarantinedDemoMembership(account, membership)) {
       membership.setGameplayAdmissionAllowed(true);
+      membership.setLifecycleState("ACTIVE");
+      membership.setMembershipVersion(Math.addExact(membership.getMembershipVersion(), 1L));
+      membership.setMembershipAuthorityGeneration(
+          Math.addExact(membership.getMembershipAuthorityGeneration(), 1L));
+      membership.setAuthorityProvenance("SEEDED_DEMO");
       accountTenantMembershipRepository.save(membership);
     }
 
@@ -96,6 +116,20 @@ public class TestDataSeeder implements ApplicationRunner {
               + subscriptions.size()
               + " rows)");
     }
+  }
+
+  private static boolean isQuarantinedDemoMembership(
+      Account account, AccountTenantMembership membership) {
+    return membership.getId() != null
+        && membership.getAccount() != null
+        && membership.getAccount().getId() != null
+        && Objects.equals(membership.getAccount().getId(), account.getId())
+        && Objects.equals(membership.getTenantId(), DEMO_TENANT_ID)
+        && "LEGACY_UNVERIFIED".equals(membership.getLifecycleState())
+        && "LEGACY_UNVERIFIED".equals(membership.getAuthorityProvenance())
+        && !membership.isGameplayAdmissionAllowed()
+        && membership.getMembershipVersion() > 0L
+        && membership.getMembershipAuthorityGeneration() > 0L;
   }
 
   private String hashPassword(String password) {
