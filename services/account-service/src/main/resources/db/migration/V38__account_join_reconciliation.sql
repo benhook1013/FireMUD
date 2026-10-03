@@ -4,7 +4,8 @@ ALTER TABLE account_join_operations
     ADD COLUMN reconciliation_attempt_count INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN last_reconciliation_attempt_at TIMESTAMP,
     ADD COLUMN last_reconciliation_attempt_reason VARCHAR(128),
-    ADD COLUMN next_reconciliation_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ADD COLUMN next_reconciliation_attempt_at TIMESTAMP NOT NULL
+        DEFAULT pg_catalog.timezone('UTC', CURRENT_TIMESTAMP),
     ADD CONSTRAINT account_join_reconciliation_attempt_count_check
         CHECK (reconciliation_attempt_count >= 0),
     ADD CONSTRAINT account_join_reconciliation_attempt_detail_check

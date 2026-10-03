@@ -1,16 +1,13 @@
 package net.firedevops.firemud.automationscripting.repository;
 
-import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayRequests.SCRIPT_DEAD_LETTER_REPLAY_REQUESTS;
+import static net.firedevops.firemud.automationscripting.jooq.tables.ScriptDeadLetterReplayResults.SCRIPT_DEAD_LETTER_REPLAY_RESULTS;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import org.jooq.DSLContext;
-import org.jooq.Field;
-import org.jooq.Record;
-import org.jooq.Result;
 import org.jooq.SQLDialect;
 import org.jooq.impl.DSL;
 import org.jooq.tools.jdbc.MockConnection;
@@ -23,18 +20,10 @@ class ScriptDeadLetterReplayRepositoryTest {
   void saveResultPreservesFirstConcurrentOutcome() {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicInteger callCount = new AtomicInteger();
-    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql());
-          if (callCount.getAndIncrement() == 0) {
-            Field<?>[] ownerFields = {SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID};
-            Result<Record> ownerResult = resultDsl.newResult(ownerFields);
-            Record owner = resultDsl.newRecord(ownerFields);
-            owner.set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID, "tenant-1");
-            ownerResult.add(owner);
-            return new MockResult[] {new MockResult(1, ownerResult)};
-          }
+          callCount.incrementAndGet();
           return new MockResult[] {new MockResult(1)};
         };
     ScriptDeadLetterReplayRepository repository =
@@ -42,9 +31,10 @@ class ScriptDeadLetterReplayRepositoryTest {
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
     repository.saveResult(
-        1L, 42L, 42L, "retried_evaluation", "", "", 3L, 4L, 5L, 2L, Instant.EPOCH);
+        "tenant-1", 1L, 42L, 42L, "retried_evaluation", "", "", 3L, 4L, 5L, 2L, Instant.EPOCH);
 
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT)).contains("on conflict", "do nothing");
+    assertThat(callCount.get()).isEqualTo(1);
   }
 
   @Test
@@ -52,19 +42,11 @@ class ScriptDeadLetterReplayRepositoryTest {
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     AtomicInteger callCount = new AtomicInteger();
-    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql());
           bindingsRef.set(context.bindings());
-          if (callCount.getAndIncrement() == 0) {
-            Field<?>[] ownerFields = {SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID};
-            Result<Record> ownerResult = resultDsl.newResult(ownerFields);
-            Record owner = resultDsl.newRecord(ownerFields);
-            owner.set(SCRIPT_DEAD_LETTER_REPLAY_REQUESTS.TENANT_ID, "tenant-1");
-            ownerResult.add(owner);
-            return new MockResult[] {new MockResult(1, ownerResult)};
-          }
+          callCount.incrementAndGet();
           return new MockResult[] {new MockResult(1)};
         };
     ScriptDeadLetterReplayRepository repository =
@@ -72,6 +54,7 @@ class ScriptDeadLetterReplayRepositoryTest {
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
     repository.saveResult(
+        "tenant-1",
         1L,
         42L,
         42L,
@@ -88,29 +71,90 @@ class ScriptDeadLetterReplayRepositoryTest {
 
     assertThat(sqlRef.get().toLowerCase(Locale.ROOT))
         .contains("original_failure_stage", "original_failure_reason");
-    assertThat(bindingsRef.get()).contains("TICK_HANDOFF", "GAME_SESSION_UNAVAILABLE");
+    assertThat(bindingsRef.get()).contains("tenant-1", "TICK_HANDOFF", "GAME_SESSION_UNAVAILABLE");
+    assertThat(callCount.get()).isEqualTo(1);
   }
 
   @Test
-  void completeUsesRunningCasSoAConcurrentCompletionCannotOverwriteCounts() {
+  void completeUsesTenantAndRunningCasSoWrongTenantCannotCompleteRequest() {
     AtomicInteger callCount = new AtomicInteger();
+    AtomicBoolean completed = new AtomicBoolean();
     AtomicReference<String> sqlRef = new AtomicReference<>();
     AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
     MockDataProvider provider =
         context -> {
           sqlRef.set(context.sql());
           bindingsRef.set(context.bindings());
-          return new MockResult[] {new MockResult(callCount.getAndIncrement() == 0 ? 1 : 0)};
+          callCount.incrementAndGet();
+          boolean matchingTenant = java.util.Arrays.asList(context.bindings()).contains("tenant-1");
+          return new MockResult[] {
+            new MockResult(matchingTenant && completed.compareAndSet(false, true) ? 1 : 0)
+          };
         };
     ScriptDeadLetterReplayRepository repository =
         new ScriptDeadLetterReplayRepository(
             DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
 
-    assertThat(repository.complete(7L, 3L, 1L, Instant.EPOCH)).isTrue();
-    assertThat(repository.complete(7L, 1L, 3L, Instant.EPOCH)).isFalse();
+    assertThat(repository.complete("tenant-2", 7L, 1L, 3L, Instant.EPOCH)).isFalse();
+    assertThat(bindingsRef.get()).contains("tenant-2", "RUNNING");
+    assertThat(repository.complete("tenant-1", 7L, 3L, 1L, Instant.EPOCH)).isTrue();
+    assertThat(repository.complete("tenant-1", 7L, 1L, 3L, Instant.EPOCH)).isFalse();
     String sql = sqlRef.get().toLowerCase(Locale.ROOT);
     String whereClause = sql.substring(sql.indexOf(" where "));
-    assertThat(whereClause.replaceAll("\\s+", " ")).contains("\"status\" = ?");
-    assertThat(bindingsRef.get()).contains("RUNNING");
+    assertThat(whereClause.replaceAll("\\s+", " "))
+        .contains("\"id\" = ?", "\"tenant_id\" = ?", "\"status\" = ?");
+    assertThat(bindingsRef.get()).contains("tenant-1", "RUNNING");
+    assertThat(callCount.get()).isEqualTo(3);
+  }
+
+  @Test
+  void findResultsScopesByTenantAndRequestId() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    var emptyResults =
+        DSL.using(SQLDialect.POSTGRES).newResult(SCRIPT_DEAD_LETTER_REPLAY_RESULTS.fields());
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {new MockResult(0, emptyResults)};
+        };
+    ScriptDeadLetterReplayRepository repository =
+        new ScriptDeadLetterReplayRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+
+    assertThat(repository.findResults("tenant-1", 41L)).isEmpty();
+
+    String sql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    assertThat(sql.substring(sql.indexOf(" where "))).contains("tenant_id", "replay_request_id");
+    assertThat(bindingsRef.get()).contains("tenant-1", 41L);
+  }
+
+  @Test
+  void retentionHoldUpdatesAreTenantQualifiedAndAllowClearing() {
+    AtomicReference<String> sqlRef = new AtomicReference<>();
+    AtomicReference<Object[]> bindingsRef = new AtomicReference<>();
+    MockDataProvider provider =
+        context -> {
+          sqlRef.set(context.sql());
+          bindingsRef.set(context.bindings());
+          return new MockResult[] {new MockResult(1)};
+        };
+    ScriptDeadLetterReplayRepository repository =
+        new ScriptDeadLetterReplayRepository(
+            DSL.using(new MockConnection(provider), SQLDialect.POSTGRES));
+    Instant holdUntil = Instant.parse("2026-08-03T00:00:00Z");
+
+    assertThat(repository.setRequestRetentionHold("tenant-1", 41L, holdUntil)).isTrue();
+    String requestSql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    assertThat(requestSql).contains("retention_hold_until", "tenant_id", "id");
+    assertThat(bindingsRef.get()).contains("tenant-1", "2026-08-03 00:00:00+00:00");
+
+    assertThat(repository.setRequestRetentionHold("tenant-1", 41L, null)).isTrue();
+    assertThat(bindingsRef.get()).contains("tenant-1", (Object) null);
+
+    assertThat(repository.setResultRetentionHold("tenant-1", 42L, holdUntil)).isTrue();
+    String resultSql = sqlRef.get().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
+    assertThat(resultSql).contains("retention_hold_until", "tenant_id", "id");
   }
 }

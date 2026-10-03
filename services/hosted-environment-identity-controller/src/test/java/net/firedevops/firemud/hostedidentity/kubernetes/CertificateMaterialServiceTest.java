@@ -456,7 +456,8 @@ class CertificateMaterialServiceTest {
             plan.grpcPublicationSecretName("game-logic-service"),
             plan.grpcPublicationSecretName("automation-scripting-service"),
             plan.grpcAccountSecretName(),
-            plan.grpcGameSessionSecretName()),
+            plan.grpcGameSessionSecretName(),
+            plan.grpcSocialGroupsSecretName()),
         java.util.Set.copyOf(read.getAllValues()));
 
     clearInvocations(runtimeSecrets);
@@ -1990,6 +1991,26 @@ class CertificateMaterialServiceTest {
         .thenReturn(gameSessionSourceResource);
     when(gameSessionSourceResource.get())
         .thenReturn(certManagerSource(plan, gameSessionRole, gameSessionSourceName, data));
+    String socialGroupsRole = HostedIdentityContract.GRPC_SOCIAL_GROUPS_ROLE;
+    String socialGroupsName = plan.grpcSocialGroupsSecretName();
+    String socialGroupsSourceName = plan.grpcSocialGroupsSourceSecretName();
+    String socialGroupsRevision = SecretProjectionService.revisionForRole(socialGroupsRole, data);
+    Resource<Secret> socialGroupsProjectionResource = mock(Resource.class);
+    when(secretClient.runtimeSecrets().withName(socialGroupsName))
+        .thenReturn(socialGroupsProjectionResource);
+    when(socialGroupsProjectionResource.get())
+        .thenReturn(
+            ownedSecret(
+                plan,
+                socialGroupsRole,
+                socialGroupsName,
+                data,
+                acceptedAnnotations(socialGroupsRevision, "1".repeat(64))));
+    Resource<Secret> socialGroupsSourceResource = mock(Resource.class);
+    when(secretClient.identitySecrets().withName(socialGroupsSourceName))
+        .thenReturn(socialGroupsSourceResource);
+    when(socialGroupsSourceResource.get())
+        .thenReturn(certManagerSource(plan, socialGroupsRole, socialGroupsSourceName, data));
     Secret ownedGrpc =
         ownedSecret(plan, HostedIdentityContract.GRPC_ROLE, plan.grpcSecretName(), data, Map.of());
     Resource<Secret> grpcSourceResource = mock(Resource.class);

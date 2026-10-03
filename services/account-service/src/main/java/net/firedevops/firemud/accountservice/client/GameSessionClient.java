@@ -29,6 +29,8 @@ public class GameSessionClient
   private static final long CALL_DEADLINE_SECONDS = 5L;
   private static final String ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE =
       "Gameplay routing authority unavailable; retry later";
+  private static final String ADMISSION_POINTER_UNAVAILABLE_MESSAGE =
+      "Selected gameplay realm is no longer admissible; rerun realm discovery before retrying gameplay entry";
 
   public GameSessionClient(
       ServiceEndpointsProperties endpoints,
@@ -64,8 +66,7 @@ public class GameSessionClient
     try {
       var response = callStub().listGameplayWorlds(ListGameplayWorldsRequest.getDefaultInstance());
       if (response.hasError()) {
-        throw new IllegalStateException(
-            "Gameplay world discovery failed: " + response.getError().getCode());
+        throw discoveryFailure("Gameplay world discovery failed", response.getError().getCode());
       }
       return response.getWorldsList();
     } catch (StatusRuntimeException ex) {
@@ -80,8 +81,7 @@ public class GameSessionClient
               .listGameplayRealms(
                   ListGameplayRealmsRequest.newBuilder().setWorldSlug(worldSlug).build());
       if (response.hasError()) {
-        throw new IllegalStateException(
-            "Gameplay realm discovery failed: " + response.getError().getCode());
+        throw discoveryFailure("Gameplay realm discovery failed", response.getError().getCode());
       }
       return response.getRealmsList();
     } catch (StatusRuntimeException ex) {
@@ -101,8 +101,18 @@ public class GameSessionClient
                       .setWorldSlug(worldSlug)
                       .build());
       if (response.hasError()) {
-        throw new IllegalStateException(
-            "Admission pointer lookup failed: " + response.getError().getCode());
+        String code = response.getError().getCode();
+        if ("INTERNAL".equals(code)
+            || "UNAVAILABLE".equals(code)
+            || "DEADLINE_EXCEEDED".equals(code)) {
+          throw new AuthenticationException(
+              "AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
+        }
+        if ("INVALID_ARGUMENT".equals(code) || "NOT_FOUND".equals(code)) {
+          throw new AuthenticationException(
+              "ADMISSION_POINTER_UNAVAILABLE", ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
+        }
+        throw new IllegalStateException("Admission pointer lookup failed: " + code);
       }
       return response.getAdmissionPointer();
     } catch (StatusRuntimeException ex) {
@@ -114,10 +124,17 @@ public class GameSessionClient
     return stub().withDeadlineAfter(CALL_DEADLINE_SECONDS, TimeUnit.SECONDS);
   }
 
-  private static AuthenticationException routingAuthorityUnavailable(StatusRuntimeException ex) {
+  private static RuntimeException discoveryFailure(String operation, String code) {
+    if ("INTERNAL".equals(code) || "UNAVAILABLE".equals(code) || "DEADLINE_EXCEEDED".equals(code)) {
+      return new AuthenticationException("AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE);
+    }
+    return new IllegalStateException(operation + ": " + code);
+  }
+
+  private static RuntimeException routingAuthorityUnavailable(StatusRuntimeException ex) {
     Status.Code code = ex.getStatus().getCode();
     if (code != Status.Code.UNAVAILABLE && code != Status.Code.DEADLINE_EXCEEDED) {
-      throw ex;
+      return ex;
     }
     return new AuthenticationException(
         "AUTH_UNAVAILABLE", ROUTING_AUTHORITY_UNAVAILABLE_MESSAGE, ex);

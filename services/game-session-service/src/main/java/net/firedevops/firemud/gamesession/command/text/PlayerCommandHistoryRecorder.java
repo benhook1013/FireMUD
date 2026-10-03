@@ -50,7 +50,8 @@ class PlayerCommandHistoryRecorder implements AcceptedCommandHistoryRecorder {
       return;
     }
 
-    // PLAY establishes its character identity during dispatch; LOGOUT clears it there.
+    // PLAY establishes its character identity during dispatch. Successful LOGOUT would clear it,
+    // but the current command fails closed before changing the binding.
     Optional<SessionContext> historyContext =
         contextAfter
             .filter(this::hasHistoryScope)

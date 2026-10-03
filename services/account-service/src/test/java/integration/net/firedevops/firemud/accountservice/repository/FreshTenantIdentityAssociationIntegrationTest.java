@@ -387,7 +387,7 @@ class FreshTenantIdentityAssociationIntegrationTest {
   }
 
   @Test
-  void v38BackfillsOnlyExistingExactRetainedAssociationsAndRejectsOrphanClaims() {
+  void v381BackfillsOnlyExistingExactRetainedAssociationsAndRejectsOrphanClaims() {
     Fixture fixture = fixture(true);
     var retainedClaim =
         fixture
@@ -456,9 +456,9 @@ class FreshTenantIdentityAssociationIntegrationTest {
     dataSource.setSchema(schema);
 
     if (preexistingRetainedAssociation) {
-      flyway(dataSource, schema, "37").migrate();
-      DSLContext beforeV38 = DSL.using(dataSource, SQLDialect.POSTGRES);
-      insertRetained(beforeV38, 80L, RETAINED_UUID, 720L, "retained-backfill-source");
+      flyway(dataSource, schema, "38").migrate();
+      DSLContext beforeV381 = DSL.using(dataSource, SQLDialect.POSTGRES);
+      insertRetained(beforeV381, 80L, RETAINED_UUID, 720L, "retained-backfill-source");
     }
     flyway(dataSource, schema, null).migrate();
 

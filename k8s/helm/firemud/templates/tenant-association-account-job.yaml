@@ -85,6 +85,7 @@ spec:
           args:
             - -jar
             - /app/app.jar
+            - --spring.flyway.enabled=false
             - --spring.main.web-application-type=none
             - --spring.grpc.server.enabled=false
             - --firemud.account-tenant-migration.enabled=true
