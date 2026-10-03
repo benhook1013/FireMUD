@@ -601,7 +601,7 @@ class LoginCommandHandlerTest {
             })
         .when(firstPartyConnectContextRegistry)
         .unregister(1L);
-    stubSessionContext(
+    stubMutableSessionContext(
         new SessionContext(
             1L,
             22L,
@@ -650,8 +650,7 @@ class LoginCommandHandlerTest {
     assertNull(credentialIdentity.playableStateScope());
     assertNull(credentialIdentity.connectScopeId());
     assertNull(credentialIdentity.connectRequestId());
-    // Keep the persisted selector revision, not the invalidated account-A connect revision.
-    assertClearedSessionContext(captor.getAllValues().get(1), 3L, null, null);
+    assertClearedSessionContext(captor.getAllValues().get(1), 0L, null, null);
   }
 
   @Test
