@@ -412,6 +412,7 @@ class LoggingAdminApplicationIntegrationTest {
           "10000000-0000-4000-8000-000000000001",
           "COMMITTED",
           "ACCEPTED",
+          digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)),
           "2025-03-01T12:00:01.123456");
       assertBackfilledReceipt(
           schema,
@@ -421,6 +422,7 @@ class LoggingAdminApplicationIntegrationTest {
           "10000000-0000-4000-8000-000000000002",
           "MINIMIZED",
           "NON_REPLAYABLE",
+          retainedInvalidDigest,
           "2025-03-01T12:00:02.987654");
       assertBackfilledReceipt(
           schema,
@@ -430,6 +432,7 @@ class LoggingAdminApplicationIntegrationTest {
           "20000000-0000-4000-8000-000000000001",
           "COMMITTED",
           "ACCEPTED",
+          digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)),
           "2025-03-01T12:00:03.123456");
       assertBackfilledReceipt(
           schema,
@@ -439,6 +442,7 @@ class LoggingAdminApplicationIntegrationTest {
           "20000000-0000-4000-8000-000000000002",
           "MINIMIZED",
           "NON_REPLAYABLE",
+          digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)),
           "2025-03-01T12:00:04.987654");
 
       assertThat(
@@ -688,6 +692,7 @@ class LoggingAdminApplicationIntegrationTest {
       String eventId,
       String status,
       String outcome,
+      String expectedPayloadDigest,
       String timestamp) {
     var receipt =
         dsl.fetchOne(
@@ -717,8 +722,7 @@ class LoggingAdminApplicationIntegrationTest {
     assertThat(receipt.get("occurred_at_nanos", Integer.class)).isEqualTo(occurredAt.getNano());
     assertThat(receipt.get("schema_version", Integer.class)).isEqualTo(1);
     assertThat(receipt.get("payload_digest_version", Integer.class)).isEqualTo(1);
-    assertThat(receipt.get("payload_digest", String.class))
-        .isEqualTo(digest("{\"retained\":true}".getBytes(StandardCharsets.UTF_8)));
+    assertThat(receipt.get("payload_digest", String.class)).isEqualTo(expectedPayloadDigest);
     assertThat(receipt.get("status", String.class)).isEqualTo(status);
     assertThat(receipt.get("outcome", String.class)).isEqualTo(outcome);
     assertThat(receipt.get("log_event_id", Long.class))
