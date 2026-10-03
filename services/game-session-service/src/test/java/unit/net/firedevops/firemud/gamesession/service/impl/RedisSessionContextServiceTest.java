@@ -3,6 +3,7 @@ package net.firedevops.firemud.gamesession.service.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -137,6 +138,50 @@ class RedisSessionContextServiceTest {
     verify(redisTemplate).exec();
     verify(redisTemplate).delete("sessionctx:10:1:context");
     verify(redisTemplate).delete("sessionctx:10:identity:40:30:context");
+  }
+
+  @Test
+  void deleteBySessionIdPreservesDifferentTenantAliasIndexes() {
+    SessionContext differentTenant = new SessionContext(1L, 99L, "30", 31L, 41L, "other-jwt");
+    when(valueOperations.get("sessionctx:10:1:context")).thenReturn(null);
+    when(valueOperations.get("sessionctx:session:1:context")).thenReturn(differentTenant);
+
+    service.deleteBySessionId(10L, 1L);
+
+    verify(redisTemplate, never()).delete("sessionctx:99:1:context");
+    verify(redisTemplate, never()).delete("sessionctx:session:1:context");
+    verify(redisTemplate, never()).delete("sessionctx:99:identity:41:31:context");
+  }
+
+  @Test
+  void deleteBySessionIdPreservesDifferentSessionAliasIndexes() {
+    SessionContext requested = new SessionContext(1L, 10L, "20", 30L, 40L, "requested-jwt");
+    SessionContext differentSession = new SessionContext(2L, 10L, "21", 31L, 41L, "other-jwt");
+    when(valueOperations.get("sessionctx:10:1:context")).thenReturn(requested);
+    when(valueOperations.get("sessionctx:session:1:context")).thenReturn(differentSession);
+
+    service.deleteBySessionId(10L, 1L);
+
+    verify(redisTemplate).delete("sessionctx:10:1:context");
+    verify(redisTemplate).delete("sessionctx:10:identity:40:30:context");
+    verify(redisTemplate, never()).delete("sessionctx:10:2:context");
+    verify(redisTemplate, never()).delete("sessionctx:session:2:context");
+    verify(redisTemplate, never()).delete("sessionctx:10:identity:41:31:context");
+  }
+
+  @Test
+  void deleteBySessionIdCleansDistinctContextForSameTenantAndSession() {
+    SessionContext requested = new SessionContext(1L, 10L, "20", 30L, 40L, "requested-jwt");
+    SessionContext sameOwner = new SessionContext(1L, 10L, "20", 31L, 41L, "other-jwt");
+    when(valueOperations.get("sessionctx:10:1:context")).thenReturn(requested);
+    when(valueOperations.get("sessionctx:session:1:context")).thenReturn(sameOwner);
+
+    service.deleteBySessionId(10L, 1L);
+
+    verify(redisTemplate, times(2)).delete("sessionctx:10:1:context");
+    verify(redisTemplate, times(2)).delete("sessionctx:session:1:context");
+    verify(redisTemplate).delete("sessionctx:10:identity:40:30:context");
+    verify(redisTemplate).delete("sessionctx:10:identity:41:31:context");
   }
 
   @Test

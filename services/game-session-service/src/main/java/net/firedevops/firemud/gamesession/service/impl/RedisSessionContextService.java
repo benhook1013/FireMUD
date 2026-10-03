@@ -154,7 +154,10 @@ public final class RedisSessionContextService implements SessionContextService {
                     }
                     operations.multi();
                     deleteIndexes(operations, existing);
-                    if (!Objects.equals(existing, existingSessionContext)) {
+                    if (!Objects.equals(existing, existingSessionContext)
+                        && existingSessionContext != null
+                        && existingSessionContext.tenantId() == tenantId
+                        && existingSessionContext.sessionId() == sessionId) {
                       deleteIndexes(operations, existingSessionContext);
                     }
                     return operations.exec() != null;
