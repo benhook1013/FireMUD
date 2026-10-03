@@ -20,11 +20,11 @@ import java.util.regex.Pattern;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
 
-class V11__enforce_tenant_public_realm_cardinalityTest {
+class V12__enforce_tenant_public_realm_cardinalityTest {
   private static final Pattern MIGRATION_FILE = Pattern.compile("^V([^_]+)__.*\\.sql$");
 
   @Test
-  void keepsAdmissionPointerMigrationsUniqueAndOrderedFromTheV7AuditThroughV12()
+  void keepsAdmissionPointerMigrationsUniqueAndOrderedFromTheV7AuditThroughV13()
       throws IOException, URISyntaxException {
     var auditMigrationUrl =
         getClass()
@@ -49,8 +49,9 @@ class V11__enforce_tenant_public_realm_cardinalityTest {
             "V8__repair_legacy_bootstrap_public_realm.sql",
             "V9__initial_admission_bind_owner_ledger.sql",
             "V10__run_owned_initial_launch_identity.sql",
-            "V11__enforce_tenant_public_realm_cardinality.sql",
-            "V12__index_gameplay_admission_pointer_event_tenant_lookup.sql");
+            "V11__gameplay_command_account_uuid.sql",
+            "V12__enforce_tenant_public_realm_cardinality.sql",
+            "V13__index_gameplay_admission_pointer_event_tenant_lookup.sql");
 
     String v7 = readMigration("V7__audit_gameplay_catalog_revision.sql");
     String normalizedV7 = normalizeSql(v7);
@@ -88,23 +89,32 @@ class V11__enforce_tenant_public_realm_cardinalityTest {
     assertThat(v10).contains("run_owned_start_request_id");
     assertNoDataRewrite(v10);
 
-    String v11 = normalizeSql(readMigration("V11__enforce_tenant_public_realm_cardinality.sql"));
+    String v11 = normalizeSql(readMigration("V11__gameplay_command_account_uuid.sql"));
     assertThat(v11)
+        .contains(
+            "ADD COLUMN account_uuid UUID",
+            "ADD CONSTRAINT chk_gameplay_command_account_uuid_non_nil",
+            "account_uuid IS NULL",
+            "account_uuid <> '00000000-0000-0000-0000-000000000000'::UUID");
+    assertNoDataRewrite(v11);
+
+    String v12 = normalizeSql(readMigration("V12__enforce_tenant_public_realm_cardinality.sql"));
+    assertThat(v12)
         .contains(
             "CREATE UNIQUE INDEX uq_gameplay_admission_pointer_visible_public_tenant",
             "ON gameplay_admission_pointer (tenant_id)",
             "WHERE visible AND public_production_realm");
-    assertNoDataRewrite(v11);
+    assertNoDataRewrite(v12);
 
-    String v12 =
+    String v13 =
         normalizeSql(
-            readMigration("V12__index_gameplay_admission_pointer_event_tenant_lookup.sql"));
-    assertThat(v12)
+            readMigration("V13__index_gameplay_admission_pointer_event_tenant_lookup.sql"));
+    assertThat(v13)
         .isEqualTo(
             "CREATE INDEX idx_gameplay_admission_pointer_event_tenant_world_realm_id "
                 + "ON gameplay_admission_pointer_event USING btree "
                 + "(tenant_id, world_slug, realm_slug, id DESC);");
-    assertNoDataRewrite(v12);
+    assertNoDataRewrite(v13);
   }
 
   private String readMigration(String name) throws IOException {
