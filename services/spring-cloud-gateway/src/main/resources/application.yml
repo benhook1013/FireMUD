@@ -31,7 +31,9 @@ spring:
                 retries: 3
                 statuses: BAD_GATEWAY,GATEWAY_TIMEOUT
                 series: SERVER_ERROR
-                methods: GET,POST
+                # One-use Account recovery and verification POSTs have no replay receipt.
+                # An ambiguous upstream response must not trigger an automatic second claim.
+                methods: GET
                 backoff:
                   firstBackoff: 50ms
                   maxBackoff: 500ms

@@ -22,7 +22,9 @@ See:
 - [Frontend Architecture](../design/architecture/system-architecture-frontend.md)
 - [Player Experience, Commands, and Communication implementation tracker](../design/project-management/implementation-tracking/player-experience-commands-and-communication.md)
 
-The Vite production build writes compiled assets to `dist/frontend-assets/`, so generated compiled JavaScript/CSS references use `/frontend-assets/**`. The prefix is reserved for first-party compiled files, does not SPA-fallback, and is not a Gateway route. The static host/Ingress, origin separation, and full browser proof remain target-state work under [ADR 0144](../design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md).
+The Vite production build writes compiled assets to `dist/frontend-assets/`, so generated compiled JavaScript/CSS references use `/frontend-assets/**`. The prefix is reserved for first-party compiled files, does not SPA-fallback, and is not a Gateway route. `Dockerfile` and `nginx.conf` prepare an unprivileged read-only static host, and the preview Helm chart can opt into a separate frontend Deployment/Service and public path split. The hosted values leave it disabled: image publication, origin/mail wiring, running-host proof, independent release/rollback, and the full browser journey remain open under [ADR 0144](../design/architecture/decisions/adr-0144-stateless-first-party-frontend-application-boundary.md).
+
+The `/verify-email` and `/reset-password` browser routes are non-mutating email-link landings. They accept the link token only in a URL fragment, remove it from the visible address, and require an explicit submit before POSTing to Account through Gateway. This source-level flow does not make mailed links reachable in a deployed environment until the opt-in static host and route split are deployed with a published image, mail URLs target that HTTPS origin, and live browser-to-Gateway-to-Account proof passes. The existing Account token-consumption transaction remains the mutation authority.
 
 ## Local Development
 
@@ -36,12 +38,15 @@ Common commands:
 
 ```bash
 npm run dev
+npm run test
 npm run build
 npm run preview
 npm run lint
 npm run format -- -c
 npm run accessibility
 ```
+
+The development server proxies `/api/**` to a locally running Gateway on port `8080`; its own landing pages are served on port `5173`. The mail URL defaults for local development point to that browser origin. A production deployment must configure the published static-site origin and preserve the fragment token without routing the browser GET to Account.
 
 The accessibility audit depends on Google Chrome. See [Developer Setup](../DEVELOPER_SETUP.md#frontend-lint--accessibility) for the expected local toolchain and installation notes.
 
