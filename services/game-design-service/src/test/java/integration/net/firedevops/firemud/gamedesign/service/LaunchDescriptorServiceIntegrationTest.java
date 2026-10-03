@@ -46,6 +46,7 @@ import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
@@ -682,7 +683,7 @@ class LaunchDescriptorServiceIntegrationTest {
                     failed.getSourceEvidenceJson(),
                     nullSchemaVersion ? failed.getFailureCode() : null,
                     failed.getFailureMessage()))
-        .isInstanceOf(DataAccessException.class)
+        .isInstanceOf(DataIntegrityViolationException.class)
         .hasStackTraceContaining("ck_launch_descriptor_authored_binding_complete");
   }
 

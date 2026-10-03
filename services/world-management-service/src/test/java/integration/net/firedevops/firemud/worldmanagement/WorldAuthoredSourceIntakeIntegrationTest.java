@@ -3,6 +3,7 @@ package net.firedevops.firemud.worldmanagement;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.SQLException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -25,6 +26,7 @@ import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -164,14 +166,16 @@ class WorldAuthoredSourceIntakeIntegrationTest {
                     "INSERT INTO region (tenant_id, name) VALUES (?, ?)",
                     first.localTenantKey(),
                     "cannot-claim-canonical-selector"))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .satisfies(this::assertReservedCanonicalSelectorRejected);
     assertThatThrownBy(
             () ->
                 dsl.execute(
                     "UPDATE region SET tenant_id = ? WHERE id = ?",
                     first.localTenantKey(),
                     legacyRegionId))
-        .isInstanceOf(DataAccessException.class);
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .satisfies(this::assertReservedCanonicalSelectorRejected);
     assertThat(
             Objects.requireNonNull(
                     dsl.fetchOne("SELECT tenant_id FROM region WHERE id = ?", legacyRegionId),
@@ -535,7 +539,8 @@ class WorldAuthoredSourceIntakeIntegrationTest {
                         return null;
                       });
                   return true;
-                } catch (DataAccessException expectedReservedKeyRejection) {
+                } catch (DataIntegrityViolationException expectedReservedKeyRejection) {
+                  assertReservedCanonicalSelectorRejected(expectedReservedKeyRejection);
                   return false;
                 }
               });
@@ -589,6 +594,17 @@ class WorldAuthoredSourceIntakeIntegrationTest {
                 tenantId),
             "canonical tenant association count query returned no row")
         .get(0, Long.class);
+  }
+
+  private void assertReservedCanonicalSelectorRejected(Throwable throwable) {
+    assertThat(throwable).hasStackTraceContaining("is reserved for a canonical authored source");
+
+    Throwable cause = throwable;
+    while (cause != null && !(cause instanceof SQLException)) {
+      cause = cause.getCause();
+    }
+    assertThat(cause).isInstanceOf(SQLException.class);
+    assertThat(((SQLException) cause).getSQLState()).isEqualTo("23514");
   }
 
   private long countReservationsForCanonicalTenant(UUID tenantId) {

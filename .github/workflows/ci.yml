@@ -1001,7 +1001,7 @@ jobs:
           retention-days: 7
 
       - name: Run Game Design authored-source read socket mTLS proof
-        if: ${{ matrix.module == 'game-design-service' }}
+        if: ${{ !cancelled() && matrix.module == 'game-design-service' }}
         run: |
           ./gradlew :game-design-service:test \
             --tests net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldSourceMtlsTest \
