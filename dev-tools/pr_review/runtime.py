@@ -1191,7 +1191,7 @@ class LiveEvidence:
             response_id,
             next_trigger,
             record,
-            current_record_path,
+            current_record_path=current_record_path,
             repo=repo,
             pr_number=pr_number,
         )
@@ -1245,7 +1245,7 @@ class LiveEvidence:
                         captured_head,
                         record,
                         payload,
-                        path,
+                        current_record_path=path,
                     )
                     or proof
                 )
@@ -1682,9 +1682,10 @@ class LiveEvidence:
                     "active_reservation": state.state in {"active", "awaiting_response"} or operational_only,
                     "reason": state.reason,
                 }
-                if state.state == "active":
+                if state.state in {"active", "awaiting_response"}:
                     anchor = record.get("anchor")
                     observation["anchor"] = dict(anchor) if isinstance(anchor, Mapping) else None
+                    observation["posted"] = record.get("status") == "posted"
                     observation["trigger_id"] = state.trigger_comment_id
                     observation["response_id"] = state.response_id
                     observation["state"] = state.state

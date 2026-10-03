@@ -1635,7 +1635,7 @@ def _archived_completed_thread_bodies(
                 or current_response_id != str(response_id)
                 or current_finished_at is None
                 or current_finished_at < response_created_at
-                or current_attempt.get("run_id") != current_attempt_id
+                or current_attempt.get("run_id") not in (None, current_attempt_id)
             ):
                 return {}
             try:

@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.command.text;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
@@ -29,10 +30,12 @@ import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapsh
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 
 class WorldsTextCommandDispatchHandlerTest {
@@ -86,7 +89,7 @@ class WorldsTextCommandDispatchHandlerTest {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("pointer authority unavailable"))
+        .thenThrow(new DataAccessException("pointer authority unavailable"))
         .thenReturn(
             List.of(
                 new GameplayAdmissionPointerSnapshot(
@@ -128,6 +131,95 @@ class WorldsTextCommandDispatchHandlerTest {
     assertThat(malformedResult.commandResult().errorCode())
         .isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, scriptEventPublisher);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"malformed", "0", "-7"})
+  void worldsRejectsInvalidTransportSessionIdBeforeCatalogStoreOrEventDispatch(
+      String transportSessionId) {
+    GameplayAdmissionPointerAuthorityService authorityService =
+        Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
+    DirectTextConnectScopeSessionStore store =
+        Mockito.mock(DirectTextConnectScopeSessionStore.class);
+    WorldsTextCommandDispatchHandler scopedHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(
+                new GameplayWorldCatalog(authorityService),
+                entityManagementClient,
+                Mockito.mock(AccountClient.class),
+                store),
+            scriptEventPublisher);
+
+    TextCommandInterpretationResult result =
+        scopedHandler.handle(worldsRequest(transportSessionId));
+
+    assertThat(result.commandResult().errorCode()).isEqualTo("INVALID_ARGUMENT");
+    Mockito.verifyNoInteractions(
+        authorityService, store, entityManagementClient, scriptEventPublisher);
+  }
+
+  @Test
+  void worldsDoesNotTranslateCatalogIllegalArgumentExceptionToInvalidArgument() {
+    GameplayWorldCatalog catalog =
+        GameplayWorldCatalog.forWorldSupplier(
+            () -> {
+              throw new IllegalArgumentException("catalog invariant failed");
+            });
+    WorldsTextCommandDispatchHandler scopedHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(
+                catalog,
+                entityManagementClient,
+                Mockito.mock(AccountClient.class),
+                DirectTextConnectScopeSessionStore.inMemoryForTest()),
+            scriptEventPublisher);
+
+    assertThatThrownBy(() -> scopedHandler.handle(worldsRequest("7")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("catalog invariant failed");
+    Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  @Test
+  void worldsDoesNotTranslateStoreIllegalArgumentExceptionToInvalidArgument() {
+    DirectTextConnectScopeSessionStore store =
+        Mockito.mock(DirectTextConnectScopeSessionStore.class);
+    Mockito.doThrow(new IllegalArgumentException("store invariant failed"))
+        .when(store)
+        .replaceWorldSnapshot(
+            Mockito.anyLong(),
+            Mockito.anyLong(),
+            Mockito.anyString(),
+            Mockito.anyList(),
+            Mockito.any(Instant.class));
+    WorldsTextCommandDispatchHandler scopedHandler =
+        new WorldsTextCommandDispatchHandler(
+            new WorldsCommandHandler(
+                GameplayWorldCatalog.forWorldViews(List.of()),
+                entityManagementClient,
+                Mockito.mock(AccountClient.class),
+                store),
+            scriptEventPublisher);
+
+    assertThatThrownBy(() -> scopedHandler.handle(worldsRequest("7")))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("store invariant failed");
+    Mockito.verify(store)
+        .replaceWorldSnapshot(
+            Mockito.eq(7L),
+            Mockito.eq(0L),
+            Mockito.anyString(),
+            Mockito.anyList(),
+            Mockito.any(Instant.class));
+    Mockito.verifyNoInteractions(scriptEventPublisher);
+  }
+
+  private static TextCommandDispatchRequest worldsRequest(String transportSessionId) {
+    return new TextCommandDispatchRequest(
+        transportSessionId,
+        new TextCommand(TextCommandType.WORLDS, List.of(), "WORLDS"),
+        false,
+        Optional.empty());
   }
 
   @Test

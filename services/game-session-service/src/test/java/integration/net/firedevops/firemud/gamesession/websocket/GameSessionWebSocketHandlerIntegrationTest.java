@@ -258,32 +258,44 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 .setAuthToken("stub-token")
                 .setAccountId("123")
                 .build());
-    org.mockito.Mockito.doReturn(
-            GetTenantMembershipForRuntimeResponse.newBuilder()
-                .setAccountId("123")
-                .setTenantId("22")
-                .setMembershipExists(true)
-                .setGameplayAdmissionAllowed(true)
-                .setMembershipVersion(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build())
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                GetTenantMembershipForRuntimeResponse.newBuilder()
+                    .setAccountId("123")
+                    .setTenantId("22")
+                    .setMembershipExists(true)
+                    .setMembershipLifecycleState("ACTIVE")
+                    .setGameplayAdmissionAllowed(true)
+                    .setMembershipVersion(1L)
+                    .setMembershipAuthorityGeneration(1L)
+                    .setEvaluatedAt(java.time.Instant.now().toString())
+                    .build())
         .when(accountClient)
         .getTenantMembershipForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
-    org.mockito.Mockito.doReturn(
-            GetTenantEntitlementsForRuntimeResponse.newBuilder()
-                .setTenantId("22")
-                .setGameplayAvailable(true)
-                .setEntitlementVersion(1L)
-                .setTenantBillingSequence(1L)
-                .setEvaluatedAt("2026-03-30T00:00:00Z")
-                .build())
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                GetTenantEntitlementsForRuntimeResponse.newBuilder()
+                    .setTenantId("22")
+                    .setGameplayAvailable(true)
+                    .setEntitlementVersion(1L)
+                    .setTenantBillingSequence(1L)
+                    .setEvaluatedAt(java.time.Instant.now().toString())
+                    .build())
         .when(accountClient)
         .getTenantEntitlementsForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse.newBuilder()
+                    .setConnectScopeId("scope-" + java.util.UUID.randomUUID())
+                    .setConnectScopeExpiresAt(java.time.Instant.now().plusSeconds(300).toString())
+                    .build())
+        .when(accountClient)
+        .issueDirectTextConnectScope(any(), any());
     org.mockito.Mockito.doReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(

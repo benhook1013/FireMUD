@@ -294,6 +294,8 @@ The Account `JoinPublicProductionMembership` writer/controller and Game Session 
 
 `GetAdmissionPointer` is a live Game Session RPC consumed by Account through `GameSessionClient`. The entitlement producer returns retryable `ENTITLEMENT_UNAVAILABLE` for zero or multiple tenant subscription rows; focused cardinality/retry proof does not establish the full snapshot/freshness contract, including explicit free/trial rows, authoritative current-row selection, `provisioningStatus`, opaque `tenantAuthorityGeneration`, caller/verified-target binding, source-event evidence, and delivery. `CommitTenantCapacityAdmission` has a synchronized target request/replay contract including `mutationDigest`, but its RPC, callers, durable Account-owned authority/usage persistence, and reservation lifecycle remain unimplemented.
 
+Every current Account deletion entry fails closed unconditionally with `ACCOUNT_DELETE_WORKFLOW_UNAVAILABLE` before account or financial-row mutation; no retained-operation check currently enables or blocks deletion. Bounded JOIN receipt cleanup/minimization and deletion reconciliation remain unimplemented retention follow-through. Account's retention/deletion workflow owns that work under [ADR 0163](../../decisions/adr-0163-service-owned-retention-classes-with-cross-service-safety.md) and [ADR 0050](../../decisions/adr-0050-versioned-export-retention-and-erasure-policy.md), including safe disposition of retained terminal JOIN receipts and unknown outcomes tracked in #2848. No universal retention duration is implied.
+
 ## Monetization and Notification Domain Notes
 
 ### Monetization Design
