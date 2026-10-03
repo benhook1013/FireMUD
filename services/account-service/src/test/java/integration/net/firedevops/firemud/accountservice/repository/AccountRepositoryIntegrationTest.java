@@ -325,7 +325,14 @@ class AccountRepositoryIntegrationTest {
                 jdbc.update(
                     "UPDATE account_audit_outbox SET receiver_audit_projection_version = 2 WHERE audit_event_id = ?",
                     committedEventId))
-        .isInstanceOf(org.springframework.dao.DataAccessException.class);
+        .isInstanceOf(org.springframework.dao.DataAccessException.class)
+        .hasStackTraceContaining("account_audit_outbox_projection_version_check");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT receiver_audit_projection_version FROM account_audit_outbox WHERE audit_event_id = ?",
+                Integer.class,
+                committedEventId))
+        .isEqualTo(1);
     assertThat(outbox.pending(10, Instant.now()))
         .noneMatch(envelope -> envelope.auditEventId().equals(minimizedEventId))
         .noneMatch(envelope -> envelope.auditEventId().equals(committedEventId));

@@ -671,7 +671,11 @@ class AccountGrpcServiceTest {
             new GrpcPeerIdentity(
                 "spiffe://firemud/ns/test/sa/world-management-service",
                 WORKLOAD_NAMESPACE,
-                "world-management-service"));
+                "world-management-service"),
+            new GrpcPeerIdentity(
+                "spiffe://firemud/ns/other/sa/game-session-service",
+                "other",
+                "game-session-service"));
     for (GrpcPeerIdentity peer : rejectedPeers) {
       PingService pingService = Mockito.mock(PingService.class);
       AccountService accountService = Mockito.mock(AccountService.class);
@@ -1823,6 +1827,47 @@ class AccountGrpcServiceTest {
     assertNotNull(ref.get());
     assertFalse(ref.get().getSuccess());
     assertEquals("FAILED_PRECONDITION", ref.get().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void requestPasswordResetFailsClosedWithoutAuthorizedInternalCaller() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<net.firedevops.firemud.account.v1.RequestPasswordResetResponse> observer =
+        new RecordingObserver<>();
+
+    service.requestPasswordReset(
+        net.firedevops.firemud.account.v1.RequestPasswordResetRequest.newBuilder()
+            .setEmail("player@example.com")
+            .build(),
+        observer);
+
+    assertTrue(observer.completed());
+    assertFalse(observer.response().getSuccess());
+    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
+    Mockito.verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void completePasswordResetFailsClosedBeforeTokenConsumption() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    AccountGrpcService service = new AccountGrpcService(pingService, accountService);
+    RecordingObserver<net.firedevops.firemud.account.v1.CompletePasswordResetResponse> observer =
+        new RecordingObserver<>();
+
+    service.completePasswordReset(
+        net.firedevops.firemud.account.v1.CompletePasswordResetRequest.newBuilder()
+            .setToken("reset-token")
+            .setNewPassword("new-password")
+            .build(),
+        observer);
+
+    assertTrue(observer.completed());
+    assertFalse(observer.response().getSuccess());
+    assertEquals("FAILED_PRECONDITION", observer.response().getError().getCode());
     Mockito.verifyNoInteractions(accountService);
   }
 

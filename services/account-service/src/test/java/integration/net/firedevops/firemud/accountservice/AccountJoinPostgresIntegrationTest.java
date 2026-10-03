@@ -58,7 +58,7 @@ class AccountJoinPostgresIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
   private static final String WORLD_SLUG = "join-proof-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "join-proof-namespace";
+  private static final String NAMESPACE_ID = "4f9e5c68-6251-4b22-8c3a-a0ed4a2d6bc1";
   private static final long GAME_INSTANCE_ID = 44L;
   private static final long CATALOG_REVISION = 23L;
   private static final long POINTER_VERSION = 17L;

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CERT_DIR="${1:-$SCRIPT_DIR}"
 GENERATOR="$SCRIPT_DIR/generate-dev-certs.sh"
 WORKLOAD_NAMESPACE="local"
@@ -193,7 +193,10 @@ ensure_compose_mtls_certs() {
       return 1
     fi
   done
-  openssl verify -CAfile "$authority_dir/ca.crt" "$authority_dir/client.crt" >/dev/null
+  if ! openssl verify -CAfile "$authority_dir/ca.crt" "$authority_dir/client.crt" >/dev/null 2>&1; then
+    echo "Compose mTLS shared client certificate does not verify under authority CA." >&2
+    return 1
+  fi
   if ! certificate_matches_private_key "$authority_dir/client.crt" "$authority_dir/client.key"; then
     echo "Compose mTLS shared client certificate and private key do not match." >&2
     return 1
