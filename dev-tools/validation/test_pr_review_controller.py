@@ -10154,5 +10154,135 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(unreconciled.status()["prs"][0]["reconciliation"], "UNRECONCILED")
 
 
+class ReviewProgressPresentationTests(unittest.TestCase):
+    def project(self, status="READY", **changes):
+        view = {"status": "CAP_ACTIVE", "minimum_additional_completed": 0,
+                "maximum_additional_completed": 2, "completed_count": 0,
+                "in_flight": 1, "remaining": 1}
+        view.update(changes.pop("view", {}))
+        return ReviewController._review_progress_view(None, view, changes.pop("history", []), status, **changes)
+
+    def test_maximum_includes_running_round_without_changing_request_slots(self):
+        value = self.project(history=[{"active_review": True}])
+        self.assertEqual(value["label"], "Reviewing")
+        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds remaining")
+        self.assertEqual(value["rule"]["request_slots_remaining"], 1)
+        self.assertEqual(value["rule"]["in_flight"], 1)
+        self.assertIn("before the maximum", value["rule"]["description"])
+
+    def test_exact_required_and_differing_floor_cap(self):
+        exact = self.project(history=[{"active_review": True}], view={
+            "minimum_additional_completed": 1, "maximum_additional_completed": 1})
+        self.assertEqual(exact["rule"]["label"], "1 required round remaining")
+        differing = self.project(view={"minimum_additional_completed": 1})
+        self.assertEqual(differing["rule"]["label"], "1 required round remaining · Maximum 2 rounds remaining")
+
+    def test_completion_stop_and_non_ancestry_blockers(self):
+        cases = [
+            ({"status": "STOPPED"}, "READY", "Stopped", "Human stop"),
+            ({"status": "CAP_TAPERED"}, "READY", "Review complete", "Taper met · Maximum 2 rounds"),
+            ({"status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2},
+             "READY", "Review complete", "Required rounds complete"),
+            ({}, "RATE_LIMITED", "Cooldown active", "Maximum 2 rounds remaining"),
+            ({}, "HELD", "Pending adjudication", "Maximum 2 rounds remaining"),
+        ]
+        for view, status, label, rule in cases:
+            with self.subTest(label=label):
+                value = self.project(status, view=view)
+                self.assertEqual((value["label"], value["rule"]["label"]), (label, rule))
+        self.assertEqual(self.project(pending_findings=True)["label"], "Pending fixes")
+
+    def test_unchecked_retains_configuration_but_not_counters(self):
+        value = self.project(checked=False)
+        self.assertEqual(value["label"], "Progress not checked")
+        self.assertEqual(value["rule"]["label"], "Maximum 2 rounds configured")
+        for field in ("completed", "maximum_remaining", "in_flight", "request_slots_remaining"):
+            self.assertIsNone(value["rule"][field])
+        normal = ReviewController._review_progress_view(None, {}, [], "NOT_CHECKED", checked=False)
+        self.assertEqual(normal["rule"]["label"], "Normal taper")
+        retained = self.project("COMPLETE", checked=False, view={
+            "status": "CAP_AUDITED_STOP", "minimum_additional_completed": 2})
+        self.assertEqual(retained["rule"]["label"], "Required rounds complete")
+        self.assertIsNone(retained["rule"]["completed"])
+
+    def test_current_required_allocation_supersedes_unchecked_prior_closure(self):
+        current = SimpleNamespace(min_additional_completed=2, max_additional_completed=2,
+                                  stop_basis=None, reopens_taper=True,
+                                  baseline_checkpoint="new-baseline", head=HEAD_1)
+        for prior in ({}, {"status": "CAP_TAPERED", "minimum_additional_completed": 1,
+                           "maximum_additional_completed": 1, "completed_count": 1},
+                      {"status": "HANDED_OFF"}):
+            with self.subTest(prior=prior):
+                value = ReviewController._review_progress_view(
+                    current, prior, [], "COMPLETE", checked=False)
+                self.assertEqual(value["label"], "Progress not checked")
+                self.assertEqual(value["rule"]["label"], "2 required rounds configured")
+                self.assertIsNone(value["rule"]["required_remaining"])
+
+    def test_split_fronts_use_existing_targets(self):
+        waiting, active = self.project(), self.project(history=[{"active_review": True}])
+        report = {"prs": [{"pr": 2, "review_progress": {"hosted": waiting, "cli": active}}],
+                  "review_targets": {"hosted": {"pr": 1, "status": "READY"},
+                                     "cli": {"pr": 2, "status": "HELD"}}}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(waiting["label"], "Waiting turn")
+        self.assertEqual(waiting["waiting_for_pr"], 1)
+        self.assertEqual(active["label"], "Reviewing")
+
+    def test_same_pr_typed_hold_is_visible_without_ancestry_preparation(self):
+        for status, label in (("HELD", "Review held"), ("JUDGMENT_REQUIRED", "Needs decision"),
+                              ("RATE_LIMITED", "Cooldown active"), ("UNSTABLE", "Evidence unclear")):
+            with self.subTest(status=status):
+                progress = self.project()
+                ReviewController._present_review_turns({
+                    "prs": [{"pr": 1, "review_progress": {"hosted": progress}}],
+                    "review_targets": {"hosted": {"pr": 1, "status": status}},
+                })
+                self.assertEqual(progress["label"], label)
+                self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+        progress = self.project()
+        ReviewController._present_review_turns({
+            "prs": [{"pr": 1, "review_progress": {"hosted": progress}}],
+            "review_targets": {"hosted": {"pr": 1, "status": "UNRECONCILED"}},
+        })
+        self.assertEqual(progress["label"], "Needs review")
+
+    def test_hosted_acknowledged_running_and_posting_reservation_differ(self):
+        active = self.project(history=[{"active_reservation": True,
+                                        "reason": HOSTED_ACTIVE_RESPONSE_REASON}])
+        pending = self.project(history=[{"active_reservation": True,
+                                         "reason": "no attributable terminal response"}])
+        self.assertEqual(active["label"], "Reviewing")
+        self.assertEqual(pending["label"], "Request reserved")
+        self.assertEqual(active["rule"], pending["rule"])
+
+    def test_unknown_final_target_clears_prior_waiting_turn(self):
+        progress = self.project()
+        report = {"prs": [{"pr": 2, "review_progress": {"hosted": progress}}],
+                  "review_targets": {"hosted": {"pr": 1, "status": "READY"}}}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(progress["label"], "Waiting turn")
+        report["review_targets"]["hosted"] = {"pr": None, "status": "UNKNOWN"}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(progress["label"], "Needs review")
+        self.assertNotIn("waiting_for_pr", progress)
+        self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+
+    def test_ancestry_request_status_and_original_evidence_are_unchanged(self):
+        factory = ControllerTests()
+        self.addCleanup(factory.doCleanups)
+        values = {1: pr(1, HEAD_1)}
+        row = {"pr": 1, "head": HEAD_1, "checkpoint": "preparation",
+               "parent_moved": True, "completed": False}
+        provider = {(1, "hosted"): [row]}
+        controller = factory.make(values, provider, heads={"feature-1": HEAD_1})
+        controller.set_stack([1])
+        result = controller.status()["prs"][0]
+        self.assertEqual(result["channels"]["hosted"], "PARENT_MOVED")
+        self.assertEqual(result["review_progress"]["hosted"]["label"], "Needs review")
+        self.assertEqual(result["review_progress"]["hosted"]["rule"]["label"], "Normal taper")
+        self.assertTrue(row["parent_moved"])
+
+
 if __name__ == "__main__":
     unittest.main()

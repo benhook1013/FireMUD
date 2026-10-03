@@ -59,6 +59,10 @@ class ReviewRecordsCliTest(unittest.TestCase):
                 "2893",
                 "--run-id",
                 f"coverage-{length}",
+                "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
                 "--reviewer",
                 "Sol medium",
                 "--scope",
@@ -83,6 +87,10 @@ class ReviewRecordsCliTest(unittest.TestCase):
                 "2893",
                 "--run-id",
                 "legacy-controller-round",
+                "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
                 "--reviewer",
                 "Sol medium",
                 "--scope",
@@ -96,6 +104,14 @@ class ReviewRecordsCliTest(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         records = SqliteReviewRecords(self.database)
+        with sqlite3.connect(self.database) as connection:
+            metadata = json.loads(connection.execute(
+                "SELECT metadata_json FROM review_attempts WHERE attempt_id = ?", ("legacy-controller-round",)
+            ).fetchone()[0])
+            metadata.pop("model", None)
+            metadata.pop("reasoning_effort", None)
+            connection.execute("UPDATE review_attempts SET metadata_json = ? WHERE attempt_id = ?",
+                               (json.dumps(metadata), "legacy-controller-round"))
         metadata = records.attempt("legacy-controller-round")["metadata"]
         arguments = ["subagent", "complete", "--run-id", "legacy-controller-round", "--actor", "root verified"]
         for title in ("Admission selection race", "Stopped historical evidence"):
@@ -216,7 +232,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             "subagent.review-1",
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna independent pass",
             "--scope",
             "broad",
@@ -361,7 +381,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             run_id,
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna",
             "--scope",
             "narrow",
@@ -497,7 +521,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             run_id,
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna",
             "--scope",
             "narrow",
@@ -647,7 +675,11 @@ class ReviewRecordsCliTest(unittest.TestCase):
             "2893",
             "--run-id",
             "subagent.failed-1",
-            "--reviewer",
+            "--model",
+                "gpt-test-model",
+                "--reasoning-effort",
+                "medium",
+                "--reviewer",
             "Luna",
             "--scope",
             "narrow",
