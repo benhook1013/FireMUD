@@ -643,6 +643,7 @@ class LoginCommandHandlerTest {
     assertEquals(77L, credentialIdentity.accountId());
     assertEquals("demo@example.com", credentialIdentity.loginName());
     assertEquals(AUTH_TOKEN, credentialIdentity.jwt());
+    assertNull(credentialIdentity.localeTag());
     assertEquals(1L, credentialIdentity.bootstrapGameInstanceId());
     assertNull(credentialIdentity.worldSlug());
     assertNull(credentialIdentity.realmSlug());
@@ -650,7 +651,7 @@ class LoginCommandHandlerTest {
     assertNull(credentialIdentity.playableStateScope());
     assertNull(credentialIdentity.connectScopeId());
     assertNull(credentialIdentity.connectRequestId());
-    assertClearedSessionContext(captor.getAllValues().get(1), 0L, null, null);
+    assertClearedSessionContext(captor.getAllValues().get(1), 0L, null, null, null);
   }
 
   @Test
@@ -1980,6 +1981,16 @@ class LoginCommandHandlerTest {
       long pointerVersion,
       String expectedConnectScopeId,
       String expectedConnectRequestId) {
+    assertClearedSessionContext(
+        context, pointerVersion, expectedConnectScopeId, expectedConnectRequestId, "en-NZ");
+  }
+
+  private static void assertClearedSessionContext(
+      SessionContext context,
+      long pointerVersion,
+      String expectedConnectScopeId,
+      String expectedConnectRequestId,
+      String expectedLocaleTag) {
     assertEquals(1L, context.sessionId());
     assertEquals(22L, context.tenantId());
     assertEquals(0L, context.accountId());
@@ -1989,7 +2000,7 @@ class LoginCommandHandlerTest {
     assertEquals(0L, context.gameInstanceId());
     assertNull(context.roomInstanceId());
     assertNull(context.jwt());
-    assertEquals("en-NZ", context.localeTag());
+    assertEquals(expectedLocaleTag, context.localeTag());
     assertEquals(1L, context.bootstrapGameInstanceId());
     if (pointerVersion > 0) {
       assertEquals("demo", context.worldSlug());
