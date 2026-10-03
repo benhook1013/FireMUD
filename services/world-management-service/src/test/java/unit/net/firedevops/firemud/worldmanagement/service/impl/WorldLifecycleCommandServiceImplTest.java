@@ -248,6 +248,36 @@ class WorldLifecycleCommandServiceImplTest {
   }
 
   @Test
+  void prepareWorldInstancePersistsPreparingLifecycle() {
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+        .thenReturn(Optional.empty());
+    when(worldInstanceRepository.save(any(WorldInstance.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var snapshot =
+        service.prepareWorldInstance(
+            new PreparedWorldInstanceRequest(
+                42L,
+                101L,
+                7L,
+                "cp-1",
+                "ld-1",
+                11L,
+                "patch-1",
+                "{}",
+                "genrev-11",
+                77L,
+                "prb:42:11:77",
+                77L));
+
+    assertEquals("PREPARING", snapshot.status());
+    assertEquals(1L, snapshot.lifecycleEpoch());
+    verify(regionInstanceRepository).save(any());
+    verify(zoneInstanceRepository).save(any());
+    verify(roomInstanceRepository).save(any());
+  }
+
+  @Test
   void activatePreparedWorldInstancePromotesPreparingRow() {
     WorldInstance instance = new WorldInstance();
     instance.setTenantId(42L);
@@ -332,7 +362,7 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setStatus("TERMINATED");
     instance.setTerminationRequestId("term-1");
     instance.setLifecycleEpoch(4L);
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
 
     var snapshot = service.terminateWorldInstance(42L, 101L, 2L, "term-1", "stop");
@@ -357,7 +387,7 @@ class WorldLifecycleCommandServiceImplTest {
     instance.setStatus("TERMINATED");
     instance.setTerminationRequestId("term-1");
     instance.setLifecycleEpoch(4L);
-    when(worldInstanceRepository.findByTenantIdAndGameInstanceId(42L, 101L))
+    when(worldInstanceRepository.findByTenantIdAndGameInstanceIdForUpdate(42L, 101L))
         .thenReturn(Optional.of(instance));
 
     IllegalArgumentException changedIdentity =

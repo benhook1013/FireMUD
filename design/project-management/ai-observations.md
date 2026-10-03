@@ -195,3 +195,8 @@ Entry format:
   - Expected pattern: retain an existing native process wait in its launching agent. For delegated external waits, let the sentinel launch its own canonical read-only waiter for the exact durable trigger or CI run; never retry the evidence-producing operation merely because a handle is unavailable in another agent.
   - Current status: the launching Gameplay agent retained the live CLI wait. Whether cross-agent process handles are supported in other execution environments is unverified.
   - Reconsideration trigger: revisit if a future harness requires cross-platform handle portability or a canonical watcher fix is verified.
+
+- `2026-10-03`: Anchor repetitive fixture edits to the owning test method
+  - Context: a row-lock reconciliation fix first matched two identical repository stubs in activation/failure tests instead of the intended terminal-retry tests, producing four test failures.
+  - Expected pattern: include the test-method context when patching repeated fixture statements, inspect the exact changed methods before validation, and retain failed runs as non-completion evidence.
+  - Outcome: the unrelated fixture changes were corrected in place; the final diff changes only the two terminal-retry lookup stubs, and the complete affected proof passes without changing production behavior or weakening assertions.
