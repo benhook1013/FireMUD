@@ -279,7 +279,7 @@ public final class AccountClient
         return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
       }
       logger.warn("Account direct-text JOIN returned a terminal transport status", ex);
-      return joinError(ex.getStatus().getCode().name(), "Account JOIN request failed");
+      return joinError("JOIN_FAILED", "Account JOIN request failed");
     } catch (Exception ex) {
       logger.warn("Account direct-text JOIN did not complete", ex);
       return joinError("AUTH_UNAVAILABLE", "Account authority unavailable");
