@@ -168,32 +168,33 @@ class AccountAuditOutboxRepositoryTest {
     AtomicReference<LocalDateTime> storedOccurredAt = new AtomicReference<>();
     AtomicReference<LocalDateTime> storedNextAttemptAt = new AtomicReference<>();
     AtomicReference<AccountAuditOutboxRecord> insertedRow = new AtomicReference<>();
+    AtomicReference<AccountAuditOutboxRecord> persistedRow = new AtomicReference<>();
+    AtomicReference<AccountAuditOutboxRecord> refreshedRow = new AtomicReference<>();
+    DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
     MockDataProvider provider =
         context -> {
           String sql = context.sql().toLowerCase(Locale.ROOT);
           if (sql.stripLeading().startsWith("insert") && sql.contains("account_audit_outbox")) {
             executedSql.set(sql);
-            return new MockResult[] {new MockResult(1)};
-          }
-          if (sql.stripLeading().startsWith("select") && sql.contains("account_audit_outbox")) {
             AccountAuditOutboxRecord inserted = insertedRow.get();
             if (inserted == null) {
-              throw new SQLException("Audit outbox row was not inserted before readback");
+              throw new SQLException("Audit outbox row was not prepared before insert");
             }
-            DSLContext resultDsl = DSL.using(SQLDialect.POSTGRES);
+            AccountAuditOutboxRecord persisted = copyAsPersistedRow(resultDsl, inserted);
+            persistedRow.set(persisted);
             Result<AccountAuditOutboxRecord> rows = resultDsl.newResult(ACCOUNT_AUDIT_OUTBOX);
-            AccountAuditOutboxRecord persisted = resultDsl.newRecord(ACCOUNT_AUDIT_OUTBOX);
-            persisted.setAuditEventId(inserted.getAuditEventId());
-            persisted.setScope(inserted.getScope());
-            persisted.setTenantId(inserted.getTenantId());
-            persisted.setProducerService(inserted.getProducerService());
-            persisted.setEventType(inserted.getEventType());
-            persisted.setOccurredAt(inserted.getOccurredAt());
-            persisted.setSchemaVersion(inserted.getSchemaVersion());
-            persisted.setPayloadDigestVersion(inserted.getPayloadDigestVersion());
-            persisted.setPayloadDigest(inserted.getPayloadDigest());
-            persisted.setPayload(inserted.getPayload());
             rows.add(persisted);
+            return new MockResult[] {new MockResult(1, rows)};
+          }
+          if (sql.stripLeading().startsWith("select") && sql.contains("account_audit_outbox")) {
+            AccountAuditOutboxRecord persisted = persistedRow.get();
+            if (persisted == null) {
+              throw new SQLException("Audit outbox row was not inserted before refresh");
+            }
+            Result<AccountAuditOutboxRecord> rows = resultDsl.newResult(ACCOUNT_AUDIT_OUTBOX);
+            AccountAuditOutboxRecord readback = copyAsPersistedRow(resultDsl, persisted);
+            refreshedRow.set(readback);
+            rows.add(readback);
             return new MockResult[] {new MockResult(1, rows)};
           }
           throw new SQLException("Unexpected Account audit outbox query");
@@ -224,6 +225,12 @@ class AccountAuditOutboxRepositoryTest {
     LocalDateTime expectedUtc = LocalDateTime.ofInstant(envelope.occurredAt(), ZoneOffset.UTC);
     assertThat(storedOccurredAt.get()).isEqualTo(expectedUtc);
     assertThat(storedNextAttemptAt.get()).isEqualTo(expectedUtc);
+    assertThat(refreshedRow.get()).isNotNull();
+    assertThat(refreshedRow.get().getOccurredAt()).isEqualTo(expectedUtc);
+    assertThat(refreshedRow.get().getNextAttemptAt()).isEqualTo(expectedUtc);
+    assertThat(persistedRow.get()).isNotNull();
+    assertThat(persistedRow.get().getOccurredAt()).isEqualTo(expectedUtc);
+    assertThat(persistedRow.get().getNextAttemptAt()).isEqualTo(expectedUtc);
   }
 
   @Test
@@ -258,6 +265,32 @@ class AccountAuditOutboxRepositoryTest {
             () -> repository.markDelivered(EVENT_ID, RECEIPT_ID, LOG_EVENT_ID, minimized))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("Audit delivery state changed concurrently");
+  }
+
+  private static AccountAuditOutboxRecord copyAsPersistedRow(
+      DSLContext dsl, AccountAuditOutboxRecord source) {
+    AccountAuditOutboxRecord persisted = dsl.newRecord(ACCOUNT_AUDIT_OUTBOX);
+    persisted.setAuditEventId(source.getAuditEventId());
+    persisted.setScope(source.getScope());
+    persisted.setTenantId(source.getTenantId());
+    persisted.setProducerService(source.getProducerService());
+    persisted.setEventType(source.getEventType());
+    persisted.setOccurredAt(source.getOccurredAt());
+    persisted.setSchemaVersion(source.getSchemaVersion());
+    persisted.setPayloadDigestVersion(source.getPayloadDigestVersion());
+    persisted.setPayloadDigest(source.getPayloadDigest());
+    persisted.setPayload(source.getPayload());
+    persisted.setReceiverReceiptId(source.getReceiverReceiptId());
+    persisted.setReceiverLogEventId(source.getReceiverLogEventId());
+    persisted.setDeliveryStatus(
+        source.getDeliveryStatus() == null ? "PENDING" : source.getDeliveryStatus());
+    persisted.setLastAttemptAt(source.getLastAttemptAt());
+    persisted.setCreatedAt(
+        source.getCreatedAt() == null ? LocalDateTime.now(ZoneOffset.UTC) : source.getCreatedAt());
+    persisted.setAttemptCount(source.getAttemptCount() == null ? 0 : source.getAttemptCount());
+    persisted.setNextAttemptAt(source.getNextAttemptAt());
+    persisted.setReceiverAuditProjectionVersion(source.getReceiverAuditProjectionVersion());
+    return persisted;
   }
 
   private static AccountAuditOutboxRepository repositoryWithReadback(

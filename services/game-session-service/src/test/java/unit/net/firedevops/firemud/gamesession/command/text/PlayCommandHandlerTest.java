@@ -3223,10 +3223,8 @@ class PlayCommandHandlerTest {
     assertThat(leftMembership.getGameplayAdmissionAllowed()).isFalse();
     assertThat(leftMembership.getMembershipLifecycleState()).isEqualTo("INACTIVE");
     assertThat(leftMembership.getAuthorityAvailability()).isEqualTo("AVAILABLE");
-    assertThat(leftMembership.getAccountId())
-        .isEqualTo("00000000-0000-0000-0000-000000000123");
-    assertThat(leftMembership.getTenantId())
-        .isEqualTo("00000000-0000-0000-0000-000000000022");
+    assertThat(leftMembership.getAccountId()).isEqualTo("00000000-0000-0000-0000-000000000123");
+    assertThat(leftMembership.getTenantId()).isEqualTo("00000000-0000-0000-0000-000000000022");
     assertThat(leftMembership.getRequestAccountId()).isEqualTo("123");
     assertThat(leftMembership.getRequestTenantId()).isEqualTo("22");
     assertThat(leftMembership.getMembershipVersionMap())
@@ -3479,11 +3477,11 @@ class PlayCommandHandlerTest {
 
     assertThat(result.commandResult().accepted()).isFalse();
     assertThat(result.commandResult().errorCode())
-        .isEqualTo(GameplayStageCommandConstants.WORLD_ACCESS_DENIED_CODE);
+        .isEqualTo(GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE);
     assertThat(result.outputs()).hasSize(1);
     assertThat(result.outputs().get(0).payload()).isInstanceOf(ErrorOutput.class);
     assertThat(((ErrorOutput) result.outputs().get(0).payload()).messageKey())
-        .isEqualTo("error.play.world-access-denied");
+        .isEqualTo("error.play.authority-unavailable");
     Mockito.verifyNoInteractions(
         entityManagementClient,
         sessionContextService,

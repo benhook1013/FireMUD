@@ -700,6 +700,7 @@ class AccountServiceImplTest {
       AccountLifecycleState lifecycleState, String expectedCode) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -789,6 +790,7 @@ class AccountServiceImplTest {
   void committedJoinRetryRejectsChangedPolicyWithoutMutatingStoredOutcomeOrMembership() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1030,6 +1032,7 @@ class AccountServiceImplTest {
       boolean retainedPendingIntent) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1127,6 +1130,7 @@ class AccountServiceImplTest {
   void joinPublicProductionRejectsLateAmbiguousPublicRealmBeforeMembershipCommit() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1249,6 +1253,7 @@ class AccountServiceImplTest {
   void unboundFailedJoinReplaysOnlyAfterCurrentScopeAndAuthorityChecks() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1668,6 +1673,7 @@ class AccountServiceImplTest {
       String status, String outcome, boolean allowPublicJoin) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1750,6 +1756,7 @@ class AccountServiceImplTest {
   void newJoinRejectsExpiredConnectScopeBeforePersistingIntent() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -1897,6 +1904,7 @@ class AccountServiceImplTest {
   void joinPublicProductionHidesAnotherAccountsGlobalRequestIdEvidence(String originalStatus) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3199,6 +3207,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsMapsZeroPublicAuthorityFromGameSession() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3222,6 +3231,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsRejectsWorldWithUnknownStateScope() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3260,6 +3270,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsMultipleVisiblePublicRealms() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3288,6 +3299,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsAcceptsExactlyOneVisiblePublicRealm() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3326,6 +3338,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsDoesNotIssueScopeWhenPublicPointerBecomesPrivateBeforeFinalRead() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -3361,6 +3374,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsDoesNotIssueScopeWhenPointerChangesDuringDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -4971,6 +4985,7 @@ class AccountServiceImplTest {
       String subscriptionStatus, String expectedCode) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5363,17 +5378,7 @@ class AccountServiceImplTest {
     PlayerBootstrapResult bootstrap = service.issuePlayerBootstrap("demo", "password");
     when(sessionService.isAccountSessionActive(11L, bootstrap.bootstrapToken())).thenReturn(true);
     String connectScopeId =
-        retainedConnectScopeForTest(
-            11L,
-            7L,
-            REALM_ID,
-            "demo",
-            "production",
-            PLAYABLE_STATE_NAMESPACE_ID,
-            "SHARED",
-            44L,
-            23L,
-            17L);
+        service.listBootstrapRealms(bootstrap.bootstrapToken(), "demo").getFirst().connectScopeId();
 
     AuthenticationException exception =
         assertThrows(
@@ -5435,6 +5440,7 @@ class AccountServiceImplTest {
       String subscriptionStatus, String expectedCode) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5549,6 +5555,7 @@ class AccountServiceImplTest {
       listBootstrapCharactersDoesNotUsePublicJoinForPrivateMembershipLostAfterReachableDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5791,6 +5798,7 @@ class AccountServiceImplTest {
       String namespaceId) {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5832,6 +5840,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsReadsFreshEntitlementsOncePerTenantPerInvocation() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5892,6 +5901,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsReadsFreshEntitlementsOncePerTenantPerInvocation() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -5941,6 +5951,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsOmitsCanceledTenantAndFailsWhenEntitlementIsUnavailable() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -6024,6 +6035,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsPropagatesUnavailableEntitlements() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -6044,6 +6056,7 @@ class AccountServiceImplTest {
   void listBootstrapWorldsFailsInsteadOfReturningIncompleteWorldDiscovery() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -6097,6 +6110,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRethrowsOtherAuthenticationErrors() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -6196,6 +6210,7 @@ class AccountServiceImplTest {
   void listBootstrapRealmsRejectsRealmWithUnknownStateScope() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -7677,9 +7692,10 @@ class AccountServiceImplTest {
     };
   }
 
-  private static Account directTextAccount() {
+  private Account directTextAccount() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     return account;
   }
@@ -7870,6 +7886,7 @@ class AccountServiceImplTest {
   private CachedPublicConnectTokenReplay prepareCachedPublicConnectTokenReplay() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     account.setUsername("demo");
     account.setPasswordHash(hash("password"));
     when(accountRepository.findByUsername("demo")).thenReturn(Optional.of(account));
@@ -7931,6 +7948,7 @@ class AccountServiceImplTest {
   private DirectTextJoinScope issueDirectTextConnectScopeForTest() {
     Account account = new Account();
     account.setId(11L);
+    setPersistedAuthenticationIdentity(account);
     when(accountRepository.findById(11L)).thenReturn(Optional.of(account));
     DirectTextCallerContext caller =
         new DirectTextCallerContext(
