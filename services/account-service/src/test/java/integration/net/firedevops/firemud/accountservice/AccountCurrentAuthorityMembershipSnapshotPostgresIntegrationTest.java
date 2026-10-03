@@ -452,6 +452,7 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
     assertThat(absentReadback.outboxCheckpoints()).isEqualTo(absent.outboxCheckpoints());
     assertThat(absentReadback.outboxSourceEvidence()).isEqualTo(absent.outboxSourceEvidence());
 
+    RuntimeMembershipSnapshotDto beforeIssuerCorruption = readRuntimeMembershipSnapshot(fixture);
     new TransactionTemplate(transactionManager)
         .execute(
             status -> {
@@ -467,14 +468,17 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
               return null;
             });
     RuntimeMembershipSnapshotDto afterRollback = readRuntimeMembershipSnapshot(fixture);
-    assertThat(afterRollback.membershipBaseline()).isEqualTo(before.membershipBaseline());
-    assertThat(afterRollback.roles()).isEqualTo(before.roles());
-    assertThat(afterRollback.authorityTuple()).isEqualTo(before.authorityTuple());
-    assertThat(afterRollback.issuanceFence()).isEqualTo(before.issuanceFence());
-    assertThat(afterRollback.outboxCheckpoints()).isEqualTo(before.outboxCheckpoints());
-    assertThat(afterRollback.outboxSourceEvidence()).isEqualTo(before.outboxSourceEvidence());
+    assertThat(afterRollback.membershipBaseline())
+        .isEqualTo(beforeIssuerCorruption.membershipBaseline());
+    assertThat(afterRollback.roles()).isEqualTo(beforeIssuerCorruption.roles());
+    assertThat(afterRollback.authorityTuple()).isEqualTo(beforeIssuerCorruption.authorityTuple());
+    assertThat(afterRollback.issuanceFence()).isEqualTo(beforeIssuerCorruption.issuanceFence());
+    assertThat(afterRollback.outboxCheckpoints())
+        .isEqualTo(beforeIssuerCorruption.outboxCheckpoints());
+    assertThat(afterRollback.outboxSourceEvidence())
+        .isEqualTo(beforeIssuerCorruption.outboxSourceEvidence());
     assertThat(afterRollback.sourceEvent().canonicalJsonUtf8())
-        .containsExactly(before.sourceEvent().canonicalJsonUtf8());
+        .containsExactly(beforeIssuerCorruption.sourceEvent().canonicalJsonUtf8());
     assertThat(membershipEventBytes(fixture)).containsExactly(immutableMembershipBytes);
   }
 
