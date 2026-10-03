@@ -8,6 +8,8 @@ import org.junit.jupiter.api.Test;
 import org.mapstruct.factory.Mappers;
 
 class GameInstanceMapperTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
+
   private final GameInstanceMapper mapper = Mappers.getMapper(GameInstanceMapper.class);
 
   @Test
@@ -28,7 +30,7 @@ class GameInstanceMapperTest {
             7L,
             "generation-1",
             null,
-            8L,
+            OWNER_ACCOUNT_UUID,
             "RUNNING");
 
     GameInstance mappedEntity = mapper.toEntity(dto);

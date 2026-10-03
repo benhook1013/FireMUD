@@ -120,6 +120,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @ActiveProfiles("test")
 @Import({NoGrpcServerTestConfiguration.class, InMemorySessionContextTestConfiguration.class})
 class GameSessionWebSocketHandlerIntegrationTest {
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
 
   // Runtime target 2 belongs to the sandbox route in this fixture.
   private static final long CUTOVER_GAME_INSTANCE_ID = 3L;
@@ -407,22 +408,22 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameInstance instance = new GameInstance();
     instance.setId(41L);
     instance.setTenantId(22L);
-    instance.setOwnerAccountId(123L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(41L);
     instance = new GameInstance();
     instance.setId(42L);
     instance.setTenantId(22L);
-    instance.setOwnerAccountId(123L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(42L);
     instance = new GameInstance();
     instance.setId(1L);
     instance.setTenantId(22L);
-    instance.setOwnerAccountId(123L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(1L);
     instance = new GameInstance();
     instance.setId(2L);
     instance.setTenantId(23L);
-    instance.setOwnerAccountId(123L);
+    instance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     org.mockito.Mockito.doReturn(Optional.of(instance)).when(gameInstanceRepository).findById(2L);
     when(worldManagementClient.getWorldInstanceLifecycle(
             org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong()))

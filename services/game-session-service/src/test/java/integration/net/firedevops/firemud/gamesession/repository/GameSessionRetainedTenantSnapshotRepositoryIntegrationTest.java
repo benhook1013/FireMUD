@@ -48,6 +48,10 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
   private static final UUID REALM_SHARED = UUID.fromString("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
   private static final UUID REALM_ISOLATED =
       UUID.fromString("dddddddd-dddd-4ddd-8ddd-dddddddddddd");
+  private static final UUID CANONICAL_OWNER =
+      UUID.fromString("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee");
+  private static final UUID CHANGED_CANONICAL_OWNER =
+      UUID.fromString("ffffffff-ffff-4fff-8fff-ffffffffffff");
   private static final String COMMITTED_INSTANCE_PHANTOM_INSERT =
       "INSERT INTO game_instances (id, tenant_id, runtime_version, owner_account_id, status, row_version) "
           + "VALUES (901, "
@@ -87,7 +91,7 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
 
     GameSessionRetainedTenantSnapshot snapshot = fixture.capture();
     JsonNode root = JSON.readTree(snapshot.canonicalJson());
-    assertThat(root.get("schemaVersion").intValue()).isEqualTo(1);
+    assertThat(root.get("schemaVersion").intValue()).isEqualTo(2);
     assertThat(root.get("targetNamespace").textValue()).isEqualTo(NAMESPACE);
     assertThat(root.get("legacyGameSessionTenantId").textValue()).isEqualTo(TENANT_ID);
     assertThat(textValues(root.get("instances"), "id")).containsExactly("2", "10", "20");
@@ -95,6 +99,8 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
         .isEqualTo("Café 🐉");
     assertThat(root.get("instances").get(1).get("row_version").textValue())
         .isEqualTo("9223372036854775807");
+    assertThat(root.get("instances").get(1).get("owner_account_id").textValue()).isEqualTo("90010");
+    assertThat(root.get("instances").get(1).get("owner_account_uuid").isNull()).isTrue();
     assertThat(textValues(root.get("pointers"), "id")).containsExactly("2", "10");
     assertThat(root.get("pointers").get(1).get("catalog_revision").textValue())
         .isEqualTo("9223372036854775807");
@@ -148,6 +154,58 @@ class GameSessionRetainedTenantSnapshotRepositoryIntegrationTest {
             GameSessionRetainedTenantSnapshotRepository.InvalidRetainedTenantSnapshotException
                 .class)
         .hasMessageContaining("backfill issue");
+  }
+
+  @Test
+  void capturesRawAndCanonicalOwnersAndBindsCanonicalOwnerChangesToSnapshotDigest()
+      throws Exception {
+    Fixture fixture = fixture();
+    fixture.seedProjection();
+    fixture.dsl.execute(
+        "INSERT INTO game_instances "
+            + "(id, tenant_id, runtime_version, owner_account_uuid, status, row_version) "
+            + "VALUES (?, ?, ?, ?, ?, ?)",
+        22L,
+        TENANT,
+        "fresh-uuid-owner",
+        CANONICAL_OWNER,
+        "STOPPED",
+        0L);
+
+    GameSessionRetainedTenantSnapshot snapshot = fixture.capture();
+    JsonNode instances = JSON.readTree(snapshot.canonicalJson()).get("instances");
+    JsonNode retainedNumericOwner = instances.get(1);
+    JsonNode newCanonicalOwner = instances.get(3);
+    assertThat(retainedNumericOwner.get("id").textValue()).isEqualTo("10");
+    assertThat(retainedNumericOwner.get("owner_account_id").textValue()).isEqualTo("90010");
+    assertThat(retainedNumericOwner.get("owner_account_uuid").isNull()).isTrue();
+    assertThat(newCanonicalOwner.get("id").textValue()).isEqualTo("22");
+    assertThat(newCanonicalOwner.get("owner_account_id").isNull()).isTrue();
+    assertThat(newCanonicalOwner.get("owner_account_uuid").textValue())
+        .isEqualTo(CANONICAL_OWNER.toString());
+    assertThat(
+            GameSessionRetainedTenantSnapshot.fromCanonicalJson(
+                NAMESPACE, TENANT_ID, snapshot.canonicalJson(), snapshot.evidenceDigest()))
+        .isEqualTo(snapshot);
+
+    fixture.dsl.execute("UPDATE game_instances SET owner_account_id = ? WHERE id = ?", 90011L, 10L);
+    GameSessionRetainedTenantSnapshot changedRawSnapshot = fixture.capture();
+    assertThat(changedRawSnapshot.evidenceDigest()).isNotEqualTo(snapshot.evidenceDigest());
+    JsonNode changedRawOwner =
+        JSON.readTree(changedRawSnapshot.canonicalJson()).get("instances").get(1);
+    assertThat(changedRawOwner.get("owner_account_id").textValue()).isEqualTo("90011");
+    assertThat(changedRawOwner.get("owner_account_uuid").isNull()).isTrue();
+
+    fixture.dsl.execute(
+        "UPDATE game_instances SET owner_account_uuid = ? WHERE id = ?",
+        CHANGED_CANONICAL_OWNER,
+        22L);
+    GameSessionRetainedTenantSnapshot changedSnapshot = fixture.capture();
+    assertThat(changedSnapshot.evidenceDigest()).isNotEqualTo(changedRawSnapshot.evidenceDigest());
+    JsonNode changedCanonicalOwner =
+        JSON.readTree(changedSnapshot.canonicalJson()).get("instances").get(3);
+    assertThat(changedCanonicalOwner.get("owner_account_uuid").textValue())
+        .isEqualTo(CHANGED_CANONICAL_OWNER.toString());
   }
 
   @Test

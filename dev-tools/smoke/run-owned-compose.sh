@@ -2,6 +2,9 @@
 
 # Validate and retain the explicit per-run binding before smoke mutation or
 # destructive Compose access. This file is sourceable by smoke entrypoints.
+# This fixed UUID names only the synthetic run-owned smoke fixture; it is not an
+# Account-authenticated identity or a mapping from retained numeric owner data.
+FIREMUD_SMOKE_SYNTHETIC_FIXTURE_OWNER_ACCOUNT_UUID="123e4567-e89b-12d3-a456-426614174000"
 
 _firemud_smoke_fail() {
   echo "Refusing run-owned smoke access: $*" >&2
@@ -344,7 +347,8 @@ _firemud_smoke_validate_initial_admission_capability() {
   fi
 
   if ! python3 - "$path" "$FIREMUD_SMOKE_RUN_ID" \
-    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" "$leaf_sha256" "$ca_sha256" <<'PY'
+    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" "$leaf_sha256" "$ca_sha256" \
+    "$FIREMUD_SMOKE_SYNTHETIC_FIXTURE_OWNER_ACCOUNT_UUID" <<'PY'
 import json
 import os
 import re
@@ -352,7 +356,15 @@ import stat
 import sys
 import uuid
 
-path, run_id, project_name, operation_id, leaf_sha256, ca_sha256 = sys.argv[1:]
+(
+    path,
+    run_id,
+    project_name,
+    operation_id,
+    leaf_sha256,
+    ca_sha256,
+    synthetic_fixture_owner_account_uuid,
+) = sys.argv[1:]
 allowed = {
     "schema", "runId", "composeProjectName", "operationId", "tenantId",
     "gameTemplateId", "ownerAccountId", "worldSlug", "worldDisplayName",
@@ -417,7 +429,7 @@ expected = {
     "operationId": operation_id,
     "tenantId": 1,
     "gameTemplateId": 1,
-    "ownerAccountId": 1,
+    "ownerAccountId": synthetic_fixture_owner_account_uuid,
     "worldSlug": "demo",
     "worldDisplayName": "Demo World",
     "realmSlug": "production",
@@ -532,12 +544,21 @@ ensure_run_owned_initial_admission_capability() {
     return 1
   }
   if ! python3 - "$temporary" "$FIREMUD_SMOKE_RUN_ID" \
-    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" "$leaf_sha256" "$ca_sha256" <<'PY'
+    "$FIREMUD_SMOKE_COMPOSE_PROJECT_NAME" "$operation_id" "$leaf_sha256" "$ca_sha256" \
+    "$FIREMUD_SMOKE_SYNTHETIC_FIXTURE_OWNER_ACCOUNT_UUID" <<'PY'
 import json
 import pathlib
 import sys
 
-path, run_id, project_name, operation_id, leaf_sha256, ca_sha256 = sys.argv[1:]
+(
+    path,
+    run_id,
+    project_name,
+    operation_id,
+    leaf_sha256,
+    ca_sha256,
+    synthetic_fixture_owner_account_uuid,
+) = sys.argv[1:]
 value = {
     "schema": "firemud.run-owned-initial-admission-fixture.v1",
     "runId": run_id,
@@ -545,7 +566,7 @@ value = {
     "operationId": operation_id,
     "tenantId": 1,
     "gameTemplateId": 1,
-    "ownerAccountId": 1,
+    "ownerAccountId": synthetic_fixture_owner_account_uuid,
     "worldSlug": "demo",
     "worldDisplayName": "Demo World",
     "realmSlug": "production",

@@ -237,25 +237,36 @@ components:
         id:
           type: integer
         tenantId:
-          type: string
+          type: integer
+          format: int64
         accountId:
           type: string
+          format: uuid
         displayName:
           type: string
         bio:
           type: string
+        presenceVisibilityPolicy:
+          type: string
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE, HIDDEN_STAFF]
+      required: [tenantId, accountId, presenceVisibilityPolicy]
     UpdateProfileRequest:
       type: object
       properties:
         tenantId:
-          type: string
+          type: integer
+          format: int64
         accountId:
           type: string
+          format: uuid
         displayName:
           type: string
         bio:
           type: string
-      required: [tenantId, accountId]
+        presenceVisibilityPolicy:
+          type: string
+          enum: [PUBLIC, FRIENDS_ONLY, PRIVATE]
+      required: [tenantId, accountId, presenceVisibilityPolicy]
     PasswordResetRequest:
       type: object
       properties:

@@ -10,11 +10,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
-import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.gamesession.entity.GameInstance;
 import net.firedevops.firemud.gamesession.jooq.tables.records.GameInstancesRecord;
+import net.firedevops.firemud.gamesession.service.AccountIds;
 import net.firedevops.firemud.gamesession.service.RuntimeVersionIdResolver;
 import net.firedevops.firemud.gamesession.service.ScriptPinTupleCoherence;
 import org.jooq.DSLContext;
@@ -50,6 +51,7 @@ public class GameInstanceRepository {
     GAME_INSTANCES.SCRIPT_PATCH_PINNED_REASON,
     GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID,
     GAME_INSTANCES.OWNER_ACCOUNT_ID,
+    GAME_INSTANCES.OWNER_ACCOUNT_UUID,
     GAME_INSTANCES.STATUS,
     GAME_INSTANCES.ROW_VERSION,
     GAME_INSTANCES.RUN_OWNED_START_REQUEST_ID,
@@ -115,16 +117,38 @@ public class GameInstanceRepository {
   }
 
   public Optional<GameInstance> findFirstByTenantIdAndOwnerAccountIdAndStatus(
-      Long tenantId, Long ownerAccountId, String status) {
+      Long tenantId, String ownerAccountId, String status) {
+    UUID ownerAccountUuid = parseCanonicalOwnerAccountId(ownerAccountId);
     return selectGameInstances()
         .where(
             GAME_INSTANCES
                 .TENANT_ID
                 .eq(tenantId)
-                .and(GAME_INSTANCES.OWNER_ACCOUNT_ID.eq(ownerAccountId))
+                .and(GAME_INSTANCES.OWNER_ACCOUNT_UUID.eq(ownerAccountUuid))
                 .and(GAME_INSTANCES.STATUS.eq(status)))
         .limit(1)
         .fetchOptional(this::toEntity);
+  }
+
+  /**
+   * Reads and locks unresolved owner rows that are active or not known to be inert.
+   *
+   * <p>Callers must invoke this method inside the owner transaction that stages a new runtime. Rows
+   * without a canonical owner UUID are not matched to the requesting Account; they remain ambiguous
+   * evidence until a separately authorized reconciliation resolves them.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public List<GameInstance> findUnresolvedActiveOwnerRowsByTenantIdForUpdate(Long tenantId) {
+    return selectGameInstances()
+        .where(
+            GAME_INSTANCES
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAME_INSTANCES.OWNER_ACCOUNT_UUID.isNull())
+                .and(GAME_INSTANCES.STATUS.isNull().or(GAME_INSTANCES.STATUS.ne("STOPPED"))))
+        .orderBy(GAME_INSTANCES.ID.asc())
+        .forUpdate()
+        .fetch(this::toEntity);
   }
 
   public List<GameInstance> findByStatus(String status) {
@@ -134,30 +158,25 @@ public class GameInstanceRepository {
         .fetch(this::toEntity);
   }
 
-  public List<GameInstance> findByTenantIdAndOwnerAccountIdInAndStatus(
-      Long tenantId, Collection<Long> ownerAccountIds, String status) {
-    if (ownerAccountIds == null || ownerAccountIds.isEmpty()) {
-      return List.of();
-    }
-    return selectGameInstances()
-        .where(
-            GAME_INSTANCES
-                .TENANT_ID
-                .eq(tenantId)
-                .and(GAME_INSTANCES.OWNER_ACCOUNT_ID.in(ownerAccountIds))
-                .and(GAME_INSTANCES.STATUS.eq(status)))
-        .orderBy(GAME_INSTANCES.ID.asc())
-        .fetch(this::toEntity);
-  }
-
   public GameInstance save(GameInstance entity) {
+    UUID ownerAccountUuid =
+        entity.getOwnerAccountId() == null
+            ? null
+            : parseCanonicalOwnerAccountId(entity.getOwnerAccountId());
+    if (entity.getId() == null && ownerAccountUuid == null) {
+      throw new IllegalArgumentException(
+          "New game instances require a canonical ownerAccountId UUID");
+    }
+    if (entity.getId() == null && entity.getLegacyOwnerAccountId() != null) {
+      throw new IllegalArgumentException("New game instances cannot use a legacy numeric owner");
+    }
     ScriptPinTupleCoherence.requireCoherent(
         entity.getScriptPatchVersion(),
         entity.getScriptPinEpoch(),
         entity.getScriptPatchPinnedControlPlaneRequestId());
     if (entity.getId() == null) {
       GameInstancesRecord record = dsl.newRecord(GAME_INSTANCES);
-      populate(record, entity);
+      populate(record, entity, ownerAccountUuid);
       long initialRowVersion = entity.getRowVersion() == null ? 0L : entity.getRowVersion();
       record.setRowVersion(initialRowVersion);
       record.store();
@@ -188,7 +207,7 @@ public class GameInstanceRepository {
             .set(
                 GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID,
                 entity.getScriptPatchPinnedControlPlaneRequestId())
-            .set(GAME_INSTANCES.OWNER_ACCOUNT_ID, entity.getOwnerAccountId())
+            .set(GAME_INSTANCES.OWNER_ACCOUNT_UUID, ownerAccountUuid)
             .set(GAME_INSTANCES.STATUS, entity.getStatus())
             .set(
                 GAME_INSTANCES.RUN_OWNED_START_PREPARING_EPOCH,
@@ -869,7 +888,7 @@ public class GameInstanceRepository {
     return isAbsent(value) ? null : value;
   }
 
-  private void populate(GameInstancesRecord record, GameInstance entity) {
+  private void populate(GameInstancesRecord record, GameInstance entity, UUID ownerAccountUuid) {
     record.setTenantId(entity.getTenantId());
     record.setRuntimeVersion(entity.getRuntimeVersion());
     record.setScriptPatchVersion(entity.getScriptPatchVersion());
@@ -887,7 +906,8 @@ public class GameInstanceRepository {
     record.setScriptPatchPinnedReason(entity.getScriptPatchPinnedReason());
     record.setScriptPatchPinnedControlPlaneRequestId(
         entity.getScriptPatchPinnedControlPlaneRequestId());
-    record.setOwnerAccountId(entity.getOwnerAccountId());
+    record.setOwnerAccountId(null);
+    record.setOwnerAccountUuid(ownerAccountUuid);
     record.setStatus(entity.getStatus());
     record.setRunOwnedStartRequestId(entity.getRunOwnedStartRequestId());
     record.setRunOwnedStartRequestDigest(entity.getRunOwnedStartRequestDigest());
@@ -917,7 +937,9 @@ public class GameInstanceRepository {
     entity.setScriptPatchPinnedReason(record.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_REASON));
     entity.setScriptPatchPinnedControlPlaneRequestId(
         record.get(GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID));
-    entity.setOwnerAccountId(record.get(GAME_INSTANCES.OWNER_ACCOUNT_ID));
+    UUID ownerAccountUuid = record.get(GAME_INSTANCES.OWNER_ACCOUNT_UUID);
+    entity.setOwnerAccountId(ownerAccountUuid == null ? null : ownerAccountUuid.toString());
+    entity.setLegacyOwnerAccountId(record.get(GAME_INSTANCES.OWNER_ACCOUNT_ID));
     entity.setStatus(record.get(GAME_INSTANCES.STATUS));
     entity.setRowVersion(record.get(GAME_INSTANCES.ROW_VERSION));
     entity.setRunOwnedStartRequestId(record.get(GAME_INSTANCES.RUN_OWNED_START_REQUEST_ID));
@@ -928,5 +950,12 @@ public class GameInstanceRepository {
         record.get(GAME_INSTANCES.RUN_OWNED_START_PREPARING_EPOCH));
     entity.setRunOwnedStartActiveEpoch(record.get(GAME_INSTANCES.RUN_OWNED_START_ACTIVE_EPOCH));
     return entity;
+  }
+
+  private static UUID parseCanonicalOwnerAccountId(String ownerAccountId) {
+    if (!AccountIds.isCanonicalNonNilUuid(ownerAccountId)) {
+      throw new IllegalArgumentException("ownerAccountId must be a canonical non-nil UUID");
+    }
+    return UUID.fromString(ownerAccountId);
   }
 }

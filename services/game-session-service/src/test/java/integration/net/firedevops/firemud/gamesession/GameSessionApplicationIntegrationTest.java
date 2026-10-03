@@ -206,7 +206,8 @@ class GameSessionApplicationIntegrationTest {
                                     .WORLD_INSTANCE_LIFECYCLE_STATUS_ACTIVE)
                             .build())
                     .build());
-    StartSessionRequest request = new StartSessionRequest(42L, 7L, "cp-1", 100L);
+    StartSessionRequest request =
+        new StartSessionRequest(42L, 7L, "cp-1", "123e4567-e89b-12d3-a456-426614174000");
 
     String responseBody =
         HttpTestSupport.postJsonBodyUnchecked(
@@ -245,7 +246,7 @@ class GameSessionApplicationIntegrationTest {
     assertThat(body.data().releaseBundleId()).isEqualTo(77L);
     assertThat(body.data().versionStateEpoch()).isEqualTo(77L);
     assertThat(body.data().generationConfigRevision()).isEqualTo("genrev-11");
-    assertThat(body.data().ownerAccountId()).isEqualTo(100L);
+    assertThat(body.data().ownerAccountId()).isEqualTo("123e4567-e89b-12d3-a456-426614174000");
     assertThat(body.data().status()).isEqualTo("RUNNING");
     assertThat(body.data().id()).isPositive();
   }

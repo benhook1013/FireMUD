@@ -240,7 +240,7 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
         || target.gameTemplateId() == null
         || target.gameTemplateId() != capability.gameTemplateId()
         || target.ownerAccountId() == null
-        || target.ownerAccountId() != capability.ownerAccountId()
+        || !target.ownerAccountId().equals(capability.ownerAccountId())
         || target.versionId() == null
         || target.versionId() <= 0L
         || target.launchDescriptorId() == null
@@ -424,7 +424,7 @@ public final class RunOwnedInitialAdmissionFixtureCoordinator {
     appendDigestField(canonical, "operationId", capability.operationId());
     appendDigestField(canonical, "tenantId", Long.toString(capability.tenantId()));
     appendDigestField(canonical, "gameTemplateId", Long.toString(capability.gameTemplateId()));
-    appendDigestField(canonical, "ownerAccountId", Long.toString(capability.ownerAccountId()));
+    appendDigestField(canonical, "ownerAccountId", capability.ownerAccountId());
     appendDigestField(canonical, "worldSlug", capability.worldSlug());
     appendDigestField(canonical, "worldDisplayName", capability.worldDisplayName());
     appendDigestField(canonical, "realmSlug", capability.realmSlug());

@@ -11,7 +11,10 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Seeds deterministic smoke metadata when local compose explicitly enables it. */
+/**
+ * Seeds demo metadata only; runtime instance ownership remains unavailable without Account UUID
+ * authority.
+ */
 @Component
 @ConditionalOnProperty(
     prefix = "firemud.smoke.seed-demo-runtime",

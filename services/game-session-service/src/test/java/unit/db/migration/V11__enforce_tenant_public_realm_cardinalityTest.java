@@ -52,6 +52,7 @@ class V11__enforce_tenant_public_realm_cardinalityTest {
             "V9__initial_admission_bind_owner_ledger.sql",
             "V9.1__gameplay_command_account_uuid.sql",
             "V10__run_owned_initial_launch_identity.sql",
+            "V10.1__game_instance_owner_account_uuid.sql",
             "V11__enforce_tenant_public_realm_cardinality.sql",
             "V12__index_gameplay_admission_pointer_event_tenant_lookup.sql");
 

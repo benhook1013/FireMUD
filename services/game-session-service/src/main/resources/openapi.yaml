@@ -27,7 +27,8 @@ components:
         controlPlaneRequestId:
           type: string
         ownerAccountId:
-          type: integer
+          type: string
+          format: uuid
         clientIp:
           type: string
       required:
@@ -57,7 +58,8 @@ components:
         generationConfigRevision:
           type: string
         ownerAccountId:
-          type: integer
+          type: [string, 'null']
+          format: uuid
         status:
           type: string
     ResultStatus:

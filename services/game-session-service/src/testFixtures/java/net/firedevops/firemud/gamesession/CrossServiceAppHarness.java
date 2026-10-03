@@ -404,13 +404,13 @@ public final class CrossServiceAppHarness {
         @Override
         public GameInstanceDto stopSession(long sessionId) {
           return new GameInstanceDto(
-              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "STOPPED");
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, null, "STOPPED");
         }
 
         @Override
         public GameInstanceDto restartSession(long sessionId) {
           return new GameInstanceDto(
-              sessionId, 0L, "stub", null, null, null, null, null, null, null, 0L, "RUNNING");
+              sessionId, 0L, "stub", null, null, null, null, null, null, null, null, "RUNNING");
         }
 
         @Override

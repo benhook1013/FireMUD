@@ -29,6 +29,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class InitialAdmissionBindPostgresIntegrationTest {
   private static final String MIGRATION_LOCATION =
       "filesystem:" + Path.of("src/main/resources/db/migration").toAbsolutePath().normalize();
+  private static final String OWNER_ACCOUNT_UUID = "123e4567-e89b-12d3-a456-426614174000";
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -160,7 +161,7 @@ class InitialAdmissionBindPostgresIntegrationTest {
     GameInstance gameInstance = new GameInstance();
     gameInstance.setTenantId(41L);
     gameInstance.setRuntimeVersion("smoke-1");
-    gameInstance.setOwnerAccountId(1001L);
+    gameInstance.setOwnerAccountId(OWNER_ACCOUNT_UUID);
     gameInstance.setStatus("RUNNING");
     gameInstance.setGameTemplateId(810L);
     gameInstance.setVersionId(902L);
