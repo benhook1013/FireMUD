@@ -36,11 +36,9 @@ import net.firedevops.firemud.account.v1.RequestEmailLoginOtpResponse;
 import net.firedevops.firemud.account.v1.UpdateProfileRequest;
 import net.firedevops.firemud.account.v1.UpdateProfileResponse;
 import net.firedevops.firemud.account.v1.VerifyEmailLoginOtpRequest;
-import net.firedevops.firemud.accountservice.dto.CompletePasswordResetRequest;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
 import net.firedevops.firemud.accountservice.dto.JoinPublicProductionRequest;
-import net.firedevops.firemud.accountservice.dto.PasswordResetRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.service.AccountService;
 import net.firedevops.firemud.accountservice.service.PingService;
@@ -749,23 +747,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.account.v1.RequestPasswordResetRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.RequestPasswordResetResponse>
           responseObserver) {
-    try {
-      accountService.requestPasswordReset(new PasswordResetRequest(request.getEmail()));
-      var response =
-          net.firedevops.firemud.account.v1.RequestPasswordResetResponse.newBuilder()
-              .setSuccess(true)
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      var response =
-          net.firedevops.firemud.account.v1.RequestPasswordResetResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("RequestPasswordReset", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        net.firedevops.firemud.account.v1.RequestPasswordResetResponse.newBuilder()
+            .setSuccess(false)
+            .setError(
+                appError(
+                    "RequestPasswordReset",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   @Override
@@ -774,24 +765,16 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       net.firedevops.firemud.account.v1.CompletePasswordResetRequest request,
       StreamObserver<net.firedevops.firemud.account.v1.CompletePasswordResetResponse>
           responseObserver) {
-    try {
-      accountService.completePasswordReset(
-          new CompletePasswordResetRequest(request.getToken(), request.getNewPassword()));
-      var response =
-          net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
-              .setSuccess(true)
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    } catch (Exception ex) {
-      var response =
-          net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
-              .setSuccess(false)
-              .setError(appError("CompletePasswordReset", "INVALID_ARGUMENT", ex.getMessage()))
-              .build();
-      responseObserver.onNext(response);
-      responseObserver.onCompleted();
-    }
+    responseObserver.onNext(
+        net.firedevops.firemud.account.v1.CompletePasswordResetResponse.newBuilder()
+            .setSuccess(false)
+            .setError(
+                appError(
+                    "CompletePasswordReset",
+                    "FAILED_PRECONDITION",
+                    "No authorized internal caller is configured"))
+            .build());
+    responseObserver.onCompleted();
   }
 
   @Override

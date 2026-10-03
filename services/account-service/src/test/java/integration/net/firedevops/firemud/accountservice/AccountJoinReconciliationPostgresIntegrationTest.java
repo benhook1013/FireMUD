@@ -68,7 +68,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   private static final UUID REALM_ID = UUID.fromString("a825f7ef-0ea3-4e8c-bf7c-a20242b4c931");
   private static final String WORLD_SLUG = "join-reconciliation-world";
   private static final String REALM_SLUG = "production";
-  private static final String NAMESPACE_ID = "join-reconciliation-namespace";
+  private static final String NAMESPACE_ID = "c3b77762-3cc2-4f76-9fc8-5f4938fe7924";
   private static final long GAME_INSTANCE_ID = 73L;
   private static final long CATALOG_REVISION = 29L;
   private static final long POINTER_VERSION = 11L;
@@ -419,7 +419,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   private void makeOperationPendingWithRetainedEvidence(JoinFixture fixture, int attempts) {
     int updated =
         dsl.execute(
-            "UPDATE account_join_operations SET status = 'PENDING', outcome = NULL, membership_id = NULL, outcome_membership_version = NULL, outcome_membership_authority_generation = NULL, reconciliation_attempt_count = ?, last_reconciliation_attempt_at = CASE WHEN ? = 0 THEN NULL ELSE CURRENT_TIMESTAMP - INTERVAL '2 seconds' END, last_reconciliation_attempt_reason = CASE WHEN ? = 0 THEN NULL ELSE 'PRIOR_RECONCILIATION_ATTEMPT' END, next_reconciliation_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second', updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED'",
+            "UPDATE account_join_operations SET status = 'PENDING', outcome = NULL, membership_id = NULL, outcome_membership_version = NULL, outcome_membership_authority_generation = NULL, reconciliation_attempt_count = ?, last_reconciliation_attempt_at = CASE WHEN ? = 0 THEN NULL ELSE pg_catalog.timezone('UTC', CURRENT_TIMESTAMP) - INTERVAL '2 seconds' END, last_reconciliation_attempt_reason = CASE WHEN ? = 0 THEN NULL ELSE 'PRIOR_RECONCILIATION_ATTEMPT' END, next_reconciliation_attempt_at = pg_catalog.timezone('UTC', CURRENT_TIMESTAMP) - INTERVAL '1 second', updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND status = 'COMMITTED' AND outcome = 'JOINED'",
             attempts,
             attempts,
             attempts,
@@ -438,7 +438,7 @@ class AccountJoinReconciliationPostgresIntegrationTest {
   private void setReconciliationAttempts(JoinFixture fixture, int attempts) {
     int updated =
         dsl.execute(
-            "UPDATE account_join_operations SET reconciliation_attempt_count = ?, last_reconciliation_attempt_at = CURRENT_TIMESTAMP - INTERVAL '2 seconds', last_reconciliation_attempt_reason = 'PRIOR_RECONCILIATION_ATTEMPT', next_reconciliation_attempt_at = CURRENT_TIMESTAMP - INTERVAL '1 second', updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND status = 'PENDING'",
+            "UPDATE account_join_operations SET reconciliation_attempt_count = ?, last_reconciliation_attempt_at = pg_catalog.timezone('UTC', CURRENT_TIMESTAMP) - INTERVAL '2 seconds', last_reconciliation_attempt_reason = 'PRIOR_RECONCILIATION_ATTEMPT', next_reconciliation_attempt_at = pg_catalog.timezone('UTC', CURRENT_TIMESTAMP) - INTERVAL '1 second', updated_at = CURRENT_TIMESTAMP WHERE request_id = ? AND status = 'PENDING'",
             attempts,
             fixture.requestId());
     assertThat(updated).isEqualTo(1);

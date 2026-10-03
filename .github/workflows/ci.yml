@@ -374,6 +374,7 @@ jobs:
           bash ./dev-tools/tests/trust-bootstrap-live-proof-contract.sh
           bash ./dev-tools/tests/trust-bootstrap-provision-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-manifest-contract.sh
+          bash ./dev-tools/tests/account-workload-namespace-contract.sh
           bash ./dev-tools/tests/hosted-identity-controller-workflow-contract.sh
           bash ./dev-tools/tests/worktree-topology-contract.sh
           bash ./dev-tools/tests/dev-tools-readme-contract.sh

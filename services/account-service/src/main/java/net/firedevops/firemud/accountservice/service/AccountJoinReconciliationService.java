@@ -42,6 +42,7 @@ public class AccountJoinReconciliationService {
   private static final Logger logger =
       LoggerFactory.getLogger(AccountJoinReconciliationService.class);
   private static final int MAX_BATCH_SIZE = 100;
+  private static final long MAX_BACKOFF_MILLIS = 300_000L;
   private static final Pattern SHA256_PATTERN = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Set<String> JOIN_AUDIT_FIELDS =
       Set.of("accountId", "tenantId", "worldSlug", "realmSlug", "membershipVersion", "requestId");
@@ -389,7 +390,7 @@ public class AccountJoinReconciliationService {
             operation.nextReconciliationAttemptAt(),
             now,
             reason,
-            nextAttemptAt(now));
+            nextAttemptAt(now, operation.reconciliationAttemptCount()));
     if (!recorded) {
       return ReconciliationResult.SKIPPED;
     }
@@ -435,12 +436,26 @@ public class AccountJoinReconciliationService {
     }
   }
 
-  private Instant nextAttemptAt(Instant attemptedAt) {
+  private Instant nextAttemptAt(Instant attemptedAt, int persistedAttemptCount) {
     try {
-      return attemptedAt.plusMillis(backoffMillis);
+      return attemptedAt.plusMillis(retryDelayMillis(persistedAttemptCount));
     } catch (DateTimeException | ArithmeticException ex) {
       throw new IllegalStateException("JOIN reconciliation backoff is outside timestamp range", ex);
     }
+  }
+
+  private long retryDelayMillis(int persistedAttemptCount) {
+    long cap = Math.max(backoffMillis, MAX_BACKOFF_MILLIS);
+    long delay = backoffMillis;
+    int remainingDoublings = Math.max(0, persistedAttemptCount);
+    while (remainingDoublings > 0 && delay < cap) {
+      if (delay > cap / 2) {
+        return cap;
+      }
+      delay *= 2;
+      remainingDoublings--;
+    }
+    return delay;
   }
 
   private static UUID joinAuditEventId(String requestId) {

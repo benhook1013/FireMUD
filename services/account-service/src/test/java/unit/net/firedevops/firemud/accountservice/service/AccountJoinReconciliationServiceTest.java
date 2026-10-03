@@ -163,7 +163,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "MEMBERSHIP_EVIDENCE_ABSENT",
-            NOW.plusMillis(5_000)))
+            NOW.plusMillis(40_000)))
         .thenReturn(true);
 
     fixture.service.reconcileDueOperations(NOW);
@@ -176,7 +176,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "MEMBERSHIP_EVIDENCE_ABSENT",
-            NOW.plusMillis(5_000));
+            NOW.plusMillis(40_000));
     verify(fixture.joinOperations, never())
         .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
     verifyNoInteractions(fixture.auditOutbox);
@@ -219,7 +219,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.plusMillis(5_000),
             NOW.plusMillis(6_000),
             "JOIN_AUDIT_ENVELOPE_ABSENT",
-            NOW.plusMillis(11_000)))
+            NOW.plusMillis(16_000)))
         .thenReturn(true);
 
     fixture.service.reconcileDueOperations(NOW.plusMillis(6_000));
@@ -244,7 +244,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.plusMillis(5_000),
             NOW.plusMillis(6_000),
             "JOIN_AUDIT_ENVELOPE_ABSENT",
-            NOW.plusMillis(11_000));
+            NOW.plusMillis(16_000));
   }
 
   @Test
@@ -262,7 +262,7 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "JOIN_READBACK_UNAVAILABLE",
-            NOW.plusMillis(5_000)))
+            NOW.plusMillis(20_000)))
         .thenReturn(true);
 
     fixture.service.reconcileDueOperations(NOW);
@@ -275,9 +275,56 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "JOIN_READBACK_UNAVAILABLE",
-            NOW.plusMillis(5_000));
+            NOW.plusMillis(20_000));
     assertThat(reconciliationCounter(fixture, "unresolved")).isEqualTo(1);
     assertThat(reconciliationCounter(fixture, "max_attempts_reached")).isZero();
+  }
+
+  @Test
+  void retryDelayDoublesFromInitialDelayAndSaturatesWithoutArithmeticOverflow() {
+    assertRetryDelay(0, 12, 5_000, 5_000);
+    assertRetryDelay(1, 12, 5_000, 10_000);
+    assertRetryDelay(5, 12, 5_000, 160_000);
+    assertRetryDelay(6, 12, 5_000, 300_000);
+    assertRetryDelay(2, 2, 5_000, 20_000);
+    assertRetryDelay(Integer.MAX_VALUE, Integer.MAX_VALUE, 5_000, 300_000);
+    assertRetryDelay(1, 2, Long.MAX_VALUE, Long.MAX_VALUE);
+  }
+
+  private static void assertRetryDelay(
+      int attemptCount, int maxAttempts, long initialDelayMillis, long expectedDelayMillis) {
+    Fixture fixture = fixture(maxAttempts, initialDelayMillis);
+    JoinOperation pending = pendingOperation(attemptCount, NOW.minusSeconds(1));
+    stubDue(fixture, pending);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
+        .thenReturn(Optional.empty());
+    Instant expectedNextAttempt = NOW.plusMillis(expectedDelayMillis);
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            attemptCount,
+            maxAttempts,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_EVIDENCE_ABSENT",
+            expectedNextAttempt))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            attemptCount,
+            maxAttempts,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_EVIDENCE_ABSENT",
+            expectedNextAttempt);
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -454,6 +501,10 @@ class AccountJoinReconciliationServiceTest {
   }
 
   private static Fixture fixture(int maxAttempts) {
+    return fixture(maxAttempts, 5_000);
+  }
+
+  private static Fixture fixture(int maxAttempts, long backoffMillis) {
     AccountJoinOperationRepository joinOperations = mock(AccountJoinOperationRepository.class);
     AccountConnectScopeRepository connectScopes = mock(AccountConnectScopeRepository.class);
     AccountTenantMembershipRepository memberships = mock(AccountTenantMembershipRepository.class);
@@ -472,7 +523,7 @@ class AccountJoinReconciliationServiceTest {
             transactionManager,
             10,
             maxAttempts,
-            5_000);
+            backoffMillis);
     return new Fixture(
         service, joinOperations, connectScopes, memberships, auditOutbox, meterRegistry);
   }

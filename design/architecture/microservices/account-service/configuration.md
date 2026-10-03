@@ -62,9 +62,9 @@ Changing any of the three JWT lifetime variables—`FIREMUD_AUTH_JWT_EXPIRATION_
 | `firemud.account.join-reconciliation.batch-size` | Caps each due-operation readback page. |
 | `firemud.account.join-reconciliation.max-attempts` | Raises a diagnostic threshold for unresolved attempts only. |
 | `firemud.account.join-reconciliation.interval-ms` | Sets the fixed delay between job invocations. |
-| `firemud.account.join-reconciliation.backoff-ms` | Sets the next readback time after an unresolved attempt. |
+| `firemud.account.join-reconciliation.backoff-ms` | Sets the initial retry delay; persisted attempts scale it according to the central catalog's capped exponential policy. |
 
-Reaching `max-attempts` never terminalizes an uncertain `PENDING` operation: exact readback continues with backoff, and attempt count alone is not evidence of commit or absence. Expiry or unavailable readback likewise does not authorize a membership mutation or an invented terminal outcome.
+Reaching `max-attempts` never terminalizes an uncertain `PENDING` operation: exact readback continues with capped exponential backoff, and attempt count alone is not evidence of commit or absence. Expiry or unavailable readback likewise does not authorize a membership mutation or an invented terminal outcome. The central catalog owns the initial-delay default and cap semantics.
 
 ## Proto Files
 
