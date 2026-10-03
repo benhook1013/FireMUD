@@ -1,6 +1,7 @@
 package net.firedevops.firemud.gamesession.entity;
 
 import java.time.Instant;
+import java.util.UUID;
 import lombok.Data;
 
 @Data
@@ -10,7 +11,10 @@ public class GameplayCommand {
   private Long tenantId;
   private Long gameInstanceId;
   private Long sessionId;
+  // Retained private numeric evidence; never derive a logical Account identity from this value.
   private Long accountId;
+  // Canonical Account identity supplied by a verified producer, not a numeric-key migration.
+  private UUID accountUuid;
   private Long characterId;
   private String commandName;
   private String commandText;
