@@ -1,15 +1,10 @@
 package net.firedevops.firemud.common.tenant;
 
-import io.grpc.CallCredentials;
-import io.grpc.Grpc;
 import io.grpc.ManagedChannel;
-import io.grpc.Metadata;
-import io.grpc.Status;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Objects;
-import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLException;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -17,6 +12,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.worldmanagement.v1.WorldAuthoredSourceIntakeServiceGrpc;
 
@@ -113,7 +109,7 @@ public final class WorldAuthoredSourceIntakeClient
     String expectedWorldPeerUri =
         "spiffe://firemud/ns/" + workloadNamespace + "/sa/world-management-service";
     return WorldAuthoredSourceIntakeServiceGrpc.newBlockingStub(channel)
-        .withCallCredentials(new ExactWorldServerCallCredentials(expectedWorldPeerUri))
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedWorldPeerUri))
         .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedWorldPeerUri))
         .withCompression("gzip");
   }
@@ -139,37 +135,6 @@ public final class WorldAuthoredSourceIntakeClient
     if (!workloadNamespace.equals(targetNamespace)) {
       throw new IllegalArgumentException(
           "World authored-source intake request must use the configured workload namespace");
-    }
-  }
-
-  /** Authenticates the negotiated server before gRPC releases request headers or body. */
-  private static final class ExactWorldServerCallCredentials extends CallCredentials {
-    private final String expectedPeerUri;
-
-    private ExactWorldServerCallCredentials(String expectedPeerUri) {
-      this.expectedPeerUri = expectedPeerUri;
-    }
-
-    @Override
-    public void applyRequestMetadata(
-        CallCredentials.RequestInfo requestInfo,
-        Executor appExecutor,
-        CallCredentials.MetadataApplier applier) {
-      var sslSession =
-          requestInfo == null || requestInfo.getTransportAttrs() == null
-              ? null
-              : requestInfo.getTransportAttrs().get(Grpc.TRANSPORT_ATTR_SSL_SESSION);
-      boolean exactPeer =
-          GrpcPeerIdentity.fromSslSession(sslSession)
-              .map(peer -> expectedPeerUri.equals(peer.uri()))
-              .orElse(false);
-      if (!exactPeer) {
-        applier.fail(
-            Status.UNAUTHENTICATED.withDescription(
-                "World intake requires the exact authenticated World workload identity"));
-        return;
-      }
-      applier.apply(new Metadata());
     }
   }
 

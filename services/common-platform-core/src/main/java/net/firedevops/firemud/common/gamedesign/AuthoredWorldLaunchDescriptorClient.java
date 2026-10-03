@@ -12,6 +12,7 @@ import net.firedevops.firemud.common.grpc.AbstractReloadingBlockingGrpcClient;
 import net.firedevops.firemud.common.grpc.CommonGrpcClientProperties;
 import net.firedevops.firemud.common.grpc.GrpcChannelFactory;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
+import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityCallCredentials;
 import net.firedevops.firemud.common.grpc.GrpcServerPeerIdentityClientInterceptor;
 import net.firedevops.firemud.gamedesign.v1.GameDesignServiceGrpc;
 
@@ -109,10 +110,11 @@ public final class AuthoredWorldLaunchDescriptorClient
 
   @Override
   protected GameDesignServiceGrpc.GameDesignServiceBlockingStub buildStub(ManagedChannel channel) {
+    String expectedGameDesignPeerUri =
+        "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service";
     return GameDesignServiceGrpc.newBlockingStub(channel)
-        .withInterceptors(
-            new GrpcServerPeerIdentityClientInterceptor(
-                "spiffe://firemud/ns/" + workloadNamespace + "/sa/game-design-service"))
+        .withCallCredentials(new GrpcServerPeerIdentityCallCredentials(expectedGameDesignPeerUri))
+        .withInterceptors(new GrpcServerPeerIdentityClientInterceptor(expectedGameDesignPeerUri))
         .withCompression("gzip");
   }
 

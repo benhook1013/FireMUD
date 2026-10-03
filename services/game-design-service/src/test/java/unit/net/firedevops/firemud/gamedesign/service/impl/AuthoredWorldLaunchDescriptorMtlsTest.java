@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.google.protobuf.UnknownFieldSet;
 import io.grpc.ForwardingServerCall.SimpleForwardingServerCall;
+import io.grpc.ForwardingServerCallListener.SimpleForwardingServerCallListener;
 import io.grpc.ManagedChannel;
 import io.grpc.Metadata;
 import io.grpc.Server;
@@ -44,6 +45,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import net.firedevops.firemud.common.config.ServiceEndpointsProperties;
@@ -217,6 +219,11 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
   }
 
   private Server startReceiver(TestCertificate serverCertificate) throws Exception {
+    return startReceiver(serverCertificate, null);
+  }
+
+  private Server startReceiver(
+      TestCertificate serverCertificate, InboundRpcCapture inboundRpcCapture) throws Exception {
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),
@@ -232,6 +239,23 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
     ReflectionTestUtils.setField(service, "workloadNamespace", NAMESPACE);
 
     Set<String> unauthenticatedMethods = publicMethods("application.yml");
+    ServerInterceptor[] interceptors =
+        inboundRpcCapture == null
+            ? new ServerInterceptor[] {
+              responseMutationInterceptor(responseMutation),
+              new AuthTokenInterceptor(
+                  new JwtUtil("test-secret-key-test-secret-key-32-bytes", 60_000),
+                  unauthenticatedMethods),
+              new GrpcPeerIdentityInterceptor()
+            }
+            : new ServerInterceptor[] {
+              inboundRpcCapture,
+              responseMutationInterceptor(responseMutation),
+              new AuthTokenInterceptor(
+                  new JwtUtil("test-secret-key-test-secret-key-32-bytes", 60_000),
+                  unauthenticatedMethods),
+              new GrpcPeerIdentityInterceptor()
+            };
     return NettyServerBuilder.forAddress(new InetSocketAddress("127.0.0.1", 0))
         .sslContext(
             GrpcSslContexts.configure(
@@ -240,14 +264,7 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
                 .trustManager(pki.caCertificate())
                 .clientAuth(ClientAuth.REQUIRE)
                 .build())
-        .addService(
-            ServerInterceptors.intercept(
-                service,
-                responseMutationInterceptor(responseMutation),
-                new AuthTokenInterceptor(
-                    new JwtUtil("test-secret-key-test-secret-key-32-bytes", 60_000),
-                    unauthenticatedMethods),
-                new GrpcPeerIdentityInterceptor()))
+        .addService(ServerInterceptors.intercept(service, interceptors))
         .build()
         .start();
   }
@@ -354,18 +371,21 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
 
     for (TestCertificate serverCertificate :
         List.of(pki.wrongServerWorkloadCertificate(), pki.wrongServerNamespaceCertificate())) {
-      Server wrongIdentityServer = startReceiver(serverCertificate);
+      InboundRpcCapture inboundRpcCapture = new InboundRpcCapture();
+      Server wrongIdentityServer = startReceiver(serverCertificate, inboundRpcCapture);
       AuthoredWorldLaunchDescriptorClient client =
           newSharedClient(directory.resolve(UUID.randomUUID().toString()), wrongIdentityServer);
       try {
         client.init();
         assertServerPeerRefused(() -> client.resolve(BOUND_REQUEST));
         assertServerPeerRefused(() -> client.get(readClientRequest()));
+        inboundRpcCapture.assertNoInboundRequests();
       } finally {
         client.close();
         stopServer(wrongIdentityServer);
       }
     }
+    verifyNoInteractions(launchDescriptorService);
   }
 
   @Test
@@ -556,6 +576,36 @@ class AuthoredWorldLaunchDescriptorMtlsTest {
     Throwable failure = catchFailure(call);
     assertThat(failure).isInstanceOf(StatusRuntimeException.class);
     assertThat(Status.fromThrowable(failure).getCode()).isEqualTo(Status.Code.UNAUTHENTICATED);
+  }
+
+  private static final class InboundRpcCapture implements ServerInterceptor {
+    private final AtomicInteger rpcCount = new AtomicInteger();
+    private final AtomicInteger requestMessageCount = new AtomicInteger();
+    private final AtomicReference<String> methodName = new AtomicReference<>();
+    private final AtomicReference<Metadata> requestMetadata = new AtomicReference<>();
+
+    @Override
+    public <ReqT, RespT> ServerCall.Listener<ReqT> interceptCall(
+        ServerCall<ReqT, RespT> call, Metadata headers, ServerCallHandler<ReqT, RespT> next) {
+      rpcCount.incrementAndGet();
+      methodName.set(call.getMethodDescriptor().getFullMethodName());
+      requestMetadata.set(headers);
+      ServerCall.Listener<ReqT> listener = next.startCall(call, headers);
+      return new SimpleForwardingServerCallListener<>(listener) {
+        @Override
+        public void onMessage(ReqT message) {
+          requestMessageCount.incrementAndGet();
+          super.onMessage(message);
+        }
+      };
+    }
+
+    private void assertNoInboundRequests() {
+      assertThat(rpcCount.get()).isZero();
+      assertThat(requestMessageCount.get()).isZero();
+      assertThat(methodName.get()).isNull();
+      assertThat(requestMetadata.get()).isNull();
+    }
   }
 
   private static void assertClientCodecRejected(Runnable call, String expectedCauseMessage) {

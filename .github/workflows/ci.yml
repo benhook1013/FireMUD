@@ -901,7 +901,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    timeout-minutes: 20
+    # Game Session runs composed owner proofs before its full checks and runtime JAR.
+    # Exact CI37121026340 exhausted 20m after those proofs passed, at JAR packaging.
+    timeout-minutes: ${{ matrix.module == 'game-session-service' && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
