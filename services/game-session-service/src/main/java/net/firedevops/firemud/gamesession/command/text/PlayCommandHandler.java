@@ -248,9 +248,9 @@ public class PlayCommandHandler {
       }
       if (worldSelection instanceof WorldSelectorResolution.Stale) {
         return failure(
-            "CONNECT_SCOPE_MISMATCH",
+            "SELECTION_STALE",
             "World selection is stale; run WORLDS again.",
-            "error.play.connect-scope-mismatch",
+            "error.play.selection-stale",
             Map.of(),
             tenantTag,
             null,
@@ -294,9 +294,9 @@ public class PlayCommandHandler {
       }
       if (realmSelection instanceof RealmSelectorResolution.Stale) {
         return failure(
-            "CONNECT_SCOPE_MISMATCH",
+            "SELECTION_STALE",
             "Realm selection is stale; run REALMS again.",
-            "error.play.connect-scope-mismatch",
+            "error.play.selection-stale",
             Map.of(),
             tenantTag,
             null,
@@ -335,9 +335,9 @@ public class PlayCommandHandler {
       }
       if (realmSelection instanceof RealmSelectorResolution.Stale) {
         return failure(
-            "CONNECT_SCOPE_MISMATCH",
+            "SELECTION_STALE",
             "Realm selection is stale; run REALMS again.",
-            "error.play.connect-scope-mismatch",
+            "error.play.selection-stale",
             Map.of(),
             tenantTag,
             null,
