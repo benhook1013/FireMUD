@@ -9,7 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
-from fire_controller.jobs import JobsNotBootstrapped, JobsSchemaIncompatible, RevisionConflict
+from fire_controller.inbox import InboxStore
+from fire_controller.jobs import JobsNotBootstrapped, JobsSchemaIncompatible, JobStore, RevisionConflict
 from fire_controller.map import (
     MAP_TABLES,
     MapImportConflict,
@@ -17,7 +18,8 @@ from fire_controller.map import (
     WorkstreamStore,
     editorial_mapping,
 )
-from pr_review.sqlite_backup import BackupError, _validate_database
+from pr_review.sqlite_backup import BackupError, _validate_database, create_snapshot, restore_snapshot
+from pr_review.sqlite_review_records import SqliteReviewRecords
 
 
 def _site_sources(directory: Path, *, worker: str = "Build & Tools") -> tuple[Path, Path]:
@@ -309,6 +311,89 @@ class WorkstreamStoreTests(unittest.TestCase):
                 with self.assertRaises(JobsSchemaIncompatible):
                     store.bootstrap()
                 self.assertEqual(state_rows(database), damaged_state)
+
+    def test_credentials_editorial_labels_survive_combined_snapshot_and_restore(self):
+        progress = json.loads(self.progress_source.read_text(encoding="utf-8"))
+        progress["tracks"][0].update({"id": "credentials", "name": "Credentials and access"})
+        progress["tracks"][0]["phases"][0].update({"name": "Credentials", "state": "NOW"})
+        self.progress_source.write_text(json.dumps(progress), encoding="utf-8")
+        self.editorial = editorial_mapping(progress)
+        status_before = self.status_source.read_bytes()
+        progress_before = self.progress_source.read_bytes()
+
+        self.store.bootstrap()
+        JobStore(self.database).bootstrap()
+        InboxStore(self.database).bootstrap()
+        SqliteReviewRecords(self.database).bootstrap()
+        self.store.import_site(self.status_source, self.progress_source, apply=True)
+        current = self.store.get("credentials", self.editorial)
+        updated = self.store.update(
+            "credentials",
+            current["revision"],
+            self.editorial,
+            now="Continue the credentials phase",
+            phase_states={"Credentials": "NOW"},
+        )
+        history = self.store.history("workstream", "credentials", limit=50, offset=0)
+        self.assertEqual(updated["phase_states"], {"Credentials": "NOW", "Phase two": "LATER"})
+        self.assertEqual([item["revision"] for item in history], [2, 1])
+        self.assertEqual(self.status_source.read_bytes(), status_before)
+        self.assertEqual(self.progress_source.read_bytes(), progress_before)
+
+        with sqlite3.connect(self.database) as connection:
+            original_values = json.loads(
+                connection.execute("SELECT original_values_json FROM map_imports").fetchone()[0]
+            )
+            manifest = json.loads(connection.execute("SELECT manifest_json FROM map_imports").fetchone()[0])
+            tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertEqual(original_values["workstreams"][0]["phase_states"]["Credentials"], "NOW")
+        self.assertEqual(manifest["workstreams"][0]["phase_states"]["Credentials"], "NOW")
+        self.assertIn("credentials", manifest["editorial"]["workstreams"])
+        self.assertTrue({"jobs", "inbox_messages", "review_runs", "map_revisions"}.issubset(tables))
+
+        source_before_snapshot = self.database.read_bytes()
+        snapshot = self.root / "combined.snapshot.sqlite3"
+        restored_path = self.root / "combined-restored.sqlite3"
+        create_snapshot(self.database, snapshot)
+        restore_snapshot(snapshot, restored_path)
+        self.assertEqual(self.database.read_bytes(), source_before_snapshot)
+        self.assertEqual(self.status_source.read_bytes(), status_before)
+        self.assertEqual(self.progress_source.read_bytes(), progress_before)
+
+        restored_store = WorkstreamStore(restored_path)
+        restored = restored_store.get("credentials", self.editorial)
+        restored_history = restored_store.history("workstream", "credentials", limit=50, offset=0)
+        self.assertEqual(restored["phase_states"], {"Credentials": "NOW", "Phase two": "LATER"})
+        self.assertEqual([item["revision"] for item in restored_history], [2, 1])
+        with sqlite3.connect(restored_path) as connection:
+            restored_original = json.loads(
+                connection.execute("SELECT original_values_json FROM map_imports").fetchone()[0]
+            )
+            restored_manifest = json.loads(
+                connection.execute("SELECT manifest_json FROM map_imports").fetchone()[0]
+            )
+        self.assertEqual(restored_original, original_values)
+        self.assertEqual(restored_manifest, manifest)
+
+    def test_backup_restore_refuses_secret_shaped_map_import_text_without_changes(self):
+        self.store.bootstrap()
+        self.store.import_site(self.status_source, self.progress_source, apply=True)
+        cases = (
+            ("semantic secret field", {"credentials": "short"}, "unredacted semantic secret field"),
+            ("credential pattern", {"source": "Bearer synthetic-secret-value"}, "credential- or raw-secret"),
+        )
+        for label, provenance, message in cases:
+            with self.subTest(kind=label), sqlite3.connect(self.database) as connection:
+                connection.execute(
+                    "UPDATE map_imports SET provenance_json = ?",
+                    (json.dumps(provenance),),
+                )
+            source_before = self.database.read_bytes()
+            destination = self.root / f"{label.replace(' ', '-')}.restored.sqlite3"
+            with self.assertRaisesRegex(BackupError, message):
+                restore_snapshot(self.database, destination)
+            self.assertEqual(self.database.read_bytes(), source_before)
+            self.assertFalse(destination.exists())
 
 
 if __name__ == "__main__":

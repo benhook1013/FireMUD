@@ -46,6 +46,56 @@ class ControllerCliTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0 if success else 2, result.stderr)
         return json.loads(result.stdout) if success and result.stdout.strip() else result
 
+    def test_file_and_real_piped_stdin_preserve_utf8_and_exact_line_endings(self):
+        original = "# Instructions\r\n\r\nKeep ü text.\nMixed return\rLast line\r\n"
+        body_file = self.root / "windows.md"
+        body_file.write_bytes(original.encode("utf-8"))
+        job = self.run_cli("alpha", "create", "file-lines", "--worker", "General", "--title", "Exact",
+                           "--body-file", str(body_file))
+        self.assertEqual(job["brief"], original)
+        revised = self.run_cli("alpha", "revise", job["id"], "--expect-revision", str(job["revision"]),
+                               "--body-file", str(body_file))
+        self.assertEqual(revised["brief"], original)
+        note = self.run_cli("alpha", "note", "--worker", "General", "--body-file", str(body_file))
+        self.assertEqual(note["body"], original)
+        updated = self.run_cli("alpha", "update", job["id"], "--body-file", str(body_file))
+        self.assertEqual(updated["body"], original)
+        command = [sys.executable, str(TOOLS / "fire-controller"), "--context", str(self.contexts["alpha"]),
+                   "jobs", "--json", "create", "stdin-lines", "--worker", "Document", "--title", "Piped",
+                   "--body-file", "-"]
+        piped = subprocess.run(command, input=original.encode("utf-8"), capture_output=True, timeout=10, check=False)
+        self.assertEqual(piped.returncode, 0, piped.stderr.decode())
+        self.assertEqual(json.loads(piped.stdout)["brief"], original)
+        from fire_controller.inbox import InboxStore
+        selected = ProjectContext.load(self.contexts["alpha"])
+        InboxStore(selected.database).bootstrap()
+        inbox_command = [sys.executable, str(TOOLS / "fire-controller"), "--context", str(self.contexts["alpha"]),
+                         "inbox", "--json", "send", "General", "--body-file", "-"]
+        message = subprocess.run(inbox_command, input=original.encode("utf-8"), capture_output=True, timeout=10, check=False)
+        self.assertEqual(message.returncode, 0, message.stderr.decode())
+        self.assertEqual(json.loads(message.stdout)["body"], original)
+        import argparse
+
+        from fire_controller.cli import _body
+        self.assertEqual(_body(argparse.Namespace(body_file=str(body_file))), original)
+
+    def test_invalid_utf8_file_and_piped_input_fail_before_writes(self):
+        import sqlite3
+        selected = ProjectContext.load(self.contexts["alpha"])
+        with sqlite3.connect(selected.database) as connection:
+            before = list(connection.iterdump())
+        source = self.root / "invalid.md"
+        source.write_bytes(b"Invalid UTF8: \xff")
+        self.run_cli("alpha", "create", "bad-file", "--worker", "General", "--title", "Bad",
+                     "--body-file", str(source), success=False)
+        command = [sys.executable, str(TOOLS / "fire-controller"), "--context", str(self.contexts["alpha"]),
+                   "jobs", "--json", "create", "bad-stdin", "--worker", "General", "--title", "Bad", "--body-file", "-"]
+        failed = subprocess.run(command, input=source.read_bytes(), capture_output=True, timeout=10, check=False)
+        self.assertEqual(failed.returncode, 2)
+        self.assertIn(b"utf-8", failed.stderr)
+        with sqlite3.connect(selected.database) as connection:
+            self.assertEqual(list(connection.iterdump()), before)
+
     def test_two_wrapper_contexts_and_revision_guard(self):
         job = self.run_cli("alpha", "create", "current", "--worker", "General", "--title", "Alpha work",
                            "--body", "Private current instructions", "--summary", "Public alpha")

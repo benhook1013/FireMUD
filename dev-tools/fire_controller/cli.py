@@ -16,9 +16,10 @@ def _body(args, *, optional=False):
         if hasattr(args, "_body_cache"):
             return args._body_cache
         if args.body_file == "-":
-            args._body_cache = sys.stdin.read()
+            stream = getattr(sys.stdin, "buffer", None)
+            args._body_cache = stream.read().decode("utf-8") if stream is not None else sys.stdin.read()
         else:
-            args._body_cache = Path(args.body_file).read_text(encoding="utf-8")
+            args._body_cache = Path(args.body_file).read_bytes().decode("utf-8")
         return args._body_cache
     if getattr(args, "body", None) is not None:
         return args.body

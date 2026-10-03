@@ -477,7 +477,6 @@ def _validate_database(path: Path, label: str) -> None:
             if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
                 raise BackupError(f"{label} contains broken SQLite foreign-key references")
             _require_allowlisted_schema(connection)
-            _screen_persisted_text(connection)
             if connection.execute("SELECT 1 FROM sqlite_master WHERE name = 'job_metadata'").fetchone():
                 from fire_controller.jobs import JobStore
                 JobStore.validate(connection)
@@ -487,6 +486,7 @@ def _validate_database(path: Path, label: str) -> None:
             if connection.execute("SELECT 1 FROM sqlite_master WHERE name = 'map_metadata'").fetchone():
                 from fire_controller.map import WorkstreamStore
                 WorkstreamStore.validate(connection)
+            _screen_persisted_text(connection)
 
         # These public read paths validate the controller document, the full
         # record schema, and indexed history/worklist reads without changing it.
@@ -632,6 +632,26 @@ def _screen_persisted_text(connection: sqlite3.Connection) -> None:
         if table not in existing_tables:
             continue
         for column in columns:
+            if table == "map_workstreams" and column == "phase_states_json":
+                for (value,) in connection.execute(f'SELECT "{column}" FROM "{table}"'):
+                    _screen_map_json_text(value, _screen_map_phase_states)
+                continue
+            if table == "map_revisions" and column == "snapshot_json":
+                for record_type, value in connection.execute(
+                    f'SELECT "record_type", "{column}" FROM "{table}"'
+                ):
+                    screen = _screen_map_workstream_snapshot if record_type == "workstream" else _screen_json_values
+                    _screen_map_json_text(value, screen)
+                continue
+            if table == "map_imports" and column in {"original_values_json", "manifest_json"}:
+                screen = (
+                    _screen_map_original_values
+                    if column == "original_values_json"
+                    else _screen_map_manifest
+                )
+                for (value,) in connection.execute(f'SELECT "{column}" FROM "{table}"'):
+                    _screen_map_json_text(value, screen)
+                continue
             if column == "content" and table in _ARTIFACT_TABLES:
                 for kind, value in connection.execute(f'SELECT "kind", "content" FROM "{table}"'):
                     if not isinstance(kind, str) or not isinstance(value, str):
@@ -655,6 +675,84 @@ def _screen_persisted_text(connection: sqlite3.Connection) -> None:
                         _screen_json_values(document)
                 elif _looks_secret(value):
                     raise BackupError("database contains credential- or raw-secret-looking text")
+
+
+def _screen_map_json_text(value: object, screen) -> None:
+    if not isinstance(value, str):
+        raise BackupError("persisted JSON cannot be screened")
+    try:
+        document = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise BackupError("persisted JSON cannot be screened") from exc
+    screen(document)
+
+
+def _screen_map_phase_states(value: object) -> None:
+    if not isinstance(value, dict):
+        _screen_json_values(value)
+        return
+    for phase, state in value.items():
+        # Phase names are editorial labels, not semantic secret-field names.
+        # Keep the ordinary credential-pattern check on both labels and values.
+        _screen_json_values(phase)
+        _screen_json_values(state)
+
+
+def _screen_map_workstream_snapshot(value: object) -> None:
+    if not isinstance(value, dict) or "phase_states" not in value:
+        _screen_json_values(value)
+        return
+    for key, nested_value in value.items():
+        if key == "phase_states":
+            _screen_map_phase_states(nested_value)
+        else:
+            _screen_json_values({key: nested_value})
+
+
+def _screen_map_import_workstreams(value: object) -> None:
+    if not isinstance(value, list):
+        _screen_json_values(value)
+        return
+    for workstream in value:
+        if not isinstance(workstream, dict) or "phase_states" not in workstream:
+            _screen_json_values(workstream)
+            continue
+        for key, nested_value in workstream.items():
+            if key == "phase_states":
+                _screen_map_phase_states(nested_value)
+            else:
+                _screen_json_values({key: nested_value})
+
+
+def _screen_map_original_values(value: object) -> None:
+    if not isinstance(value, dict) or "workstreams" not in value:
+        _screen_json_values(value)
+        return
+    for key, nested_value in value.items():
+        if key == "workstreams":
+            _screen_map_import_workstreams(nested_value)
+        else:
+            _screen_json_values({key: nested_value})
+
+
+def _screen_map_manifest(value: object) -> None:
+    if not isinstance(value, dict):
+        _screen_json_values(value)
+        return
+    for key, nested_value in value.items():
+        if key == "workstreams":
+            _screen_map_import_workstreams(nested_value)
+        elif key == "editorial" and isinstance(nested_value, dict):
+            for editorial_key, editorial_value in nested_value.items():
+                if editorial_key == "workstreams" and isinstance(editorial_value, dict):
+                    for workstream_id, workstream in editorial_value.items():
+                        # Workstream IDs are dynamic editorial labels in this map.
+                        _screen_json_values(workstream_id)
+                        _screen_json_values(workstream)
+                else:
+                    _screen_json_values({editorial_key: editorial_value})
+        else:
+            _screen_json_values({key: nested_value})
 
 
 def _screen_json_artifact(kind: str, content: str) -> None:
