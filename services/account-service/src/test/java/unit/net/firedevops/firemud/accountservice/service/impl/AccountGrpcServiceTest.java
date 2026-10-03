@@ -914,6 +914,36 @@ class AccountGrpcServiceTest {
   }
 
   @Test
+  void getProfileMapsSourceValidationFailuresToSanitizedApplicationErrors() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    Mockito.when(accountService.getProfile(1L, 2L))
+        .thenThrow(new IllegalStateException("private source validation detail"));
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<GetProfileResponse> observer = new RecordingObserver<>();
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.getProfile(
+                GetProfileRequest.newBuilder().setTenantId("1").setAccountId(ACCOUNT_UUID).build(),
+                observer));
+
+    assertEquals(1, observer.responseCount());
+    assertEquals("INTERNAL", observer.response().getError().getCode());
+    assertEquals("Profile source validation failed", observer.response().getError().getMessage());
+    assertEquals("", observer.response().getProfileJson());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService).getProfile(1L, 2L);
+  }
+
+  @Test
   void getProfileRejectsZeroAccountIdBeforeLookup() {
     PingService pingService = Mockito.mock(PingService.class);
     AccountService accountService = Mockito.mock(AccountService.class);
@@ -1488,6 +1518,42 @@ class AccountGrpcServiceTest {
     assertEquals("INVALID_ARGUMENT", observer.response().getError().getCode());
     assertTrue(observer.completed());
     Mockito.verify(accountService).updateProfile(Mockito.anyLong(), Mockito.any());
+  }
+
+  @Test
+  void updateProfileMapsSourceValidationFailuresToSanitizedApplicationErrors() {
+    PingService pingService = Mockito.mock(PingService.class);
+    AccountService accountService = Mockito.mock(AccountService.class);
+    Mockito.when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenReturn(2L);
+    Mockito.doThrow(new IllegalStateException("private source validation detail"))
+        .when(accountService)
+        .updateProfile(Mockito.eq(2L), Mockito.any());
+    AccountGrpcService service =
+        new AccountGrpcService(pingService, accountService, null, WORKLOAD_NAMESPACE);
+    RecordingObserver<UpdateProfileResponse> observer = new RecordingObserver<>();
+    SessionContext.setContext(ACCOUNT_UUID, List.of("player"), Map.of());
+
+    withPeer(
+        SOCIAL_GROUPS_PEER,
+        () ->
+            service.updateProfile(
+                UpdateProfileRequest.newBuilder()
+                    .setTenantId("1")
+                    .setAccountId(ACCOUNT_UUID)
+                    .setProfileJson(
+                        "{\"displayName\":\"demo\",\"bio\":\"bio\",\"presenceVisibilityPolicy\":\"PRIVATE\"}")
+                    .build(),
+                observer));
+
+    assertEquals(1, observer.responseCount());
+    assertFalse(observer.response().getSuccess());
+    assertEquals("INTERNAL", observer.response().getError().getCode());
+    assertEquals("Profile source validation failed", observer.response().getError().getMessage());
+    assertTrue(observer.completed());
+    assertFalse(observer.receivedTransportError());
+    Mockito.verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+    Mockito.verify(accountService).updateProfile(Mockito.eq(2L), Mockito.any());
   }
 
   @Test
@@ -2338,12 +2404,14 @@ class AccountGrpcServiceTest {
 
   private static final class RecordingObserver<T> implements StreamObserver<T> {
     private T response;
+    private int responseCount;
     private boolean receivedTransportError;
     private boolean completed;
 
     @Override
     public void onNext(T value) {
       response = value;
+      responseCount++;
     }
 
     @Override
@@ -2358,6 +2426,10 @@ class AccountGrpcServiceTest {
 
     private T response() {
       return response;
+    }
+
+    private int responseCount() {
+      return responseCount;
     }
 
     private boolean receivedTransportError() {
