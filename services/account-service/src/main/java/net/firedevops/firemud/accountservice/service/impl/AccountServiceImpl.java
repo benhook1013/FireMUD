@@ -60,7 +60,6 @@ import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
 import net.firedevops.firemud.accountservice.entity.AccountLifecycleState;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthMode;
 import net.firedevops.firemud.accountservice.entity.AccountLoginAuthModes;
-import net.firedevops.firemud.accountservice.entity.AccountRealmAccessGrant;
 import net.firedevops.firemud.accountservice.entity.AccountTenantMembership;
 import net.firedevops.firemud.accountservice.entity.EmailVerificationToken;
 import net.firedevops.firemud.accountservice.entity.Profile;
@@ -131,6 +130,7 @@ public class AccountServiceImpl implements AccountService {
   public static final String ACCOUNT_JWT_ISSUER = "firemud-account-service";
   private static final String GAMEPLAY_DELEGATION_AUDIENCE = "account-service";
   private static final int EMAIL_LOGIN_OTP_MAX_ATTEMPTS = 5;
+  private static final UUID NIL_ACCOUNT_UUID = new UUID(0L, 0L);
   private static final SecureRandom EMAIL_LOGIN_OTP_RANDOM = new SecureRandom();
   private static final JsonMapper AUDIT_JSON = JsonMapper.builder().build();
 
@@ -255,14 +255,16 @@ public class AccountServiceImpl implements AccountService {
         "platform",
         null,
         "ACCOUNT_REGISTERED",
-        "{\"accountId\":" + saved.getId() + "}");
+        "{\"accountId\":\"" + saved.getAccountUuid() + "\"}");
     return accountMapper.toDto(saved);
   }
 
   private void requireCanonicalPersistedIdentity(Account account) {
     if (account == null
         || account.getId() == null
+        || account.getId() <= 0L
         || account.getAccountUuid() == null
+        || NIL_ACCOUNT_UUID.equals(account.getAccountUuid())
         || account.getAccountUuidProvenance() != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
         || !account.getId().equals(account.getAccountUuidSourceNumericId())) {
       throw new IllegalStateException(
@@ -270,27 +272,46 @@ public class AccountServiceImpl implements AccountService {
     }
   }
 
+  private void requireAuthenticationPersistedIdentity(Account account) {
+    AccountIdentityProvenance provenance =
+        account == null ? null : account.getAccountUuidProvenance();
+    if (account == null
+        || account.getId() == null
+        || account.getId() <= 0L
+        || account.getAccountUuid() == null
+        || NIL_ACCOUNT_UUID.equals(account.getAccountUuid())
+        || account.getAccountUuidSourceNumericId() == null
+        || !account.getId().equals(account.getAccountUuidSourceNumericId())
+        || (provenance != AccountIdentityProvenance.ACCOUNT_REPOSITORY_INSERT
+            && provenance != AccountIdentityProvenance.ACCOUNT_V29_MIGRATION
+            && provenance != AccountIdentityProvenance.ACCOUNT_DATABASE_INSERT)) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
+  }
+
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.authenticate")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticate(
       String username, String password) {
     PrimaryAuthentication authentication = authenticateAccountIdentity(username, password, true);
     Account account = authentication.account();
+    requireAuthenticationPersistedIdentity(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
-            account.getId().toString(),
+            account.getAccountUuid().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims("control-ui", account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+        account.getAccountUuid().toString(), token);
   }
 
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.authenticate_gameplay")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult authenticateForGameplay(
       String email, String password) {
@@ -301,16 +322,17 @@ public class AccountServiceImpl implements AccountService {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(gameplayAccount, password, true);
     Account account = authentication.account();
+    requireAuthenticationPersistedIdentity(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String token =
         mintToken(
-            account.getId().toString(),
+            account.getAccountUuid().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+        account.getAccountUuid().toString(), token);
   }
 
   @Override
@@ -351,7 +373,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.verify_email_login_otp")
   public net.firedevops.firemud.accountservice.dto.AuthenticationResult verifyEmailLoginOtp(
       String email, String code) {
@@ -375,39 +397,47 @@ public class AccountServiceImpl implements AccountService {
       throw invalidCredentials();
     }
     requireAuthenticationEligible(account);
+    requireAuthenticationPersistedIdentity(account);
     accountEmailLoginChallengeRepository.delete(challenge);
     String token =
         mintToken(
-            account.getId().toString(),
+            account.getAccountUuid().toString(),
             jwtAuthProperties.getJwtExpirationMs(),
             authenticationTokenClaims(GAMEPLAY_DELEGATION_AUDIENCE, account));
     sessionService.storeAccountSession(
         account.getId(), token, jwtAuthProperties.getJwtExpirationMs());
     return new net.firedevops.firemud.accountservice.dto.AuthenticationResult(
-        account.getId(), token);
+        account.getAccountUuid().toString(), token);
   }
 
   @Override
-  @Transactional
+  @Transactional(noRollbackFor = AuthenticationException.class)
   @Timed(value = "account.player_bootstrap")
   public PlayerBootstrapResult issuePlayerBootstrap(String accountIdentifier, String secret) {
     PrimaryAuthentication authentication =
         authenticateAccountIdentity(accountIdentifier, secret, true);
     Account account = authentication.account();
+    requireAuthenticationPersistedIdentity(account);
     authentication.emailLoginChallenge().ifPresent(accountEmailLoginChallengeRepository::delete);
     String jti = UUID.randomUUID().toString();
     long issuedAt = System.currentTimeMillis();
     long expiresAt = issuedAt + tokenProperties.getPlayerBootstrapExpirationMs();
     String bootstrapToken =
         mintToken(
-            String.valueOf(account.getId()),
+            account.getAccountUuid().toString(),
             tokenProperties.getPlayerBootstrapExpirationMs(),
-            Map.of("aud", "player-bootstrap", "accountId", account.getId(), "jti", jti));
+            Map.of(
+                "aud",
+                "player-bootstrap",
+                "accountId",
+                account.getAccountUuid().toString(),
+                "jti",
+                jti));
     sessionService.storeAccountSession(
         account.getId(), bootstrapToken, tokenProperties.getPlayerBootstrapExpirationMs());
     logger.info("Issued player bootstrap token for account {}", account.getId());
     return new PlayerBootstrapResult(
-        account.getId(),
+        account.getAccountUuid().toString(),
         bootstrapToken,
         Instant.ofEpochMilli(issuedAt).toString(),
         Instant.ofEpochMilli(expiresAt).toString());
@@ -549,7 +579,9 @@ public class AccountServiceImpl implements AccountService {
         || !caller.playableStateScope().equals(target.playableStateScope())) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
     }
-    requireAuthenticationEligible(requireAccount(caller.accountId()));
+    Account persistedCaller = requireAccount(caller.accountId());
+    requireAuthenticationEligible(persistedCaller);
+    UUID callerAccountUuid = requirePersistedAccountUuid(persistedCaller);
     RuntimeRealmTarget current =
         requireRealmTarget(target.tenantId(), target.worldSlug(), target.realmSlug());
     if (!isPublicProductionRealm(current)) {
@@ -574,7 +606,10 @@ public class AccountServiceImpl implements AccountService {
     Instant expiresAt = evaluatedAt.plusMillis(tokenProperties.getConnectScopeExpirationMs());
     String scopeId =
         mintAndRetainConnectScope(
-            new BootstrapContext(caller.accountId()), current, evaluatedAt, expiresAt);
+            new BootstrapContext(callerAccountUuid, caller.accountId()),
+            current,
+            evaluatedAt,
+            expiresAt);
     return new DirectTextJoinScope(scopeId, expiresAt.toString());
   }
 
@@ -590,7 +625,9 @@ public class AccountServiceImpl implements AccountService {
       throw new AuthenticationException(
           "CONNECT_CONTEXT_INVALID", "JOIN caller context is missing");
     }
-    requireAuthenticationEligible(requireAccount(caller.accountId()));
+    Account persistedCaller = requireAccount(caller.accountId());
+    requireAuthenticationEligible(persistedCaller);
+    requirePersistedAccountUuid(persistedCaller);
     return joinPublicProductionForTrustedCaller(
         caller.accountId(), caller.sessionId(), caller, request);
   }
@@ -1255,14 +1292,16 @@ public class AccountServiceImpl implements AccountService {
 
   private void validateDirectTextJoinScope(
       DirectTextCallerContext caller, VerifiedJoinScope scope) {
-    if (caller != null
-        && (caller.accountId() != scope.accountId()
-            || caller.tenantId() != scope.tenantId()
-            || !caller.realmId().equals(scope.realmId())
-            || caller.gameInstanceId() != scope.gameInstanceId()
-            || !caller.playableStateNamespaceId().equals(scope.playableStateNamespaceId())
-            || !caller.playableStateScope().equals(scope.playableStateScope()))) {
-      throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+    if (caller != null) {
+      requirePersistedAccountUuid(requireAccount(caller.accountId()));
+      if (caller.accountId() != scope.accountId()
+          || caller.tenantId() != scope.tenantId()
+          || !caller.realmId().equals(scope.realmId())
+          || caller.gameInstanceId() != scope.gameInstanceId()
+          || !caller.playableStateNamespaceId().equals(scope.playableStateNamespaceId())
+          || !caller.playableStateScope().equals(scope.playableStateScope())) {
+        throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
+      }
     }
   }
 
@@ -1271,8 +1310,10 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private JoinEvaluation evaluateJoin(VerifiedJoinScope scope, boolean lockEntitlement) {
+    UUID accountUuid = requirePersistedAccountUuid(requireAccount(scope.accountId()));
     return evaluateJoin(
         new ConnectScopeContext(
+            accountUuid,
             scope.accountId(),
             scope.tenantId(),
             scope.realmId(),
@@ -1545,47 +1586,17 @@ public class AccountServiceImpl implements AccountService {
   }
 
   @Override
-  @Transactional
   @Timed(value = "account.realm_access_grant_upsert")
   public RealmAccessGrantResult grantRealmAccess(RealmAccessGrantRequest request) {
-    Account account = requireAccount(request.accountId());
-    Instant now = Instant.now();
-    AccountRealmAccessGrant grant =
-        accountRealmAccessGrantRepository
-            .findByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-                request.accountId(), request.tenantId(), request.worldSlug(), request.realmSlug())
-            .orElseGet(
-                () -> {
-                  AccountRealmAccessGrant created = new AccountRealmAccessGrant();
-                  created.setAccount(account);
-                  created.setTenantId(request.tenantId());
-                  created.setWorldSlug(request.worldSlug());
-                  created.setRealmSlug(request.realmSlug());
-                  created.setGrantVersion(0L);
-                  created.setCreatedAt(now);
-                  return created;
-                });
-    grant.setGrantVersion(grant.getGrantVersion() + 1L);
-    grant.setGrantedBy(request.grantedBy());
-    grant.setGrantReason(request.grantReason());
-    grant.setUpdatedAt(now);
-    accountRealmAccessGrantRepository.save(grant);
-    return new RealmAccessGrantResult(
-        request.accountId(),
-        request.tenantId(),
-        request.worldSlug(),
-        request.realmSlug(),
-        true,
-        grant.getGrantVersion(),
-        now.toString());
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE", "Lifecycle-qualified realm-grant mutations are unavailable");
   }
 
   @Override
-  @Transactional
   @Timed(value = "account.realm_access_grant_revoke")
   public void revokeRealmAccess(Long accountId, Long tenantId, String worldSlug, String realmSlug) {
-    accountRealmAccessGrantRepository.deleteByAccountIdAndTenantIdAndWorldSlugAndRealmSlug(
-        accountId, tenantId, worldSlug, realmSlug);
+    throw new AuthenticationException(
+        "AUTH_UNAVAILABLE", "Lifecycle-qualified realm-grant mutations are unavailable");
   }
 
   @Override
@@ -1629,15 +1640,18 @@ public class AccountServiceImpl implements AccountService {
             "CONNECT_CONTEXT_INVALID",
             "Missing bootstrap token",
             "Invalid bootstrap token");
+    UUID accountUuid;
+    long accountId;
     try {
-      long accountId = requireSignedActorAccountId(claims);
-      if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
-        throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
-      }
-      return new BootstrapContext(accountId);
-    } catch (IllegalArgumentException ex) {
+      accountUuid = requireSignedActorAccountUuid(claims);
+      accountId = resolveAccountStorageId(accountUuid);
+    } catch (IllegalArgumentException | IllegalStateException ex) {
       throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Invalid bootstrap token", ex);
     }
+    if (!sessionService.isAccountSessionActive(accountId, bootstrapToken)) {
+      throw new AuthenticationException("CONNECT_CONTEXT_INVALID", "Bootstrap token expired");
+    }
+    return new BootstrapContext(accountUuid, accountId);
   }
 
   private RuntimeRealmTarget requireAdmissibleRealm(
@@ -1897,11 +1911,11 @@ public class AccountServiceImpl implements AccountService {
       Instant expiresAt) {
     long expirationMs = Math.max(1L, expiresAt.toEpochMilli() - evaluatedAt.toEpochMilli());
     return mintToken(
-        String.valueOf(bootstrapContext.accountId()),
+        bootstrapContext.accountUuid().toString(),
         expirationMs,
         Map.ofEntries(
             Map.entry("aud", "bootstrap-connect-scope"),
-            Map.entry("accountId", bootstrapContext.accountId()),
+            Map.entry("accountId", bootstrapContext.accountUuid().toString()),
             Map.entry("tenantId", realm.tenantId()),
             Map.entry("realmId", realm.realmId().toString()),
             Map.entry("worldSlug", realm.worldSlug()),
@@ -1917,7 +1931,7 @@ public class AccountServiceImpl implements AccountService {
                 "jti",
                 stableId(
                     "connect-scope",
-                    bootstrapContext.accountId(),
+                    bootstrapContext.accountUuid().toString(),
                     Long.toString(realm.tenantId()),
                     realm.worldSlug(),
                     realm.realmSlug(),
@@ -1974,9 +1988,8 @@ public class AccountServiceImpl implements AccountService {
             INVALID_CONNECT_SCOPE_MESSAGE,
             INVALID_CONNECT_SCOPE_MESSAGE);
     try {
-      JwtClaims.SignedGameplayRoutingClaims routingClaims =
-          JwtClaims.requireSignedGameplayRoutingClaims(
-              claims, "signed token account subject mismatch");
+      UUID accountUuid = requireSignedActorAccountUuid(claims);
+      long accountId = resolveAccountStorageId(accountUuid);
       Instant connectScopeExpiresAt = parseInstant(claims.get("connectScopeExpiresAt"));
       Instant evaluatedAt = parseInstant(claims.get("evaluatedAt"));
       if (connectScopeExpiresAt == null) {
@@ -1986,25 +1999,46 @@ public class AccountServiceImpl implements AccountService {
         throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE);
       }
       return new ConnectScopeContext(
-          routingClaims.accountId(),
-          routingClaims.tenantId(),
+          accountUuid,
+          accountId,
+          JwtClaims.requireLong(claims.get("tenantId"), "tenantId", false),
           requireCanonicalRealmId(claims.get("realmId")),
-          routingClaims.worldSlug(),
-          routingClaims.realmSlug(),
+          JwtClaims.requireText(claims.get("worldSlug"), "worldSlug"),
+          JwtClaims.requireText(claims.get("realmSlug"), "realmSlug"),
           JwtClaims.requireText(claims.get("playableStateNamespaceId"), "playableStateNamespaceId"),
           JwtClaims.requireText(claims.get("playableStateScope"), "playableStateScope"),
-          routingClaims.gameInstanceId(),
+          JwtClaims.requireLong(claims.get("gameInstanceId"), "gameInstanceId", false),
           requirePositiveLong(claims.get("catalogRevision"), "catalogRevision"),
-          routingClaims.pointerVersion(),
+          JwtClaims.requireLong(claims.get("pointerVersion"), "pointerVersion", false),
           evaluatedAt,
           connectScopeExpiresAt);
-    } catch (IllegalArgumentException ex) {
+    } catch (IllegalArgumentException | IllegalStateException ex) {
       throw new AuthenticationException("CONNECT_SCOPE_INVALID", INVALID_CONNECT_SCOPE_MESSAGE, ex);
     }
   }
 
-  private static long requireSignedActorAccountId(Claims claims) {
-    return JwtClaims.requireSignedActorAccountId(claims, "signed token account subject mismatch");
+  private static UUID requireSignedActorAccountUuid(Claims claims) {
+    UUID subjectAccountUuid = requireCanonicalAccountUuid(claims.getSubject(), "sub");
+    UUID claimedAccountUuid = requireCanonicalAccountUuid(claims.get("accountId"), "accountId");
+    if (!subjectAccountUuid.equals(claimedAccountUuid)) {
+      throw new IllegalArgumentException("signed token account subject mismatch");
+    }
+    return claimedAccountUuid;
+  }
+
+  private static UUID requireCanonicalAccountUuid(Object value, String claimName) {
+    if (!(value instanceof String text)) {
+      throw new IllegalArgumentException(claimName + " must be a canonical Account UUID");
+    }
+    try {
+      UUID accountUuid = UUID.fromString(text);
+      if (!accountUuid.toString().equals(text) || NIL_ACCOUNT_UUID.equals(accountUuid)) {
+        throw new IllegalArgumentException(claimName + " must be a canonical Account UUID");
+      }
+      return accountUuid;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException(claimName + " must be a canonical Account UUID", ex);
+    }
   }
 
   private Claims requireSignedTokenClaims(
@@ -2034,7 +2068,8 @@ public class AccountServiceImpl implements AccountService {
 
   private void validateConnectScopeAgainstBootstrap(
       BootstrapContext bootstrapContext, ConnectScopeContext scopeContext) {
-    if (scopeContext.accountId() != bootstrapContext.accountId()) {
+    if (!scopeContext.accountUuid().equals(bootstrapContext.accountUuid())
+        || scopeContext.accountId() != bootstrapContext.accountId()) {
       throw new AuthenticationException("CONNECT_SCOPE_MISMATCH", STALE_CONNECT_SCOPE_MESSAGE);
     }
   }
@@ -2220,6 +2255,16 @@ public class AccountServiceImpl implements AccountService {
         .orElseThrow(() -> new IllegalArgumentException("Account not found"));
   }
 
+  private UUID requirePersistedAccountUuid(Account account) {
+    requireAuthenticationPersistedIdentity(account);
+    UUID accountUuid = account.getAccountUuid();
+    if (!account.getId().equals(resolveAccountStorageId(accountUuid))) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match its exact persisted source row");
+    }
+    return accountUuid;
+  }
+
   private boolean hasRealmAccessGrant(
       Long accountId, Long tenantId, String worldSlug, String realmSlug) {
     // The retained four-field row cannot prove the current playtest lifecycle and state generation.
@@ -2242,7 +2287,7 @@ public class AccountServiceImpl implements AccountService {
         "aud",
         audience,
         "accountId",
-        account.getId(),
+        account.getAccountUuid().toString(),
         "globalRoles",
         globalRoles,
         "jti",
@@ -2297,6 +2342,24 @@ public class AccountServiceImpl implements AccountService {
       case "active", "trialing", "past_due" -> true;
       default -> false;
     };
+  }
+
+  @Override
+  @Transactional(readOnly = true)
+  public Long resolveAccountStorageId(UUID accountUuid) {
+    if (accountUuid == null || NIL_ACCOUNT_UUID.equals(accountUuid)) {
+      throw new IllegalArgumentException("A canonical non-nil Account UUID is required");
+    }
+    Account account =
+        accountRepository
+            .findByAccountUuid(accountUuid)
+            .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+    requireAuthenticationPersistedIdentity(account);
+    if (!accountUuid.equals(account.getAccountUuid())) {
+      throw new IllegalStateException(
+          "Account UUID readback did not match the requested persisted identity");
+    }
+    return account.getId();
   }
 
   @Override
@@ -2382,6 +2445,7 @@ public class AccountServiceImpl implements AccountService {
   @Timed(value = "account.export")
   public AccountDataExportDto exportAccountData(Long accountId) {
     Account account = requireAccount(accountId);
+    requirePersistedAccountUuid(account);
     List<ProfileDto> profiles =
         profileRepository.findByAccountId(accountId).stream().map(profileMapper::toDto).toList();
     return new AccountDataExportDto(accountMapper.toDto(account), profiles);
@@ -2639,7 +2703,7 @@ public class AccountServiceImpl implements AccountService {
         });
   }
 
-  private record BootstrapContext(long accountId) {}
+  private record BootstrapContext(UUID accountUuid, long accountId) {}
 
   private record JoinAuditPayload(
       long accountId,
@@ -2799,6 +2863,7 @@ public class AccountServiceImpl implements AccountService {
   }
 
   private record ConnectScopeContext(
+      UUID accountUuid,
       long accountId,
       long tenantId,
       UUID realmId,

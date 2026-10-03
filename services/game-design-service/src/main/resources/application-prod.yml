@@ -54,6 +54,7 @@ firemud:
         - gamedesign.v1.TenantIdentityService/ResolveFreshTenantCreation
         - gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity
         - gamedesign.v1.TenantIdentityService/ResolveAuthoredWorldSource
+        - gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation
   grpc:
     cert-chain: ${FIREMUD_GRPC_CERT_CHAIN_PATH:certs/client.crt}
     private-key: ${FIREMUD_GRPC_PRIVATE_KEY_PATH:certs/client.key}

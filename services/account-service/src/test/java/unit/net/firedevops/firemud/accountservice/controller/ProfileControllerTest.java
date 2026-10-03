@@ -1,5 +1,6 @@
 package net.firedevops.firemud.accountservice.controller;
 
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -9,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
@@ -33,6 +35,8 @@ import tools.jackson.databind.ObjectMapper;
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 @WithFiremudHttpAuthTestProperties
 class ProfileControllerTest {
+  private static final String ACCOUNT_UUID = "550e8400-e29b-41d4-a716-446655440000";
+  private static final String OTHER_ACCOUNT_UUID = "550e8400-e29b-41d4-a716-446655440001";
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -49,12 +53,13 @@ class ProfileControllerTest {
   void getProfileReturnsDto() throws Exception {
     ProfileDto dto =
         new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.FRIENDS_ONLY);
+    when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID))).thenReturn(2L);
     when(accountService.getProfile(1L, 2L)).thenReturn(dto);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
     mockMvc
         .perform(
-            get("/profiles/2")
+            get("/profiles/" + ACCOUNT_UUID)
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isOk())
@@ -68,12 +73,13 @@ class ProfileControllerTest {
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     ProfileDto dto =
         new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID))).thenReturn(2L);
     when(accountService.updateProfile(req)).thenReturn(dto);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
     mockMvc
         .perform(
-            put("/profiles/2")
+            put("/profiles/" + ACCOUNT_UUID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -89,7 +95,7 @@ class ProfileControllerTest {
         jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("8", List.of("tenantAdmin"))));
     mockMvc
         .perform(
-            get("/profiles/2")
+            get("/profiles/" + ACCOUNT_UUID)
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
@@ -98,11 +104,12 @@ class ProfileControllerTest {
   @Test
   void getProfileRejectsSameTenantAdminForAnotherAccount() throws Exception {
     String token =
-        jwtUtil.generateToken("3", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID, Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
-            get("/profiles/2")
+            get("/profiles/" + ACCOUNT_UUID)
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
@@ -112,11 +119,12 @@ class ProfileControllerTest {
 
   @Test
   void getProfileRejectsGlobalAdminForAnotherAccount() throws Exception {
-    String token = jwtUtil.generateToken("3", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
-            get("/profiles/2")
+            get("/profiles/" + ACCOUNT_UUID)
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isForbidden());
@@ -125,28 +133,60 @@ class ProfileControllerTest {
   }
 
   @Test
-  void getProfileRejectsMalformedAccountIdBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+  void getProfileRejectsNumericSubjectBeforeIdentityLookup() throws Exception {
+    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
 
     mockMvc
         .perform(
-            get("/profiles/not-a-number")
+            get("/profiles/" + ACCOUNT_UUID)
+                .param("tenantId", "1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(accountService);
+  }
+
+  @Test
+  void getProfileRejectsUnmappedUuidBeforeProfileRead() throws Exception {
+    when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+        .thenThrow(new IllegalArgumentException("Account not found"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
+
+    mockMvc
+        .perform(
+            get("/profiles/" + ACCOUNT_UUID)
+                .param("tenantId", "1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+        .andExpect(status().isBadRequest());
+
+    org.mockito.Mockito.verify(accountService, never()).getProfile(1L, 2L);
+  }
+
+  @Test
+  void getProfileRejectsMalformedAccountIdBeforeDispatch() throws Exception {
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
+
+    mockMvc
+        .perform(
+            get("/profiles/not-a-uuid")
                 .param("tenantId", "1")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be numeric"));
+        .andExpect(jsonPath("$.error.message").value("accountId must be a canonical non-nil UUID"));
 
     verifyNoInteractions(accountService);
   }
 
   @Test
   void getProfileRejectsZeroTenantIdBeforeDispatch() throws Exception {
-    String token = jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
-            get("/profiles/2")
+            get("/profiles/" + ACCOUNT_UUID)
                 .param("tenantId", "0")
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
@@ -162,12 +202,13 @@ class ProfileControllerTest {
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     ProfileDto dto =
         new ProfileDto(1L, 1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
+    when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID))).thenReturn(2L);
     when(accountService.updateProfile(req)).thenReturn(dto);
 
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
     mockMvc
         .perform(
-            put("/profiles/2")
+            put("/profiles/" + ACCOUNT_UUID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -180,11 +221,11 @@ class ProfileControllerTest {
     UpdateProfileRequest request =
         new UpdateProfileRequest(
             1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
     mockMvc
         .perform(
-            put("/profiles/2")
+            put("/profiles/" + ACCOUNT_UUID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -202,11 +243,12 @@ class ProfileControllerTest {
     UpdateProfileRequest request =
         new UpdateProfileRequest(
             1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.HIDDEN_STAFF);
-    String token = jwtUtil.generateToken("3", Map.of("accountId", "3"));
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("accountId", OTHER_ACCOUNT_UUID));
 
     mockMvc
         .perform(
-            put("/profiles/2")
+            put("/profiles/" + ACCOUNT_UUID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -220,11 +262,12 @@ class ProfileControllerTest {
     UpdateProfileRequest request =
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
     String token =
-        jwtUtil.generateToken("3", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            OTHER_ACCOUNT_UUID, Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
-            put("/profiles/2")
+            put("/profiles/" + ACCOUNT_UUID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -237,11 +280,12 @@ class ProfileControllerTest {
   void updateProfileRejectsGlobalAdminForAnotherAccount() throws Exception {
     UpdateProfileRequest request =
         new UpdateProfileRequest(1L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
-    String token = jwtUtil.generateToken("3", Map.of("globalRoles", List.of("platformAdmin")));
+    String token =
+        jwtUtil.generateToken(OTHER_ACCOUNT_UUID, Map.of("globalRoles", List.of("platformAdmin")));
 
     mockMvc
         .perform(
-            put("/profiles/2")
+            put("/profiles/" + ACCOUNT_UUID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(request))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
@@ -264,7 +308,7 @@ class ProfileControllerTest {
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
         .andExpect(status().isBadRequest())
         .andExpect(jsonPath("$.error.code").value("INVALID_ARGUMENT"))
-        .andExpect(jsonPath("$.error.message").value("accountId must be positive"));
+        .andExpect(jsonPath("$.error.message").value("accountId must be a canonical non-nil UUID"));
 
     verifyNoInteractions(accountService);
   }
@@ -273,11 +317,11 @@ class ProfileControllerTest {
   void updateProfileRejectsZeroTenantIdBeforeDispatch() throws Exception {
     UpdateProfileRequest req =
         new UpdateProfileRequest(0L, 2L, "demo", "bio", ProfilePresenceVisibilityPolicy.PRIVATE);
-    String token = jwtUtil.generateToken("2", Map.of("accountId", "2"));
+    String token = jwtUtil.generateToken(ACCOUNT_UUID, Map.of("accountId", ACCOUNT_UUID));
 
     mockMvc
         .perform(
-            put("/profiles/2")
+            put("/profiles/" + ACCOUNT_UUID)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(req))
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))

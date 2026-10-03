@@ -16,8 +16,68 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipR
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 class AccountMembershipAuthorityEventProducerTest {
+  @Test
+  void inactiveMembershipSnapshotRequiresOwnerTransactionBeforeRepositoryReads() {
+    AccountJoinOperationRepository joinOperationRepository =
+        mock(AccountJoinOperationRepository.class);
+    AccountMembershipPairAuthorityRepository pairAuthorityRepository =
+        mock(AccountMembershipPairAuthorityRepository.class);
+    AccountRepository accountRepository = mock(AccountRepository.class);
+    AccountTenantIdentityResolver tenantIdentityResolver =
+        mock(AccountTenantIdentityResolver.class);
+    FreshTenantIdentityAssociationRepository freshAssociationRepository =
+        mock(FreshTenantIdentityAssociationRepository.class);
+    AccountAuthorityGenerationRepository generationRepository =
+        mock(AccountAuthorityGenerationRepository.class);
+    AccountAuthorityOutboxRepository outboxRepository =
+        mock(AccountAuthorityOutboxRepository.class);
+    AccountMembershipTransitionReceiptRepository receiptRepository =
+        mock(AccountMembershipTransitionReceiptRepository.class);
+    AccountTenantMembershipRepository membershipRepository =
+        mock(AccountTenantMembershipRepository.class);
+    AccountTenantMembershipRoleSnapshotRepository rolesRepository =
+        mock(AccountTenantMembershipRoleSnapshotRepository.class);
+    AccountMembershipAuthorityEventProducer producer =
+        new AccountMembershipAuthorityEventProducer(
+            joinOperationRepository,
+            pairAuthorityRepository,
+            accountRepository,
+            tenantIdentityResolver,
+            freshAssociationRepository,
+            generationRepository,
+            outboxRepository,
+            receiptRepository,
+            membershipRepository,
+            rolesRepository);
+    boolean previouslyActive = TransactionSynchronizationManager.isActualTransactionActive();
+    TransactionSynchronizationManager.setActualTransactionActive(false);
+
+    try {
+      assertThatThrownBy(() -> producer.readCurrentPairBoundInactiveMembershipSnapshot(42L, 7L))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("active owner transaction");
+      assertThatThrownBy(() -> producer.publishLeftMembershipChange(42L, 7L, "leave-request", null))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("active owner transaction");
+      verifyNoInteractions(
+          joinOperationRepository,
+          pairAuthorityRepository,
+          accountRepository,
+          tenantIdentityResolver,
+          freshAssociationRepository,
+          generationRepository,
+          outboxRepository,
+          receiptRepository,
+          membershipRepository,
+          rolesRepository);
+    } finally {
+      TransactionSynchronizationManager.setActualTransactionActive(previouslyActive);
+    }
+  }
+
   @Test
   void freshSnapshotRequiresOwnerTransactionBeforeRepositoryReads() {
     AccountJoinOperationRepository joinOperationRepository =

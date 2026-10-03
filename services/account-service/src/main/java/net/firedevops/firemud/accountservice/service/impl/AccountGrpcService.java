@@ -239,19 +239,28 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     }
   }
 
-  private void requireCallerAccountSubject(long accountId) {
+  private void requireCallerAccountSubject(UUID accountUuid) {
     if (SessionContext.isInternalService()) {
       throw new AdminAuthorizationException("Authenticated account subject is required");
     }
 
-    Long callerAccountId;
-    try {
-      callerAccountId = SessionContext.currentAccountIdOrNull();
-    } catch (IllegalArgumentException ex) {
-      throw new AdminAuthorizationException("Authenticated account subject is required");
-    }
-    if (callerAccountId == null || callerAccountId.longValue() != accountId) {
+    if (!accountUuid.toString().equals(SessionContext.getAccountId())) {
       throw new AdminAuthorizationException("Profile access is restricted to the caller account");
+    }
+  }
+
+  private static UUID requireCanonicalAccountUuid(String value) {
+    if (!hasText(value)) {
+      throw new InvalidRequestException("accountId must be a canonical non-nil UUID", null);
+    }
+    try {
+      UUID accountUuid = UUID.fromString(value);
+      if (accountUuid.equals(new UUID(0L, 0L)) || !accountUuid.toString().equals(value)) {
+        throw new IllegalArgumentException("accountId must be a canonical non-nil UUID");
+      }
+      return accountUuid;
+    } catch (IllegalArgumentException exception) {
+      throw new InvalidRequestException("accountId must be a canonical non-nil UUID", exception);
     }
   }
 
@@ -325,7 +334,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
               request.getUsername(), request.getEmail(), request.getPassword());
       var account = accountService.createAccount(dto);
       CreateAccountResponse response =
-          CreateAccountResponse.newBuilder().setAccountId(account.id().toString()).build();
+          CreateAccountResponse.newBuilder().setAccountId(account.id()).build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
     } catch (AccountAlreadyExistsException ex) {
@@ -360,7 +369,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       AuthenticateResponse response =
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
@@ -428,7 +437,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
       responseObserver.onNext(
           AuthenticateResponse.newBuilder()
               .setAuthToken(result.authToken())
-              .setAccountId(String.valueOf(result.accountId()))
+              .setAccountId(result.accountId())
               .build());
     } catch (AdminAuthorizationException ex) {
       responseObserver.onNext(
@@ -501,6 +510,7 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
             .setRequestAccountId(playerContext.getAccountId())
             .setRequestTenantId(playerContext.getTenantId())
             .setRequestId(playerContext.getRequestId())
+            .setAuthorityAvailability("AVAILABLE")
             .setGameplayAdmissionAllowed(snapshot.gameplayAdmissionAllowed())
             .setMembershipExists(snapshot.membershipExists())
             .setMembershipLifecycleState(baseline.membershipLifecycleState())
@@ -630,9 +640,11 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
                         .findFirst()
                         .orElse("0")),
                 new OutboxCheckpointEntry(tenantStreamKey, "0")));
-    if (!"ACTIVE".equals(snapshot.membershipBaseline().membershipLifecycleState())
-        || !snapshot.gameplayAdmissionAllowed()
-        || !snapshot.roles().contains("player")
+    String lifecycleState = snapshot.membershipBaseline().membershipLifecycleState();
+    boolean activeMembership = "ACTIVE".equals(lifecycleState);
+    if ((!activeMembership && !"INACTIVE".equals(lifecycleState))
+        || snapshot.gameplayAdmissionAllowed() != activeMembership
+        || (activeMembership && !snapshot.roles().contains("player"))
         || !snapshot.outboxCheckpoints().equals(expectedPositiveCheckpoints)
         || snapshot.outboxSourceEvidence().size() != 1) {
       throw new IllegalArgumentException("Positive runtime membership snapshot is incomplete");
@@ -817,8 +829,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       requireSocialGroupsPeer();
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
-      long accountId = requirePositiveRequestId(request.getAccountId(), "accountId");
-      requireCallerAccountSubject(accountId);
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      requireCallerAccountSubject(accountUuid);
+      long accountId = accountService.resolveAccountStorageId(accountUuid);
       var dto = accountService.getProfile(tenantId, accountId);
       GetProfileResponse response =
           GetProfileResponse.newBuilder()
@@ -916,8 +929,9 @@ public class AccountGrpcService extends AccountServiceGrpc.AccountServiceImplBas
     try {
       requireSocialGroupsPeer();
       long tenantId = requirePositiveRequestId(request.getTenantId(), "tenantId");
-      long accountId = requirePositiveRequestId(request.getAccountId(), "accountId");
-      requireCallerAccountSubject(accountId);
+      UUID accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      requireCallerAccountSubject(accountUuid);
+      long accountId = accountService.resolveAccountStorageId(accountUuid);
       JsonNode node = JsonMapper.builder().build().readTree(request.getProfileJson());
       String displayName = node.path("displayName").asText(null);
       String bio = node.path("bio").asText(null);

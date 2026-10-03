@@ -58,8 +58,17 @@ public final class MembershipTransitionReceiptDigest {
     if (!receiptStreamKey(accountId, tenantId).equals(streamKey)) {
       throw new IllegalArgumentException("receiptStreamKey does not match the membership scope");
     }
-    if (!("MEMBERSHIP_JOINED".equals(transition) || "MEMBERSHIP_REACTIVATED".equals(transition))) {
+    boolean activeTransition =
+        "MEMBERSHIP_JOINED".equals(transition) || "MEMBERSHIP_REACTIVATED".equals(transition);
+    boolean leaveTransition = "MEMBERSHIP_LEFT".equals(transition);
+    if (!activeTransition && !leaveTransition) {
       throw new IllegalArgumentException("transitionType is not a supported membership receipt");
+    }
+    if ((activeTransition && (!"ACTIVE".equals(lifecycleState) || !gameplayAdmissionAllowed))
+        || (leaveTransition && (!"INACTIVE".equals(lifecycleState) || gameplayAdmissionAllowed))
+        || !"EXPLICIT_JOIN".equals(provenance)) {
+      throw new IllegalArgumentException(
+          "transitionType does not match the membership state and provenance");
     }
 
     String preimage =

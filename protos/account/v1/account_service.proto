@@ -97,7 +97,7 @@ message CreateAccountRequest {
 
 // Result of a CreateAccount call.
 message CreateAccountResponse {
-  // Unique identifier of the newly created account.
+  // Canonical non-nil Account UUID of the newly created account.
   string account_id = 1;
   // Details about why the creation failed, if applicable.
   shared.v1.ErrorDetail error = 2;
@@ -114,6 +114,7 @@ message AuthenticateRequest {
 
 message AuthenticateResponse {
   string auth_token = 1;
+  // Canonical non-nil Account UUID from the authenticated persisted source row, never its numeric PK.
   string account_id = 2;
   shared.v1.ErrorDetail error = 3;
 }
@@ -163,6 +164,7 @@ message GetTenantMembershipForRuntimeResponse {
   string request_account_id = 18; // Exact canonical UUID echo of player_context.account_id.
   string request_tenant_id = 19; // Exact canonical UUID echo of player_context.tenant_id.
   string request_id = 20;
+  string authority_availability = 21;
 }
 
 message RuntimeMembershipBaseline {
@@ -261,6 +263,7 @@ message GetTenantEntitlementsForRuntimeResponse {
 
 message GetProfileRequest {
   string tenant_id = 1;
+  // Canonical non-nil Account UUID, exactly matching the authenticated caller subject.
   string account_id = 2;
 }
 
@@ -287,6 +290,7 @@ message ListPresenceVisibilityPoliciesResponse {
 
 message UpdateProfileRequest {
   string tenant_id = 1;
+  // Canonical non-nil Account UUID, exactly matching the authenticated caller subject.
   string account_id = 2;
   string profile_json = 3;
 }

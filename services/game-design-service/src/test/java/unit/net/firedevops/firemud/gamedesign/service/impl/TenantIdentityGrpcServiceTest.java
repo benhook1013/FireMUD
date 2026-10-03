@@ -26,6 +26,7 @@ import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import net.firedevops.firemud.gamedesign.repository.GameAuthoredWorldSourceRepository;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantCreationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantAssociationMigrationService.ApprovedAssociation;
@@ -80,9 +81,16 @@ class TenantIdentityGrpcServiceTest {
       mock(GameTenantCreationRepository.class);
   private final GameAuthoredWorldSourceRepository authoredWorldRepository =
       mock(GameAuthoredWorldSourceRepository.class);
+  private final GameSessionTenantAssociationRepository gameSessionAssociationRepository =
+      mock(GameSessionTenantAssociationRepository.class);
   private final TenantIdentityGrpcService service =
       new TenantIdentityGrpcService(
-          repository, associationService, creationRepository, authoredWorldRepository, "test");
+          repository,
+          associationService,
+          creationRepository,
+          authoredWorldRepository,
+          gameSessionAssociationRepository,
+          "test");
 
   @Test
   void authoredSourceReadRequiresExactGameSessionPeerBeforeOwnerAccess() {

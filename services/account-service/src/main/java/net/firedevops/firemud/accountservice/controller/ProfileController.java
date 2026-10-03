@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.controller;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import jakarta.validation.Valid;
+import java.util.UUID;
 import net.firedevops.firemud.accountservice.dto.ProfileDto;
 import net.firedevops.firemud.accountservice.dto.UpdateProfileRequest;
 import net.firedevops.firemud.accountservice.service.AccountService;
@@ -33,9 +34,10 @@ public class ProfileController {
   @GetMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> getProfile(
       @PathVariable String accountId, @RequestParam String tenantId) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(tenantId);
-    requireProfileOwner(parsedAccountId);
+    requireProfileOwner(parsedAccountUuid);
+    Long parsedAccountId = accountService.resolveAccountStorageId(parsedAccountUuid);
     ProfileDto dto = accountService.getProfile(parsedTenantId, parsedAccountId);
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
@@ -43,13 +45,14 @@ public class ProfileController {
   @PutMapping("/{accountId}")
   public ResponseEntity<ApiResponse<ProfileDto>> updateProfile(
       @PathVariable String accountId, @Valid @RequestBody UpdateProfileRequest request) {
-    long parsedAccountId = AccountRequestReaders.requireAccountId(accountId);
+    UUID parsedAccountUuid = AccountRequestReaders.requireAccountUuid(accountId);
     long parsedTenantId = AccountRequestReaders.requireTenantId(request.tenantId());
-    requireProfileOwner(parsedAccountId);
+    requireProfileOwner(parsedAccountUuid);
     if (request.presenceVisibilityPolicy() == null) {
       throw new IllegalArgumentException("presenceVisibilityPolicy must be provided");
     }
     request.presenceVisibilityPolicy().requireSelectableByAccountHolder();
+    Long parsedAccountId = accountService.resolveAccountStorageId(parsedAccountUuid);
     ProfileDto dto =
         accountService.updateProfile(
             new UpdateProfileRequest(
@@ -61,8 +64,8 @@ public class ProfileController {
     return ResponseEntity.ok(ApiResponse.success(dto));
   }
 
-  private static void requireProfileOwner(long accountId) {
-    if (!SessionContext.isCurrentAccount(accountId)) {
+  private static void requireProfileOwner(UUID accountUuid) {
+    if (!accountUuid.toString().equals(SessionContext.getAccountId())) {
       throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Profile access required");
     }
   }

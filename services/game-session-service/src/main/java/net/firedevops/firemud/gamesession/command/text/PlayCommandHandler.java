@@ -1533,7 +1533,8 @@ public class PlayCommandHandler {
       SessionContext context,
       GameplayWorldCatalog.RealmView selectedRealm,
       String requestId) {
-    if (!StringUtils.hasText(response.getAccountId())
+    if (!"AVAILABLE".equals(response.getAuthorityAvailability())
+        || !StringUtils.hasText(response.getAccountId())
         || !StringUtils.hasText(response.getTenantId())
         || !StringUtils.hasText(response.getEvaluatedAt())
         || !isCanonicalUuid(response.getAccountId())

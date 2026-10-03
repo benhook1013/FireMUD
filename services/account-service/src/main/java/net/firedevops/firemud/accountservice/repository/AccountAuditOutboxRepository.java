@@ -17,6 +17,8 @@ import net.firedevops.firemud.accountservice.jooq.tables.records.AccountAuditOut
 import org.jooq.DSLContext;
 import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Owner-local audit identity, immutable envelope, and durable delivery state. */
 @Repository
@@ -52,6 +54,7 @@ public class AccountAuditOutboxRepository {
     row.setPayload(payload);
     row.setDeliveryStatus("PENDING");
     row.store();
+    row.refresh();
     return toEnvelope(row);
   }
 
@@ -93,6 +96,26 @@ public class AccountAuditOutboxRepository {
                     row.getReceiverAuditProjectionVersion(),
                     row.getReceiverReceiptId(),
                     row.getReceiverLogEventId()));
+  }
+
+  /** Locks one exact Account LEFT envelope for same-owner-transaction retry proof. */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public Optional<AccountAuditEnvelope> findMembershipLeftEnvelopeForUpdate(
+      UUID auditEventId, long tenantId) {
+    if (auditEventId == null || tenantId <= 0) {
+      throw new IllegalArgumentException("LEFT audit identity and tenant are required");
+    }
+    return dsl.selectFrom(ACCOUNT_AUDIT_OUTBOX)
+        .where(
+            ACCOUNT_AUDIT_OUTBOX
+                .AUDIT_EVENT_ID
+                .eq(auditEventId)
+                .and(ACCOUNT_AUDIT_OUTBOX.SCOPE.eq("tenant"))
+                .and(ACCOUNT_AUDIT_OUTBOX.TENANT_ID.eq(tenantId))
+                .and(ACCOUNT_AUDIT_OUTBOX.PRODUCER_SERVICE.eq("account-service"))
+                .and(ACCOUNT_AUDIT_OUTBOX.EVENT_TYPE.eq("ACCOUNT_MEMBERSHIP_LEFT")))
+        .forUpdate()
+        .fetchOptional(this::toEnvelope);
   }
 
   public void markDelivered(

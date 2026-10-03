@@ -47,6 +47,7 @@ import tools.jackson.databind.ObjectMapper;
 @WebMvcTest(AuthController.class)
 @Import({CommonSecurityAutoConfiguration.class, CommonSecurityServletAutoConfiguration.class})
 class AuthControllerTest {
+  private static final String ACCOUNT_UUID = "04ef66b4-c0ad-3d5b-b3b2-0e8510e72001";
 
   @Autowired private MockMvc mockMvc;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -89,7 +90,7 @@ class AuthControllerTest {
   void loginReturnsTokenAndAccountId() throws Exception {
     LoginRequest request = new LoginRequest("demo", "password");
     when(accountService.authenticate("demo", "password"))
-        .thenReturn(new AuthenticationResult(1L, "tok123"));
+        .thenReturn(new AuthenticationResult(ACCOUNT_UUID, "tok123"));
 
     mockMvc
         .perform(
@@ -98,7 +99,7 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.accountId").value(ACCOUNT_UUID))
         .andExpect(jsonPath("$.data.authToken").value("tok123"));
   }
 
@@ -106,7 +107,7 @@ class AuthControllerTest {
   void loginAcceptsExistingOneCharacterPassword() throws Exception {
     LoginRequest request = new LoginRequest("demo", "x");
     when(accountService.authenticate("demo", "x"))
-        .thenReturn(new AuthenticationResult(1L, "tok123"));
+        .thenReturn(new AuthenticationResult(ACCOUNT_UUID, "tok123"));
 
     mockMvc
         .perform(
@@ -121,10 +122,11 @@ class AuthControllerTest {
   @Test
   void playerBootstrapReturnsShortLivedToken() throws Exception {
     PlayerBootstrapRequest request = new PlayerBootstrapRequest("demo", "password");
+    String accountUuid = "59a39c43-6829-48b1-8d09-99bfe533d919";
     when(accountService.issuePlayerBootstrap("demo", "password"))
         .thenReturn(
             new PlayerBootstrapResult(
-                1L, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));
+                accountUuid, "boot123", "2026-03-30T00:00:00Z", "2026-03-30T00:05:00Z"));
 
     mockMvc
         .perform(
@@ -133,7 +135,7 @@ class AuthControllerTest {
                 .content(objectMapper.writeValueAsString(request)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("SUCCESS"))
-        .andExpect(jsonPath("$.data.accountId").value(1))
+        .andExpect(jsonPath("$.data.accountId").value(accountUuid))
         .andExpect(jsonPath("$.data.bootstrapToken").value("boot123"));
   }
 
