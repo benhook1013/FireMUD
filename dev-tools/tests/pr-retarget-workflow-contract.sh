@@ -334,6 +334,27 @@ for path in "$ci_path" "$security_path" "$smoke_path"; do
   require_contains "$path" 'types: [opened, synchronize, reopened, edited]'
 done
 
+# Stacked feature-base PRs must reach normal Validation on every supported
+# event; push scope and metadata/base-retarget job guards remain unchanged.
+python3 - "$ci_path" <<'PYTHON'
+import sys
+from pathlib import Path
+
+import yaml
+
+workflow = yaml.load(Path(sys.argv[1]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+events = workflow["on"]
+pr = events["pull_request"]
+if set(pr) != {"types"}:
+    raise SystemExit("Validation PR triggers must not filter base branches or paths")
+if set(pr["types"]) != {"opened", "synchronize", "reopened", "edited"}:
+    raise SystemExit("Validation must cover opens, new commits, reopenings, and base/metadata edits")
+if events["push"] != {"branches": ["main", "develop"]}:
+    raise SystemExit("Validation push scope must remain main/develop only")
+if "workflow_dispatch" not in events:
+    raise SystemExit("Validation must retain manual dispatch")
+PYTHON
+
 # Metadata-only edits get distinct optional summary contexts; substantive events
 # retain each summary's canonical name.
 # shellcheck disable=SC2016 # Assert literal GitHub expression syntax.
