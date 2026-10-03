@@ -6,10 +6,12 @@ exact manifest bytes, an opaque source generation, source expiry, target environ
 namespace, the exact dedicated materializer service-account username, predecessor generation,
 and an immutable source-created timestamp. That timestamp is a conservative age anchor for the
 Secret's materialized-at and expiry metadata, not a claim of the later Kubernetes write time.
-The source record must come from protected durable custody. The tool verifies the
-server-reported kubectl identity before any Secret access and never creates or rotates key
-material. The caller supplies the trusted class maximum age separately. Re-running an exact
-generation is read-only and preserves its timestamps.
+The source record must come from protected durable custody. Real Kubernetes subprocesses are
+currently denied until the independently trusted target-cluster binding verifier is implemented.
+With that gate satisfied, the materializer verifies the server-reported kubectl identity before
+each Secret operation and never creates or rotates key material. The caller supplies the trusted
+class maximum age separately. Re-running an exact generation is read-only and preserves its
+timestamps.
 """
 
 from __future__ import annotations
@@ -542,6 +544,7 @@ def _run_kubectl(
     *,
     failure_message: str = "Kubernetes operation failed; existing Secret was left for diagnosis",
 ) -> str:
+    _require_target_cluster_binding()
     try:
         completed = subprocess.run(
             list(command),
@@ -560,6 +563,14 @@ def _run_kubectl(
     if completed.returncode != 0:
         raise MaterializationError(failure_message)
     return completed.stdout
+
+
+def _require_target_cluster_binding() -> None:
+    """Fail closed until the trusted target-cluster binding verifier exists."""
+
+    raise MaterializationError(
+        "target-cluster binding verification is unavailable; Kubernetes access is disabled"
+    )
 
 
 def _verify_materializer_identity(kubectl: str, expected_username: str) -> str:

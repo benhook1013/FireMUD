@@ -174,8 +174,15 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.write_source_record()
         self.fake_kubectl = FakeKubectl()
         self.kubectl_patch = patch.object(MATERIALIZER.subprocess, "run", side_effect=self.fake_kubectl)
-        self.kubectl_patch.start()
+        self.subprocess_run_mock = self.kubectl_patch.start()
         self.addCleanup(self.kubectl_patch.stop)
+        # Permit only this test fixture's fake Kubernetes transcripts. This is
+        # offline behavior proof, not authorization for live materialization.
+        self.target_binding_patch = patch.object(
+            MATERIALIZER, "_require_target_cluster_binding", return_value=None
+        )
+        self.target_binding_patch.start()
+        self.addCleanup(self.target_binding_patch.stop)
 
     def write_source_record(
         self,
@@ -656,6 +663,59 @@ class AccountResponseEnvelopeMaterializerTest(unittest.TestCase):
         self.assertEqual(1, self.fake_kubectl.reads)
         self.assertEqual(1, len(self.fake_kubectl.mutations))
         self.assertIsNotNone(self.fake_kubectl.secret)
+
+    def test_normal_python_and_cli_materialization_fail_before_kubectl_without_cluster_binding(self) -> None:
+        current_time = dt.datetime.now(dt.timezone.utc)
+        self.write_source_record(
+            created_at=MATERIALIZER.format_timestamp(current_time - dt.timedelta(minutes=1)),
+            expires_at=MATERIALIZER.format_timestamp(current_time + dt.timedelta(hours=1)),
+        )
+        source_record = MATERIALIZER.read_source_record(self.source_path)
+        self.assertEqual(ENVIRONMENT_ID, source_record.environment_id)
+        self.assertEqual(TARGET_NAMESPACE, source_record.target_namespace)
+        self.assertEqual(MATERIALIZER_USERNAME, source_record.materializer_username)
+        self.fake_kubectl.identity_username = MATERIALIZER_USERNAME
+        self.target_binding_patch.stop()
+        self.subprocess_run_mock.reset_mock()
+
+        with patch.object(
+            MATERIALIZER,
+            "_materialization_receipt",
+            wraps=MATERIALIZER._materialization_receipt,
+        ) as receipt_factory:
+            with self.assertRaisesRegex(
+                MATERIALIZER.MaterializationError,
+                "target-cluster binding verification is unavailable",
+            ):
+                self.run_materializer(now=current_time)
+
+            error_output = io.StringIO()
+            with contextlib.redirect_stderr(error_output):
+                result = MATERIALIZER.main(
+                    [
+                        "--source-record",
+                        str(self.source_path),
+                        "--environment-id",
+                        ENVIRONMENT_ID,
+                        "--namespace",
+                        TARGET_NAMESPACE,
+                        "--class-max-age-seconds",
+                        str(MAX_AGE_SECONDS),
+                        "--kubectl",
+                        "kubectl-test-double",
+                    ]
+                )
+
+            self.assertEqual(1, result)
+            self.assertIn("target-cluster binding verification is unavailable", error_output.getvalue())
+            receipt_factory.assert_not_called()
+
+        self.subprocess_run_mock.assert_not_called()
+        self.assertEqual([], self.fake_kubectl.commands)
+        self.assertEqual([], self.fake_kubectl.operations)
+        self.assertEqual(0, self.fake_kubectl.reads)
+        self.assertEqual([], self.fake_kubectl.mutations)
+        self.assertIsNone(self.fake_kubectl.secret)
 
     def test_same_generation_with_different_bytes_fails_without_write(self) -> None:
         self.run_materializer()
