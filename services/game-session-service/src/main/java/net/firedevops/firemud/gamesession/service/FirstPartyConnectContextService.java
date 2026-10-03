@@ -42,7 +42,7 @@ public class FirstPartyConnectContextService {
               claims, "first-party connect context account subject mismatch");
       return Optional.of(
           new FirstPartyConnectContext(
-              routingClaims.accountId(),
+              Long.toString(routingClaims.accountId()),
               routingClaims.tenantId(),
               routingClaims.worldSlug(),
               routingClaims.realmSlug(),

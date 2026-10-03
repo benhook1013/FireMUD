@@ -22,7 +22,7 @@ class ActionStateCommandHandlerTest {
   private final ActionStateCommandHandler handler =
       new ActionStateCommandHandler(gameLogicClient, Clock.fixed(NOW, ZoneOffset.UTC));
   private final SessionContext context =
-      new SessionContext(42L, 22L, 7L, "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
+      new SessionContext(42L, 22L, "7", "demo@example.com", 91L, "Demo", 5L, "R-1", "jwt-token");
 
   @Test
   void blockAppliesShortLivedBlockingState() {
@@ -106,7 +106,7 @@ class ActionStateCommandHandlerTest {
   @Test
   void blockRejectsPartialGameplayIdentityShell() {
     SessionContext partialContext =
-        new SessionContext(42L, 22L, 7L, "demo@example.com", 0L, null, 5L, "R-1", "jwt-token");
+        new SessionContext(42L, 22L, "7", "demo@example.com", 0L, null, 5L, "R-1", "jwt-token");
 
     var result =
         handler.handle(

@@ -232,9 +232,11 @@ public final class GameSessionGrpcService
     return ControlPlaneRequestParser.parsePositiveLong(ownerAccountIdText, "ownerAccountId");
   }
 
-  private List<Long> parseAccountIds(List<String> accountIds) {
+  private List<String> parseAccountIds(List<String> accountIds) {
     return accountIds.stream()
-        .map(accountId -> ControlPlaneRequestParser.parsePositiveLong(accountId, "accountId"))
+        .map(
+            accountId ->
+                Long.toString(ControlPlaneRequestParser.parsePositiveLong(accountId, "accountId")))
         .toList();
   }
 
@@ -442,13 +444,14 @@ public final class GameSessionGrpcService
       if (request.getAccountIdsCount() > 100) {
         throw new IllegalArgumentException("accountIds must contain at most 100 entries");
       }
-      List<Long> accountIds = parseAccountIds(request.getAccountIdsList());
+      List<String> accountIds = parseAccountIds(request.getAccountIdsList());
       QueryAccountPresenceResponse.Builder builder = QueryAccountPresenceResponse.newBuilder();
       for (var snapshot :
-          accountPresenceQueryService.queryAccountPresence(tenantId, viewerAccountId, accountIds)) {
+          accountPresenceQueryService.queryAccountPresence(
+              tenantId, Long.toString(viewerAccountId), accountIds)) {
         AccountPresenceEntry.Builder entry =
             AccountPresenceEntry.newBuilder()
-                .setAccountId(Long.toString(snapshot.accountId()))
+                .setAccountId(snapshot.accountId())
                 .setOnline(snapshot.online());
         if (snapshot.gameInstanceId() != null) {
           entry.setGameInstanceId(Long.toString(snapshot.gameInstanceId()));

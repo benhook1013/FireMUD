@@ -864,7 +864,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         new SessionContext(
             sessionId,
             tenantId,
-            accountId,
+            Long.toString(accountId),
             loginName,
             characterId,
             characterName,
@@ -891,7 +891,7 @@ public final class GameplayCrossServiceStack implements AutoCloseable {
         new SessionContext(
             sessionId,
             tenantId,
-            accountId,
+            Long.toString(accountId),
             loginName,
             characterId,
             characterName,

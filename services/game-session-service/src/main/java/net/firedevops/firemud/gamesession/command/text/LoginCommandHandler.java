@@ -166,7 +166,8 @@ public final class LoginCommandHandler {
   private void invalidateStaleFirstPartyConnectContext(long sessionId, long accountId) {
     firstPartyConnectContextRegistry
         .find(sessionId)
-        .filter(connectContext -> connectContext.accountId() != accountId)
+        .filter(
+            connectContext -> !Objects.equals(connectContext.accountId(), Long.toString(accountId)))
         .ifPresent(ignored -> firstPartyConnectContextRegistry.unregister(sessionId));
   }
 
@@ -231,9 +232,25 @@ public final class LoginCommandHandler {
 
     var verifiedContext = maybeContext.get();
     if (existingSession != null
-        && existingSession.accountId() > 0
-        && existingSession.accountId() != verifiedContext.accountId()) {
+        && existingSession.hasAccountIdentity()
+        && !Objects.equals(existingSession.accountId(), verifiedContext.accountId())) {
       firstPartyConnectContextRegistry.unregister(numericSessionId);
+      return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
+    }
+    long numericAccountId;
+    try {
+      numericAccountId =
+          PositiveLongParsing.requireOptionalText(verifiedContext.accountId(), "accountId")
+              .orElseThrow(() -> new IllegalArgumentException("accountId must be positive"));
+    } catch (IllegalArgumentException ex) {
+      clearFailedFirstPartyLoginSessionState(
+          numericSessionId,
+          existingSession,
+          verifiedContext.tenantId(),
+          verifiedContext.gameInstanceId(),
+          verifiedContext.worldSlug(),
+          verifiedContext.realmSlug(),
+          verifiedContext.pointerVersion());
       return failure("CONNECT_CONTEXT_INVALID", "Connect context invalid");
     }
     Optional<GameInstance> maybeInstance =
@@ -275,7 +292,7 @@ public final class LoginCommandHandler {
     persistSessionContext(
         numericSessionId,
         verifiedContext.tenantId(),
-        verifiedContext.accountId(),
+        numericAccountId,
         "first-party:" + verifiedContext.accountId(),
         null,
         verifiedContext.gameInstanceId(),
@@ -287,7 +304,27 @@ public final class LoginCommandHandler {
             PlayerOutput.message(
                 "Logged in as first-party account " + verifiedContext.accountId(),
                 "message.login.first-party-success",
-                Map.of("accountId", Long.toString(verifiedContext.accountId())))));
+                Map.of("accountId", verifiedContext.accountId()))));
+  }
+
+  private void clearFailedFirstPartyLoginSessionState(
+      long sessionId,
+      SessionContext existingSession,
+      long fallbackTenantId,
+      long fallbackBootstrapGameInstanceId,
+      String worldSlug,
+      String realmSlug,
+      long pointerVersion) {
+    if (existingSession != null && existingSession.hasAccountIdentity()) {
+      return;
+    }
+    clearFailedLoginSessionState(
+        sessionId,
+        fallbackTenantId,
+        fallbackBootstrapGameInstanceId,
+        worldSlug,
+        realmSlug,
+        pointerVersion);
   }
 
   private void persistSessionContext(
@@ -310,7 +347,9 @@ public final class LoginCommandHandler {
         projectedExisting != null && projectedExisting.tenantId() == tenantId
             ? projectedExisting
             : null;
-    boolean sameAuthenticatedAccount = existing != null && existing.accountId() == accountId;
+    String accountIdText = Long.toString(accountId);
+    boolean sameAuthenticatedAccount =
+        existing != null && Objects.equals(existing.accountId(), accountIdText);
     Optional<SessionContext> reusableBootstrapShell =
         sameAuthenticatedAccount
             ? Optional.empty()
@@ -339,7 +378,7 @@ public final class LoginCommandHandler {
                 ? new SessionContext(
                     sessionId,
                     tenantId,
-                    accountId,
+                    accountIdText,
                     loginName,
                     0L,
                     null,
@@ -351,7 +390,7 @@ public final class LoginCommandHandler {
                 : new SessionContext(
                     sessionId,
                     tenantId,
-                    accountId,
+                    accountIdText,
                     loginName,
                     existing.characterId(),
                     existing.characterName(),
@@ -368,7 +407,8 @@ public final class LoginCommandHandler {
                     existing.playableStateScope(),
                     existing.connectScopeId(),
                     existing.connectRequestId());
-    if (projectedExisting != null && projectedExisting.accountId() != accountId) {
+    if (projectedExisting != null
+        && !Objects.equals(projectedExisting.accountId(), accountIdText)) {
       gameplayPresenceLifecycleService.clearGameplayBinding(
           projectedExisting, "LOGIN_ACCOUNT_CHANGED");
     } else if (projectedExisting != null && projectedExisting.tenantId() != tenantId) {
@@ -391,7 +431,7 @@ public final class LoginCommandHandler {
       net.firedevops.firemud.gamesession.service.FirstPartyConnectContext verifiedConnectContext,
       String verifiedPlayableStateScope) {
     if (existing == null
-        || existing.accountId() != 0L
+        || existing.hasAccountIdentity()
         || existing.tenantId() != tenantId
         || existing.bootstrapGameInstanceId() != bootstrapGameInstanceId
         || existing.hasGameplayBinding()
@@ -407,7 +447,7 @@ public final class LoginCommandHandler {
 
     boolean verifiedIdentityAndTargetMatch =
         verifiedConnectContext.hasCompleteRoutingScope()
-            && verifiedConnectContext.accountId() == accountId
+            && Objects.equals(verifiedConnectContext.accountId(), Long.toString(accountId))
             && verifiedConnectContext.tenantId() == tenantId
             && verifiedConnectContext.gameInstanceId() == bootstrapGameInstanceId
             && Objects.equals(existing.playableStateScope(), verifiedPlayableStateScope)
@@ -435,7 +475,7 @@ public final class LoginCommandHandler {
     return new SessionContext(
         sessionId,
         tenantId,
-        accountId,
+        Long.toString(accountId),
         loginName,
         0L,
         null,
@@ -565,7 +605,7 @@ public final class LoginCommandHandler {
         new SessionContext(
             sessionId,
             tenantId,
-            0L,
+            null,
             null,
             0L,
             null,

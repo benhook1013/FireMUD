@@ -44,7 +44,7 @@ public final class GameplayLocalPathReadinessProbe {
         new SessionContext(
             probeSessionId,
             PROBE_TENANT_ID,
-            PROBE_ACCOUNT_ID,
+            Long.toString(PROBE_ACCOUNT_ID),
             PROBE_CHARACTER_ID,
             PROBE_GAME_INSTANCE_ID,
             probeRoomInstanceId,

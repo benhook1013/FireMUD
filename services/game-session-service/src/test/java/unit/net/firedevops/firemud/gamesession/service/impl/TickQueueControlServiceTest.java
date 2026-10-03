@@ -717,7 +717,7 @@ class TickQueueControlServiceTest {
   @Test
   void queryStateUsesSessionContextTenantFromSessionAuthority() {
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("7"))
-        .thenReturn(Optional.of(new SessionContext(7L, 11L, 0L, 0L, 0L, null)));
+        .thenReturn(Optional.of(new SessionContext(7L, 11L, null, 0L, 0L, null)));
     when(valueOps.get("session:11:7")).thenReturn("{\"status\":\"ready\"}");
 
     String state = service.queryState(7L);
@@ -739,7 +739,7 @@ class TickQueueControlServiceTest {
   @Test
   void queryStateFailsClosedWhenSessionContextHasNoTenantAuthority() {
     when(sessionAuthenticationService.resolveUnverifiedSessionContext("7"))
-        .thenReturn(Optional.of(new SessionContext(7L, 0L, 0L, 0L, 0L, null)));
+        .thenReturn(Optional.of(new SessionContext(7L, 0L, null, 0L, 0L, null)));
 
     IllegalArgumentException exception =
         assertThrows(IllegalArgumentException.class, () -> service.queryState(7L));

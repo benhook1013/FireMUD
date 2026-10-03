@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,12 +28,15 @@ import net.firedevops.firemud.entitymanagement.v1.QueryActorStateResponse;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryRequest;
 import net.firedevops.firemud.entitymanagement.v1.QueryInventoryResponse;
 import net.firedevops.firemud.entitymanagement.v1.RoomGroundInventoryItem;
+import net.firedevops.firemud.gamelogic.v1.CommunicationType;
 import net.firedevops.firemud.gamelogic.v1.DropCarriedItemRequest;
 import net.firedevops.firemud.gamelogic.v1.GameLogicServiceGrpc;
 import net.firedevops.firemud.gamelogic.v1.LookRequest;
 import net.firedevops.firemud.gamelogic.v1.LookResult;
 import net.firedevops.firemud.gamelogic.v1.MoveResult;
 import net.firedevops.firemud.gamelogic.v1.PickupVisibleRoomItemRequest;
+import net.firedevops.firemud.gamelogic.v1.SendCommunicationRequest;
+import net.firedevops.firemud.gamelogic.v1.SendCommunicationResponse;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.shared.v1.RoomInstanceRef;
 import org.junit.jupiter.api.Test;
@@ -41,7 +45,7 @@ import org.mockito.ArgumentCaptor;
 class GameLogicClientTest {
   private static final SessionContext SESSION_CONTEXT =
       new SessionContext(
-          41L, 22L, 0L, "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
+          41L, 22L, "0", "", 123L, "", 1L, "R-1021", "", null, 1L, "world", "realm", 17L, "SHARED");
 
   @Test
   void resolveLookForwardsGameInstanceIdIntoRoomInstance() throws Exception {
@@ -341,6 +345,43 @@ class GameLogicClientTest {
   }
 
   @Test
+  void sendCommunicationMapsNullAccountToEmptyAndPreservesOpaqueAccount() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.sendCommunication(any(SendCommunicationRequest.class)))
+        .thenReturn(SendCommunicationResponse.getDefaultInstance());
+    setStub(client, stub);
+
+    client.sendCommunication(
+        sessionContextWithAccountId(null),
+        "Sora",
+        "R-1021",
+        CommunicationType.SAY,
+        "hello",
+        null,
+        null,
+        null);
+    client.sendCommunication(
+        sessionContextWithAccountId("acct:opaque/legacy"),
+        "Sora",
+        "R-1021",
+        CommunicationType.SAY,
+        "hello",
+        null,
+        null,
+        null);
+
+    ArgumentCaptor<SendCommunicationRequest> requestCaptor =
+        ArgumentCaptor.forClass(SendCommunicationRequest.class);
+    verify(stub, times(2)).sendCommunication(requestCaptor.capture());
+    assertThat(requestCaptor.getAllValues())
+        .extracting(SendCommunicationRequest::getAccountId)
+        .containsExactly("", "acct:opaque/legacy");
+  }
+
+  @Test
   void listRoomGroundInventoryForwardsCurrentGameRoomAndAttestation() throws Exception {
     GameLogicClient client = newClient();
     GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
@@ -446,6 +487,48 @@ class GameLogicClientTest {
   }
 
   @Test
+  void pickupVisibleRoomItemMapsNullAccountToEmptyAndPreservesOpaqueAccount() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.pickupVisibleRoomItem(any(PickupVisibleRoomItemRequest.class)))
+        .thenReturn(PickupItemFromRoomResponse.getDefaultInstance());
+    setStub(client, stub);
+
+    client.pickupVisibleRoomItem(sessionContextWithAccountId(null), "torch1", 1);
+    client.pickupVisibleRoomItem(sessionContextWithAccountId("acct:opaque/legacy"), "torch1", 1);
+
+    ArgumentCaptor<PickupVisibleRoomItemRequest> requestCaptor =
+        ArgumentCaptor.forClass(PickupVisibleRoomItemRequest.class);
+    verify(stub, times(2)).pickupVisibleRoomItem(requestCaptor.capture());
+    assertThat(requestCaptor.getAllValues())
+        .extracting(PickupVisibleRoomItemRequest::getAccountId)
+        .containsExactly("", "acct:opaque/legacy");
+  }
+
+  @Test
+  void dropCarriedItemMapsNullAccountToEmptyAndPreservesOpaqueAccount() throws Exception {
+    GameLogicClient client = newClient();
+    GameLogicServiceGrpc.GameLogicServiceBlockingStub stub =
+        mock(GameLogicServiceGrpc.GameLogicServiceBlockingStub.class);
+    when(stub.withDeadlineAfter(5L, TimeUnit.SECONDS)).thenReturn(stub);
+    when(stub.dropCarriedItem(any(DropCarriedItemRequest.class)))
+        .thenReturn(DropItemToRoomResponse.getDefaultInstance());
+    setStub(client, stub);
+
+    client.dropCarriedItem(sessionContextWithAccountId(null), "torch1", 1);
+    client.dropCarriedItem(sessionContextWithAccountId("acct:opaque/legacy"), "torch1", 1);
+
+    ArgumentCaptor<DropCarriedItemRequest> requestCaptor =
+        ArgumentCaptor.forClass(DropCarriedItemRequest.class);
+    verify(stub, times(2)).dropCarriedItem(requestCaptor.capture());
+    assertThat(requestCaptor.getAllValues())
+        .extracting(DropCarriedItemRequest::getAccountId)
+        .containsExactly("", "acct:opaque/legacy");
+  }
+
+  @Test
   void queryInventoryFailsClosedWhenSessionContextDropsAdmittedPlayableStateScope() {
     GameLogicClient client = newClient();
     SessionContext missingScope =
@@ -530,6 +613,21 @@ class GameLogicClientTest {
             "22", "41", "0", "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
         .thenReturn("attestation");
     when(attestationService.issueGameplaySessionAttestation(
+            "22", "41", null, "123", "1", "R-1021", "world", "realm", "17", "SHARED"))
+        .thenReturn("attestation");
+    when(attestationService.issueGameplaySessionAttestation(
+            "22",
+            "41",
+            "acct:opaque/legacy",
+            "123",
+            "1",
+            "R-1021",
+            "world",
+            "realm",
+            "17",
+            "SHARED"))
+        .thenReturn("attestation");
+    when(attestationService.issueGameplaySessionAttestation(
             "22", "41", "0", "123", "1", "R-2045", "world", "realm", "17", "SHARED"))
         .thenReturn("destination-attestation");
     when(attestationService.issueInternalProbeAttestation("22", "1", "R-1021"))
@@ -540,6 +638,25 @@ class GameLogicClientTest {
         mock(GrpcChannelFactory.class),
         BlockingGrpcStubCustomizer.noop(),
         attestationService);
+  }
+
+  private static SessionContext sessionContextWithAccountId(String accountId) {
+    return new SessionContext(
+        SESSION_CONTEXT.sessionId(),
+        SESSION_CONTEXT.tenantId(),
+        accountId,
+        SESSION_CONTEXT.loginName(),
+        SESSION_CONTEXT.characterId(),
+        SESSION_CONTEXT.characterName(),
+        SESSION_CONTEXT.gameInstanceId(),
+        SESSION_CONTEXT.roomInstanceId(),
+        SESSION_CONTEXT.jwt(),
+        SESSION_CONTEXT.localeTag(),
+        SESSION_CONTEXT.bootstrapGameInstanceId(),
+        SESSION_CONTEXT.worldSlug(),
+        SESSION_CONTEXT.realmSlug(),
+        SESSION_CONTEXT.pointerVersion(),
+        SESSION_CONTEXT.playableStateScope());
   }
 
   private static void setStub(GameLogicClient client, Object stub) throws Exception {

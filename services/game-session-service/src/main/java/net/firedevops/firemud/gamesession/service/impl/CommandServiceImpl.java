@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.service.CommandService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import net.firedevops.firemud.gamesession.service.PositiveLongParsing;
 import net.firedevops.firemud.gamesession.service.ScriptEventPublisher;
 import net.firedevops.firemud.gamesession.service.SessionAuthenticationService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -99,6 +100,15 @@ public class CommandServiceImpl implements CommandService {
     }
 
     var sessionContext = resolveSessionContext(sessionIdText);
+    Optional<Long> numericAccountId;
+    try {
+      numericAccountId =
+          sessionContext
+              .map(SessionContext::accountId)
+              .flatMap(id -> PositiveLongParsing.requireOptionalText(id, "accountId"));
+    } catch (IllegalArgumentException ex) {
+      return CommandEnqueueResult.failure("INVALID_ARGUMENT", ex.getMessage());
+    }
     Optional<QueueTarget> queueTarget = resolveQueueTarget(sessionContext);
     String tenantContext =
         queueTarget.map(target -> String.valueOf(target.tenantId())).orElse("unknown");
@@ -148,6 +158,7 @@ public class CommandServiceImpl implements CommandService {
               requiresSoloTick,
               queueTarget.get(),
               sessionContext,
+              numericAccountId,
               authoredAdmission,
               runtimeScope.get());
       logger.info(
@@ -189,6 +200,7 @@ public class CommandServiceImpl implements CommandService {
       boolean requiresSoloTick,
       QueueTarget queueTarget,
       Optional<SessionContext> sessionContext,
+      Optional<Long> numericAccountId,
       AuthoredCommandAdmission authoredAdmission,
       RuntimeRegionStatus runtimeScope) {
     Instant now = Instant.now();
@@ -197,10 +209,7 @@ public class CommandServiceImpl implements CommandService {
     gameplayCommand.setTenantId(queueTarget.tenantId());
     gameplayCommand.setGameInstanceId(queueTarget.queueTargetId());
     gameplayCommand.setSessionId(sessionId);
-    sessionContext
-        .map(SessionContext::accountId)
-        .filter(id -> id > 0)
-        .ifPresent(gameplayCommand::setAccountId);
+    numericAccountId.ifPresent(gameplayCommand::setAccountId);
     sessionContext
         .map(SessionContext::characterId)
         .filter(id -> id > 0)

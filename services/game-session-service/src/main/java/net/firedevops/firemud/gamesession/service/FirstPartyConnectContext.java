@@ -4,7 +4,7 @@ import java.io.Serializable;
 import org.springframework.util.StringUtils;
 
 public record FirstPartyConnectContext(
-    long accountId,
+    String accountId,
     long tenantId,
     String worldSlug,
     String realmSlug,
@@ -18,7 +18,7 @@ public record FirstPartyConnectContext(
   private static final long serialVersionUID = 1L;
 
   public boolean hasCompleteRoutingScope() {
-    return accountId > 0L
+    return StringUtils.hasText(accountId)
         && tenantId > 0L
         && gameInstanceId > 0L
         && pointerVersion > 0L

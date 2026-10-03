@@ -1,5 +1,6 @@
 package net.firedevops.firemud.gamesession.service.impl;
 
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.LinkedHashMap;
@@ -14,14 +15,22 @@ import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.redis.serializer.SerializationException;
 import org.springframework.stereotype.Service;
 
 @Service
 public final class RedisAccountRecentPresenceService implements AccountRecentPresenceService {
-  private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%d";
+  private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%s";
+  private static final int MAX_WRITE_RETRIES = 8;
+  private static final Logger logger =
+      LoggerFactory.getLogger(RedisAccountRecentPresenceService.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
@@ -58,7 +67,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
 
   @Override
   public void recordConnected(SessionContext context) {
-    if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
+    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
       return;
     }
     GameplayPresence presence =
@@ -99,18 +108,22 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
   }
 
   @Override
-  public Map<Long, AccountRecentPresenceState> findByAccountIds(
-      long tenantId, Collection<Long> accountIds) {
+  public Map<String, AccountRecentPresenceState> findByAccountIds(
+      long tenantId, Collection<String> accountIds) {
     ValueOperations<String, Object> valueOps = redisTemplate.opsForValue();
-    LinkedHashMap<Long, AccountRecentPresenceState> results = new LinkedHashMap<>();
-    for (Long accountId : accountIds) {
-      if (accountId == null || accountId <= 0 || valueOps == null) {
+    LinkedHashMap<String, AccountRecentPresenceState> results = new LinkedHashMap<>();
+    for (String accountId : accountIds) {
+      if (accountId == null || accountId.isBlank() || valueOps == null) {
         continue;
       }
-      AccountRecentPresenceState state =
-          (AccountRecentPresenceState) valueOps.get(key(tenantId, accountId));
-      if (state != null) {
-        results.put(accountId, state);
+      try {
+        AccountRecentPresenceState state =
+            (AccountRecentPresenceState) valueOps.get(key(tenantId, accountId));
+        if (state != null) {
+          results.put(accountId, state);
+        }
+      } catch (SerializationException | ClassCastException ex) {
+        // Retain unreadable evidence; it must not be treated as an absent value for cleanup.
       }
     }
     return Map.copyOf(results);
@@ -122,8 +135,8 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     if (valueOps == null || snapshot == null) {
       return;
     }
-    valueOps.set(
-        key(snapshot.tenantId(), snapshot.accountId()),
+    String key = key(snapshot.tenantId(), snapshot.accountId());
+    AccountRecentPresenceState state =
         new AccountRecentPresenceState(
             snapshot.tenantId(),
             snapshot.accountId(),
@@ -133,12 +146,45 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
             snapshot.realmSlug(),
             snapshot.pointerVersion(),
             timestampMs,
-            disposition),
-        ttl);
+            disposition);
+    for (int attempt = 0; attempt < MAX_WRITE_RETRIES; attempt++) {
+      WriteAttemptResult result =
+          redisTemplate.execute(
+              new SessionCallback<>() {
+                @Override
+                @SuppressFBWarnings(
+                    value = "RCN_REDUNDANT_NULLCHECK_OF_NONNULL_VALUE",
+                    justification =
+                        "Redis EXEC returns null when WATCH detects a concurrent key change; retrying preserves the newer retained presence.")
+                public WriteAttemptResult execute(RedisOperations operations) {
+                  operations.watch(key);
+                  Object retained;
+                  try {
+                    retained = operations.opsForValue().get(key);
+                  } catch (SerializationException | ClassCastException ex) {
+                    operations.unwatch();
+                    return WriteAttemptResult.PRESERVED;
+                  }
+                  if (retained != null && !(retained instanceof AccountRecentPresenceState)) {
+                    operations.unwatch();
+                    return WriteAttemptResult.PRESERVED;
+                  }
+                  operations.multi();
+                  operations.opsForValue().set(key, state, ttl);
+                  return operations.exec() == null
+                      ? WriteAttemptResult.RETRY
+                      : WriteAttemptResult.COMMITTED;
+                }
+              });
+      if (result == WriteAttemptResult.COMMITTED || result == WriteAttemptResult.PRESERVED) {
+        return;
+      }
+    }
+    logger.warn("Recent account presence projection update skipped after concurrent Redis changes");
   }
 
   private RoutingSnapshot routingSnapshot(SessionContext context, GameplayPresence presence) {
-    if (context == null || context.tenantId() <= 0 || context.accountId() <= 0) {
+    if (context == null || context.tenantId() <= 0 || !context.hasAccountIdentity()) {
       return null;
     }
     GameplayPresence effectivePresence =
@@ -180,16 +226,22 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
     return null;
   }
 
-  private String key(long tenantId, long accountId) {
+  private String key(long tenantId, String accountId) {
     return String.format(RECENT_PRESENCE_KEY_TEMPLATE, tenantId, accountId);
   }
 
   private record RoutingSnapshot(
       long tenantId,
-      long accountId,
+      String accountId,
       Long gameInstanceId,
       String playableStateScope,
       String worldSlug,
       String realmSlug,
       Long pointerVersion) {}
+
+  private enum WriteAttemptResult {
+    COMMITTED,
+    RETRY,
+    PRESERVED
+  }
 }

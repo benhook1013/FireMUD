@@ -40,7 +40,7 @@ class FirstPartyConnectContextServiceTest {
 
     assertTrue(service.parse("token").isPresent());
     FirstPartyConnectContext context = service.parse("token").orElseThrow();
-    assertEquals(42L, context.accountId());
+    assertEquals("42", context.accountId());
     assertEquals(7L, context.tenantId());
     assertEquals("demo", context.worldSlug());
     assertEquals("production", context.realmSlug());

@@ -248,11 +248,11 @@ class GameSessionGrpcServiceTest {
     IpConnectionLimiter ipLimiter = Mockito.mock(IpConnectionLimiter.class);
     SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
     SessionContext.setContext("42", List.of(), Map.of());
-    Mockito.when(accountPresenceQueryService.queryAccountPresence(1L, 42L, List.of(7L)))
+    Mockito.when(accountPresenceQueryService.queryAccountPresence(1L, "42", List.of("7")))
         .thenReturn(
             List.of(
                 new AccountPresenceSnapshot(
-                    7L,
+                    "7",
                     true,
                     9L,
                     "ISOLATED",

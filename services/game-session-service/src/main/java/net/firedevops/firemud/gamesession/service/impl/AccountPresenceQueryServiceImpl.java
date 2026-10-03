@@ -57,11 +57,11 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
 
   @Override
   public List<AccountPresenceSnapshot> queryAccountPresence(
-      long tenantId, long viewerAccountId, List<Long> accountIds) {
+      long tenantId, String viewerAccountId, List<String> accountIds) {
     Objects.requireNonNull(accountIds, "accountIds");
-    LinkedHashSet<Long> requestedIds = new LinkedHashSet<>();
-    for (Long accountId : accountIds) {
-      if (accountId != null && accountId > 0) {
+    LinkedHashSet<String> requestedIds = new LinkedHashSet<>();
+    for (String accountId : accountIds) {
+      if (accountId != null && !accountId.isBlank()) {
         requestedIds.add(accountId);
       }
     }
@@ -69,20 +69,20 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
       return List.of();
     }
 
-    Map<Long, AccountPresenceSnapshot> results = new LinkedHashMap<>();
+    Map<String, AccountPresenceSnapshot> results = new LinkedHashMap<>();
     Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers = new HashMap<>();
-    Map<Long, AccountRecentPresenceState> recentStates =
+    Map<String, AccountRecentPresenceState> recentStates =
         accountRecentPresenceService.findByAccountIds(tenantId, requestedIds);
-    for (Long accountId : requestedIds) {
+    for (String accountId : requestedIds) {
       results.put(
           accountId,
           offline(tenantId, accountId, recentStates.get(accountId), currentRuntimePointers));
     }
 
-    Map<Long, List<GameplayPresence>> activePresences =
+    Map<String, List<GameplayPresence>> activePresences =
         gameplayPresenceService.listConnectedByAccountIds(tenantId, requestedIds);
-    for (Map.Entry<Long, List<GameplayPresence>> entry : activePresences.entrySet()) {
-      Long accountId = entry.getKey();
+    for (Map.Entry<String, List<GameplayPresence>> entry : activePresences.entrySet()) {
+      String accountId = entry.getKey();
       GameplayPresence presence =
           selectCurrentPresence(tenantId, entry.getValue(), currentRuntimePointers);
       if (presence == null) {
@@ -170,7 +170,7 @@ public class AccountPresenceQueryServiceImpl implements AccountPresenceQueryServ
 
   private AccountPresenceSnapshot offline(
       long tenantId,
-      long accountId,
+      String accountId,
       AccountRecentPresenceState recentState,
       Map<Long, GameplayAdmissionPointerSnapshot> currentRuntimePointers) {
     GameplayAdmissionPointerSnapshot pointer =

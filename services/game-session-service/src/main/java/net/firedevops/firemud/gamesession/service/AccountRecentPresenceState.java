@@ -5,7 +5,7 @@ import java.io.Serializable;
 /** Bounded recent-presence facts retained after a gameplay presence disconnects. */
 public record AccountRecentPresenceState(
     long tenantId,
-    long accountId,
+    String accountId,
     Long gameInstanceId,
     String playableStateScope,
     String worldSlug,
@@ -18,7 +18,7 @@ public record AccountRecentPresenceState(
 
   public AccountRecentPresenceState(
       long tenantId,
-      long accountId,
+      String accountId,
       long lastSeenAtEpochMs,
       AccountRecentPresenceDisposition disposition) {
     this(tenantId, accountId, null, null, null, null, null, lastSeenAtEpochMs, disposition);

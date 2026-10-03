@@ -49,7 +49,7 @@ class RedisMovementEffectIdempotencyServiceTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             7001L,
             "demo",
@@ -151,7 +151,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     return new SessionContext(
         41L,
         22L,
-        123L,
+        "123",
         "demo@example.com",
         7001L,
         "demo",
@@ -170,7 +170,7 @@ class RedisMovementEffectIdempotencyServiceTest {
     return new SessionContext(
         context.sessionId(),
         context.tenantId(),
-        accountId,
+        Long.toString(accountId),
         context.loginName(),
         context.characterId(),
         context.characterName(),

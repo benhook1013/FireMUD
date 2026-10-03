@@ -67,7 +67,9 @@ import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.SetOperations;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.grpc.server.lifecycle.GrpcServerLifecycle;
@@ -210,6 +212,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
             })
         .when(redisTemplate)
         .delete(org.mockito.ArgumentMatchers.anyString());
+    stubTransactionExecution(redisTemplate);
     when(gameInstanceRepository.save(org.mockito.ArgumentMatchers.any(GameInstance.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     org.mockito.Mockito.doAnswer(
@@ -653,7 +656,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L)).isPresent();
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of("123")))
+        .containsKey("123");
 
     List<String> secondPayloads;
     try (GameplayWebSocketDriver client = openAdmittedGameplayDriver("42")) {
@@ -1104,7 +1108,8 @@ class GameSessionWebSocketHandlerIntegrationTest {
     verify(screenBufferService, never()).clear(22L, 1L, 123L);
     GameplayAsyncAssertions.assertPresenceCountEventually(
         gameplayPresenceService, 22L, 1L, 0, java.time.Duration.ofSeconds(5));
-    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of(123L))).containsKey(123L);
+    assertThat(accountRecentPresenceService.findByAccountIds(22L, List.of("123")))
+        .containsKey("123");
 
     java.util.List<String> secondPayloads;
     try (GameplayWebSocketDriver client =
@@ -1301,7 +1306,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 41L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.accountId()).isEqualTo("123");
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
@@ -1469,7 +1474,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.accountId()).isEqualTo("123");
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(2L);
@@ -1562,7 +1567,7 @@ class GameSessionWebSocketHandlerIntegrationTest {
     assertThat(sessionContextService.findByTenantAndSessionId(22L, 2L))
         .hasValueSatisfying(
             context -> {
-              assertThat(context.accountId()).isEqualTo(123L);
+              assertThat(context.accountId()).isEqualTo("123");
               assertThat(context.gameInstanceId()).isZero();
               assertThat(context.characterId()).isZero();
               assertThat(context.bootstrapGameInstanceId()).isEqualTo(1L);
@@ -1741,6 +1746,17 @@ class GameSessionWebSocketHandlerIntegrationTest {
                 pointer.tenantId() == 22L && pointer.visible() && pointer.publicProductionRealm())
         .extracting(GameplayAdmissionPointerSnapshot::worldSlug)
         .containsExactly("demo");
+  }
+
+  @SuppressWarnings("unchecked")
+  private static void stubTransactionExecution(RedisTemplate<String, Object> redisTemplate) {
+    when(redisTemplate.execute(Mockito.any(SessionCallback.class)))
+        .thenAnswer(
+            invocation -> {
+              SessionCallback<?> callback = invocation.getArgument(0);
+              return callback.execute((RedisOperations<String, Object>) redisTemplate);
+            });
+    when(redisTemplate.exec()).thenReturn(List.of("OK"));
   }
 
   private static JsonNode json(String payload) {

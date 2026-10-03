@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -100,20 +101,22 @@ public final class FakeGameplayPresenceService implements GameplayPresenceServic
   }
 
   @Override
-  public Map<Long, List<GameplayPresence>> listConnectedByAccountIds(
-      long tenantId, Collection<Long> accountIds) {
+  public Map<String, List<GameplayPresence>> listConnectedByAccountIds(
+      long tenantId, Collection<String> accountIds) {
     if (accountIds == null || accountIds.isEmpty()) {
       return Map.of();
     }
-    Map<Long, List<GameplayPresence>> results = new LinkedHashMap<>();
-    for (Long accountId : accountIds) {
-      if (accountId == null || accountId <= 0) {
+    Map<String, List<GameplayPresence>> results = new LinkedHashMap<>();
+    for (String accountId : accountIds) {
+      if (accountId == null || accountId.isBlank()) {
         continue;
       }
       List<GameplayPresence> matches =
           presences.values().stream()
               .filter(
-                  presence -> presence.tenantId() == tenantId && presence.accountId() == accountId)
+                  presence ->
+                      presence.tenantId() == tenantId
+                          && Objects.equals(presence.accountId(), accountId))
               .sorted(ordering())
               .toList();
       if (!matches.isEmpty()) {

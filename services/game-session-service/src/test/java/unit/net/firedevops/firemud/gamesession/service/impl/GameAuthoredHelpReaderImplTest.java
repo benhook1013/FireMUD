@@ -56,6 +56,6 @@ class GameAuthoredHelpReaderImplTest {
 
   private SessionContext gameplayContext() {
     return new SessionContext(
-        41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
+        41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt");
   }
 }

@@ -108,7 +108,7 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
             null);
 
@@ -159,7 +159,7 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         handler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
             null);
 
@@ -191,7 +191,7 @@ class WorldsCommandHandlerTest {
 
     WorldsCommandHandler.CharacterBrowseResult result =
         localHandler.browseCharacters(
-            new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt"),
+            new SessionContext(1L, 22L, "123", "demo@example.com", 0L, null, 0L, "jwt"),
             "demo",
             null);
 

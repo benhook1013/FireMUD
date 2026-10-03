@@ -846,7 +846,7 @@ class AutomationScriptEventPublisherTest {
     return new SessionContext(
         17L,
         9L,
-        3L,
+        "3",
         "demo",
         44L,
         "char",

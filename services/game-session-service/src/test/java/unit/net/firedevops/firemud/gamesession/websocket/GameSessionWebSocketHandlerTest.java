@@ -136,7 +136,7 @@ class GameSessionWebSocketHandlerTest {
                 "token"));
     FirstPartyConnectContext connectContext =
         new FirstPartyConnectContext(
-            123L, 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+            "123", 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
     when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenReturn(
@@ -200,6 +200,55 @@ class GameSessionWebSocketHandlerTest {
   }
 
   @Test
+  void afterConnectionEstablishedRejectsFirstPartyContextWhenRetainedStateCannotBeRegistered()
+      throws Exception {
+    when(session.getAttributes())
+        .thenReturn(
+            Map.of(
+                GameSessionWebSocketHandshakeInterceptor.SESSION_ID_ATTR,
+                "41",
+                GameSessionWebSocketHandshakeInterceptor.CONNECTION_MODE_ATTR,
+                "first_party_web",
+                GameSessionWebSocketHandshakeInterceptor.CONNECT_CONTEXT_ATTR,
+                "token"));
+    FirstPartyConnectContext connectContext =
+        new FirstPartyConnectContext(
+            "123", 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+    when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
+    when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
+        .thenReturn(
+            List.of(
+                pointer(
+                    "demo",
+                    "Demo",
+                    "production",
+                    "Production",
+                    22L,
+                    7L,
+                    3L,
+                    true,
+                    true,
+                    false,
+                    "SHARED",
+                    "ALLOW_NEW")));
+    Mockito.doThrow(new IllegalStateException("retained context is unreadable"))
+        .when(firstPartyConnectContextRegistry)
+        .register(41L, connectContext);
+
+    handler.afterConnectionEstablished(session);
+
+    verify(session)
+        .close(
+            argThat(
+                status ->
+                    status.getCode() == CloseStatus.POLICY_VIOLATION.getCode()
+                        && "CONNECT_CONTEXT_INVALID".equals(status.getReason())));
+    verify(sessionAuthenticationService, never()).resolveUnverifiedSessionContext(22L, 41L);
+    verify(sessionContextService, never()).save(Mockito.any());
+    verify(firstPartyConnectContextRegistry).register(41L, connectContext);
+  }
+
+  @Test
   void afterConnectionEstablishedClosesWithServiceUnavailableWhenPointerAuthorityFails()
       throws Exception {
     when(session.getAttributes())
@@ -213,7 +262,7 @@ class GameSessionWebSocketHandlerTest {
                 "token"));
     FirstPartyConnectContext connectContext =
         new FirstPartyConnectContext(
-            123L, 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
+            "123", 22L, "demo", "production", 7L, 3L, "scope-1", "jti", "req-1", "gw-1");
     when(firstPartyConnectContextService.parse("token")).thenReturn(Optional.of(connectContext));
     when(gameplayAdmissionPointerAuthorityService.listByRuntimeTarget(22L, 7L))
         .thenThrow(new IllegalStateException("database unavailable"));
@@ -469,7 +518,7 @@ class GameSessionWebSocketHandlerTest {
         .save(
             eq(
                 new SessionContext(
-                    41L, 22L, 0L, null, 0L, null, 0L, null, null, null, 7L, null, null, 0L, null,
+                    41L, 22L, null, null, 0L, null, 0L, null, null, null, 7L, null, null, 0L, null,
                     null, null)));
   }
 
@@ -600,7 +649,7 @@ class GameSessionWebSocketHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             123L,
             "Emberline",
@@ -649,7 +698,7 @@ class GameSessionWebSocketHandlerTest {
                 context ->
                     context.sessionId() == 41L
                         && context.tenantId() == 22L
-                        && context.accountId() == 0L
+                        && context.accountId() == null
                         && context.bootstrapGameInstanceId() == 7L
                         && "demo".equals(context.worldSlug())
                         && "production".equals(context.realmSlug())
@@ -664,7 +713,7 @@ class GameSessionWebSocketHandlerTest {
         new SessionContext(
             41L,
             22L,
-            123L,
+            "123",
             "demo@example.com",
             123L,
             "Emberline",
@@ -726,7 +775,7 @@ class GameSessionWebSocketHandlerTest {
                 context ->
                     context.sessionId() == 41L
                         && context.tenantId() == 22L
-                        && context.accountId() == 0L
+                        && context.accountId() == null
                         && context.bootstrapGameInstanceId() == 7L
                         && context.worldSlug() == null
                         && context.realmSlug() == null
@@ -739,7 +788,7 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Recent room line");
     SessionContext clearedShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -774,7 +823,7 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Recent room line");
     SessionContext partialShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 0L, null, "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 0L, null, "jwt", "en-NZ", 1L);
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -809,7 +858,7 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Presence: online in Demo World / Live Realm");
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
     when(parser.parse("WHO")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -846,7 +895,7 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Entering Demo World");
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -890,7 +939,7 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Custom session response");
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
     when(parser.parse("CUSTOM-PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -927,7 +976,7 @@ class GameSessionWebSocketHandlerTest {
     WebSocketSession decoratedSession = Mockito.mock(WebSocketSession.class);
     SessionContext context =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 7001L, "Emberline", 7L, "R-1", "jwt", "en-NZ", 1L);
     when(session.getId()).thenReturn("session-41");
     when(decoratedSession.getId()).thenReturn("session-41");
     when(activeTransportSessionRegistry.find(41L)).thenReturn(Optional.of(decoratedSession));
@@ -975,7 +1024,7 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext clearedShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1006,7 +1055,7 @@ class GameSessionWebSocketHandlerTest {
     TextCommand command = new TextCommand(TextCommandType.PLAY, List.of("demo"), "PLAY demo");
     SessionContext partialShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 1L, null, "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 0L, null, 1L, null, "jwt", "en-NZ", 1L);
     when(parser.parse("PLAY demo")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1045,7 +1094,7 @@ class GameSessionWebSocketHandlerTest {
     PlayerOutput output = PlayerOutput.message("Recent room line");
     SessionContext clearedShell =
         new SessionContext(
-            41L, 22L, 123L, "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
+            41L, 22L, "123", "demo@example.com", 0L, null, 0L, null, "jwt", "en-NZ", 1L);
     when(parser.parse("LOOK")).thenReturn(command);
     when(interpreter.interpret("41", command, false))
         .thenReturn(
@@ -1233,7 +1282,21 @@ class GameSessionWebSocketHandlerTest {
             "LOGIN demo@example.com swordfish");
     SessionContext tenantScoped =
         new SessionContext(
-            41L, 22L, 0L, null, 0L, null, 0L, null, null, null, 7L, "demo", "production", 3L, null);
+            41L,
+            22L,
+            null,
+            null,
+            0L,
+            null,
+            0L,
+            null,
+            null,
+            null,
+            7L,
+            "demo",
+            "production",
+            3L,
+            null);
     when(parser.parse("LOGIN demo@example.com swordfish")).thenReturn(command);
     when(sessionAuthenticationService.resolveUnverifiedSessionContext(22L, 41L))
         .thenReturn(Optional.of(tenantScoped));

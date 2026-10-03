@@ -63,7 +63,7 @@ public class WorldsCommandHandler {
     ListCharactersByAccountResponse response =
         entityManagementClient.listCharactersByAccount(
             Long.toString(realm.tenantId()),
-            Long.toString(sessionContext.accountId()),
+            sessionContext.accountId(),
             Long.toString(realm.gameInstanceId()),
             toPlayableStateScope(realm));
     if (response.hasError()) {
