@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "dev-tools"))
 
 from pr_review import cli as cli_module
-from pr_review import cli_attempts, evidence, github, hosted, sqlite_review_records
+from pr_review import cli_attempts, evidence, github, hosted, runtime, sqlite_review_records
 from pr_review.cli_runner import ReviewResult
 from pr_review.sqlite_finding_text import _safe_finding_detail
 from pr_review.sqlite_provider_imports import _cli_detail, _cli_finding_title, _cli_headline

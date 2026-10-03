@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 DEV_TOOLS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEV_TOOLS))
 
+from pr_review import cli as cli_module
 from pr_review import cli_attempts, cli_runner, evidence, github, hosted
 from pr_review.cli import _parser, _render
 from pr_review.cli_runner import (
