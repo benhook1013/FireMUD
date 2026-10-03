@@ -1378,12 +1378,7 @@ public class AccountServiceImpl implements AccountService {
     if (cachedReplay.isPresent()) {
       var replay = cachedReplay.orElseThrow();
       if (replay.success()) {
-        RuntimeRealmTarget currentRealm = requireCurrentConnectScopeTarget(scopeContext);
-        if (!isPublicProductionRealm(currentRealm)) {
-          throw new AuthenticationException(
-              "REALM_ACCESS_DENIED",
-              "The selected non-public realm does not have an active access grant");
-        }
+        requireCurrentConnectTokenEligibility(bootstrapContext, scopeContext, request, true);
         logger.info(
             "Replayed connect-token attempt for account {} tenant {} world {} realm {} requestId {}",
             bootstrapContext.accountId(),
@@ -1425,58 +1420,8 @@ public class AccountServiceImpl implements AccountService {
       BootstrapContext bootstrapContext,
       ConnectScopeContext scopeContext,
       ConnectTokenRequest request) {
-    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
-    RuntimeEntitlementsDto entitlements =
-        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
-    if (!entitlements.gameplayAvailable()) {
-      throw new AuthenticationException(
-          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
-    }
-    RuntimeMembershipDto membership =
-        getTenantMembershipForRuntime(
-            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
-
-    if (membership.membershipExists()
-        && !"ACTIVE".equals(membership.membershipLifecycleState())
-        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
-    }
-    if (membership.membershipExists()
-        && "INACTIVE".equals(membership.membershipLifecycleState())
-        && isPublicProductionRealm(realm)) {
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-    if (membership.membershipExists() && "INACTIVE".equals(membership.membershipLifecycleState())) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
-      throw new AuthenticationException(
-          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
-    }
-
-    if (!membership.membershipExists()) {
-      if (!isPublicProductionRealm(realm)) {
-        throw new AuthenticationException(
-            "NON_PUBLIC_ENROLLMENT_REQUIRED",
-            "Existing game membership is required for this non-public realm");
-      }
-      if (!entitlements.allowPublicJoin()) {
-        throw new AuthenticationException(
-            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
-            "Public joining is not allowed for the selected game");
-      }
-      throw new AuthenticationException(
-          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
-    }
-
+    RuntimeRealmTarget realm =
+        requireCurrentConnectTokenEligibility(bootstrapContext, scopeContext, request, false);
     if (!isPublicProductionRealm(realm)
         && !hasRealmAccessGrant(
             bootstrapContext.accountId(),
@@ -1561,6 +1506,72 @@ public class AccountServiceImpl implements AccountService {
         request.requestId(),
         jti);
     return result;
+  }
+
+  private RuntimeRealmTarget requireCurrentConnectTokenEligibility(
+      BootstrapContext bootstrapContext,
+      ConnectScopeContext scopeContext,
+      ConnectTokenRequest request,
+      boolean cachedSuccessReplay) {
+    RuntimeRealmTarget realm = requireCurrentConnectScopeTarget(scopeContext);
+    boolean publicProductionRealm = isPublicProductionRealm(realm);
+    if (cachedSuccessReplay && !publicProductionRealm) {
+      throw new AuthenticationException(
+          "REALM_ACCESS_DENIED",
+          "The selected non-public realm does not have an active access grant");
+    }
+
+    RuntimeEntitlementsDto entitlements =
+        getTenantEntitlementsForRuntime(scopeContext.tenantId(), request.requestId());
+    if (!entitlements.gameplayAvailable()) {
+      throw new AuthenticationException(
+          "TENANT_BILLING_BLOCKED", "Gameplay is not available for this tenant");
+    }
+    RuntimeMembershipDto membership =
+        getTenantMembershipForRuntime(
+            bootstrapContext.accountId(), scopeContext.tenantId(), request.requestId());
+
+    if (membership.membershipExists()
+        && !"ACTIVE".equals(membership.membershipLifecycleState())
+        && !"INACTIVE".equals(membership.membershipLifecycleState())) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Membership authority requires reconciliation");
+    }
+    if (membership.membershipExists()
+        && "INACTIVE".equals(membership.membershipLifecycleState())
+        && publicProductionRealm) {
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+    if (membership.membershipExists() && "INACTIVE".equals(membership.membershipLifecycleState())) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+    if (membership.membershipExists() && !membership.gameplayAdmissionAllowed()) {
+      throw new AuthenticationException(
+          "CONNECT_TOKEN_REJECTED", "Gameplay admission is not allowed for this account");
+    }
+
+    if (!membership.membershipExists()) {
+      if (!publicProductionRealm) {
+        throw new AuthenticationException(
+            "NON_PUBLIC_ENROLLMENT_REQUIRED",
+            "Existing game membership is required for this non-public realm");
+      }
+      if (!entitlements.allowPublicJoin()) {
+        throw new AuthenticationException(
+            "PUBLIC_PRODUCTION_ADMISSION_DENIED",
+            "Public joining is not allowed for the selected game");
+      }
+      throw new AuthenticationException(
+          "JOIN_REQUIRED", "Join the selected world before requesting a connect token");
+    }
+    return realm;
   }
 
   @Override

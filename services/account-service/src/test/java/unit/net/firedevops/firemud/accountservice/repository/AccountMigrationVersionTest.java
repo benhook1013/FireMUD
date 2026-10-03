@@ -28,7 +28,8 @@ class AccountMigrationVersionTest {
             "V28__account_audit_delivery_backoff.sql",
             "V37__verified_audit_projection_evidence.sql",
             "V38__account_join_reconciliation.sql",
-            "V40__account_membership_transition_receipts.sql")
+            "V40__account_membership_transition_receipts.sql",
+            "V41__protect_account_membership_transition_receipts.sql")
         .doesNotContain(
             "V28__account_join_reconciliation.sql",
             "V28__account_membership_transition_receipts.sql",
@@ -41,6 +42,27 @@ class AccountMigrationVersionTest {
     assertThat(version("V40__account_membership_transition_receipts.sql"))
         .isGreaterThan(version("V38__account_join_reconciliation.sql"))
         .isGreaterThan(MigrationVersion.fromVersion("39.1"));
+    assertThat(version("V41__protect_account_membership_transition_receipts.sql"))
+        .isGreaterThan(version("V40__account_membership_transition_receipts.sql"));
+  }
+
+  @Test
+  void receiptProtectionMigrationGuardsOnlyUpdatesAndDeletesWithoutDocker() throws IOException {
+    String migration =
+        Files.readString(
+            Path.of(
+                "src/main/resources/db/migration/"
+                    + "V41__protect_account_membership_transition_receipts.sql"));
+
+    assertThat(migration)
+        .contains(
+            "CREATE TRIGGER account_membership_transition_receipts_append_only",
+            "BEFORE UPDATE OR DELETE ON account_membership_transition_receipts",
+            "EXECUTE FUNCTION reject_account_membership_transition_receipt_mutation()")
+        .doesNotContain(
+            "BEFORE INSERT ON account_membership_transition_receipts",
+            "INSERT OR UPDATE OR DELETE ON account_membership_transition_receipts",
+            "ON account_membership_transition_receipt_stream_heads");
   }
 
   private static MigrationVersion version(String name) {
