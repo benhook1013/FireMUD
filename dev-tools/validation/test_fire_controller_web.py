@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import difflib
+import hashlib
 import importlib
 import importlib.util
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import threading
@@ -831,6 +834,45 @@ if __name__ == "__main__":
 
 
 class RetainedHistoryAndAdapterTests(unittest.TestCase):
+    def test_adapter_applies_root_relative_patch_inside_parent_git_worktree(self):
+        helper_path = TOOLS / "fire_controller" / "integration" / "apply_private_adapter.py"
+        spec = importlib.util.spec_from_file_location("nested_adapter_test", helper_path)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        index_path = Path(subprocess.check_output(
+            ["git", "rev-parse", "--path-format=absolute", "--git-path", "index"],
+            cwd=ROOT, text=True).strip())
+        original_index = index_path.read_bytes()
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+            directory = Path(temporary)
+            outside = directory / "outside.txt"
+            outside.write_text("Unrelated source stays intact")
+            source, target = directory / "source", directory / "nested" / "site"
+            source.mkdir()
+            target.mkdir(parents=True)
+            patch_parts = []
+            helper.BASELINE, helper.POST_PATCH, helper.UNCHANGED = {}, {}, {}
+            for name in helper.EXPECTED_FILES:
+                old, new = "old source\n", "new source\n"
+                (source / name).write_text(old)
+                (target / name).write_text(old)
+                helper.BASELINE[name] = hashlib.sha256(old.encode()).hexdigest()
+                helper.POST_PATCH[name] = hashlib.sha256(new.encode()).hexdigest()
+                patch_parts.append(f"diff --git a/{name} b/{name}\n")
+                patch_parts.extend(difflib.unified_diff(
+                    old.splitlines(keepends=True), new.splitlines(keepends=True),
+                    fromfile=f"a/{name}", tofile=f"b/{name}"))
+            helper.PATCH = directory / "adapter.patch"
+            helper.PATCH.write_text("".join(patch_parts))
+            arguments = ["--source-site", str(source), "--site-copy", str(target)]
+            self.assertEqual(helper.main(arguments), 0)
+            self.assertEqual(helper.main(arguments + ["--verify"]), 0)
+            for name in helper.EXPECTED_FILES:
+                self.assertEqual((source / name).read_text(), "old source\n")
+                self.assertEqual((target / name).read_text(), "new source\n")
+            self.assertEqual(outside.read_text(), "Unrelated source stays intact")
+            self.assertEqual(index_path.read_bytes(), original_index)
+
     def test_historical_job_structured_state_is_visible_and_escaped(self):
         page = web.render_job({"job": {"id": "job-1", "name": "Current"}, "revision_entry": {
             "revision": 2, "status": "blocked", "worker": "General<script>", "primary": True,

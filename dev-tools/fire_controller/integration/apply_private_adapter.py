@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -83,9 +84,16 @@ def main(argv=None) -> int:
             print("private adapter fingerprints verified")
             return 0
         check_source(site, {**BASELINE, **UNCHANGED})
+        # The isolated copy can sit under another Git worktree. Avoid parent
+        # discovery filtering our root-relative patch paths out silently.
+        apply_environment = os.environ.copy()
+        for variable in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE"):
+            apply_environment.pop(variable, None)
+        apply_environment["GIT_CEILING_DIRECTORIES"] = str(site.parent)
         checked = subprocess.run(
             ["git", "apply", "--check", str(PATCH)],
             cwd=site,
+            env=apply_environment,
             capture_output=True,
             text=True,
             check=False,
@@ -95,6 +103,7 @@ def main(argv=None) -> int:
         applied = subprocess.run(
             ["git", "apply", str(PATCH)],
             cwd=site,
+            env=apply_environment,
             capture_output=True,
             text=True,
             check=False,
