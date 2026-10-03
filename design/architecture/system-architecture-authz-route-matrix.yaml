@@ -1185,9 +1185,9 @@ routes:
     implementation_status:
       known_drift:
         - membership_authority_generation_snapshot_and_consumer_proof_remains_target_only
-        - join_unknown_database_outcome_recovery_and_reconciliation_remains_target_only
+        - bounded_Account_readback_reconciler_is_implemented_locally_but_PostgreSQL_runtime_unknown_outcome_and_concurrency_proof_remain_unavailable
         - join_audit_receipt_retention_and_safe_watermark_proof_remains_target_only
-        - postgresql_runtime_and_direct_text_end_to_end_proof_unavailable
+        - direct_text_to_Logging_end_to_end_proof_unavailable
   - service: game-session-service
     route: PLAY
     scope: tenant
