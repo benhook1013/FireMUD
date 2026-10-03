@@ -34,10 +34,12 @@ public final class RedisFirstPartyConnectContextRegistry
     try {
       Object retained = valueOperations().get(key);
       if (retained != null && !(retained instanceof FirstPartyConnectContext)) {
-        return;
+        throw new IllegalStateException(
+            "Retained first-party connect context is incompatible and cannot be replaced");
       }
     } catch (SerializationException | ClassCastException ex) {
-      return;
+      throw new IllegalStateException(
+          "Retained first-party connect context is unreadable and cannot be replaced", ex);
     }
     valueOperations().set(key, connectContext, ttl);
   }

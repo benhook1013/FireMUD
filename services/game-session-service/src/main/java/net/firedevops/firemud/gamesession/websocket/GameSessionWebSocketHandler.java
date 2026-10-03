@@ -749,7 +749,14 @@ public class GameSessionWebSocketHandler extends TextWebSocketHandler {
       return;
     }
     String playableStateScope = currentPointer.orElseThrow().stateScope();
-    firstPartyConnectContextRegistry.register(sessionId, connectContext);
+    try {
+      firstPartyConnectContextRegistry.register(sessionId, connectContext);
+    } catch (IllegalStateException ex) {
+      logger.warn(
+          "Unable to register first-party connect context because retained state is invalid");
+      closeInvalidFirstPartyContext(session);
+      return;
+    }
     Optional<SessionContext> existing =
         sessionAuthenticationService.resolveUnverifiedSessionContext(
             connectContext.tenantId(), sessionId);
