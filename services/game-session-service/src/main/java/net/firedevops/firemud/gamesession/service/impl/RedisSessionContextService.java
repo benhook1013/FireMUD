@@ -72,7 +72,9 @@ public final class RedisSessionContextService implements SessionContextService {
                             : null;
                     LinkedHashSet<String> additionalWatchKeys = new LinkedHashSet<>();
                     addWatchKeys(additionalWatchKeys, existingContext);
-                    addWatchKeys(additionalWatchKeys, existingSessionContext);
+                    if (isSessionAliasFor(existingSessionContext, context)) {
+                      addWatchKeys(additionalWatchKeys, existingSessionContext);
+                    }
                     addWatchKeys(additionalWatchKeys, existingIdentityContext);
                     addWatchKeys(additionalWatchKeys, existingNameContext);
                     if (additionalWatchKeys.removeAll(watchedKeys)
@@ -83,7 +85,8 @@ public final class RedisSessionContextService implements SessionContextService {
                     }
                     operations.multi();
                     deleteIndexes(operations, existingContext);
-                    if (!Objects.equals(existingContext, existingSessionContext)) {
+                    if (!Objects.equals(existingContext, existingSessionContext)
+                        && isSessionAliasFor(existingSessionContext, context)) {
                       deleteIndexes(operations, existingSessionContext);
                     }
                     deleteIndexes(operations, existingIdentityContext);
@@ -185,6 +188,12 @@ public final class RedisSessionContextService implements SessionContextService {
 
   private String nameKey(long tenantId, long gameInstanceId, String characterName) {
     return SessionContextRedisKeys.nameKey(tenantId, gameInstanceId, characterName);
+  }
+
+  private boolean isSessionAliasFor(SessionContext candidate, SessionContext context) {
+    return candidate != null
+        && candidate.tenantId() == context.tenantId()
+        && candidate.sessionId() == context.sessionId();
   }
 
   private List<String> watchKeys(SessionContext context) {

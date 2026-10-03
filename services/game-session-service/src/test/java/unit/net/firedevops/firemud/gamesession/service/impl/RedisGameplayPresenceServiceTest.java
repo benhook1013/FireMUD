@@ -339,6 +339,38 @@ class RedisGameplayPresenceServiceTest {
   }
 
   @Test
+  void listConnectedByAccountIdsUsesOpaqueAccountTextForIndexAndResultKey() {
+    String accountId = "account-uuid-opaque-v1";
+    String accountIndexKey = "gameplaypresence:22:account:account-uuid-opaque-v1:sessions";
+    String presenceKey = "gameplaypresence:session:9";
+    var presence =
+        new net.firedevops.firemud.gamesession.service.GameplayPresence(
+            9L,
+            22L,
+            7L,
+            "SHARED",
+            "demo",
+            "production",
+            17L,
+            accountId,
+            202L,
+            "Ben",
+            GameplayPresenceRole.PLAYER,
+            80L,
+            null,
+            100L,
+            null);
+    when(setOperations.members(accountIndexKey)).thenReturn(new LinkedHashSet<>(List.of("9")));
+    when(valueOperations.get(presenceKey)).thenReturn(presence);
+
+    var result = service.listConnectedByAccountIds(22L, List.of(accountId));
+
+    assertEquals(Map.of(accountId, List.of(presence)), result);
+    verify(setOperations).members(accountIndexKey);
+    verify(valueOperations).get(presenceKey);
+  }
+
+  @Test
   void listConnectedByAccountIdsPrunesMalformedSessionIndexEntry() {
     when(setOperations.members("gameplaypresence:22:account:102:sessions"))
         .thenReturn(new LinkedHashSet<>(List.of("bad-session", "4")));

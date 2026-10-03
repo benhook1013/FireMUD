@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import net.firedevops.firemud.gamesession.service.SessionContext;
@@ -65,6 +66,73 @@ class RedisSessionContextServiceTest {
     verify(redisTemplate).delete("sessionctx:10:1:context");
     verify(valueOperations).set("sessionctx:10:2:context", replacement, TTL);
     verify(valueOperations).set("sessionctx:10:identity:40:30:context", replacement, TTL);
+  }
+
+  @Test
+  void savePreservesForeignTenantIndexesFromSessionAlias() {
+    SessionContext incoming =
+        new SessionContext(1L, 10L, "88", "new-login", 60L, "Current", 50L, "R-1", "new-jwt");
+    SessionContext foreignTenant =
+        new SessionContext(1L, 99L, "30", "other-login", 31L, "Foreign", 41L, "R-2", "old-jwt");
+    when(valueOperations.get("sessionctx:session:1:context")).thenReturn(foreignTenant);
+
+    service.save(incoming);
+
+    verify(redisTemplate, never()).delete("sessionctx:99:1:context");
+    verify(redisTemplate, never()).delete("sessionctx:99:identity:41:31:context");
+    verify(redisTemplate, never()).delete("sessionctx:99:identity:41:name:foreign:context");
+    verify(redisTemplate, never()).delete("sessionctx:session:1:context");
+    verify(redisTemplate, never())
+        .watch(
+            Mockito.argThat((Collection<String> keys) -> keys.contains("sessionctx:99:1:context")));
+    verify(valueOperations).set("sessionctx:10:1:context", incoming, TTL);
+    verify(valueOperations).set("sessionctx:session:1:context", incoming, TTL);
+  }
+
+  @Test
+  void savePreservesForeignSessionIndexesFromSessionAlias() {
+    SessionContext incoming =
+        new SessionContext(1L, 10L, "88", "new-login", 60L, "Current", 50L, "R-1", "new-jwt");
+    SessionContext foreignSession =
+        new SessionContext(2L, 10L, "30", "other-login", 31L, "Foreign", 41L, "R-2", "old-jwt");
+    when(valueOperations.get("sessionctx:session:1:context")).thenReturn(foreignSession);
+
+    service.save(incoming);
+
+    verify(redisTemplate, never()).delete("sessionctx:10:2:context");
+    verify(redisTemplate, never()).delete("sessionctx:10:identity:41:31:context");
+    verify(redisTemplate, never()).delete("sessionctx:10:identity:41:name:foreign:context");
+    verify(redisTemplate, never()).delete("sessionctx:session:2:context");
+    verify(redisTemplate, never())
+        .watch(
+            Mockito.argThat((Collection<String> keys) -> keys.contains("sessionctx:10:2:context")));
+    verify(valueOperations).set("sessionctx:10:1:context", incoming, TTL);
+    verify(valueOperations).set("sessionctx:session:1:context", incoming, TTL);
+  }
+
+  @Test
+  void saveCleansDistinctSessionAliasIndexesForSameTenantAndSession() {
+    SessionContext incoming =
+        new SessionContext(1L, 10L, "88", "new-login", 60L, "Current", 50L, "R-1", "new-jwt");
+    SessionContext existingContext =
+        new SessionContext(
+            1L, 10L, "30", "context-login", 31L, "ContextOld", 41L, "R-2", "ctx-jwt");
+    SessionContext existingSessionAlias =
+        new SessionContext(1L, 10L, "31", "alias-login", 32L, "AliasOld", 42L, "R-3", "alias-jwt");
+    when(valueOperations.get("sessionctx:10:1:context")).thenReturn(existingContext);
+    when(valueOperations.get("sessionctx:session:1:context")).thenReturn(existingSessionAlias);
+
+    service.save(incoming);
+
+    verify(redisTemplate).delete("sessionctx:10:identity:42:32:context");
+    verify(redisTemplate).delete("sessionctx:10:identity:42:name:aliasold:context");
+    verify(redisTemplate, Mockito.atLeastOnce())
+        .watch(
+            Mockito.argThat(
+                (Collection<String> keys) ->
+                    keys.contains("sessionctx:10:identity:42:32:context")));
+    verify(valueOperations).set("sessionctx:10:1:context", incoming, TTL);
+    verify(valueOperations).set("sessionctx:session:1:context", incoming, TTL);
   }
 
   @Test
