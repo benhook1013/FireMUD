@@ -1061,6 +1061,52 @@ class ReviewController:
         )
 
     @staticmethod
+    def _hosted_awaiting_response_matches(
+        observation: Any,
+        expected_pr: int,
+        current_anchor: AnchorFacts | None,
+    ) -> bool:
+        """Verify a posted request awaiting acknowledgment without counting completion."""
+        if current_anchor is None:
+            return False
+        trigger_id = _field(observation, "trigger_id")
+        observed_head = _field(observation, "head", "reviewed_head")
+        return (
+            _field(observation, "state") == "awaiting_response"
+            and _field(observation, "posted") is True
+            and _field(observation, "reason") == "no attributable terminal response"
+            and _field(observation, "held") is True
+            and _field(observation, "active_reservation") is True
+            and _field(observation, "unstable") is not True
+            and _field(observation, "attributable") is True
+            and _field(observation, "terminal") is False
+            and _field(observation, "response_id") is None
+            and type(_field(observation, "pr")) is int
+            and _field(observation, "pr") == expected_pr
+            and type(trigger_id) is int
+            and trigger_id > 0
+            and _field(observation, "checkpoint", "checkpoint_id") == f"trigger:{trigger_id}"
+            and isinstance(observed_head, str)
+            and observed_head.casefold() == current_anchor.child_head.casefold()
+            and not any(
+                _field(observation, flag) is True
+                for flag in (
+                    "rate_limited",
+                    "terminal_ambiguous",
+                    "unreconciled",
+                    "parent_moved",
+                    "over_ceiling",
+                    "provisional",
+                    "correction",
+                    "non_counting",
+                    "completed",
+                    "actionable",
+                )
+            )
+            and ReviewController._hosted_anchor_matches(observation, expected_pr, current_anchor)
+        )
+
+    @staticmethod
     def _active_cli_review_overlaps_hosted(
         observation: Any,
         expected_pr: int,
@@ -3245,6 +3291,31 @@ class ReviewController:
                         "results": results,
                         "in_flight": len(in_flight_ids),
                         "error": "an in-flight review has an incomplete or changed stack anchor",
+                    }
+                if (
+                    allocation.channel == "hosted"
+                    and (
+                        _field(value, "state") in {"awaiting_response", "ambiguous"}
+                        or _field(value, "reason") == "no attributable terminal response"
+                    )
+                    and not ReviewController._hosted_awaiting_response_matches(
+                        value,
+                        allocation.pr,
+                        AnchorFacts(
+                            allocation.pr,
+                            active_head,
+                            active_parent_identity,
+                            active_parent_head,
+                            active_merge_base,
+                            active_patch_id,
+                        ),
+                    )
+                ):
+                    return {
+                        "baseline": baseline,
+                        "results": results,
+                        "in_flight": len(in_flight_ids),
+                        "error": "an awaiting Hosted request lacks verified posted identity",
                     }
                 identity = _field(value, "trigger_id", "run_id", "reservation_id", "attempt_id")
                 if identity is None and trigger_checkpoint is not None:
@@ -5797,13 +5868,15 @@ class ReviewController:
             ):
                 return False
             if selected == policy.Channel.HOSTED:
-                return self._hosted_active_response_overlaps_cli(
+                if self._hosted_active_response_overlaps_cli(
                     value,
                     pr,
                     request_anchor.child_head,
                     request_anchor,
                     require_response_identity=True,
-                )
+                ):
+                    return True
+                return self._hosted_awaiting_response_matches(value, pr, request_anchor)
             return self._active_cli_review_overlaps_hosted(value, pr, request_anchor)
 
         baseline = tuple(

@@ -137,8 +137,8 @@ def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = T
         "observed_at": old_finished_at,
     }
 
-    state_dir = common / "firemud" / "pr-review-stack.json"
-    state_dir.mkdir(parents=True)
+    selected_state = common / "firemud" / "pr-review-stack.json"
+    selected_state.mkdir(parents=True)
     database = common / "firemud" / "pr-review-stack.sqlite3"
     SqliteStateStore(database).update(lambda state: state)
     records = SqliteReviewRecords(database)
@@ -168,18 +168,7 @@ def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = T
         channel="hosted",
         candidate_sha=HEAD,
         started_at="2026-09-23T00:01:50Z",
-    )
-    records.finish_attempt(
-        "current-hosted-attempt",
-        state="ambiguous",
-        finished_at="2026-09-23T00:02:08Z",
-        trigger_id="10",
-        provider_review_id="11",
-        artifacts={
-            "hosted_review": "[]",
-            "hosted_comments": json.dumps({"comments": []}),
-            "metadata": json.dumps({"state": "ambiguous"}),
-        },
+        metadata={"repository": REPO},
     )
 
     trigger = comment(10, "owner", hosted.FULL_COMMAND, trigger_at)
@@ -1891,12 +1880,93 @@ class HostedEvidenceTests(unittest.TestCase):
     def test_finished_reply_accepts_only_exact_archived_addressed_thread_updates(self):
         with tempfile.TemporaryDirectory() as directory:
             payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            common = hosted._trigger_record_common_for_path(record_path, REPO, PR)
+            self.assertIsNotNone(common)
+            database = common / "firemud" / "pr-review-stack.sqlite3"
+            records = SqliteReviewRecords(database)
+            current_attempt = records.attempt("current-hosted-attempt")
+            self.assertEqual(current_attempt["state"], "started")
+            current_row = next(
+                item for item in records.attempt_history(PR) if item["attempt_id"] == "current-hosted-attempt"
+            )
+            self.assertIsNone(current_row["trigger_id"])
 
             state = hosted.trigger_state(REPO, PR, payload, record, record_path)
 
         self.assertEqual(state.state, "completed")
         self.assertTrue(state.attributed)
         self.assertEqual(state.response_id, 11)
+
+    def test_runtime_zero_reply_proof_uses_custom_trigger_record_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            checkpoint = evidence.Checkpoint(
+                comment_id=40,
+                created_at="2026-09-23T00:03:00Z",
+                type="Hosted",
+                raw_found=0,
+                accepted=0,
+                reviewed_sha=HEAD,
+                file_count=1,
+                correction=False,
+                updated_at=None,
+                run_id=None,
+                hosted_review_id=11,
+            )
+
+            proof = runtime.LiveEvidence._hosted_zero_reply_proof(
+                checkpoint,
+                11,
+                None,
+                REPO,
+                PR,
+                HEAD,
+                record,
+                payload,
+                record_path,
+            )
+
+        self.assertIsNotNone(proof)
+        self.assertEqual(proof["review_id"], 11)
+
+    def test_finished_reply_fails_closed_on_archive_lookup_filesystem_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+            with patch.object(hosted, "state_path", side_effect=PermissionError("state directory inaccessible")):
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+        self.assertEqual(state.state, "ambiguous")
+        self.assertFalse(state.attributed)
+
+    def test_finished_reply_does_not_promote_ambiguous_or_mismatched_current_attempt(self):
+        cases = (("ambiguous", "10"), ("ambiguous", "99"), ("completed", "99"))
+        for attempt_state, trigger_id in cases:
+            with (
+                self.subTest(state=attempt_state, trigger_id=trigger_id),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                payload, record, record_path = archived_addressed_reply_fixture(Path(directory))
+                common = hosted._trigger_record_common_for_path(record_path, REPO, PR)
+                self.assertIsNotNone(common)
+                database = common / "firemud" / "pr-review-stack.sqlite3"
+                records = SqliteReviewRecords(database)
+                records.finish_attempt(
+                    "current-hosted-attempt",
+                    state=attempt_state,
+                    finished_at="2026-09-23T00:02:08Z",
+                    trigger_id=trigger_id,
+                    provider_review_id="11",
+                    artifacts={
+                        "hosted_review": "[]",
+                        "hosted_comments": json.dumps({"comments": []}),
+                        "metadata": json.dumps({"state": attempt_state}),
+                    },
+                )
+
+                state = hosted.trigger_state(REPO, PR, payload, record, record_path)
+
+                self.assertEqual(state.state, "ambiguous")
+                self.assertFalse(state.attributed)
 
     def test_finished_reply_keeps_unproven_or_changed_thread_output_ambiguous(self):
         cases = (
