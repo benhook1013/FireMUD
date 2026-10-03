@@ -145,7 +145,10 @@ class AccountApplicationIntegrationTest {
     assertThat(accountExport.profiles()).isEmpty();
 
     dsl.execute(
-        "INSERT INTO account_tenant_membership (account_id, tenant_id) VALUES (?, ?)",
+        "INSERT INTO account_tenant_membership (account_id, tenant_id, lifecycle_state, "
+            + "gameplay_admission_allowed, membership_version, "
+            + "membership_authority_generation, authority_provenance) "
+            + "VALUES (?, ?, 'LEGACY_UNVERIFIED', FALSE, 1, 1, 'LEGACY_UNVERIFIED')",
         accountId.longValue(),
         999L);
     var tenantExport = accountService.exportTenantData(999L, accountId.longValue());
