@@ -522,6 +522,28 @@ def _field(value: Any, name: str, *aliases: str) -> Any:
     return getattr(value, name, None)
 
 
+def _allocation_reopens_selection(view: Mapping[str, Any]) -> bool:
+    """Return whether an allocation keeps an otherwise complete channel open."""
+
+    status = view.get("status")
+    remaining = view.get("remaining")
+    has_capacity = remaining is None or (isinstance(remaining, int) and remaining > 0)
+    return (
+        status == "CAP_ACTIVE"
+        and view.get("selection_control") == "minimum"
+        and has_capacity
+    ) or (
+        status == "CAP_ACTIVE"
+        and view.get("selection_control") == "taper"
+        and view.get("completed_count", 0) > 0
+        and has_capacity
+    ) or (
+        view.get("reopens_taper") is True
+        and status in {"PROMISED", "CAP_ACTIVE"}
+        and has_capacity
+    ) or status == "PROMISED"
+
+
 class ReviewController:
     """Single-stack orchestration API used by the command dispatcher."""
 
@@ -3940,23 +3962,7 @@ class ReviewController:
             | {
                 pr
                 for pr, view in channel_allocations.items()
-                if (
-                    view["status"] == "CAP_ACTIVE"
-                    and view.get("selection_control") == "minimum"
-                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
-                )
-                or (
-                    view["status"] == "CAP_ACTIVE"
-                    and view.get("selection_control") == "taper"
-                    and view.get("completed_count", 0) > 0
-                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
-                )
-                or (
-                    view.get("reopens_taper") is True
-                    and view["status"] in {"PROMISED", "CAP_ACTIVE"}
-                    and (view.get("remaining") is None or view.get("remaining", 0) > 0)
-                )
-                or view["status"] == "PROMISED"
+                if _allocation_reopens_selection(view)
             },
             taper_history_by_pr=taper_history_by_pr,
             active_review_prs=active_review_prs,
@@ -4695,6 +4701,11 @@ class ReviewController:
                         taper_history=taper_history,
                         reconciliation=channel_reconciliation,
                     )
+                    if (
+                        projected_status == policy.ReviewStatus.COMPLETE
+                        and _allocation_reopens_selection(allocations[channel].get(pr, {}))
+                    ):
+                        projected_status = policy.ReviewStatus.READY
                     if (
                         projected_status != policy.ReviewStatus.COMPLETE
                         and channel_reconciliation
