@@ -1490,6 +1490,7 @@ public class PlayCommandHandler {
     boolean selectedTenantMatchesContext =
         requestedTenantId > 0L
             && context.tenantId() > 0L
+            && requestedTenantId == context.tenantId()
             && hasMatchingTenantId(tenantTag, context.tenantId());
     boolean sameRuntimeTarget =
         selectedTenantMatchesContext
