@@ -4700,12 +4700,8 @@ class ReviewController:
                         histories[channel][pr],
                         taper_history=taper_history,
                         reconciliation=channel_reconciliation,
+                        allocation_reopened=_allocation_reopens_selection(allocations[channel].get(pr, {})),
                     )
-                    if (
-                        projected_status == policy.ReviewStatus.COMPLETE
-                        and _allocation_reopens_selection(allocations[channel].get(pr, {}))
-                    ):
-                        projected_status = policy.ReviewStatus.READY
                     if (
                         projected_status != policy.ReviewStatus.COMPLETE
                         and channel_reconciliation

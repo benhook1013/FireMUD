@@ -346,6 +346,7 @@ def completion_status(
     *,
     taper_history: Sequence[Evidence | Mapping[str, Any]] | None = None,
     reconciliation: ReconciliationStatus | str | None = None,
+    allocation_reopened: bool = False,
 ) -> ReviewStatus:
     """Classify one channel without consulting GitHub or copying live state."""
 
@@ -391,11 +392,11 @@ def completion_status(
     }
     for item in history:
         blocked = _blocked(item, None)
-        if blocked and not (taper_complete and blocked in request_blockers):
+        if blocked and not (taper_complete and not allocation_reopened and blocked in request_blockers):
             return blocked
     if reopened:
         return ReviewStatus.READY
-    if taper_complete:
+    if taper_complete and not allocation_reopened:
         return ReviewStatus.COMPLETE
     if reconciliation_blocker:
         return reconciliation_blocker

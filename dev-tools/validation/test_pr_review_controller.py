@@ -1118,6 +1118,37 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(stopped["allocations"]["hosted"]["status"], "STOPPED")
         self.assertEqual(stopped["channels"]["hosted"], "HUMAN_STOPPED")
 
+    def test_bounded_hosted_extra_review_preserves_request_blockers(self):
+        for blocker in ("rate_limited", "unstable", "over_ceiling"):
+            with self.subTest(blocker=blocker):
+                controller, evidence = self.hosted_judgment_allocation_fixture(sqlite=True)
+                controller.decide_allocation(
+                    action="grant",
+                    pr=1,
+                    channel="hosted",
+                    head=HEAD_3,
+                    reason="bounded extra Hosted review after equivalent history",
+                    min_additional_completed=1,
+                    max_additional_completed=1,
+                    fresh_taper=False,
+                )
+                evidence[(1, "hosted")].append(
+                    self.allocation_evidence(
+                        head=HEAD_3,
+                        checkpoint=f"hosted-{blocker}",
+                        channel="hosted",
+                        completed=False,
+                        **{blocker: True},
+                    )
+                )
+
+                report = controller.status()
+                row = report["prs"][0]
+                self.assertTrue(row["allocations"]["hosted"]["historical_taper_complete"])
+                self.assertEqual(row["allocations"]["hosted"]["remaining"], 1)
+                self.assertEqual(row["channels"]["hosted"], blocker.upper())
+                self.assertEqual(report["review_targets"]["hosted"]["status"], blocker.upper())
+
     def test_bounded_hosted_allocation_reopens_equivalent_old_head_identity(self):
         controller, _ = self.hosted_judgment_allocation_fixture(hosted_patch_id=f"patch-{HEAD_3[:4]}")
 
@@ -2208,9 +2239,10 @@ class ControllerTests(unittest.TestCase):
 
         before_taper = controller.status()
 
-        self.assertEqual(before_taper["prs"][0]["channels"]["hosted"], "COMPLETE")
+        self.assertEqual(before_taper["prs"][0]["channels"]["hosted"], "READY")
         self.assertEqual(before_taper["prs"][0]["allocations"]["hosted"]["remaining"], 2)
         self.assertEqual(before_taper["review_targets"]["hosted"]["pr"], 1)
+        self.assertEqual(before_taper["review_targets"]["hosted"]["status"], "READY")
         self.assertEqual(controller.resolve_hosted_target().snapshot.number, 1)
 
         evidence[(1, "hosted")].append(
