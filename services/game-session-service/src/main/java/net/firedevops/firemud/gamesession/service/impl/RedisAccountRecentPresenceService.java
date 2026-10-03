@@ -15,6 +15,8 @@ import net.firedevops.firemud.gamesession.service.GameplayPresence;
 import net.firedevops.firemud.gamesession.service.GameplayPresenceService;
 import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisOperations;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -27,6 +29,8 @@ import org.springframework.stereotype.Service;
 public final class RedisAccountRecentPresenceService implements AccountRecentPresenceService {
   private static final String RECENT_PRESENCE_KEY_TEMPLATE = "accountrecentpresence:%d:%s";
   private static final int MAX_WRITE_RETRIES = 8;
+  private static final Logger logger =
+      LoggerFactory.getLogger(RedisAccountRecentPresenceService.class);
 
   private final RedisTemplate<String, Object> redisTemplate;
   private final SessionRoutingNormalizationService sessionRoutingNormalizationService;
@@ -176,8 +180,7 @@ public final class RedisAccountRecentPresenceService implements AccountRecentPre
         return;
       }
     }
-    throw new IllegalStateException(
-        "Failed to write recent account presence after concurrent retries");
+    logger.warn("Recent account presence projection update skipped after concurrent Redis changes");
   }
 
   private RoutingSnapshot routingSnapshot(SessionContext context, GameplayPresence presence) {

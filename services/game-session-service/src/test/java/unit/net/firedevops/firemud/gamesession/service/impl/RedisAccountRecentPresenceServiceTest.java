@@ -417,6 +417,73 @@ class RedisAccountRecentPresenceServiceTest {
   }
 
   @Test
+  void recordConnectedStopsAfterEightWatchedConflictsWithoutCommittingTheProjection() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    stubTransactionExecution(redisTemplate);
+    AccountRecentPresenceState retained =
+        new AccountRecentPresenceState(
+            22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    when(valueOperations.get("accountrecentpresence:22:123")).thenReturn(retained);
+    when(redisTemplate.exec()).thenReturn(null);
+
+    GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
+    when(gameplayPresenceService.findConnectedBySessionId(41L)).thenReturn(Optional.empty());
+    RedisAccountRecentPresenceService service = newService(redisTemplate, gameplayPresenceService);
+
+    service.recordConnected(testContext());
+
+    verify(redisTemplate, times(8)).watch("accountrecentpresence:22:123");
+    verify(redisTemplate, times(8)).multi();
+    verify(redisTemplate, times(8)).exec();
+    verify(valueOperations, times(8)).get("accountrecentpresence:22:123");
+    // Each null EXEC represents a WATCH conflict, so none of the queued replacement writes
+    // committed.
+    verify(valueOperations, times(8))
+        .set(eq("accountrecentpresence:22:123"), any(), eq(Duration.ofMinutes(5)));
+    verify(redisTemplate, never()).delete(anyString());
+  }
+
+  @Test
+  void recordActivityStopsAfterEightWatchedConflictsWithoutCommittingTheProjection() {
+    @SuppressWarnings("unchecked")
+    RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
+    @SuppressWarnings("unchecked")
+    ValueOperations<String, Object> valueOperations = Mockito.mock(ValueOperations.class);
+    when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    stubTransactionExecution(redisTemplate);
+    AccountRecentPresenceState retained =
+        new AccountRecentPresenceState(
+            22L, "123", 1_699_999_999_000L, AccountRecentPresenceDisposition.TRANSPORT_LOSS);
+    when(valueOperations.get("accountrecentpresence:22:123")).thenReturn(retained);
+    when(redisTemplate.exec()).thenReturn(null);
+
+    SessionRoutingNormalizationService sessionRoutingNormalizationService =
+        Mockito.mock(SessionRoutingNormalizationService.class);
+    when(sessionRoutingNormalizationService.resolveProjectedSessionContext("41"))
+        .thenReturn(Optional.of(testContext()));
+    GameplayPresenceService gameplayPresenceService = Mockito.mock(GameplayPresenceService.class);
+    when(gameplayPresenceService.findConnectedBySessionId(41L)).thenReturn(Optional.empty());
+    RedisAccountRecentPresenceService service =
+        newService(redisTemplate, gameplayPresenceService, sessionRoutingNormalizationService);
+
+    service.recordActivity(41L);
+
+    verify(redisTemplate, times(8)).watch("accountrecentpresence:22:123");
+    verify(redisTemplate, times(8)).multi();
+    verify(redisTemplate, times(8)).exec();
+    verify(valueOperations, times(8)).get("accountrecentpresence:22:123");
+    // Each null EXEC represents a WATCH conflict, so none of the queued replacement writes
+    // committed.
+    verify(valueOperations, times(8))
+        .set(eq("accountrecentpresence:22:123"), any(), eq(Duration.ofMinutes(5)));
+    verify(redisTemplate, never()).delete(anyString());
+  }
+
+  @Test
   void recordConnectedDoesNotRetryWriteWhenConflictRevealsUnreadableReplacement() {
     @SuppressWarnings("unchecked")
     RedisTemplate<String, Object> redisTemplate = Mockito.mock(RedisTemplate.class);
@@ -494,11 +561,21 @@ class RedisAccountRecentPresenceServiceTest {
   private static RedisAccountRecentPresenceService newService(
       RedisTemplate<String, Object> redisTemplate,
       GameplayPresenceService gameplayPresenceService) {
+    return newService(
+        redisTemplate,
+        gameplayPresenceService,
+        Mockito.mock(SessionRoutingNormalizationService.class));
+  }
+
+  private static RedisAccountRecentPresenceService newService(
+      RedisTemplate<String, Object> redisTemplate,
+      GameplayPresenceService gameplayPresenceService,
+      SessionRoutingNormalizationService sessionRoutingNormalizationService) {
     PresenceProperties presenceProperties = new PresenceProperties();
     presenceProperties.setRecentPresenceTtlMs(Duration.ofMinutes(5).toMillis());
     return new RedisAccountRecentPresenceService(
         redisTemplate,
-        Mockito.mock(SessionRoutingNormalizationService.class),
+        sessionRoutingNormalizationService,
         gameplayPresenceService,
         presenceProperties,
         () -> 1_700_000_000_000L);
