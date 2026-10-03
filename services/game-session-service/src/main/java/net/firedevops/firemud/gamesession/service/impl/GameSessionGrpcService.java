@@ -60,6 +60,7 @@ import net.firedevops.firemud.gamesession.v1.TickStatus;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagRequest;
 import net.firedevops.firemud.gamesession.v1.ToggleFeatureFlagResponse;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
+import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -526,8 +527,7 @@ public final class GameSessionGrpcService
           ListGameplayWorldsResponse.newBuilder()
               .addAllWorlds(
                   gameplayWorldCatalog
-                      .publicWorldsFromAuthoritySnapshot(
-                          gameplayAdmissionPointerAuthorityService.listPointers())
+                      .publicWorldsFromAuthoritySnapshot(readGameplayAdmissionPointerSnapshots())
                       .stream()
                       .map(
                           world ->
@@ -575,7 +575,7 @@ public final class GameSessionGrpcService
       WorldView world =
           gameplayWorldCatalog
               .resolvePublicWorldFromAuthoritySnapshot(
-                  worldSelector, gameplayAdmissionPointerAuthorityService.listPointers())
+                  worldSelector, readGameplayAdmissionPointerSnapshots())
               .orElseThrow(() -> new IllegalArgumentException("Unknown gameplay world selection"));
       List<net.firedevops.firemud.gamesession.v1.GameplayRealm> realms =
           gameplayWorldCatalog.publicVisibleRealms(world).stream()
@@ -628,7 +628,7 @@ public final class GameSessionGrpcService
       long tenantId =
           ControlPlaneRequestParser.parsePositiveLong(request.getTenantId(), "tenantId");
       List<GameplayAdmissionPointerSnapshot> pointerSnapshot =
-          gameplayAdmissionPointerAuthorityService.listPointers();
+          readGameplayAdmissionPointerSnapshots();
       gameplayWorldCatalog.requireHealthyPointerCatalog(pointerSnapshot, tenantId);
       List<GameplayAdmissionPointerSnapshot> selectedRealms =
           pointerSnapshot.stream()
@@ -685,6 +685,13 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      GetAdmissionPointerResponse response =
+          GetAdmissionPointerResponse.newBuilder()
+              .setError(GrpcAppErrors.error(meterRegistry, "AUTH_UNAVAILABLE", ex.getMessage()))
+              .build();
+      responseObserver.onNext(response);
+      responseObserver.onCompleted();
     } catch (CatalogRevisionUnavailableException ex) {
       GetAdmissionPointerResponse response =
           GetAdmissionPointerResponse.newBuilder()
@@ -718,6 +725,21 @@ public final class GameSessionGrpcService
               .build();
       responseObserver.onNext(response);
       responseObserver.onCompleted();
+    }
+  }
+
+  private List<GameplayAdmissionPointerSnapshot> readGameplayAdmissionPointerSnapshots() {
+    try {
+      List<GameplayAdmissionPointerSnapshot> pointerSnapshots =
+          gameplayAdmissionPointerAuthorityService.listPointers();
+      if (pointerSnapshots == null) {
+        throw new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
+            "Authoritative gameplay pointer list is unavailable");
+      }
+      return pointerSnapshots;
+    } catch (DataAccessException ex) {
+      throw new GameplayWorldCatalog.AuthorityPointerReadUnavailableException(
+          "Authoritative gameplay pointer list is unavailable", ex);
     }
   }
 
