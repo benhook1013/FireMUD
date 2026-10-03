@@ -4715,7 +4715,12 @@ class ReviewController:
             "OVER_CEILING": "File limit", "JUDGMENT_REQUIRED": "Needs decision",
             "NOT_CHECKED": "Progress not checked", "UNKNOWN": "Progress not checked",
         }.get(status, "Progress not checked")
-        active = checked and any(_field(item, "active_review") is True for item in history)
+        active = checked and any(
+            _field(item, "active_review") is True
+            or (_field(item, "active_reservation") is True
+                and _field(item, "reason") == HOSTED_ACTIVE_RESPONSE_REASON)
+            for item in history
+        )
         reserved = checked and any(_field(item, "active_reservation") is True for item in history)
         if allocation_status == "STOPPED":
             rule_kind, label = "human_stop", "Human stop"
@@ -4766,6 +4771,23 @@ class ReviewController:
         for row in report.get("prs", []):
             for channel, progress in row.get("review_progress", {}).items():
                 target = targets.get(channel, {})
+                if progress.pop("waiting_for_pr", None) is not None and progress.get("label") == "Waiting turn":
+                    progress["label"] = "Needs review"
+                if (
+                    target.get("pr") == row["pr"]
+                    and progress.get("status") in {"READY", "MISSING_EVIDENCE"}
+                    and target.get("status") in {
+                        "HELD", "JUDGMENT_REQUIRED", "RATE_LIMITED", "UNSTABLE", "OVER_CEILING"
+                    }
+                ):
+                    # Typed request blockers already owned by the selector.
+                    # Ancestry statuses deliberately remain request-only.
+                    progress["status"] = target["status"]
+                    progress["label"] = {
+                        "HELD": "Review held", "JUDGMENT_REQUIRED": "Needs decision",
+                        "RATE_LIMITED": "Cooldown active", "UNSTABLE": "Evidence unclear",
+                        "OVER_CEILING": "File limit",
+                    }[target["status"]]
                 if (
                     progress.get("status") in {"READY", "MISSING_EVIDENCE"}
                     and progress.get("label") == "Needs review"

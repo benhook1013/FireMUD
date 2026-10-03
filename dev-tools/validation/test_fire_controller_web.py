@@ -843,7 +843,9 @@ class RetainedHistoryAndAdapterTests(unittest.TestCase):
             ["git", "rev-parse", "--path-format=absolute", "--git-path", "index"],
             cwd=ROOT, text=True).strip())
         original_index = index_path.read_bytes()
-        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as temporary:
+        fixture_parent = ROOT / "tmp"
+        fixture_parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=fixture_parent) as temporary:
             directory = Path(temporary)
             outside = directory / "outside.txt"
             outside.write_text("Unrelated source stays intact")

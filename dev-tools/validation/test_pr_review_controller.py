@@ -10229,6 +10229,45 @@ class ReviewProgressPresentationTests(unittest.TestCase):
         self.assertEqual(waiting["waiting_for_pr"], 1)
         self.assertEqual(active["label"], "Reviewing")
 
+    def test_same_pr_typed_hold_is_visible_without_ancestry_preparation(self):
+        for status, label in (("HELD", "Review held"), ("JUDGMENT_REQUIRED", "Needs decision"),
+                              ("RATE_LIMITED", "Cooldown active"), ("UNSTABLE", "Evidence unclear")):
+            with self.subTest(status=status):
+                progress = self.project()
+                ReviewController._present_review_turns({
+                    "prs": [{"pr": 1, "review_progress": {"hosted": progress}}],
+                    "review_targets": {"hosted": {"pr": 1, "status": status}},
+                })
+                self.assertEqual(progress["label"], label)
+                self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+        progress = self.project()
+        ReviewController._present_review_turns({
+            "prs": [{"pr": 1, "review_progress": {"hosted": progress}}],
+            "review_targets": {"hosted": {"pr": 1, "status": "UNRECONCILED"}},
+        })
+        self.assertEqual(progress["label"], "Needs review")
+
+    def test_hosted_acknowledged_running_and_posting_reservation_differ(self):
+        active = self.project(history=[{"active_reservation": True,
+                                        "reason": HOSTED_ACTIVE_RESPONSE_REASON}])
+        pending = self.project(history=[{"active_reservation": True,
+                                         "reason": "no attributable terminal response"}])
+        self.assertEqual(active["label"], "Reviewing")
+        self.assertEqual(pending["label"], "Request reserved")
+        self.assertEqual(active["rule"], pending["rule"])
+
+    def test_unknown_final_target_clears_prior_waiting_turn(self):
+        progress = self.project()
+        report = {"prs": [{"pr": 2, "review_progress": {"hosted": progress}}],
+                  "review_targets": {"hosted": {"pr": 1, "status": "READY"}}}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(progress["label"], "Waiting turn")
+        report["review_targets"]["hosted"] = {"pr": None, "status": "UNKNOWN"}
+        ReviewController._present_review_turns(report)
+        self.assertEqual(progress["label"], "Needs review")
+        self.assertNotIn("waiting_for_pr", progress)
+        self.assertEqual(progress["rule"]["label"], "Maximum 2 rounds remaining")
+
     def test_ancestry_request_status_and_original_evidence_are_unchanged(self):
         factory = ControllerTests()
         self.addCleanup(factory.doCleanups)
