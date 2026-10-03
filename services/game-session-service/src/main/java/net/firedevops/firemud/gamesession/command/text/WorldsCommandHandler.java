@@ -219,7 +219,8 @@ public class WorldsCommandHandler {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
     }
     try {
-      connectScopeSessionStore.clearWorldScopes(sessionContext, worldTenantId(world), world.slug());
+      connectScopeSessionStore.clearWorldScopes(
+          sessionContext, worldTenantId(world), world.slug(), clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
