@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.DateTimeException;
@@ -11,6 +12,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Pattern;
 import net.firedevops.firemud.accountservice.dto.AccountAuditDigest;
 import net.firedevops.firemud.accountservice.dto.AccountAuditEnvelope;
@@ -42,6 +44,7 @@ public class AccountJoinReconciliationService {
   private static final Logger logger =
       LoggerFactory.getLogger(AccountJoinReconciliationService.class);
   private static final int MAX_BATCH_SIZE = 100;
+  private static final long MAX_BACKOFF_MILLIS = 300_000L;
   private static final Pattern SHA256_PATTERN = Pattern.compile("sha256:[0-9a-f]{64}");
   private static final Set<String> JOIN_AUDIT_FIELDS =
       Set.of("accountId", "tenantId", "worldSlug", "realmSlug", "membershipVersion", "requestId");
@@ -60,6 +63,9 @@ public class AccountJoinReconciliationService {
   private final Counter unresolved;
   private final Counter failures;
   private final Counter maxAttemptsReached;
+  private final AtomicLong dueBacklog = new AtomicLong();
+  private final AtomicLong dueButNotSelected = new AtomicLong();
+  private final AtomicLong dueBacklogSampleUnknown = new AtomicLong(1);
 
   public AccountJoinReconciliationService(
       AccountJoinOperationRepository joinOperationRepository,
@@ -97,11 +103,28 @@ public class AccountJoinReconciliationService {
     this.unresolved = counter(meterRegistry, "unresolved");
     this.failures = counter(meterRegistry, "failure");
     this.maxAttemptsReached = counter(meterRegistry, "max_attempts_reached");
+    Gauge.builder("account.join.reconciliation.due.backlog", dueBacklog, AtomicLong::doubleValue)
+        .description("Last successfully sampled count of due PENDING Account JOIN operations")
+        .register(meterRegistry);
+    Gauge.builder(
+            "account.join.reconciliation.due.not.selected",
+            dueButNotSelected,
+            AtomicLong::doubleValue)
+        .description("Due JOIN operations beyond the configured bounded page capacity")
+        .register(meterRegistry);
+    Gauge.builder(
+            "account.join.reconciliation.due.backlog.sample.unknown",
+            dueBacklogSampleUnknown,
+            AtomicLong::doubleValue)
+        .description(
+            "One when the latest due JOIN backlog count failed and retained values are stale")
+        .register(meterRegistry);
   }
 
   /** Processes one bounded due page using the caller's captured time for deterministic rechecks. */
   public void reconcileDueOperations(Instant now) {
     Objects.requireNonNull(now, "JOIN reconciliation time is required");
+    sampleDueBacklog(now);
     final List<JoinOperation> dueOperations;
     try {
       dueOperations = joinOperationRepository.findDuePendingReconciliation(now, batchSize);
@@ -114,6 +137,29 @@ public class AccountJoinReconciliationService {
 
     for (JoinOperation candidate : dueOperations) {
       reconcileOne(candidate, now);
+    }
+  }
+
+  private void sampleDueBacklog(Instant now) {
+    try {
+      long count = joinOperationRepository.countDuePendingReconciliation(now);
+      long excess = count > batchSize ? count - batchSize : 0L;
+      dueBacklog.set(count);
+      dueButNotSelected.set(excess);
+      dueBacklogSampleUnknown.set(0);
+      if (count > batchSize) {
+        logger.warn(
+            "JOIN reconciliation due backlog {} exceeds bounded page size {} by {}",
+            count,
+            batchSize,
+            excess);
+      }
+    } catch (RuntimeException ex) {
+      failures.increment();
+      dueBacklogSampleUnknown.set(1);
+      logger.warn(
+          "JOIN reconciliation due backlog count is unavailable; retaining the last successful sample ({})",
+          ex.getClass().getSimpleName());
     }
   }
 
@@ -389,7 +435,7 @@ public class AccountJoinReconciliationService {
             operation.nextReconciliationAttemptAt(),
             now,
             reason,
-            nextAttemptAt(now));
+            nextAttemptAt(now, operation.reconciliationAttemptCount()));
     if (!recorded) {
       return ReconciliationResult.SKIPPED;
     }
@@ -435,12 +481,26 @@ public class AccountJoinReconciliationService {
     }
   }
 
-  private Instant nextAttemptAt(Instant attemptedAt) {
+  private Instant nextAttemptAt(Instant attemptedAt, int persistedAttemptCount) {
     try {
-      return attemptedAt.plusMillis(backoffMillis);
+      return attemptedAt.plusMillis(retryDelayMillis(persistedAttemptCount));
     } catch (DateTimeException | ArithmeticException ex) {
       throw new IllegalStateException("JOIN reconciliation backoff is outside timestamp range", ex);
     }
+  }
+
+  private long retryDelayMillis(int persistedAttemptCount) {
+    long cap = Math.max(backoffMillis, MAX_BACKOFF_MILLIS);
+    long delay = backoffMillis;
+    int remainingDoublings = Math.max(0, persistedAttemptCount);
+    while (remainingDoublings > 0 && delay < cap) {
+      if (delay > cap / 2) {
+        return cap;
+      }
+      delay *= 2;
+      remainingDoublings--;
+    }
+    return delay;
   }
 
   private static UUID joinAuditEventId(String requestId) {

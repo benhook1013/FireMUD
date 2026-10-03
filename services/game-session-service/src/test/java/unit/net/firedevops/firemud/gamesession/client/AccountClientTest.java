@@ -204,6 +204,78 @@ class AccountClientTest {
     verify(fixture.channelFactory()).buildChannel(anyString(), anyInt(), any(), anyBoolean());
   }
 
+  @ParameterizedTest
+  @EnumSource(
+      value = Status.Code.class,
+      mode = EnumSource.Mode.EXCLUDE,
+      names = {"OK", "UNAVAILABLE", "DEADLINE_EXCEEDED"})
+  void directTextJoinMapsTerminalTransportStatusesToBoundedFailureWithoutRetry(
+      Status.Code statusCode) throws Exception {
+    RetryFixture fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    String upstreamDescription = "private account-service detail";
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenThrow(
+            new StatusRuntimeException(
+                Status.fromCode(statusCode).withDescription(upstreamDescription)));
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                JOIN_TEST_NOW.plusSeconds(60));
+
+    assertThat(response.getOutcomeCode()).isEqualTo("JOIN_FAILED");
+    assertThat(response.getError().getCode()).isEqualTo("JOIN_FAILED");
+    assertThat(response.getError().getMessage()).isEqualTo("Account JOIN request failed");
+    assertThat(response.getError().getMessage()).doesNotContain(upstreamDescription);
+    verify(fixture.initialStub())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
+  @Test
+  void directTextJoinPreservesTypedAccountApplicationResponse() throws Exception {
+    RetryFixture fixture = newRetryFixture(new TestClock(JOIN_TEST_NOW));
+    JoinPublicProductionMembershipResponse expected =
+        JoinPublicProductionMembershipResponse.newBuilder()
+            .setSuccess(false)
+            .setOutcomeCode("JOIN_NOT_ELIGIBLE")
+            .setAccountId("41")
+            .setTenantId("22")
+            .setError(
+                ErrorDetail.newBuilder()
+                    .setCode("JOIN_NOT_ELIGIBLE")
+                    .setMessage("This account cannot join the selected world."))
+            .build();
+    when(fixture
+            .initialStub()
+            .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class)))
+        .thenReturn(expected);
+
+    JoinPublicProductionMembershipResponse response =
+        fixture
+            .client()
+            .joinPublicProductionMembership(
+                directTextContext("join-request-1"),
+                "account-issued-scope",
+                "join-request-1",
+                JOIN_TEST_NOW.plusSeconds(60));
+
+    assertThat(response).isEqualTo(expected);
+    verify(fixture.retryStub(), never())
+        .joinPublicProductionMembership(any(JoinPublicProductionMembershipRequest.class));
+    verify(fixture.channelFactory(), never())
+        .buildChannel(anyString(), anyInt(), any(), anyBoolean());
+  }
+
   @Test
   void directTextJoinDoesNotDispatchForMissingExpiredOrBoundaryScope() throws Exception {
     TestClock clock = new TestClock(JOIN_TEST_NOW);

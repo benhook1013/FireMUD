@@ -1,6 +1,7 @@
 package net.firedevops.firemud.loggingadmin.service.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -24,8 +25,10 @@ import net.firedevops.firemud.loggingadmin.entity.AccountAuditReceipt;
 import net.firedevops.firemud.loggingadmin.entity.AccountAuditReceiptInsertResult;
 import net.firedevops.firemud.loggingadmin.repository.AccountAuditReceiptRepository;
 import net.firedevops.firemud.loggingadmin.service.AuditReceiptNotFoundException;
+import net.firedevops.firemud.loggingadmin.service.AuditStorageUnavailableException;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class LogEventServiceImplTest {
   private static final String AUDIT_EVENT_ID = "d2719d4f-3b2a-4f64-a994-0f9ccdfdd2b3";
@@ -261,6 +264,56 @@ class LogEventServiceImplTest {
     when(repository.findByIdentity(request, 0L)).thenReturn(Optional.empty());
 
     assertThrows(AuditReceiptNotFoundException.class, () -> service.readLogEventReceipt(request));
+  }
+
+  @Test
+  void jooqWriteFailureMapsToAuditStorageUnavailableWithCause() {
+    CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
+    var cause = new org.jooq.exception.DataAccessException("jOOQ write failed");
+    when(repository.insertIfAbsent(eq(request), any(UUID.class))).thenThrow(cause);
+
+    var exception =
+        assertThrows(AuditStorageUnavailableException.class, () -> service.createLogEvent(request));
+
+    assertSame(cause, exception.getCause());
+  }
+
+  @Test
+  void springWriteFailureMapsToAuditStorageUnavailableWithCause() {
+    CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
+    var cause = new DataAccessResourceFailureException("Spring write failed");
+    when(repository.insertIfAbsent(eq(request), any(UUID.class))).thenThrow(cause);
+
+    var exception =
+        assertThrows(AuditStorageUnavailableException.class, () -> service.createLogEvent(request));
+
+    assertSame(cause, exception.getCause());
+  }
+
+  @Test
+  void jooqReadFailureMapsToAuditStorageUnavailableWithCause() {
+    CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
+    var cause = new org.jooq.exception.DataAccessException("jOOQ read failed");
+    when(repository.findByIdentity(eq(request), eq(0L))).thenThrow(cause);
+
+    var exception =
+        assertThrows(
+            AuditStorageUnavailableException.class, () -> service.readLogEventReceipt(request));
+
+    assertSame(cause, exception.getCause());
+  }
+
+  @Test
+  void springReadFailureMapsToAuditStorageUnavailableWithCause() {
+    CreateLogEventRequest request = request(AccountAuditScope.PLATFORM, null, Instant.EPOCH, "{}");
+    var cause = new DataAccessResourceFailureException("Spring read failed");
+    when(repository.findByIdentity(eq(request), eq(0L))).thenThrow(cause);
+
+    var exception =
+        assertThrows(
+            AuditStorageUnavailableException.class, () -> service.readLogEventReceipt(request));
+
+    assertSame(cause, exception.getCause());
   }
 
   @Test

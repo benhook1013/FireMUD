@@ -446,7 +446,14 @@ class PlayCommandHandlerTest {
         handler.handle("1", new TextCommand(TextCommandType.PLAY, List.of("1"), "PLAY 1"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(result.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
+    ErrorOutput staleSelection = (ErrorOutput) result.outputs().getFirst().payload();
+    assertThat(staleSelection.messageKey()).isEqualTo("error.play.selection-stale");
+    assertThat(
+            new TextPlayerOutputRenderer(new PresentationProperties())
+                .render(result.outputs().getFirst(), "fr"))
+        .isEqualTo(
+            "ERROR SELECTION_STALE Cette sélection a expiré. Relancez WORLDS ou REALMS, puis réessayez PLAY.");
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -637,7 +644,7 @@ class PlayCommandHandlerTest {
             "1", new TextCommand(TextCommandType.PLAY, List.of("1", "Sora"), "PLAY 1 Sora"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(result.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -659,7 +666,7 @@ class PlayCommandHandlerTest {
             "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "1"), "PLAY demo 1"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(result.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
     Mockito.verifyNoInteractions(
         accountClient,
         entityManagementClient,
@@ -727,7 +734,7 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "2", "demo"), "PLAY demo 2 demo"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(result.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
     Mockito.verifyNoInteractions(accountClient, entityManagementClient);
     verifyNoGameplayBindingSideEffects();
   }
@@ -941,7 +948,7 @@ class PlayCommandHandlerTest {
             new TextCommand(
                 TextCommandType.PLAY, List.of(worldSelector, "1"), "PLAY " + worldSelector + " 1"));
     assertThat(wrongTenantResult.commandResult().accepted()).isFalse();
-    assertThat(wrongTenantResult.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(wrongTenantResult.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
 
     // The right tenant key still fails when its retained REALMS fingerprint is stale.
     connectScopeSessionStore.replaceRealmSnapshot(
@@ -960,7 +967,7 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of(worldSelector, "1"), "PLAY " + worldSelector + " 1"));
 
     assertThat(staleResult.commandResult().accepted()).isFalse();
-    assertThat(staleResult.commandResult().errorCode()).isEqualTo("CONNECT_SCOPE_MISMATCH");
+    assertThat(staleResult.commandResult().errorCode()).isEqualTo("SELECTION_STALE");
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 
