@@ -2,6 +2,7 @@ package net.firedevops.firemud.entitymanagement.repository;
 
 import static net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport.*;
 import static net.firedevops.firemud.entitymanagement.jooq.Tables.ACTOR_ACTIVE_CONDITIONS;
+import static net.firedevops.firemud.entitymanagement.jooq.Tables.CHARACTERS;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.time.Instant;
@@ -10,6 +11,7 @@ import java.util.Optional;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import org.jooq.DSLContext;
 import org.jooq.Record;
+import org.jooq.impl.DSL;
 import org.springframework.stereotype.Repository;
 
 @Repository
@@ -32,6 +34,7 @@ public class ActorActiveConditionRepository {
                 .eq(tenantId)
                 .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                 .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
+                .and(ownerResolvedActorExists())
                 .and(
                     ACTOR_ACTIVE_CONDITIONS
                         .EXPIRES_AT
@@ -59,6 +62,7 @@ public class ActorActiveConditionRepository {
                     .eq(tenantId)
                     .and(ACTOR_ACTIVE_CONDITIONS.PLAYABLE_STATE_KEY.eq(playableStateKey))
                     .and(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID.eq(characterId))
+                    .and(ownerResolvedActorExists())
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_TYPE.eq(sourceType))
                     .and(ACTOR_ACTIVE_CONDITIONS.SOURCE_ID.eq(sourceId)))
             .orderBy(ACTOR_ACTIVE_CONDITIONS.ID.asc())
@@ -67,6 +71,7 @@ public class ActorActiveConditionRepository {
   }
 
   public ActorActiveCondition save(ActorActiveCondition entity) {
+    requireOwnerResolvedActor(entity.getTenantId(), entity.getCharacterId());
     if (entity.getId() == null) {
       Long id =
           dsl.insertInto(ACTOR_ACTIVE_CONDITIONS)
@@ -109,8 +114,35 @@ public class ActorActiveConditionRepository {
             ACTOR_ACTIVE_CONDITIONS
                 .EXPIRES_AT
                 .isNotNull()
-                .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now))))
+                .and(ACTOR_ACTIVE_CONDITIONS.EXPIRES_AT.le(toOffsetDateTime(now)))
+                .and(ownerResolvedActorExists()))
         .execute();
+  }
+
+  private org.jooq.Condition ownerResolvedActorExists() {
+    return DSL.exists(
+        dsl.selectOne()
+            .from(CHARACTERS)
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(ACTOR_ACTIVE_CONDITIONS.CHARACTER_ID)
+                    .and(CHARACTERS.TENANT_ID.eq(ACTOR_ACTIVE_CONDITIONS.TENANT_ID))
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"))));
+  }
+
+  private void requireOwnerResolvedActor(Long tenantId, Long characterId) {
+    long ownerResolvedCount =
+        dsl.fetchCount(
+            CHARACTERS,
+            CHARACTERS
+                .ID
+                .eq(characterId)
+                .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")));
+    if (ownerResolvedCount != 1) {
+      throw new IllegalStateException("ACTOR_IDENTITY_NOT_OWNER_RESOLVED");
+    }
   }
 
   private ActorActiveCondition toEntity(Record record) {

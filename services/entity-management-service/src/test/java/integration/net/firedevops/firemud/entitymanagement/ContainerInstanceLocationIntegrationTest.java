@@ -2,6 +2,9 @@ package net.firedevops.firemud.entitymanagement;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.HashMap;
+import java.util.Map;
+import net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.Item;
 import net.firedevops.firemud.entitymanagement.entity.ItemStackCompatibilityMode;
@@ -12,10 +15,12 @@ import net.firedevops.firemud.entitymanagement.repository.ItemRepository;
 import net.firedevops.firemud.entitymanagement.repository.ItemStackRepository;
 import net.firedevops.firemud.entitymanagement.service.ContainerService;
 import net.firedevops.firemud.entitymanagement.service.InventoryService;
+import net.firedevops.firemud.entitymanagement.service.ScopedCharacterResolver;
 import net.firedevops.firemud.entitymanagement.v1.PlayableStateScope;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -30,6 +35,12 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+/**
+ * Conditional PostgreSQL proof for holder persistence after an assumed actor scope guard. The
+ * mocked resolver admits only explicitly registered saved-character fixtures with the exact test
+ * tenant, instance, and scope; those rows remain quarantined. This class proves nested holder and
+ * persistence behavior, not owner provenance, runtime admission, or PLAY activation.
+ */
 @Testcontainers(disabledWithoutDocker = true)
 @SuppressWarnings("resource")
 @SpringBootTest(
@@ -42,6 +53,7 @@ class ContainerInstanceLocationIntegrationTest {
   private static final String ROOM_INSTANCE_ID = "R-1";
   private static final PlayableStateScope PLAYABLE_STATE_SCOPE =
       PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED;
+  private final Map<Long, Character> registeredCharacterFixtures = new HashMap<>();
 
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -67,9 +79,34 @@ class ContainerInstanceLocationIntegrationTest {
   @Autowired private JdbcTemplate jdbcTemplate;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+  @MockitoBean private ScopedCharacterResolver scopedCharacterResolver;
 
   @BeforeEach
   void cleanDatabase() {
+    registeredCharacterFixtures.clear();
+    Mockito.doAnswer(
+            invocation -> {
+              Long tenantId = invocation.getArgument(0);
+              Long characterId = invocation.getArgument(1);
+              String gameInstanceId = invocation.getArgument(2);
+              PlayableStateScope playableStateScope = invocation.getArgument(3);
+              Character character = registeredCharacterFixtures.get(characterId);
+              if (!TENANT_ID.equals(tenantId)
+                  || !GAME_INSTANCE_ID.equals(gameInstanceId)
+                  || PLAYABLE_STATE_SCOPE != playableStateScope
+                  || character == null
+                  || !TENANT_ID.equals(character.getTenantId())) {
+                throw new IllegalArgumentException(
+                    "Test scoped resolver fixture does not match requested tenant, character, instance, or scope");
+              }
+              return character;
+            })
+        .when(scopedCharacterResolver)
+        .requireScopedCharacter(
+            Mockito.nullable(Long.class),
+            Mockito.nullable(Long.class),
+            Mockito.nullable(String.class),
+            Mockito.nullable(PlayableStateScope.class));
     jdbcTemplate.execute(
         "TRUNCATE TABLE item_stacks, item_instances, container_instances, items, characters RESTART IDENTITY CASCADE");
   }
@@ -78,6 +115,8 @@ class ContainerInstanceLocationIntegrationTest {
   void nonEmptyContainerSurvivesDropAndPickupBetweenHolders() {
     Character alice = characterRepository.save(character("Alice"));
     Character bob = characterRepository.save(character("Bob"));
+    registerCharacterFixture(alice);
+    registerCharacterFixture(bob);
     Item backpack = itemRepository.save(containerItem("Backpack"));
     Item torch = itemRepository.save(ordinaryItem("Torch"));
 
@@ -184,6 +223,7 @@ class ContainerInstanceLocationIntegrationTest {
   @Test
   void identicalContainersKeepDistinctContentsByContainerInstance() {
     Character alice = characterRepository.save(character("Alice"));
+    registerCharacterFixture(alice);
     Item backpack = itemRepository.save(containerItem("Backpack"));
     Item torch = itemRepository.save(ordinaryItem("Torch"));
     Item ration = itemRepository.save(ordinaryItem("Ration"));
@@ -287,6 +327,12 @@ class ContainerInstanceLocationIntegrationTest {
     character.setHealth(100);
     character.setMana(50);
     return character;
+  }
+
+  private void registerCharacterFixture(Character character) {
+    assertThat(character.getActorIdentity()).isNotNull();
+    assertThat(character.getActorIdentity().status()).isEqualTo(ActorIdentityStatus.QUARANTINED);
+    registeredCharacterFixtures.put(character.getId(), character);
   }
 
   private Item containerItem(String name) {

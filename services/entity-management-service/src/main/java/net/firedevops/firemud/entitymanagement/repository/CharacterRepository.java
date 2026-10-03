@@ -8,6 +8,7 @@ import static net.firedevops.firemud.entitymanagement.jooq.Tables.ITEMS;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.LinkedHashSet;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.entitymanagement.entity.Character;
 import net.firedevops.firemud.entitymanagement.entity.InventoryEntry;
 import net.firedevops.firemud.entitymanagement.entity.InventoryKey;
@@ -32,7 +33,9 @@ public class CharacterRepository {
 
   public Optional<Character> findWithInventoryById(Long id) {
     Character character =
-        dsl.selectFrom(CHARACTERS).where(CHARACTERS.ID.eq(id)).fetchOne(this::toEntity);
+        dsl.selectFrom(CHARACTERS)
+            .where(CHARACTERS.ID.eq(id).and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+            .fetchOne(this::toEntity);
     if (character == null) {
       return Optional.empty();
     }
@@ -65,13 +68,20 @@ public class CharacterRepository {
 
   public Optional<Character> findById(Long id) {
     return Optional.ofNullable(
-        dsl.selectFrom(CHARACTERS).where(CHARACTERS.ID.eq(id)).fetchOne(this::toEntity));
+        dsl.selectFrom(CHARACTERS)
+            .where(CHARACTERS.ID.eq(id).and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+            .fetchOne(this::toEntity));
   }
 
   public Optional<Character> findByIdAndTenantId(Long id, Long tenantId) {
     return Optional.ofNullable(
         dsl.selectFrom(CHARACTERS)
-            .where(CHARACTERS.ID.eq(id).and(CHARACTERS.TENANT_ID.eq(tenantId)))
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(id)
+                    .and(CHARACTERS.TENANT_ID.eq(tenantId))
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
             .fetchOne(this::toEntity));
   }
 
@@ -84,7 +94,8 @@ public class CharacterRepository {
                     .ID
                     .eq(id)
                     .and(CHARACTERS.TENANT_ID.eq(tenantId))
-                    .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey)))
+                    .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
             .fetchOne(this::toEntity));
   }
 
@@ -95,7 +106,8 @@ public class CharacterRepository {
             .TENANT_ID
             .eq(tenantId)
             .and(CHARACTERS.ACCOUNT_ID.eq(accountId))
-            .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey));
+            .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
+            .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED"));
     long total = dsl.fetchCount(CHARACTERS, condition);
     var content =
         dsl.selectFrom(CHARACTERS)
@@ -118,7 +130,8 @@ public class CharacterRepository {
                     .TENANT_ID
                     .eq(tenantId)
                     .and(CHARACTERS.PLAYABLE_STATE_KEY.eq(playableStateKey))
-                    .and(DSL.lower(CHARACTERS.NAME).eq(name.toLowerCase())))
+                    .and(DSL.lower(CHARACTERS.NAME).eq(name.toLowerCase()))
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
             .limit(1)
             .fetchOne(this::toEntity));
   }
@@ -127,10 +140,20 @@ public class CharacterRepository {
     return dsl.fetchCount(CHARACTERS, CHARACTERS.TENANT_ID.eq(tenantId));
   }
 
+  public long countQuarantinedByTenantId(Long tenantId) {
+    return dsl.fetchCount(
+        CHARACTERS,
+        CHARACTERS.TENANT_ID.eq(tenantId).and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("QUARANTINED")));
+  }
+
   public Character save(Character entity) {
     if (entity.getId() == null) {
+      UUID characterUuid = UUID.randomUUID();
       Long id =
           dsl.insertInto(CHARACTERS)
+              .set(CHARACTERS.CHARACTER_UUID, characterUuid)
+              .set(CHARACTERS.ACTOR_IDENTITY_STATUS, "QUARANTINED")
+              .set(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON, "OWNER_PROVENANCE_MISSING")
               .set(CHARACTERS.TENANT_ID, entity.getTenantId())
               .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
               .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
@@ -148,27 +171,35 @@ public class CharacterRepository {
               .set(CHARACTERS.VERSION, entity.getVersion())
               .returningResult(CHARACTERS.ID)
               .fetchOne(CHARACTERS.ID);
-      return findById(id).orElseThrow();
+      return findStoredById(id).orElseThrow();
     }
-    dsl.update(CHARACTERS)
-        .set(CHARACTERS.TENANT_ID, entity.getTenantId())
-        .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
-        .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
-        .set(CHARACTERS.NAME, entity.getName())
-        .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
-        .set(CHARACTERS.LEVEL, entity.getLevel())
-        .set(CHARACTERS.EXPERIENCE, entity.getExperience())
-        .set(CHARACTERS.STRENGTH, entity.getStrength())
-        .set(CHARACTERS.AGILITY, entity.getAgility())
-        .set(CHARACTERS.INTELLIGENCE, entity.getIntelligence())
-        .set(CHARACTERS.STAMINA, entity.getStamina())
-        .set(CHARACTERS.HEALTH, entity.getHealth())
-        .set(CHARACTERS.MANA, entity.getMana())
-        .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
-        .set(CHARACTERS.LAST_LOGIN_AT, toLocalDateTime(entity.getLastLoginAt()))
-        .set(CHARACTERS.VERSION, entity.getVersion() + 1)
-        .where(CHARACTERS.ID.eq(entity.getId()))
-        .execute();
+    int updatedRows =
+        dsl.update(CHARACTERS)
+            .set(CHARACTERS.TENANT_ID, entity.getTenantId())
+            .set(CHARACTERS.ACCOUNT_ID, entity.getAccountId())
+            .set(CHARACTERS.PLAYABLE_STATE_KEY, entity.getPlayableStateKey())
+            .set(CHARACTERS.NAME, entity.getName())
+            .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
+            .set(CHARACTERS.LEVEL, entity.getLevel())
+            .set(CHARACTERS.EXPERIENCE, entity.getExperience())
+            .set(CHARACTERS.STRENGTH, entity.getStrength())
+            .set(CHARACTERS.AGILITY, entity.getAgility())
+            .set(CHARACTERS.INTELLIGENCE, entity.getIntelligence())
+            .set(CHARACTERS.STAMINA, entity.getStamina())
+            .set(CHARACTERS.HEALTH, entity.getHealth())
+            .set(CHARACTERS.MANA, entity.getMana())
+            .set(CHARACTERS.BODY_LAYOUT_KEY, entity.getBodyLayoutKey())
+            .set(CHARACTERS.LAST_LOGIN_AT, toLocalDateTime(entity.getLastLoginAt()))
+            .set(CHARACTERS.VERSION, entity.getVersion() + 1)
+            .where(
+                CHARACTERS
+                    .ID
+                    .eq(entity.getId())
+                    .and(CHARACTERS.ACTOR_IDENTITY_STATUS.eq("OWNER_RESOLVED")))
+            .execute();
+    if (updatedRows != 1) {
+      throw new IllegalStateException("CHARACTER_IDENTITY_NOT_OWNER_RESOLVED");
+    }
     return findById(entity.getId()).orElseThrow();
   }
 
@@ -178,6 +209,16 @@ public class CharacterRepository {
     }
     Character character = new Character();
     character.setId(record.get(CHARACTERS.ID));
+    character.setActorIdentity(
+        new net.firedevops.firemud.entitymanagement.entity.ActorIdentity(
+            record.get(CHARACTERS.CHARACTER_UUID),
+            record.get(CHARACTERS.ACCOUNT_UUID),
+            record.get(CHARACTERS.TENANT_UUID),
+            record.get(CHARACTERS.PLAYABLE_STATE_NAMESPACE_ID),
+            scopeFrom(record.get(CHARACTERS.PLAYABLE_STATE_SCOPE)),
+            net.firedevops.firemud.entitymanagement.entity.ActorIdentityStatus.valueOf(
+                record.get(CHARACTERS.ACTOR_IDENTITY_STATUS)),
+            record.get(CHARACTERS.ACTOR_IDENTITY_QUARANTINE_REASON)));
     character.setTenantId(record.get(CHARACTERS.TENANT_ID));
     character.setAccountId(record.get(CHARACTERS.ACCOUNT_ID));
     character.setPlayableStateKey(record.get(CHARACTERS.PLAYABLE_STATE_KEY));
@@ -194,6 +235,17 @@ public class CharacterRepository {
     character.setLastLoginAt(toInstant(record.get(CHARACTERS.LAST_LOGIN_AT)));
     character.setVersion(record.get(CHARACTERS.VERSION));
     return character;
+  }
+
+  private Optional<Character> findStoredById(Long id) {
+    return Optional.ofNullable(
+        dsl.selectFrom(CHARACTERS).where(CHARACTERS.ID.eq(id)).fetchOne(this::toEntity));
+  }
+
+  private net.firedevops.firemud.entitymanagement.v1.PlayableStateScope scopeFrom(String value) {
+    return value == null
+        ? null
+        : net.firedevops.firemud.entitymanagement.v1.PlayableStateScope.valueOf(value);
   }
 
   private InventoryEntry toInventoryEntry(Record record, Character character) {
