@@ -289,6 +289,9 @@ public class PlayCommandHandler {
             null,
             null);
       }
+      if (realmSelection instanceof RealmSelectorResolution.PointerUnavailable) {
+        return admissionPointerUnavailableFailure(tenantTag, null);
+      }
       if (realmSelection instanceof RealmSelectorResolution.Stale) {
         return failure(
             "CONNECT_SCOPE_MISMATCH",
@@ -326,6 +329,9 @@ public class PlayCommandHandler {
             null,
             null,
             null);
+      }
+      if (realmSelection instanceof RealmSelectorResolution.PointerUnavailable) {
+        return admissionPointerUnavailableFailure(tenantTag, null);
       }
       if (realmSelection instanceof RealmSelectorResolution.Stale) {
         return failure(
@@ -1149,30 +1155,8 @@ public class PlayCommandHandler {
       GetTenantMembershipForRuntimeResponse response,
       SessionContext context,
       GameplayWorldCatalog.RealmView selectedRealm) {
-    if (!hasMatchingAuthorityIdentity(
-            response.getAccountId(),
-            response.getTenantId(),
-            context.accountId(),
-            selectedRealm.tenantId())
-        || !AuthorityEvaluationFreshness.isFresh(
-            response.getEvaluatedAt(), authorityEvaluationClock)) {
-      return false;
-    }
-    if (!response.getMembershipExists()) {
-      return "MISSING".equalsIgnoreCase(response.getMembershipLifecycleState())
-          && !response.getGameplayAdmissionAllowed()
-          && response.getMembershipVersion() == 0L
-          && response.getMembershipAuthorityGeneration() == 0L;
-    }
-    if (response.getMembershipVersion() <= 0L
-        || response.getMembershipAuthorityGeneration() <= 0L) {
-      return false;
-    }
-    if (response.getGameplayAdmissionAllowed()) {
-      return "ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState());
-    }
-    return "ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())
-        || "INACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState());
+    return AccountAuthorityEvidence.isSafeMembershipSnapshot(
+        response, context.accountId(), selectedRealm.tenantId(), authorityEvaluationClock);
   }
 
   private boolean isValidGrant(
@@ -1180,40 +1164,19 @@ public class PlayCommandHandler {
       SessionContext context,
       GameplayWorldCatalog.WorldView world,
       GameplayWorldCatalog.RealmView realm) {
-    return response.getGrantVersion() > 0L
-        && hasMatchingAuthorityIdentity(
-            response.getAccountId(), response.getTenantId(), context.accountId(), realm.tenantId())
-        && world.slug().equals(response.getWorldSlug())
-        && realm.slug().equals(response.getRealmSlug())
-        && AuthorityEvaluationFreshness.isFresh(
-            response.getEvaluatedAt(), authorityEvaluationClock);
+    return AccountAuthorityEvidence.isValidRealmAccessGrant(
+        response,
+        context.accountId(),
+        realm.tenantId(),
+        world.slug(),
+        realm.slug(),
+        authorityEvaluationClock);
   }
 
   private boolean isValidEntitlement(
       GetTenantEntitlementsForRuntimeResponse response, GameplayWorldCatalog.RealmView realm) {
-    return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
-        && response.getEntitlementVersion() > 0L
-        && response.getTenantBillingSequence() > 0L
-        && AuthorityEvaluationFreshness.isFresh(
-            response.getEvaluatedAt(), authorityEvaluationClock);
-  }
-
-  private boolean hasMatchingAuthorityIdentity(
-      String accountId, String tenantId, long expectedAccountId, long expectedTenantId) {
-    try {
-      return Long.parseLong(accountId) == expectedAccountId
-          && Long.parseLong(tenantId) == expectedTenantId;
-    } catch (NumberFormatException ex) {
-      return false;
-    }
-  }
-
-  private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
-    try {
-      return Long.parseLong(tenantId) == expectedTenantId;
-    } catch (NumberFormatException ex) {
-      return false;
-    }
+    return AccountAuthorityEvidence.isValidEntitlement(
+        response, realm.tenantId(), authorityEvaluationClock);
   }
 
   private boolean maybeRecordFreshEntryFallback(
@@ -1318,8 +1281,14 @@ public class PlayCommandHandler {
       return new RealmSelectorResolution.Stale();
     }
     DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
-    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog =
-        gameplayWorldCatalog.readRealmDiscoverySnapshot(world);
+    GameplayWorldCatalog.RealmDiscoverySnapshot currentRealmCatalog;
+    try {
+      currentRealmCatalog = gameplayWorldCatalog.readRealmDiscoverySnapshot(world);
+    } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
+      return new RealmSelectorResolution.Unavailable();
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return new RealmSelectorResolution.PointerUnavailable();
+    }
     if (!snapshot.catalogFingerprint().equals(currentRealmCatalog.catalogFingerprint())) {
       return new RealmSelectorResolution.Stale();
     }
@@ -1367,7 +1336,8 @@ public class PlayCommandHandler {
           RealmSelectorResolution.NoSelection,
           RealmSelectorResolution.Invalid,
           RealmSelectorResolution.Stale,
-          RealmSelectorResolution.Unavailable {
+          RealmSelectorResolution.Unavailable,
+          RealmSelectorResolution.PointerUnavailable {
     record Selected(GameplayWorldCatalog.RealmView realm) implements RealmSelectorResolution {}
 
     record NoSelection() implements RealmSelectorResolution {}
@@ -1377,6 +1347,8 @@ public class PlayCommandHandler {
     record Stale() implements RealmSelectorResolution {}
 
     record Unavailable() implements RealmSelectorResolution {}
+
+    record PointerUnavailable() implements RealmSelectorResolution {}
   }
 
   private Optional<ResolvedPlaySelection> resolveSelection(

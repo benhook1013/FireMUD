@@ -44,6 +44,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.service.SessionContextService;
 import net.firedevops.firemud.gamesession.service.SessionRoutingNormalizationService;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -507,6 +508,77 @@ class PlayCommandHandlerTest {
     Mockito.verify(scopeStore).realmsSnapshot(context, 22L, "demo", authorityNow);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"read-unavailable", "malformed"})
+  void numericRealmSelectorMapsPointerExceptionsToTypedFailures(String pointerFailure) {
+    Instant authorityNow = Instant.parse("2030-05-06T07:08:09Z");
+    Clock authorityClock = Clock.fixed(authorityNow, ZoneOffset.UTC);
+    SessionContext context =
+        new SessionContext(1L, 22L, 123L, "demo@example.com", 0L, null, 0L, "jwt-token");
+    when(sessionAuthenticationService.resolveSessionContext("1")).thenReturn(Optional.of(context));
+    GameplayWorldCatalog baseCatalog = worldCatalog;
+    GameplayWorldCatalog.DiscoverySnapshot worldSnapshot = baseCatalog.readDiscoverySnapshot();
+    GameplayWorldCatalog.WorldView world = baseCatalog.resolveWorld("demo").orElseThrow();
+    GameplayWorldCatalog.RealmDiscoverySnapshot realmSnapshot =
+        baseCatalog.readRealmDiscoverySnapshot(world);
+    DirectTextConnectScopeSessionStore scopeStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
+    scopeStore.replaceRealmSnapshot(
+        context,
+        "demo",
+        22L,
+        "demo",
+        realmSnapshot.catalogFingerprint(),
+        realmSnapshot.ordinalTargets(),
+        List.of(),
+        authorityNow);
+    GameplayWorldCatalog catalog = Mockito.spy(baseCatalog);
+    Mockito.doReturn(worldSnapshot).when(catalog).readDiscoverySnapshot();
+    if ("read-unavailable".equals(pointerFailure)) {
+      Mockito.doThrow(
+              new GameplayWorldCatalog.AuthorityPointerReadUnavailableException("read failed"))
+          .when(catalog)
+          .readRealmDiscoverySnapshot(Mockito.any(GameplayWorldCatalog.WorldView.class));
+    } else {
+      Mockito.doThrow(new GameplayWorldCatalog.AuthorityPointerUnavailableException("malformed"))
+          .when(catalog)
+          .readRealmDiscoverySnapshot(Mockito.any(GameplayWorldCatalog.WorldView.class));
+    }
+    PlayCommandHandler pointerFailureHandler =
+        new PlayCommandHandler(
+            sessionAuthenticationService,
+            sessionContextService,
+            sessionRoutingNormalizationService,
+            catalog,
+            gameLogicProperties,
+            accountClient,
+            entityManagementClient,
+            moderationPolicyClient,
+            firstPartyConnectContextRegistry,
+            gameplayPresenceLifecycleService,
+            scriptEventPublisher,
+            meterRegistry,
+            scopeStore,
+            authorityClock);
+
+    PlayCommandHandlingResult result =
+        pointerFailureHandler.handle(
+            "1", new TextCommand(TextCommandType.PLAY, List.of("demo", "1"), "PLAY demo 1"));
+
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(
+            "read-unavailable".equals(pointerFailure)
+                ? GameplayStageCommandConstants.AUTH_UNAVAILABLE_CODE
+                : "ADMISSION_POINTER_UNAVAILABLE");
+    Mockito.verifyNoInteractions(
+        accountClient,
+        entityManagementClient,
+        moderationPolicyClient,
+        sessionContextService,
+        gameplayPresenceLifecycleService,
+        scriptEventPublisher);
+  }
+
   @Test
   void numericWorldPlayTreatsUnrecognizedSecondSelectorAsCharacterWhenDefaultRealmIsUnambiguous() {
     SessionContext context =
@@ -886,7 +958,7 @@ class PlayCommandHandlerTest {
             invocation -> {
               pointerReads.incrementAndGet();
               if ("throw".equals(failureMode)) {
-                throw new IllegalStateException("authority down on final read");
+                throw new DataAccessException("authority down on final read");
               }
               return null;
             });
@@ -937,7 +1009,7 @@ class PlayCommandHandlerTest {
   void playMapsPointerAuthorityReadFailureBeforeAccountOrEntityAdmissionReads() {
     GameplayAdmissionPointerAuthorityService authorityService =
         Mockito.mock(GameplayAdmissionPointerAuthorityService.class);
-    when(authorityService.listPointers()).thenThrow(new IllegalStateException("authority down"));
+    when(authorityService.listPointers()).thenThrow(new DataAccessException("authority down"));
     PlayCommandHandler authorityBackedHandler =
         new PlayCommandHandler(
             sessionAuthenticationService,
@@ -1045,7 +1117,7 @@ class PlayCommandHandlerTest {
                 return List.of(admissionPointer(1L));
               }
               if ("throw".equals(failureMode)) {
-                throw new IllegalStateException("authority down during default realm resolution");
+                throw new DataAccessException("authority down during default realm resolution");
               }
               return null;
             });
@@ -2980,7 +3052,16 @@ class PlayCommandHandlerTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"stale", "future", "wrong-account", "missing-generation"})
+  @ValueSource(
+      strings = {
+        "stale",
+        "future",
+        "wrong-account",
+        "wrong-tenant",
+        "unknown-lifecycle",
+        "inactive-admitting",
+        "missing-generation"
+      })
   void playRejectsInvalidPositiveMembershipAuthority(String invalidEvidence) {
     SessionContext context =
         new SessionContext(1L, 22L, 123L, "demo@example.com", 123L, "demo", 1L, "R-1", "jwt-token");
@@ -2998,6 +3079,9 @@ class PlayCommandHandlerTest {
       case "stale" -> response.setEvaluatedAt(Instant.now().minusSeconds(16).toString());
       case "future" -> response.setEvaluatedAt(Instant.now().plusSeconds(1).toString());
       case "wrong-account" -> response.setAccountId("999");
+      case "wrong-tenant" -> response.setTenantId("23");
+      case "unknown-lifecycle" -> response.setMembershipLifecycleState("UNKNOWN");
+      case "inactive-admitting" -> response.setMembershipLifecycleState("INACTIVE");
       case "missing-generation" -> response.setMembershipAuthorityGeneration(0L);
       default -> throw new IllegalArgumentException(invalidEvidence);
     }

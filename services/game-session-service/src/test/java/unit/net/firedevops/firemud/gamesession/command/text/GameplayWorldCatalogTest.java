@@ -18,6 +18,7 @@ import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionS
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -353,7 +354,7 @@ class GameplayWorldCatalogTest {
   @Test
   void pointerReadFailureIsDistinctFromMalformedOrAmbiguousAuthority() {
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("authority down"))
+        .thenThrow(new DataAccessException("authority down"))
         .thenReturn(null);
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
@@ -364,9 +365,18 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void unexpectedPointerReadDefectPropagates() {
+    IllegalStateException defect = new IllegalStateException("unexpected mapping defect");
+    when(authorityService.listPointers()).thenThrow(defect);
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::readDiscoverySnapshot).isSameAs(defect);
+  }
+
+  @Test
   void authorityWorldResolutionUsesReadOutageClassificationBeforeSnapshotValidation() {
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("authority down"))
+        .thenThrow(new DataAccessException("authority down"))
         .thenReturn(null)
         .thenReturn(
             List.of(pointer("demo", "Demo World", "production", "Live Realm", 0L, 11L, 1L)));
@@ -384,7 +394,7 @@ class GameplayWorldCatalogTest {
   @Test
   void publicProductionCardinalityKeepsReadOutageDistinctFromMalformedSnapshot() {
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("authority down"))
+        .thenThrow(new DataAccessException("authority down"))
         .thenReturn(
             List.of(pointer("demo", "Demo World", "production", "Live Realm", 0L, 11L, 1L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
@@ -439,11 +449,22 @@ class GameplayWorldCatalogTest {
   void matchesCurrentAdmissionPointerPropagatesTenantReadOutage() {
     CurrentAdmissionTarget target = currentAdmissionTarget();
     when(authorityService.listPointersByTenant(1L))
-        .thenThrow(new IllegalStateException("authority down"));
+        .thenThrow(new DataAccessException("authority down"));
 
     assertThatThrownBy(
             () -> target.catalog().matchesCurrentAdmissionPointer(target.world(), target.realm()))
         .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+  }
+
+  @Test
+  void matchesCurrentAdmissionPointerPropagatesUnexpectedTenantReadDefect() {
+    CurrentAdmissionTarget target = currentAdmissionTarget();
+    IllegalStateException defect = new IllegalStateException("unexpected mapping defect");
+    when(authorityService.listPointersByTenant(1L)).thenThrow(defect);
+
+    assertThatThrownBy(
+            () -> target.catalog().matchesCurrentAdmissionPointer(target.world(), target.realm()))
+        .isSameAs(defect);
   }
 
   @Test
