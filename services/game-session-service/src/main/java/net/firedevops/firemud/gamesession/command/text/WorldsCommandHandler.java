@@ -43,6 +43,7 @@ public class WorldsCommandHandler {
   private final EntityManagementClient entityManagementClient;
   private final AccountClient accountClient;
   private final DirectTextConnectScopeSessionStore connectScopeSessionStore;
+  private final Clock clock;
 
   @Autowired
   public WorldsCommandHandler(
@@ -50,6 +51,20 @@ public class WorldsCommandHandler {
       EntityManagementClient entityManagementClient,
       AccountClient accountClient,
       DirectTextConnectScopeSessionStore connectScopeSessionStore) {
+    this(
+        worldCatalog,
+        entityManagementClient,
+        accountClient,
+        connectScopeSessionStore,
+        Clock.systemUTC());
+  }
+
+  WorldsCommandHandler(
+      GameplayWorldCatalog worldCatalog,
+      EntityManagementClient entityManagementClient,
+      AccountClient accountClient,
+      DirectTextConnectScopeSessionStore connectScopeSessionStore,
+      Clock clock) {
     this.worldCatalog = Objects.requireNonNull(worldCatalog, "worldCatalog must not be null");
     this.entityManagementClient =
         Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
@@ -57,6 +72,7 @@ public class WorldsCommandHandler {
     this.connectScopeSessionStore =
         Objects.requireNonNull(
             connectScopeSessionStore, "connectScopeSessionStore must not be null");
+    this.clock = Objects.requireNonNull(clock, "clock must not be null");
   }
 
   WorldsCommandHandler(
@@ -66,6 +82,7 @@ public class WorldsCommandHandler {
         Objects.requireNonNull(entityManagementClient, "entityManagementClient must not be null");
     this.accountClient = null;
     this.connectScopeSessionStore = null;
+    this.clock = Clock.systemUTC();
   }
 
   public WorldsViewOutput browseView() {
@@ -90,7 +107,7 @@ public class WorldsCommandHandler {
         maybeCaller.map(SessionContext::accountId).orElse(0L),
         snapshot.catalogFingerprint(),
         snapshot.ordinalTargets(),
-        Instant.now());
+        clock.instant());
     return snapshot.output();
   }
 
@@ -183,7 +200,7 @@ public class WorldsCommandHandler {
       } catch (DateTimeParseException ex) {
         return RealmBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
       }
-      if (!expiresAt.isAfter(Instant.now())) {
+      if (!expiresAt.isAfter(clock.instant())) {
         return RealmBrowseResult.failure("CONNECT_SCOPE_MISMATCH");
       }
       issuedScopes.add(
@@ -202,7 +219,11 @@ public class WorldsCommandHandler {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
     }
     try {
-      connectScopeSessionStore.clearWorldScopes(sessionContext, worldTenantId(world), world.slug());
+      connectScopeSessionStore.clearWorldScopes(
+          sessionContext,
+          DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+          world.slug(),
+          clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
@@ -214,12 +235,12 @@ public class WorldsCommandHandler {
       connectScopeSessionStore.replaceRealmSnapshot(
           sessionContext,
           worldSelector,
-          worldTenantId(world),
+          DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
           world.slug(),
           realmSnapshot.catalogFingerprint(),
           realmSnapshot.ordinalTargets(),
           issuedScopes,
-          Instant.now());
+          clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return RealmBrowseResult.failure("AUTH_UNAVAILABLE");
@@ -240,40 +261,21 @@ public class WorldsCommandHandler {
           .<WorldSelectorResolution>map(WorldSelectorResolution.Selected::new)
           .orElseGet(WorldSelectorResolution.Invalid::new);
     }
-    if (connectScopeSessionStore == null) {
-      return new WorldSelectorResolution.Unavailable();
+    DirectTextOrdinalSelectionResolver.Resolution<GameplayWorldCatalog.WorldView> resolution =
+        DirectTextOrdinalSelectionResolver.resolveWorldOrdinal(
+            selector,
+            connectScopeSessionStore,
+            caller,
+            clock.instant(),
+            currentCatalog,
+            worldCatalog);
+    Optional<GameplayWorldCatalog.WorldView> selected = resolution.selectedValue();
+    if (selected.isPresent()) {
+      return new WorldSelectorResolution.Selected(selected.orElseThrow());
     }
-    Optional<DirectTextConnectScopeSessionStore.WorldsSnapshot> maybeSnapshot;
-    try {
-      maybeSnapshot = connectScopeSessionStore.worldsSnapshot(caller, Instant.now());
-    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
-        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
-      return new WorldSelectorResolution.Unavailable();
-    }
-    if (maybeSnapshot.isEmpty()) {
-      return new WorldSelectorResolution.Stale();
-    }
-    DirectTextConnectScopeSessionStore.WorldsSnapshot worldsSnapshot = maybeSnapshot.orElseThrow();
-    if (!worldsSnapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
-      return new WorldSelectorResolution.Stale();
-    }
-    int ordinal;
-    try {
-      ordinal = Integer.parseInt(selector.trim());
-    } catch (NumberFormatException ex) {
-      return new WorldSelectorResolution.Stale();
-    }
-    Optional<DirectTextConnectScopeSessionStore.WorldOrdinalTarget> maybeTarget =
-        worldsSnapshot.ordinalTargets().stream()
-            .filter(target -> target.ordinal() == ordinal)
-            .findFirst();
-    if (maybeTarget.isEmpty()) {
-      return new WorldSelectorResolution.Stale();
-    }
-    return worldCatalog
-        .resolveSnapshotOrdinal(currentCatalog, maybeTarget.orElseThrow())
-        .<WorldSelectorResolution>map(WorldSelectorResolution.Selected::new)
-        .orElseGet(WorldSelectorResolution.Stale::new);
+    return resolution instanceof DirectTextOrdinalSelectionResolver.Unavailable<?>
+        ? new WorldSelectorResolution.Unavailable()
+        : new WorldSelectorResolution.Stale();
   }
 
   private static OptionalLong parseTransportSessionId(String sessionId) {
@@ -313,43 +315,26 @@ public class WorldsCommandHandler {
           .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
           .orElseGet(RealmSelectorResolution.Invalid::new);
     }
-    if (connectScopeSessionStore == null) {
+    DirectTextOrdinalSelectionResolver.Resolution<GameplayWorldCatalog.RealmView> resolution =
+        DirectTextOrdinalSelectionResolver.resolveRealmOrdinal(
+            selector,
+            connectScopeSessionStore,
+            caller,
+            DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+            world,
+            clock.instant(),
+            () -> currentCatalog,
+            worldCatalog);
+    Optional<GameplayWorldCatalog.RealmView> selected = resolution.selectedValue();
+    if (selected.isPresent()) {
+      return new RealmSelectorResolution.Selected(selected.orElseThrow());
+    }
+    if (resolution instanceof DirectTextOrdinalSelectionResolver.Unavailable<?>) {
       return new RealmSelectorResolution.Unavailable();
     }
-    Optional<DirectTextConnectScopeSessionStore.RealmsSnapshot> maybeSnapshot;
-    try {
-      maybeSnapshot =
-          connectScopeSessionStore.realmsSnapshot(
-              caller, worldTenantId(world), world.slug(), Instant.now());
-    } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
-        | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
-      return new RealmSelectorResolution.Unavailable();
-    }
-    if (maybeSnapshot.isEmpty()) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR);
-    }
-    DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
-    if (!snapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
-    }
-    int ordinal;
-    try {
-      ordinal = Integer.parseInt(selector.trim());
-    } catch (NumberFormatException ex) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR);
-    }
-    Optional<DirectTextConnectScopeSessionStore.RealmOrdinalTarget> maybeTarget =
-        snapshot.ordinalTargets().stream()
-            .filter(target -> target.ordinal() == ordinal)
-            .findFirst();
-    if (maybeTarget.isEmpty()) {
-      return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR);
-    }
-    return worldCatalog
-        .resolveRealmSnapshotOrdinal(world, currentCatalog, maybeTarget.orElseThrow())
-        .<RealmSelectorResolution>map(RealmSelectorResolution.Selected::new)
-        .orElseGet(
-            () -> new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH));
+    return resolution instanceof DirectTextOrdinalSelectionResolver.UnboundSelector<?>
+        ? new RealmSelectorResolution.Stale(RealmSelectorStaleReason.UNBOUND_SELECTOR)
+        : new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
   }
 
   private RealmSelectorResolution resolveOmittedLobbyRealm(
@@ -364,7 +349,10 @@ public class WorldsCommandHandler {
     try {
       maybeSnapshot =
           connectScopeSessionStore.realmsSnapshot(
-              caller, worldTenantId(world), world.slug(), Instant.now());
+              caller,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return new RealmSelectorResolution.Unavailable();
@@ -372,7 +360,7 @@ public class WorldsCommandHandler {
     if (maybeSnapshot.isPresent()) {
       DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
       if (!snapshot.worldSlug().equalsIgnoreCase(world.slug())
-          || snapshot.tenantId() != worldTenantId(world)
+          || snapshot.tenantId() != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)
           || !snapshot.catalogFingerprint().equals(currentRealmCatalog.catalogFingerprint())) {
         return new RealmSelectorResolution.Stale(RealmSelectorStaleReason.SNAPSHOT_MISMATCH);
       }
@@ -417,7 +405,10 @@ public class WorldsCommandHandler {
     try {
       maybeSnapshot =
           connectScopeSessionStore.realmsSnapshot(
-              caller, worldTenantId(world), world.slug(), Instant.now());
+              caller,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return false;
@@ -427,7 +418,7 @@ public class WorldsCommandHandler {
     }
     DirectTextConnectScopeSessionStore.RealmsSnapshot snapshot = maybeSnapshot.orElseThrow();
     if (!snapshot.worldSlug().equalsIgnoreCase(world.slug())
-        || snapshot.tenantId() != worldTenantId(world)
+        || snapshot.tenantId() != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)
         || !snapshot.catalogFingerprint().equals(currentCatalog.catalogFingerprint())) {
       return false;
     }
@@ -475,47 +466,6 @@ public class WorldsCommandHandler {
     record Stale() implements WorldSelectorResolution {}
 
     record Unavailable() implements WorldSelectorResolution {}
-  }
-
-  private boolean isValidEntitlement(
-      GetTenantEntitlementsForRuntimeResponse response, GameplayWorldCatalog.RealmView realm) {
-    return hasMatchingTenantId(response.getTenantId(), realm.tenantId())
-        && response.getEntitlementVersion() > 0L
-        && response.getTenantBillingSequence() > 0L
-        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
-  }
-
-  private boolean hasMatchingTenantId(String tenantId, long expectedTenantId) {
-    try {
-      return Long.parseLong(tenantId) == expectedTenantId;
-    } catch (NumberFormatException ex) {
-      return false;
-    }
-  }
-
-  private boolean isValidActiveMembership(
-      GetTenantMembershipForRuntimeResponse response,
-      SessionContext sessionContext,
-      GameplayWorldCatalog.RealmView realm) {
-    return "ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())
-        && response.getMembershipVersion() > 0L
-        && response.getMembershipAuthorityGeneration() > 0L
-        && hasMatchingAuthorityIdentity(
-            response.getAccountId(),
-            response.getTenantId(),
-            sessionContext.accountId(),
-            realm.tenantId())
-        && AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC());
-  }
-
-  private boolean hasMatchingAuthorityIdentity(
-      String accountId, String tenantId, long expectedAccountId, long expectedTenantId) {
-    try {
-      return Long.parseLong(accountId) == expectedAccountId
-          && Long.parseLong(tenantId) == expectedTenantId;
-    } catch (NumberFormatException ex) {
-      return false;
-    }
   }
 
   private boolean isAuthorityUnavailable(String code) {
@@ -573,7 +523,10 @@ public class WorldsCommandHandler {
     try {
       maybeRealmSnapshot =
           connectScopeSessionStore.realmsSnapshot(
-              sessionContext, worldTenantId(world), world.slug(), Instant.now());
+              sessionContext,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
@@ -591,7 +544,11 @@ public class WorldsCommandHandler {
     try {
       maybeJoinScope =
           connectScopeSessionStore.publicProductionScopeForJoin(
-              sessionContext, worldSelector, worldTenantId(world), world.slug(), Instant.now());
+              sessionContext,
+              worldSelector,
+              DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world),
+              world.slug(),
+              clock.instant());
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return JoinMembershipResult.failure("AUTH_UNAVAILABLE");
@@ -607,7 +564,7 @@ public class WorldsCommandHandler {
     } catch (NumberFormatException ex) {
       return JoinMembershipResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
-    if (tenantId != worldTenantId(world)) {
+    if (tenantId != DirectTextOrdinalSelectionResolver.worldTenantIdOrInvalid(world)) {
       return JoinMembershipResult.failure("CONNECT_SCOPE_MISMATCH");
     }
     boolean hasPublicProductionRealm;
@@ -627,12 +584,6 @@ public class WorldsCommandHandler {
     return JoinMembershipResult.response(
         accountClient.joinPublicProductionMembership(
             playerContext, scope.connectScopeId(), requestId, scope.expiresAt()));
-  }
-
-  private static long worldTenantId(GameplayWorldCatalog.WorldView world) {
-    List<Long> tenantIds =
-        world.realms().stream().map(GameplayWorldCatalog.RealmView::tenantId).distinct().toList();
-    return tenantIds.size() == 1 ? tenantIds.getFirst() : -1L;
   }
 
   private static String normalizeSelector(String selector) {
@@ -776,6 +727,8 @@ public class WorldsCommandHandler {
       currentRealmCatalog = worldCatalog.readRealmDiscoverySnapshot(world);
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return CharacterBrowseResult.failure("AUTH_UNAVAILABLE");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE");
     }
     RealmSelectorResolution realmSelection =
         resolveLobbyRealm(sessionContext, world, realmSelector, currentRealmCatalog);
@@ -912,7 +865,8 @@ public class WorldsCommandHandler {
     if (!membershipResponse.getGameplayAdmissionAllowed()) {
       return CharacterBrowseAuthorization.PUBLIC_PRODUCTION_ADMISSION_DENIED;
     }
-    if (!isValidActiveMembership(membershipResponse, sessionContext, realm)) {
+    if (!AccountAuthorityEvidence.isActiveMembership(
+        membershipResponse, sessionContext.accountId(), realm.tenantId(), clock)) {
       return CharacterBrowseAuthorization.AUTH_UNAVAILABLE;
     }
     return CharacterBrowseAuthorization.AUTHORIZED;
@@ -946,7 +900,8 @@ public class WorldsCommandHandler {
               : CharacterBrowseAuthorization.DENIED,
           false);
     }
-    if (!isValidEntitlement(entitlementResponse, realm)) {
+    if (!AccountAuthorityEvidence.isValidEntitlement(
+        entitlementResponse, realm.tenantId(), clock)) {
       return new PublicEntitlementAuthorization(
           CharacterBrowseAuthorization.ENTITLEMENT_UNAVAILABLE, false);
     }
@@ -962,29 +917,8 @@ public class WorldsCommandHandler {
       GetTenantMembershipForRuntimeResponse response,
       SessionContext sessionContext,
       GameplayWorldCatalog.RealmView realm) {
-    if (!hasMatchingAuthorityIdentity(
-            response.getAccountId(),
-            response.getTenantId(),
-            sessionContext.accountId(),
-            realm.tenantId())
-        || !AuthorityEvaluationFreshness.isFresh(response.getEvaluatedAt(), Clock.systemUTC())) {
-      return false;
-    }
-    if (!response.getMembershipExists()) {
-      return "MISSING".equalsIgnoreCase(response.getMembershipLifecycleState())
-          && !response.getGameplayAdmissionAllowed()
-          && response.getMembershipVersion() == 0L
-          && response.getMembershipAuthorityGeneration() == 0L;
-    }
-    if (response.getMembershipVersion() <= 0L
-        || response.getMembershipAuthorityGeneration() <= 0L) {
-      return false;
-    }
-    if ("ACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())) {
-      return true;
-    }
-    return "INACTIVE".equalsIgnoreCase(response.getMembershipLifecycleState())
-        && !response.getGameplayAdmissionAllowed();
+    return AccountAuthorityEvidence.isSafeMembershipSnapshot(
+        response, sessionContext.accountId(), realm.tenantId(), clock);
   }
 
   private boolean hasCompleteSelectedRealmPointerEvidence(GameplayWorldCatalog.RealmView realm) {

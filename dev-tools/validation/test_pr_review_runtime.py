@@ -4552,6 +4552,48 @@ class RuntimeTest(unittest.TestCase):
         self.assertEqual(observation["trigger_id"], 10)
         self.assertEqual(observation["response_id"], 11)
 
+    def test_posted_awaiting_hosted_observation_exposes_exact_trigger_and_durable_anchor(self) -> None:
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        trigger_at = (now - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+        record = self._trigger_record(created=trigger_at)
+        state = SimpleNamespace(
+            trigger_comment_id=10,
+            response_id=None,
+            state="awaiting_response",
+            terminal=False,
+            attributed=True,
+            head_sha=HEAD,
+            reason="no attributable terminal response",
+        )
+        payload = self._payload()
+        pull = payload["data"]["repository"]["pullRequest"]
+        pull.update({"number": 42, "baseRefName": "develop", "baseRefOid": BASE})
+        snapshot = PullRequestSnapshot(42, "OPEN", "develop", BASE, HEAD, "feature", 1)
+        live = LiveGitHub("owner/repo")
+        with tempfile.TemporaryDirectory() as directory:
+            common = Path(directory)
+            record_path = hosted.default_trigger_record_path("owner/repo", 42, common)
+            record_path.parent.mkdir(parents=True)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            with (
+                patch.object(github, "fetch_pull_request", return_value=payload),
+                patch.object(live, "pull_request", return_value=snapshot),
+                patch.object(evidence, "git_common_dir", return_value=common),
+                patch.object(hosted, "trigger_state", return_value=state),
+            ):
+                history = list(LiveEvidence("owner/repo", live).history(42, "hosted"))
+
+        observation = next(item for item in history if item.get("checkpoint") == "trigger:10")
+        self.assertEqual(observation["state"], "awaiting_response")
+        self.assertTrue(observation["posted"])
+        self.assertTrue(observation["active_reservation"])
+        self.assertTrue(observation["held"])
+        self.assertTrue(observation["attributable"])
+        self.assertFalse(observation["terminal"])
+        self.assertEqual(observation["anchor"], record["anchor"])
+        self.assertEqual(observation["trigger_id"], 10)
+        self.assertIsNone(observation["response_id"])
+
     def test_complete_audit_exposes_exact_active_hosted_response_identity(self) -> None:
         now = datetime.now(timezone.utc).replace(microsecond=0)
         trigger_at = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")

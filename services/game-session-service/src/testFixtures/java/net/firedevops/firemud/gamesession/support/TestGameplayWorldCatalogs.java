@@ -191,8 +191,17 @@ public final class TestGameplayWorldCatalogs {
         characterCreationPolicy,
         1L,
         stableId("realm", input.getTenantId(), worldSlug, input.getSlug()),
-        UUID.nameUUIDFromBytes(
-            ("test-namespace:" + input.getTenantId() + ":" + input.getGameInstanceId())
-                .getBytes(StandardCharsets.UTF_8)));
+        namespaceId(stateScope, input.getTenantId(), worldSlug, input.getSlug()));
+  }
+
+  private static UUID namespaceId(
+      String stateScope, long tenantId, String worldSlug, String realmSlug) {
+    String identity =
+        switch (stateScope) {
+          case "SHARED" -> "shared-tenant:" + tenantId;
+          case "ISOLATED" -> "isolated-realm:" + tenantId + ":" + worldSlug + ":" + realmSlug;
+          default -> "unresolved-realm:" + tenantId + ":" + worldSlug + ":" + realmSlug;
+        };
+    return UUID.nameUUIDFromBytes(("test-namespace:" + identity).getBytes(StandardCharsets.UTF_8));
   }
 }

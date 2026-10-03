@@ -87,10 +87,7 @@ def main() -> int:
             if line.strip() and not line.lstrip().startswith("#") and not line.startswith("-r ")
         }
         direct_requirements = (
-            {
-                re.split(r"[<>=!~;\[]", spec, maxsplit=1)[0].strip()
-                for spec in direct_specs
-            }
+            {re.split(r"[<>=!~;\[]", spec, maxsplit=1)[0].strip() for spec in direct_specs}
             if name == "docs"
             else direct_specs
         )
@@ -165,15 +162,10 @@ def main() -> int:
             fail(f"{tool} must have an exact pinned release version")
     if a["CHROME_FOR_TESTING_VERSION"] != a["CHROMEDRIVER_VERSION"]:
         fail("Chrome for Testing and ChromeDriver must use the exact same release version")
-    if not re.fullmatch(r"\d+\.\d+\.\d+", a.get("VELERO_CHART_VERSION", "")):
-        fail("Velero chart authority must have an exact three-part version")
     pairs = {
-        "KUBECTL": "KUBECTL_LINUX_AMD64",
-        "HELM": "HELM_LINUX_AMD64",
         "GH": "GH_LINUX_AMD64",
         "BUF": "BUF_LINUX_X86_64",
         "KUBECONFORM": "KUBECONFORM_LINUX_AMD64",
-        "VELERO": "VELERO_LINUX_AMD64",
         "SHELLCHECK": "SHELLCHECK_LINUX_X86_64",
         "CLOC": "CLOC_SOURCE",
         "CHROME_FOR_TESTING": "CHROME_FOR_TESTING_LINUX_X86_64",
@@ -186,13 +178,13 @@ def main() -> int:
             fail(f"{tool} checksum version is stale")
         if not re.fullmatch(r"[0-9a-f]{64}", a.get(f"{stem}_SHA256", "")):
             fail(f"{tool} checksum is invalid")
-    for tool in ("VELERO_IMAGE", "ORT", "ZAP"):
+    for tool in ("ORT", "ZAP"):
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", a.get(f"{tool}_DIGEST", "")):
             fail(f"{tool} digest is invalid")
     expected = (
         {f"{x}_VERSION" for x in versions + list(artifact_versions)}
         | {f"{s}_{suffix}" for s in pairs.values() for suffix in ("CHECKSUM_VERSION", "SHA256")}
-        | {"VELERO_CHART_VERSION", "VELERO_IMAGE_DIGEST", "ORT_DIGEST", "ZAP_DIGEST"}
+        | {"ORT_DIGEST", "ZAP_DIGEST"}
     )
     if set(a) != expected:
         fail("workflow tool authority has unexpected or missing keys")
@@ -208,9 +200,7 @@ def main() -> int:
     loader_run = loader_runs[0]
     expected_loader_outputs = {
         "kubectl-version",
-        "kubectl-linux-amd64-sha256",
         "helm-version",
-        "helm-linux-amd64-sha256",
         "gh-version",
         "gh-linux-amd64-sha256",
         "buf-version",
@@ -218,7 +208,6 @@ def main() -> int:
         "kubeconform-version",
         "kubeconform-linux-amd64-sha256",
         "velero-version",
-        "velero-linux-amd64-sha256",
         "actionlint-version",
         "shellcheck-version",
         "shellcheck-linux-x86-64-sha256",
@@ -779,9 +768,7 @@ def main() -> int:
 
         workflow_fixture = root / ".github/workflows/workflow-authority-fixture.yml"
 
-        def expect_workflow_failure(
-            steps, expected_message, *, path=workflow_fixture, job_name="profile-sequencing"
-        ):
+        def expect_workflow_failure(steps, expected_message, *, path=workflow_fixture, job_name="profile-sequencing"):
             try:
                 validate_workflow_python_steps(path, job_name, steps)
             except SystemExit as error:
@@ -888,16 +875,12 @@ def main() -> int:
         '"ghcr.io/benhook1013/${{ matrix.service }}:latest"',
     ):
         if required_scan_fragment not in trivy_scan_run:
-            fail(
-                "weekly-security-scan.yml Trivy scan is missing required command fragment: "
-                f"{required_scan_fragment}"
-            )
+            fail(f"weekly-security-scan.yml Trivy scan is missing required command fragment: {required_scan_fragment}")
 
     report_upload_steps = [
         step
         for step in weekly_scan_steps
-        if isinstance(step, dict)
-        and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/upload-artifact@")
     ]
     if len(report_upload_steps) != 1:
         fail("weekly-security-scan.yml must upload exactly one Trivy report artifact")
@@ -911,9 +894,7 @@ def main() -> int:
         or report_upload_with.get("path") != "trivy-report.json"
         or report_upload_with.get("if-no-files-found") != "warn"
     ):
-        fail(
-            "weekly-security-scan.yml Trivy report upload must always collect the service-specific JSON artifact"
-        )
+        fail("weekly-security-scan.yml Trivy report upload must always collect the service-specific JSON artifact")
 
     license_workflow = load(workflows / "license-scan.yml")
     license_changes = (license_workflow.get("jobs") or {}).get("changes")
@@ -1051,7 +1032,7 @@ def main() -> int:
             "actionlint-version",
         ),
         "docs.yml": ("lychee-version",),
-        "manual-backup-restore.yml": ("velero-version", "velero-linux-amd64-sha256"),
+        "manual-backup-restore.yml": ("velero-version", "verify-publisher-checksum.sh"),
         "security.yml": ("uses: ./.github/actions/setup-trivy",),
         "weekly-security-scan.yml": ("uses: ./.github/actions/setup-trivy",),
         "zap-baseline.yml": ("zap-image",),
@@ -1072,6 +1053,12 @@ def main() -> int:
         fail(
             "manual-backup-restore.yml must define exactly one Velero installer with canonical bounded retries and timeouts"
         )
+    if not (
+        manual_backup_restore_text.index("releases/download/v${VELERO_VERSION}/CHECKSUM")
+        < manual_backup_restore_text.index("verify-publisher-checksum.sh")
+        < manual_backup_restore_text.index("sudo install -m 0755")
+    ):
+        fail("manual Velero restore must verify the exact publisher sidecar before installation")
 
     ci_text = (workflows / "ci.yml").read_text()
     if (
@@ -1142,12 +1129,12 @@ def main() -> int:
         fail("setup-kubectl must define exactly one direct installer with canonical bounded retries and timeouts")
     for required_setup_kubectl_fragment in (
         "KUBECTL_VERSION: ${{ steps.versions.outputs.kubectl-version }}",
-        "KUBECTL_SHA256: ${{ steps.versions.outputs.kubectl-linux-amd64-sha256 }}",
         "RUNNER_OS",
         "RUNNER_ARCH",
         "requires a Linux X64 runner",
-        'printf \'%s  %s\\n\' "$kubectl_sha256" "$temporary_binary"',
-        "sha256sum --check --status",
+        "kubectl.sha256",
+        "verify-publisher-checksum.sh",
+        'digest "$temporary_checksum"',
         "install -m 0755",
         "GITHUB_PATH",
     ):
@@ -1164,6 +1151,12 @@ def main() -> int:
         fail("setup-kubectl must keep per-invocation temporary files under its stable root")
     if 'mv -fT -- "$staged_binary" "$installed_binary"' not in setup_kubectl_text:
         fail("setup-kubectl must atomically replace the verified binary")
+    if not (
+        setup_kubectl_text.index("kubectl.sha256")
+        < setup_kubectl_text.index("verify-publisher-checksum.sh")
+        < setup_kubectl_text.index('install -m 0755 "$temporary_binary"')
+    ):
+        fail("setup-kubectl must verify the exact-version publisher checksum before installation")
     if "trap cleanup EXIT" not in setup_kubectl_text or 'rm -rf -- "$temporary_directory"' not in setup_kubectl_text:
         fail("setup-kubectl must clean only its exact temporary directory")
 
@@ -1184,9 +1177,7 @@ def main() -> int:
         "GITHUB_PATH",
     ):
         if required_setup_trivy_fragment not in setup_trivy_text:
-            fail(
-                f"setup-trivy installer does not consume canonical authority safely: {required_setup_trivy_fragment}"
-            )
+            fail(f"setup-trivy installer does not consume canonical authority safely: {required_setup_trivy_fragment}")
 
     release = load(workflows / "release-notes.yml")
     if release.get("permissions") != {"contents": "read"}:
@@ -1302,32 +1293,66 @@ def main() -> int:
             fail(f"ci.yml {cache_id} key must hash .node-version and {lockfile}")
 
     def extract_hcl_block(text, header):
-        """Return the exact text for one updater-scanned HCL block."""
-        span = updater.find_hcl_block_span(text, header)
-        if span is None:
+        """Return one HCL block while ignoring braces in strings and comments."""
+        match = re.search(rf"(?m)^{re.escape(header)}\s*\{{", text)
+        if match is None:
             return None
-        return text[span[0] : span[1]]
+        depth = 0
+        in_string = escaped = line_comment = block_comment = False
+        index = text.find("{", match.start(), match.end())
+        while index < len(text):
+            char = text[index]
+            following = text[index + 1] if index + 1 < len(text) else ""
+            if line_comment:
+                line_comment = char != "\n"
+            elif block_comment:
+                if char == "*" and following == "/":
+                    block_comment = False
+                    index += 1
+            elif in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char == "#" or (char == "/" and following == "/"):
+                line_comment = True
+                index += char == "/"
+            elif char == "/" and following == "*":
+                block_comment = True
+                index += 1
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[match.start() : index + 1]
+            index += 1
+        return None
 
     def has_hcl_set_value(block, name, value):
         """Match one exact Helm set block, keeping its name/value association."""
         pattern = (
-            rf'(?ms)^[ \t]*set[ \t]*\{{\s*'
+            rf"(?ms)^[ \t]*set[ \t]*\{{\s*"
             rf'name[ \t]*=[ \t]*"{re.escape(name)}"\s*'
             rf'value[ \t]*=[ \t]*"{re.escape(value)}"\s*'
-            rf'\}}[ \t]*$'
+            rf"\}}[ \t]*$"
         )
         return re.search(pattern, block) is not None
 
     fixture = (
         'resource "helm_release" "velero" {\n'
         '  description = "literal } remains inside this block"\n'
-        '  # line comment with a closing brace }\n'
-        '  /* block comment with a closing brace } */\n'
+        "  # line comment with a closing brace }\n"
+        "  /* block comment with a closing brace } */\n"
         '  version = "canonical"\n'
-        '}\n'
+        "}\n"
         'resource "helm_release" "following" {\n'
         '  version = "following-only"\n'
-        '}\n'
+        "}\n"
     )
     fixture_block = extract_hcl_block(fixture, 'resource "helm_release" "velero"')
     if fixture_block is None or 'version = "canonical"' not in fixture_block:
@@ -1341,13 +1366,18 @@ def main() -> int:
     velero_release = extract_hcl_block(velero_terraform, 'resource "helm_release" "velero"')
     if velero_release is None:
         fail("Terraform Velero Helm release block is unterminated")
-    chart_pattern = rf'(?m)^[ \t]*version[ \t]*=[ \t]*"{re.escape(a["VELERO_CHART_VERSION"])}"[ \t]*$'
-    if re.search(chart_pattern, velero_release) is None:
-        fail("Terraform Velero Helm release must pin the canonical chart version")
-    if not has_hcl_set_value(velero_release, "image.tag", f'v{a["VELERO_VERSION"]}'):
+    chart_match = re.search(r'(?m)^[ \t]*version[ \t]*=[ \t]*"(?P<version>\d+\.\d+\.\d+)"[ \t]*$', velero_release)
+    if chart_match is None:
+        fail("Terraform Velero Helm release must pin one exact chart version")
+    chart_version = chart_match.group("version")
+    if not has_hcl_set_value(velero_release, "image.tag", f"v{a['VELERO_VERSION']}"):
         fail("Terraform Velero Helm release must pin the canonical server image tag")
-    if not has_hcl_set_value(velero_release, "image.digest", a["VELERO_IMAGE_DIGEST"]):
-        fail("Terraform Velero Helm release must pin the canonical server image digest")
+    digest_match = re.search(
+        r'(?ms)name\s*=\s*"image\.digest"\s+value\s*=\s*"(?P<digest>sha256:[0-9a-f]{64})"', velero_release
+    )
+    if digest_match is None:
+        fail("Terraform Velero Helm release must pin one immutable server image digest")
+    velero_image_digest = digest_match.group("digest")
     if not has_hcl_set_value(velero_release, "configuration.backupStorageLocation[0].name", "default"):
         fail("Terraform Velero Helm release must name its default backup storage location")
     minio_values = yaml.safe_load((root / "k8s/velero/values-minio.yaml").read_text())
@@ -1374,51 +1404,48 @@ def main() -> int:
         fail("MinIO Velero values must retain the endpoint/TLS settings and force S3 path style")
     minio_readme = (root / "k8s/velero/README.md").read_text()
     if minio_readme.count('s3ForcePathStyle: "true"') != 1:
-        fail("MinIO Velero README snippet must document s3ForcePathStyle: \"true\"")
+        fail('MinIO Velero README snippet must document s3ForcePathStyle: "true"')
 
     negative_release = (
         'resource "helm_release" "velero" {\n'
-        f'  # version = "{a["VELERO_CHART_VERSION"]}"\n'
+        f'  # version = "{chart_version}"\n'
         '  version = "not-canonical"\n'
-        '  set {\n'
+        "  set {\n"
         f'    name = "unrelated.tag"\n    value = "v{a["VELERO_VERSION"]}"\n'
-        '  }\n'
-        '  set {\n'
+        "  }\n"
+        "  set {\n"
         '    name = "image.tag"\n    value = "not-canonical"\n'
-        '  }\n'
-        '  set {\n'
-        f'    name = "unrelated.digest"\n    value = "{a["VELERO_IMAGE_DIGEST"]}"\n'
-        '  }\n'
-        '  set {\n'
+        "  }\n"
+        "  set {\n"
+        f'    name = "unrelated.digest"\n    value = "{velero_image_digest}"\n'
+        "  }\n"
+        "  set {\n"
         '    name = "image.digest"\n    value = "sha256:not-canonical"\n'
-        '  }\n'
-        '}\n'
+        "  }\n"
+        "}\n"
     )
-    if re.search(chart_pattern, negative_release) is not None:
+    if re.search(rf'(?m)^[ \t]*version[ \t]*=[ \t]*"{re.escape(chart_version)}"[ \t]*$', negative_release) is not None:
         fail("Velero chart assertion accepted a commented assignment")
-    if has_hcl_set_value(negative_release, "image.tag", f'v{a["VELERO_VERSION"]}'):
+    if has_hcl_set_value(negative_release, "image.tag", f"v{a['VELERO_VERSION']}"):
         fail("Velero image tag assertion accepted an unrelated Helm set")
-    if has_hcl_set_value(negative_release, "image.digest", a["VELERO_IMAGE_DIGEST"]):
+    if has_hcl_set_value(negative_release, "image.digest", velero_image_digest):
         fail("Velero image digest assertion accepted an unrelated Helm set")
 
     velero_cronjob_path = root / "k8s/velero/verify-backups-cronjob.yaml"
     if not velero_cronjob_path.is_file():
         fail("backup verifier CronJob manifest is missing")
     verifier_dockerfile = (root / "docker/backup-verifier.Dockerfile").read_text()
-    expected_velero_stage = (
-        f"FROM velero/velero:v{a['VELERO_VERSION']}@{a['VELERO_IMAGE_DIGEST']} AS velero-cli"
-    )
+    expected_velero_stage = f"FROM velero/velero:v{a['VELERO_VERSION']}@{velero_image_digest} AS velero-cli"
     if verifier_dockerfile.count(expected_velero_stage) != 1:
         fail("backup verifier Dockerfile Velero projection is stale")
 
     renovate = json.loads((root / "renovate.json").read_text())
-    if not {"nodenv", "pyenv", "pip_requirements", "custom.regex"} <= set(renovate["enabledManagers"]):
+    if not {"nodenv", "pyenv", "pip_requirements", "terraform", "custom.regex"} <= set(renovate["enabledManagers"]):
         fail("Renovate managers incomplete")
     kubectl_rules = [
         rule
         for rule in renovate.get("packageRules", [])
-        if rule.get("matchManagers") == ["custom.regex"]
-        and rule.get("matchPackageNames") == ["kubernetes/kubernetes"]
+        if rule.get("matchManagers") == ["custom.regex"] and rule.get("matchPackageNames") == ["kubernetes/kubernetes"]
     ]
     if len(kubectl_rules) != 1:
         fail("Renovate must define exactly one kubectl compatibility rule")
@@ -1426,12 +1453,19 @@ def main() -> int:
     if kubectl_rule.get("allowedVersions") != "<1.36.0":
         fail("Renovate kubectl proposals must remain below 1.36 for the Kubernetes 1.34 cluster")
     kubectl_notes = "\n".join(kubectl_rule.get("prBodyNotes") or [])
-    for required in ("update-workflow-tool.py kubectl <version>", "cluster-version upgrade"):
+    for required in ("publisher checksum", "cluster-version upgrade"):
         if required not in kubectl_notes:
             fail(f"Renovate kubectl guidance is missing: {required}")
+    pip_rebase_rules = [
+        rule for rule in renovate.get("packageRules", []) if rule.get("matchManagers") == ["pip_requirements"]
+    ]
+    if len(pip_rebase_rules) != 1 or pip_rebase_rules[0].get("rebaseWhen") != "behind-base-branch":
+        fail("Renovate hashed Python requirements must refresh behind-base branches")
     custom_managers = renovate.get("customManagers", [])
     if len(custom_managers) != 11:
-        fail("Renovate must define three version-only, five checksum-backed, one Velero chart, one Velero image, and one ORT/ZAP image authority manager")
+        fail(
+            "Renovate must define four version-only, five checksum-backed, one Velero Terraform image, and one ORT/ZAP image manager"
+        )
 
     def translate_renovate_pattern(pattern_source):
         return re.sub(r"\(\?<([A-Za-z_])", r"(?P<\1", pattern_source)
@@ -1472,13 +1506,10 @@ def main() -> int:
         "ORT": "ghcr.io/oss-review-toolkit/ort",
         "ZAP": "ghcr.io/zaproxy/zaproxy",
     }
-    expected_renovate_dependencies = Counter(
-        (expected_dep_names[x], a[f"{x}_VERSION"]) for x in expected_dep_names
-    )
+    expected_renovate_dependencies = Counter((expected_dep_names[x], a[f"{x}_VERSION"]) for x in expected_dep_names)
     expected_renovate_dependencies.update(
         (expected_image_dep_names[x], a[f"{x}_VERSION"]) for x in expected_image_dep_names
     )
-    expected_renovate_dependencies.update((("velero", a["VELERO_CHART_VERSION"]),))
     expected_renovate_dependencies.update((("velero/velero", a["VELERO_VERSION"]),))
     matched = Counter()
     version_only_specs = {
@@ -1515,8 +1546,7 @@ def main() -> int:
         managers = [
             manager
             for manager in custom_managers
-            if manager.get("datasourceTemplate") == "github-releases"
-            and manager.get("depNameTemplate") == dep_name
+            if manager.get("datasourceTemplate") == "github-releases" and manager.get("depNameTemplate") == dep_name
         ]
         if len(managers) != 1:
             fail(f"Renovate must define exactly one version-only manager for {dep_name}")
@@ -1573,19 +1603,24 @@ def main() -> int:
         if match.group("currentDigest") != a[checksum_stem + "_SHA256"]:
             fail(f"{dep_name} checksum manager must capture the archive checksum")
         replacement = manager.get("autoReplaceStringTemplate", "")
-        if "{{{newDigest}}}" not in replacement or "_CHECKSUM_VERSION=" not in replacement or "_SHA256=" not in replacement:
+        if (
+            "{{{newDigest}}}" not in replacement
+            or "_CHECKSUM_VERSION=" not in replacement
+            or "_SHA256=" not in replacement
+        ):
             fail(f"{dep_name} checksum manager must replace version and checksum authority together")
         if "extractVersion" in replacement or marker not in replacement:
             fail(f"{dep_name} replacement must preserve the raw-release marker")
         new_value_token = "{{{replace '" + release_prefix + "' '' newValue}}}"
         raw_release_tag = f"{release_prefix.removeprefix('^')}9.9.9"
-        rendered_replacement = replacement.replace(new_value_token, "9.9.9").replace(
-            "{{{newDigest}}}", "d" * 64
-        )
+        rendered_replacement = replacement.replace(new_value_token, "9.9.9").replace("{{{newDigest}}}", "d" * 64)
         rendered_match = pattern.fullmatch(rendered_replacement)
         if rendered_match is None or rendered_match.group("currentValue") != "9.9.9":
             fail(f"{dep_name} checksum manager replacement must preserve one complete authority block")
-        if rendered_match.group("currentChecksumVersion") != "9.9.9" or rendered_match.group("currentDigest") != "d" * 64:
+        if (
+            rendered_match.group("currentChecksumVersion") != "9.9.9"
+            or rendered_match.group("currentDigest") != "d" * 64
+        ):
             fail(f"{dep_name} checksum manager replacement must update both checksum fields")
         if key == "LYCHEE":
             versioning_pattern = re.compile(translate_renovate_pattern(versioning.removeprefix("regex:")))
@@ -1596,57 +1631,67 @@ def main() -> int:
                 "patch": "9",
             }:
                 fail(f"{dep_name} versioning must compare numeric releases while accepting the raw tag")
-    velero_chart_managers = [manager for manager in custom_managers if manager.get("depNameTemplate") == "velero"]
-    if len(velero_chart_managers) != 1:
-        fail("Renovate must define exactly one Velero chart manager")
-    velero_chart_manager = velero_chart_managers[0]
-    if (
-        velero_chart_manager.get("datasourceTemplate") != "helm"
-        or velero_chart_manager.get("registryUrlTemplate") != "https://vmware-tanzu.github.io/helm-charts"
-        or velero_chart_manager.get("versioningTemplate") != "semver"
-        or velero_chart_manager.get("currentValueTemplate") != "{{{currentValue}}}"
-        or "autoReplaceStringTemplate" in velero_chart_manager
-    ):
-        fail("Velero chart manager must signal Helm releases without automatic projection")
-    velero_chart_pattern_sources = velero_chart_manager.get("matchStrings", [None])
-    if len(velero_chart_pattern_sources) != 1:
-        fail("Velero chart manager must define one match pattern")
-    try:
-        velero_chart_pattern = compile_re2_pattern(velero_chart_pattern_sources[0])
-    except (re.error, TypeError) as error:
-        fail(f"Velero chart manager pattern is invalid: {error}")
-    velero_chart_matches = list(velero_chart_pattern.finditer(authority_text))
-    if len(velero_chart_matches) != 1 or velero_chart_matches[0].group("currentValue") != a["VELERO_CHART_VERSION"]:
-        fail("Velero chart manager must match the canonical chart authority exactly once")
     velero_managers = [manager for manager in custom_managers if manager.get("depNameTemplate") == "velero/velero"]
-    if len(velero_managers) != 1:
-        fail("Renovate must define exactly one Velero image manager")
-    velero_manager = velero_managers[0]
+    if len(velero_managers) != 2:
+        fail("Renovate must define Velero CLI and Terraform image managers")
+    velero_cli_manager = next(
+        (
+            manager
+            for manager in velero_managers
+            if manager.get("managerFilePatterns") == ["/^config/workflow-tool-versions\\.env$/"]
+        ),
+        None,
+    )
+    velero_terraform_manager = next(
+        (
+            manager
+            for manager in velero_managers
+            if manager.get("managerFilePatterns") == ["/^k8s/terraform-production/main\\.tf$/"]
+        ),
+        None,
+    )
     if (
-        velero_manager.get("datasourceTemplate") != "docker"
-        or velero_manager.get("versioningTemplate") != "docker"
-        or velero_manager.get("currentValueTemplate") != "v{{{currentValue}}}"
+        velero_cli_manager is None
+        or velero_cli_manager.get("datasourceTemplate") != "docker"
+        or velero_cli_manager.get("currentValueTemplate") != "v{{{currentValue}}}"
     ):
-        fail("Velero manager must track Docker releases with the v tag prefix")
-    velero_pattern_sources = velero_manager.get("matchStrings", [None])
-    if len(velero_pattern_sources) != 1:
-        fail("Velero image manager must define one match pattern")
-    try:
-        velero_pattern = compile_re2_pattern(velero_pattern_sources[0])
-    except (re.error, TypeError) as error:
-        fail(f"Velero image manager pattern is invalid: {error}")
-    velero_matches = list(velero_pattern.finditer(authority_text))
-    if len(velero_matches) != 1:
-        fail("Velero image manager must match exactly one authority block")
-    velero_match = velero_matches[0]
+        fail("Velero CLI manager must track exact Docker release tags")
+    cli_patterns = velero_cli_manager.get("matchStrings") or []
+    if len(cli_patterns) != 1:
+        fail("Velero CLI manager must define one authority pattern")
+    cli_pattern = compile_re2_pattern(cli_patterns[0])
+    cli_matches = list(cli_pattern.finditer(authority_text))
+    if len(cli_matches) != 1 or cli_matches[0].group("currentValue") != a["VELERO_VERSION"]:
+        fail("Velero CLI manager must match the exact authority version")
+    if "currentDigest" in cli_matches[0].groupdict():
+        fail("Velero CLI authority must not retain a repository checksum or image digest")
+    cli_replacement = velero_cli_manager.get("autoReplaceStringTemplate", "")
+    expected_cli_token = "{{{replace '^v' '' newValue}}}"
+    if expected_cli_token not in cli_replacement:
+        fail("Velero CLI replacement must remove exactly one Docker tag prefix")
+    proposed_cli_replacement = cli_replacement.replace(expected_cli_token, "1.18.4")
+    proposed_cli_match = cli_pattern.fullmatch(proposed_cli_replacement)
+    if proposed_cli_match is None or proposed_cli_match.group("currentValue") != "1.18.4":
+        fail("Velero CLI replacement must write an unprefixed exact version")
     if (
-        velero_match.group("currentValue") != a["VELERO_VERSION"]
-        or velero_match.group("currentDigest") != a["VELERO_IMAGE_DIGEST"]
+        velero_terraform_manager is None
+        or velero_terraform_manager.get("datasourceTemplate") != "docker"
+        or velero_terraform_manager.get("versioningTemplate") != "docker"
     ):
-        fail("Velero image manager must match the canonical image authority")
-    velero_replacement = velero_manager.get("autoReplaceStringTemplate", "")
-    if "VELERO_VERSION=" not in velero_replacement or "VELERO_IMAGE_DIGEST={{{newDigest}}}" not in velero_replacement:
-        fail("Velero image manager must update its image version and digest")
+        fail("Velero Terraform image manager must use the Docker datasource")
+    terraform_patterns = velero_terraform_manager.get("matchStrings") or []
+    if len(terraform_patterns) != 1:
+        fail("Velero Terraform image manager must define one tag/digest pattern")
+    terraform_pattern = compile_re2_pattern(terraform_patterns[0])
+    terraform_matches = list(terraform_pattern.finditer(velero_release))
+    if len(terraform_matches) != 1:
+        fail("Velero Terraform manager must match exactly one server image projection")
+    terraform_match = terraform_matches[0]
+    if (
+        terraform_match.group("currentValue") != f"v{a['VELERO_VERSION']}"
+        or terraform_match.group("currentDigest") != velero_image_digest
+    ):
+        fail("Velero Terraform manager must pair the current tag and immutable digest")
 
     docker_managers = [
         manager
@@ -1671,9 +1716,7 @@ def main() -> int:
         expected_image_dep_names[x] for x in ("ORT", "ZAP")
     ):
         fail("ORT/ZAP image manager must match each GHCR image exactly once and exclude Velero")
-    expected_ort_zap_digests = {
-        expected_image_dep_names[key]: a[f"{key}_DIGEST"] for key in ("ORT", "ZAP")
-    }
+    expected_ort_zap_digests = {expected_image_dep_names[key]: a[f"{key}_DIGEST"] for key in ("ORT", "ZAP")}
     for match in ort_zap_matches:
         if match.group("currentDigest") != expected_ort_zap_digests[match.group("depName")]:
             fail("ORT/ZAP image manager must pair each GHCR image with its own authority digest")
@@ -1711,38 +1754,22 @@ def main() -> int:
         (
             rule
             for rule in rules
-            if rule.get("description") == "Velero verifier image changes require promotion evidence"
+            if rule.get("description") == "Group Velero CLI, verifier image, server image, and chart updates"
         ),
         None,
     )
     if infra_rule is None or velero_rule is None or rules.index(velero_rule) <= rules.index(infra_rule):
-        fail("production Velero Renovate exception must follow infrastructure automerge")
+        fail("Velero grouping rule must follow generic infrastructure automerge")
     if (
-        velero_rule.get("matchManagers") != ["dockerfile"]
-        or velero_rule.get("matchFileNames") != ["docker/backup-verifier.Dockerfile"]
-        or velero_rule.get("matchPackageNames") != ["velero/velero"]
-        or velero_rule.get("pinDigests") is not False
+        velero_rule.get("matchManagers") != ["custom.regex", "dockerfile", "terraform"]
+        or velero_rule.get("matchPackageNames") != ["velero", "velero/velero"]
+        or velero_rule.get("groupName") != "Velero runtime and chart"
+        or velero_rule.get("pinDigests") is not True
         or velero_rule.get("automerge") is not False
-        or velero_rule.get("enabled") is not False
     ):
-        fail("production Velero Renovate exception must disable automated digest projection and merge")
-    velero_manual_rule = next(
-        (rule for rule in rules if rule.get("description") == "Velero Renovate PRs require a transactional verifier Dockerfile update"),
-        None,
-    )
-    if (
-        velero_manual_rule is None
-        or velero_manual_rule.get("matchManagers") != ["custom.regex"]
-        or velero_manual_rule.get("matchPackageNames") != ["velero", "velero/velero"]
-        or velero_manual_rule.get("prBodyNotes") != [
-            "Run `python3 dev-tools/maintenance/update-workflow-tool.py velero <version> --velero-dockerfile <path> --terraform-file <path> --velero-chart-version <chart-version> --image-evidence-file <path>` before merging so the Velero chart, verifier Dockerfile image digest, Terraform projection, and CLI archive checksum are verified and updated together."
-        ]
-    ):
-        fail("Velero custom manager updates must carry the transactional updater PR note")
-    if "# renovate-image: datasource=docker depName=velero/velero" not in authority_text:
-        fail("Velero authority must retain its Renovate image manager marker")
-    if "# renovate-chart: datasource=helm depName=velero registryUrl=https://vmware-tanzu.github.io/helm-charts" not in authority_text:
-        fail("Velero authority must retain its Renovate chart manager marker")
+        fail("Velero native managers must remain grouped, digest-pinned, and manually merged")
+    if "# renovate-version: datasource=docker depName=velero/velero" not in authority_text:
+        fail("Velero CLI authority must retain its Docker release manager marker")
 
     proto = (root / "gradle/proto-convention.gradle").read_text()
     if (
@@ -1751,10 +1778,17 @@ def main() -> int:
         or "${gradle.gradleVersion}" not in proto
     ):
         fail("protobuf diagnostic must derive both canonical versions")
-    for action in ("setup-gh", "setup-helm"):
+    for action in ("setup-gh",):
         data = (actions / action / "action.yml").read_text()
         if "sha256sum --check --status" not in data:
             fail(f"{action} must verify its archive")
+    setup_helm_text = (actions / "setup-helm/action.yml").read_text()
+    if not (
+        setup_helm_text.index(".sha256sum")
+        < setup_helm_text.index("verify-publisher-checksum.sh")
+        < setup_helm_text.index("tar -xzf")
+    ):
+        fail("setup-helm must verify the exact publisher checksum filename before extraction")
     if (
         "RUNNER_OS" not in (actions / "setup-gh/action.yml").read_text()
         or "RUNNER_ARCH" not in (actions / "setup-gh/action.yml").read_text()

@@ -137,8 +137,8 @@ def archived_addressed_reply_fixture(common: Path, *, include_baseline: bool = T
         "observed_at": old_finished_at,
     }
 
-    state_dir = common / "firemud" / "pr-review-stack.json"
-    state_dir.mkdir(parents=True)
+    selected_state = common / "firemud" / "pr-review-stack.json"
+    selected_state.mkdir(parents=True)
     database = common / "firemud" / "pr-review-stack.sqlite3"
     SqliteStateStore(database).update(lambda state: state)
     records = SqliteReviewRecords(database)

@@ -1351,6 +1351,12 @@ class SqliteHostedCaptureTest(unittest.TestCase):
             self.assertTrue(replay["synced"][0]["idempotent_replay"])
 
     def test_sync_attributes_archived_addressed_thread_on_first_started_attempt_and_replays(self) -> None:
+        self._assert_sync_archived_addressed_thread_and_replay(partial_completed=False)
+
+    def test_sync_recovers_unlinked_completed_addressed_thread_and_replays(self) -> None:
+        self._assert_sync_archived_addressed_thread_and_replay(partial_completed=True)
+
+    def _assert_sync_archived_addressed_thread_and_replay(self, *, partial_completed: bool) -> None:
         with tempfile.TemporaryDirectory() as directory:
             common = Path(directory) / "git-common"
             (common / "firemud" / "pr-review-stack.json").mkdir(parents=True)
@@ -1478,10 +1484,67 @@ class SqliteHostedCaptureTest(unittest.TestCase):
                 review_threads=[{"comments": {"nodes": [addressed_thread_comment]}}],
             )
 
+            if partial_completed:
+                pull = payload["data"]["repository"]["pullRequest"]
+                finished_at = "2026-09-29T01:04:00Z"
+                records.finish_attempt(
+                    attempt_id,
+                    state="completed",
+                    finished_at=finished_at,
+                    trigger_id="901",
+                    provider_review_id="902",
+                    artifacts={
+                        "hosted_review": json.dumps([]),
+                        "hosted_comments": json.dumps(
+                            {
+                                "comments": pull["comments"]["nodes"],
+                                "review_threads": pull["reviewThreads"]["nodes"],
+                            }
+                        ),
+                        "metadata": json.dumps(
+                            {
+                                "state": "completed",
+                                "terminal": True,
+                                "attributable": True,
+                                "repository": REPO,
+                                "pull_request": PR,
+                                "head_sha": HEAD,
+                                "trigger_id": 901,
+                                "response_id": 902,
+                                "observed_at": finished_at,
+                            }
+                        ),
+                    },
+                )
+                self.assertIsNone(records.attempt(attempt_id)["run_id"])
+                original_attempt = sqlite_review_records.SqliteReviewRecords.attempt
+
+                def conflicting_run_link(store, selected_attempt_id):
+                    attempt = original_attempt(store, selected_attempt_id)
+                    if selected_attempt_id == attempt_id:
+                        return {**attempt, "run_id": "conflicting-source-run"}
+                    return attempt
+
+                with patch.object(
+                    sqlite_review_records.SqliteReviewRecords, "attempt", autospec=True, side_effect=conflicting_run_link
+                ):
+                    self.assertEqual(
+                        hosted.trigger_state(REPO, PR, payload, trigger, record_path).state,
+                        "ambiguous",
+                    )
+
             with patch.object(sqlite_hosted_capture.github, "fetch_pull_request", return_value=payload) as fetch:
+                if partial_completed:
+                    fetch.side_effect = AssertionError("partial archive recovery must not fetch GitHub")
                 first = sqlite_hosted_capture.sync_hosted_pending(records, REPO, common=common, pr_number=PR)
 
-            fetch.assert_called_once_with(REPO, PR)
+            if partial_completed:
+                fetch.assert_not_called()
+                self.assertEqual(first["errors"], [])
+                self.assertTrue(first["synced"][0]["recovered_from_archive"], first)
+                self.assertEqual(records.attempt(attempt_id)["run_id"], attempt_id)
+            else:
+                fetch.assert_called_once_with(REPO, PR)
             self.assertEqual(len(first["synced"]), 1, first)
             self.assertEqual(first["synced"][0]["state"], "completed")
             self.assertEqual(first["synced"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})

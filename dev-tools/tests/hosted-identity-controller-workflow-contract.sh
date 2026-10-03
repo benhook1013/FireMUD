@@ -456,18 +456,19 @@ for required in \
   'id: versions' \
   'uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' \
   'path: ${{ runner.temp }}/firemud-helm/v${{ steps.versions.outputs.helm-version }}/helm.tar.gz' \
-  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}-${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
+  'key: firemud-helm-${{ runner.os }}-${{ runner.arch }}-v${{ steps.versions.outputs.helm-version }}' \
   'HELM_VERSION: v${{ steps.versions.outputs.helm-version }}' \
-  'HELM_SHA256: ${{ steps.versions.outputs.helm-linux-amd64-sha256 }}' \
   'RUNNER_OS' \
   'RUNNER_ARCH' \
   'RUNNER_TEMP' \
   'helm_root="${RUNNER_TEMP:?}/firemud-helm/${helm_version}"' \
+  'https://get.helm.sh/${expected_archive_name}.sha256sum' \
+  'verify-publisher-checksum.sh' \
+  'manifest "$checksum_path"' \
   '[[ ! -f "$archive_path" ]]' \
   'temporary_archive="$(mktemp -- "${helm_root}/helm.tar.gz.XXXXXX")"' \
   'mv -fT -- "$temporary_archive" "$archive_path"' \
   'curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 30' \
-  'sha256sum --check --status' \
   'echo "$install_dir" >> "$GITHUB_PATH"' \
   'version --template' \
   'Helm version mismatch' \
@@ -475,8 +476,11 @@ for required in \
   contains "$helm_action" "$required"
 done
 contains "$workflow_tool_authority" 'HELM_VERSION='
-contains "$workflow_tool_authority" 'HELM_LINUX_AMD64_SHA256='
-if [[ "$(grep -Fc 'sha256sum --check --status' "$helm_action")" -lt 2 ]]; then
+if grep -Fq 'HELM_LINUX_AMD64_SHA256=' "$workflow_tool_authority"; then
+  echo "$workflow_tool_authority must not retain a repository-frozen Helm checksum" >&2
+  exit 1
+fi
+if [[ "$(grep -Fc 'verify-publisher-checksum.sh' "$helm_action")" -lt 3 ]]; then
   echo "$helm_action must verify both restored and downloaded Helm archives" >&2
   exit 1
 fi

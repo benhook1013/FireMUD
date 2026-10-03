@@ -92,9 +92,9 @@ for line in (root / "config/workflow-tool-versions.env").read_text(encoding="utf
         key, value = line.split("=", 1)
         authority[key] = value
 expected_stage = (
-    f"FROM velero/velero:v{authority['VELERO_VERSION']}@{authority['VELERO_IMAGE_DIGEST']} AS velero-cli"
+    rf"FROM velero/velero:v{re.escape(authority['VELERO_VERSION'])}@sha256:[0-9a-f]{{64}} AS velero-cli"
 )
-if dockerfile.count(expected_stage) != 1:
+if len(re.findall(rf"(?m)^{expected_stage}$", dockerfile)) != 1:
     raise SystemExit("backup verifier Dockerfile Velero stage drifted from authority")
 script_text = (root / "dev-tools/backups/verify-backups.sh").read_text(encoding="utf-8")
 for required in (
