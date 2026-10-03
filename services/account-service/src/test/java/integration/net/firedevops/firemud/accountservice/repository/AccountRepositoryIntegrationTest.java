@@ -1189,10 +1189,77 @@ class AccountRepositoryIntegrationTest {
                         secondAccountId))
             .longValue();
 
-    UUID joinRealmId = UUID.fromString("61d40f5d-2d59-4cc5-8774-54f7445d144b");
+    UUID joinRealmId = REALM_ID;
     String pendingJoinRequestId = "retained-v28-pending-join";
-    String scopeDigest = AccountJoinDigest.tokenHash("retained-connect-scope");
-    String intentDigest = AccountJoinDigest.tokenHash(pendingJoinRequestId + ":intent");
+    String retainedConnectScopeId = "retained-scope-token";
+    String worldSlug = "retained-world";
+    String realmSlug = "retained-realm";
+    String namespaceId = "retained-namespace";
+    String playableStateScope = "REALM";
+    long gameInstanceId = 7L;
+    long catalogRevision = 11L;
+    long pointerVersion = 13L;
+    String evaluatedAt = "2026-10-02T12:00:00Z";
+    String connectScopeExpiresAt = "2099-10-02T12:00:00Z";
+    VerifiedJoinScope retainedScopeBase =
+        new VerifiedJoinScope(
+            retainedConnectScopeId,
+            secondAccountId,
+            42L,
+            joinRealmId,
+            worldSlug,
+            realmSlug,
+            namespaceId,
+            playableStateScope,
+            gameInstanceId,
+            catalogRevision,
+            pointerVersion,
+            evaluatedAt,
+            connectScopeExpiresAt,
+            "unused");
+    String scopeDigest = AccountJoinDigest.scope(retainedScopeBase);
+    VerifiedJoinScope retainedScope =
+        new VerifiedJoinScope(
+            retainedScopeBase.connectScopeId(),
+            retainedScopeBase.accountId(),
+            retainedScopeBase.tenantId(),
+            retainedScopeBase.realmId(),
+            retainedScopeBase.worldSlug(),
+            retainedScopeBase.realmSlug(),
+            retainedScopeBase.playableStateNamespaceId(),
+            retainedScopeBase.playableStateScope(),
+            retainedScopeBase.gameInstanceId(),
+            retainedScopeBase.catalogRevision(),
+            retainedScopeBase.pointerVersion(),
+            retainedScopeBase.evaluatedAt(),
+            retainedScopeBase.connectScopeExpiresAt(),
+            scopeDigest);
+    String scopeTokenHash = AccountJoinDigest.tokenHash(retainedConnectScopeId);
+    dsl.execute(
+        "INSERT INTO "
+            + schema
+            + ".account_connect_scope_records "
+            + "(scope_token_hash, account_id, target_class, tenant_id, realm_id, world_slug, "
+            + "realm_slug, playable_state_namespace_id, playable_state_scope, game_instance_id, "
+            + "catalog_revision, pointer_version, evaluated_at, connect_scope_expires_at, "
+            + "snapshot_digest) "
+            + "VALUES (?, ?, 'PUBLIC_PRODUCTION', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        scopeTokenHash,
+        retainedScope.accountId(),
+        retainedScope.tenantId(),
+        retainedScope.realmId(),
+        retainedScope.worldSlug(),
+        retainedScope.realmSlug(),
+        retainedScope.playableStateNamespaceId(),
+        retainedScope.playableStateScope(),
+        retainedScope.gameInstanceId(),
+        retainedScope.catalogRevision(),
+        retainedScope.pointerVersion(),
+        retainedScope.evaluatedAt(),
+        retainedScope.connectScopeExpiresAt(),
+        retainedScope.snapshotDigest());
+    String intentDigest =
+        AccountJoinDigest.intent(pendingJoinRequestId, retainedScope, "retained-caller");
     dsl.execute(
         "INSERT INTO "
             + schema
@@ -1201,13 +1268,21 @@ class AccountRepositoryIntegrationTest {
             + "connect_scope_digest, world_slug, realm_slug, realm_id, playable_state_namespace_id, "
             + "playable_state_scope, game_instance_id, catalog_revision, pointer_version, "
             + "intent_digest_version, intent_digest, caller_bound_authority_invalidated, status) "
-            + "VALUES (?, ?, 42, 'retained-caller', ?, ?, 'retained-world', 'retained-realm', ?, "
-            + "'retained-namespace', 'REALM', 7, 11, 13, 1, ?, FALSE, 'PENDING')",
+            + "VALUES (?, ?, ?, 'retained-caller', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, FALSE, "
+            + "'PENDING')",
         pendingJoinRequestId,
-        secondAccountId,
-        AccountJoinDigest.tokenHash("retained-scope-token"),
+        retainedScope.accountId(),
+        retainedScope.tenantId(),
+        scopeTokenHash,
         scopeDigest,
-        joinRealmId,
+        retainedScope.worldSlug(),
+        retainedScope.realmSlug(),
+        retainedScope.realmId(),
+        retainedScope.playableStateNamespaceId(),
+        retainedScope.playableStateScope(),
+        retainedScope.gameInstanceId(),
+        retainedScope.catalogRevision(),
+        retainedScope.pointerVersion(),
         intentDigest);
 
     String receiptStreamKey =
@@ -1285,6 +1360,12 @@ class AccountRepositoryIntegrationTest {
                 + schema
                 + ".account_join_operations j WHERE request_id = ?",
             pendingJoinRequestId);
+    String retainedConnectScopeBefore =
+        jsonRow(
+            "SELECT to_jsonb(s)::text FROM "
+                + schema
+                + ".account_connect_scope_records s WHERE scope_token_hash = ?",
+            scopeTokenHash);
     String receiptStreamHeadBefore =
         jsonRow(
             "SELECT to_jsonb(h)::text FROM "
@@ -1352,6 +1433,13 @@ class AccountRepositoryIntegrationTest {
                     + ".account_join_operations j WHERE request_id = ?",
                 pendingJoinRequestId))
         .isEqualTo(pendingJoinBefore);
+    assertThat(
+            jsonRow(
+                "SELECT to_jsonb(s)::text FROM "
+                    + schema
+                    + ".account_connect_scope_records s WHERE scope_token_hash = ?",
+                scopeTokenHash))
+        .isEqualTo(retainedConnectScopeBefore);
     assertThat(
             jsonRow(
                 "SELECT to_jsonb(h)::text FROM "
