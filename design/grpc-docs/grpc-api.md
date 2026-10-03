@@ -413,6 +413,8 @@ for conventions on schema evolution and error handling. See each service's
     - [GetGameSessionPinConvergenceResponse](#game_session-v1-GetGameSessionPinConvergenceResponse)
     - [GetGameplayCommandStatusRequest](#game_session-v1-GetGameplayCommandStatusRequest)
     - [GetGameplayCommandStatusResponse](#game_session-v1-GetGameplayCommandStatusResponse)
+    - [GetInitialAdmissionBindProofRequest](#game_session-v1-GetInitialAdmissionBindProofRequest)
+    - [GetInitialAdmissionBindProofResponse](#game_session-v1-GetInitialAdmissionBindProofResponse)
     - [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest)
     - [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse)
     - [GetPreparedVersionUpgradeRequest](#game_session-v1-GetPreparedVersionUpgradeRequest)
@@ -493,6 +495,7 @@ for conventions on schema evolution and error handling. See each service's
     - [AccountRecentPresenceDisposition](#game_session-v1-AccountRecentPresenceDisposition)
     - [CutoverCompatibilityResult](#game_session-v1-CutoverCompatibilityResult)
     - [ExpectedCurrentPin.Kind](#game_session-v1-ExpectedCurrentPin-Kind)
+    - [InitialAdmissionBindOwnerProofOutcome](#game_session-v1-InitialAdmissionBindOwnerProofOutcome)
     - [TickStatus](#game_session-v1-TickStatus)
 
     - [GameSessionControlPlaneService](#game_session-v1-GameSessionControlPlaneService)
@@ -7434,8 +7437,8 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | actor_principal | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
-| expected_pointer_version | [int64](#int64) | optional |  |
-| expected_catalog_revision | [int64](#int64) | optional |  |
+| expected_pointer_version | [int64](#int64) | optional | Existing-row mutations require both expected revisions to match the current row. Creating a missing row is supported only with both fields explicitly present as zero. Optional presence does not enable the currently disabled public mutation RPC or imply valid mutation semantics. |
+| expected_catalog_revision | [int64](#int64) | optional | Must be supplied with expected_pointer_version under the same existing-row or creation rules. |
 
 
 
@@ -7824,6 +7827,67 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | command | [GameplayCommandStatus](#game_session-v1-GameplayCommandStatus) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetInitialAdmissionBindProofRequest"></a>
+
+### GetInitialAdmissionBindProofRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hold_id | [string](#string) |  |  |
+| hold_fence | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| active_lifecycle_epoch | [int64](#int64) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| expected_no_prior_pointer | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="game_session-v1-GetInitialAdmissionBindProofResponse"></a>
+
+### GetInitialAdmissionBindProofResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| hold_id | [string](#string) |  | Echoes the complete request tuple so World can reject proof for another hold or target. |
+| hold_fence | [string](#string) |  |  |
+| tenant_id | [string](#string) |  |  |
+| realm_uuid | [string](#string) |  |  |
+| playable_state_namespace_uuid | [string](#string) |  |  |
+| playable_state_scope | [entity_management.v1.PlayableStateScope](#entity_management-v1-PlayableStateScope) |  |  |
+| game_instance_id | [string](#string) |  |  |
+| version_id | [string](#string) |  |  |
+| active_lifecycle_epoch | [int64](#int64) |  |  |
+| initial_admission_request_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| expected_no_prior_pointer | [bool](#bool) |  |  |
+| expected_catalog_revision | [int64](#int64) |  |  |
+| outcome | [InitialAdmissionBindOwnerProofOutcome](#game_session-v1-InitialAdmissionBindOwnerProofOutcome) |  |  |
+| owner_proof_id | [string](#string) |  |  |
+| pointer_audit_id | [string](#string) |  |  |
+| pointer_version | [int64](#int64) |  |  |
+| pointer_audit_request_digest | [string](#string) |  |  |
+| future_commit_prevented | [bool](#bool) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -9293,10 +9357,10 @@ Resume ticks after an authorized maintenance workflow completes.
 | actor_principal | [string](#string) |  |  |
 | reason | [string](#string) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
-| expected_pointer_version | [int64](#int64) | optional |  |
+| expected_pointer_version | [int64](#int64) | optional | Existing-row mutations require both expected revisions to match the current row. Creating a missing row is supported only with both fields explicitly present as zero. Optional presence does not enable the currently disabled public mutation RPC or imply valid mutation semantics. |
 | prepared_version_upgrade_id | [string](#string) |  |  |
 | public_production_realm | [bool](#bool) |  |  |
-| expected_catalog_revision | [int64](#int64) | optional |  |
+| expected_catalog_revision | [int64](#int64) | optional | Must be supplied with expected_pointer_version under the same existing-row or creation rules. |
 
 
 
@@ -9587,6 +9651,23 @@ Resume ticks after an authorized maintenance workflow completes.
 
 
 
+<a name="game_session-v1-InitialAdmissionBindOwnerProofOutcome"></a>
+
+### InitialAdmissionBindOwnerProofOutcome
+
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_UNSPECIFIED | 0 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_COMMITTED | 1 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ABORTED | 2 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_NOT_FOUND | 3 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_PENDING | 4 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_UNAVAILABLE | 5 |  |
+| INITIAL_ADMISSION_BIND_OWNER_PROOF_OUTCOME_ERROR | 6 |  |
+
+
+
 <a name="game_session-v1-TickStatus"></a>
 
 ### TickStatus
@@ -9615,6 +9696,7 @@ plus scoped tick pause/resume used for rollback safety.
 | GetPinnedScriptPatchVersion | [GetPinnedScriptPatchVersionRequest](#game_session-v1-GetPinnedScriptPatchVersionRequest) | [GetPinnedScriptPatchVersionResponse](#game_session-v1-GetPinnedScriptPatchVersionResponse) |  |
 | GetGameSessionPinConvergence | [GetGameSessionPinConvergenceRequest](#game_session-v1-GetGameSessionPinConvergenceRequest) | [GetGameSessionPinConvergenceResponse](#game_session-v1-GetGameSessionPinConvergenceResponse) |  |
 | GetGameInstanceRuntimeState | [GetGameInstanceRuntimeStateRequest](#game_session-v1-GetGameInstanceRuntimeStateRequest) | [GetGameInstanceRuntimeStateResponse](#game_session-v1-GetGameInstanceRuntimeStateResponse) |  |
+| GetInitialAdmissionBindProof | [GetInitialAdmissionBindProofRequest](#game_session-v1-GetInitialAdmissionBindProofRequest) | [GetInitialAdmissionBindProofResponse](#game_session-v1-GetInitialAdmissionBindProofResponse) | Read exact durable owner proof for a World-owned initial-admission hold. |
 | ValidateBuiltInCommandAlias | [ValidateBuiltInCommandAliasRequest](#game_session-v1-ValidateBuiltInCommandAliasRequest) | [ValidateBuiltInCommandAliasResponse](#game_session-v1-ValidateBuiltInCommandAliasResponse) |  |
 | ListAdmissionPointers | [ListAdmissionPointersRequest](#game_session-v1-ListAdmissionPointersRequest) | [ListAdmissionPointersResponse](#game_session-v1-ListAdmissionPointersResponse) |  |
 | ListAdmissionPointerAudit | [ListAdmissionPointerAuditRequest](#game_session-v1-ListAdmissionPointerAuditRequest) | [ListAdmissionPointerAuditResponse](#game_session-v1-ListAdmissionPointerAuditResponse) |  |

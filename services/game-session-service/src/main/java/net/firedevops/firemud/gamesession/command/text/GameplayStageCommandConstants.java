@@ -30,6 +30,9 @@ public final class GameplayStageCommandConstants {
   public static final String AUTH_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
   public static final String AUTH_UNAVAILABLE_MESSAGE =
       "Gameplay authority is temporarily unavailable. Retry PLAY shortly.";
+  public static final String ADMISSION_POINTER_UNAVAILABLE_CODE = "ADMISSION_POINTER_UNAVAILABLE";
+  public static final String ADMISSION_POINTER_UNAVAILABLE_MESSAGE =
+      "Gameplay admission pointer is temporarily unavailable. Retry PLAY shortly.";
   public static final String ENTITLEMENT_UNAVAILABLE_CODE = "ENTITLEMENT_UNAVAILABLE";
   public static final String ENTITLEMENT_UNAVAILABLE_MESSAGE =
       "Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.";

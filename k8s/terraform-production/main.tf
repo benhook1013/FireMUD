@@ -2,11 +2,11 @@ terraform {
   required_providers {
     kubernetes = {
       source  = "hashicorp/kubernetes"
-      version = "~> 2.23"
+      version = "~> 3.0"
     }
     helm = {
       source  = "hashicorp/helm"
-      version = "~> 2.10"
+      version = "~> 3.0"
     }
   }
 }
@@ -40,7 +40,7 @@ resource "helm_release" "redis_coord" {
   name       = "redis-coord"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "redis"
-  version    = "20.13.4"
+  version    = "28.3.1"
   namespace  = var.namespace
   values     = [file("${path.module}/redis-coord-values.yaml")]
 }
@@ -49,7 +49,7 @@ resource "helm_release" "redis_cache" {
   name       = "redis-cache"
   repository = "https://charts.bitnami.com/bitnami"
   chart      = "redis"
-  version    = "20.13.4"
+  version    = "28.3.1"
   namespace  = var.namespace
   values     = [file("${path.module}/redis-cache-values.yaml")]
 }
@@ -62,11 +62,11 @@ resource "helm_release" "velero" {
   namespace  = var.namespace
   set {
     name  = "image.tag"
-    value = "v1.18.3"
+    value = "v1.18.4"
   }
   set {
     name  = "image.digest"
-    value = "sha256:b839e52bc2c69eb3b5a84b010b8b3c7f714f3c5ef50b77ec7770a382a8f2e0ab"
+    value = "sha256:c89fb5b6d1fd6afd368e0f483e6f5555fd62851a1eada8ac5c72482e674ca17b"
   }
   set {
     name  = "configuration.backupStorageLocation[0].name"

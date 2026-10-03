@@ -50,20 +50,39 @@ final class WorldsTextCommandDispatchHandler implements TextCommandDispatchHandl
   }
 
   private TextCommandInterpretationResult handleWorlds(TextCommandDispatchRequest request) {
+    if (!hasPositiveTransportSessionId(request.sessionId())) {
+      return errorResult(
+          "INVALID_ARGUMENT", "Transport session is unavailable. Reconnect and try again.");
+    }
     try {
       return new TextCommandInterpretationResult(
           net.firedevops.firemud.gamesession.dto.CommandEnqueueResult.success(),
           List.of(
               net.firedevops.firemud.gamesession.presentation.PlayerOutput.view(
                   worldsHandler.browseView(request.sessionId(), request.sessionContext()))));
-    } catch (IllegalArgumentException ex) {
-      return errorResult(
-          "INVALID_ARGUMENT", "Transport session is unavailable. Reconnect and try again.");
     } catch (GameplayWorldCatalog.AuthorityPointerReadUnavailableException ex) {
       return errorResult("AUTH_UNAVAILABLE", "World list is temporarily unavailable.");
+    } catch (GameplayWorldCatalog.AuthorityPointerUnavailableException ex) {
+      return errorResult(
+          "ADMISSION_POINTER_UNAVAILABLE", "World routing is unavailable. Retry WORLDS.");
     } catch (DirectTextConnectScopeSessionStore.StoreUnavailableException
         | DirectTextConnectScopeSessionStore.ConflictingIdentityException ex) {
       return errorResult("AUTH_UNAVAILABLE", "World list is temporarily unavailable.");
+    }
+  }
+
+  private boolean hasPositiveTransportSessionId(String sessionId) {
+    if (sessionId == null || sessionId.isBlank()) {
+      return false;
+    }
+    String trimmed = sessionId.trim();
+    if (!trimmed.chars().allMatch(Character::isDigit)) {
+      return false;
+    }
+    try {
+      return Long.parseLong(trimmed) > 0L;
+    } catch (NumberFormatException ex) {
+      return false;
     }
   }
 

@@ -11,6 +11,7 @@ never sent over the WebSocket or included in errors.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -514,15 +515,67 @@ def _connect_context(
             "Content-Type": "application/json",
         },
     )
-    _require_envelope(response, "connect-token issuance", config)
+    metadata = _require_envelope(response, "connect-token issuance", config)
     set_cookie = _header(response.headers, "Set-Cookie")
-    pair = set_cookie.split(";", 1)[0].strip()
+    cookie_parts = [part.strip() for part in set_cookie.split(";")]
+    pair = cookie_parts[0] if cookie_parts else ""
     name, separator, value = pair.partition("=")
     if separator != "=" or name != "Firemud-Connect-Token" or not value:
         raise _fail(
             "connect-token issuance did not return a valid Firemud-Connect-Token cookie",
             config,
         )
+    attributes: dict[str, list[str | None]] = {}
+    for part in cookie_parts[1:]:
+        attribute, equals, attribute_value = part.partition("=")
+        attribute = attribute.strip().lower()
+        if not attribute:
+            raise _fail("connect-token cookie protections are malformed", config)
+        attributes.setdefault(attribute, []).append(attribute_value.strip() if equals else None)
+
+    def require_flag(attribute: str) -> bool:
+        return attributes.get(attribute) == [None]
+
+    if not require_flag("httponly") or not require_flag("secure"):
+        raise _fail("connect-token cookie protections are incomplete", config)
+    same_site_values = attributes.get("samesite")
+    if (
+        same_site_values is None
+        or len(same_site_values) != 1
+        or not isinstance(same_site_values[0], str)
+        or same_site_values[0].casefold() != "strict"
+    ):
+        raise _fail("connect-token cookie protections are incomplete", config)
+    if attributes.get("path") != ["/ws/game"]:
+        raise _fail("connect-token cookie protections are incomplete", config)
+
+    max_age_values = attributes.get("max-age")
+    if max_age_values is None or len(max_age_values) != 1:
+        raise _fail("connect-token cookie lifetime is invalid", config)
+    max_age = max_age_values[0]
+    if not isinstance(max_age, str) or not max_age.isascii() or not max_age.isdecimal() or max_age.startswith("0"):
+        raise _fail("connect-token cookie lifetime is invalid", config)
+    if not isinstance(metadata, dict):
+        raise _fail("connect-token response metadata is malformed", config)
+    issued_at = metadata.get("issuedAt")
+    expires_at = metadata.get("expiresAt")
+    if not isinstance(issued_at, str) or not isinstance(expires_at, str):
+        raise _fail("connect-token response metadata is malformed", config)
+    try:
+        issued = datetime.datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
+        expires = datetime.datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        ttl_seconds = (expires - issued).total_seconds()
+        cookie_seconds = int(max_age)
+    except (OverflowError, TypeError, ValueError):
+        raise _fail("connect-token response metadata is malformed", config) from None
+    if (
+        issued.utcoffset() is None
+        or expires.utcoffset() is None
+        or ttl_seconds <= 0
+        or cookie_seconds <= 0
+        or cookie_seconds > ttl_seconds
+    ):
+        raise _fail("connect-token cookie lifetime exceeds its token lifetime", config)
     return f"Firemud-Connect-Token={value}", character
 
 

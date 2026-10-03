@@ -84,12 +84,20 @@ class FakeHttp:
         self,
         *,
         cookie="Firemud-Connect-Token=token-1",
+        cookie_attributes="; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30",
+        connect_token_metadata=None,
         readiness=None,
         characters=None,
         character_rosters=None,
     ):
         self.calls = []
         self.cookie = cookie
+        self.cookie_attributes = cookie_attributes
+        self.connect_token_metadata = (
+            connect_token_metadata
+            if connect_token_metadata is not None
+            else {"issuedAt": "2026-01-01T00:00:00Z", "expiresAt": "2026-01-01T00:00:30Z"}
+        )
         self.readiness = readiness
         self.characters = characters if characters is not None else [{"characterName": "Ada"}]
         self.character_rosters = character_rosters
@@ -122,7 +130,11 @@ class FakeHttp:
             cookie = self.cookie
             if self.connect_count > 1 and cookie == "Firemud-Connect-Token=token-1":
                 cookie = f"Firemud-Connect-Token=token-{self.connect_count}"
-            return MODULE.HttpResponse(200, {"Set-Cookie": cookie + "; Path=/ws/game"}, {"data": {}})
+            return MODULE.HttpResponse(
+                200,
+                {"Set-Cookie": cookie + self.cookie_attributes},
+                {"data": self.connect_token_metadata},
+            )
         if url.endswith("/revoke"):
             return MODULE.HttpResponse(200, {}, {"status": "success", "data": {}})
         raise AssertionError(f"unexpected fake HTTP request: {method} {url}")
@@ -1004,6 +1016,59 @@ class HostedWebSocketPlayableSmokeTests(unittest.TestCase):
         http = FakeHttp(cookie="Other=wrong")
         with self.assertRaisesRegex(MODULE.HostedWebSocketPlayableSmokeError, "valid Firemud-Connect-Token"):
             MODULE.run_smoke(self.config(), http_request=http, websocket_factory=FakeWebSocket)
+
+    def test_connect_token_cookie_requires_full_protection_before_wss(self):
+        invalid_responses = (
+            ("; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30", None),
+            ("; HttpOnly; SameSite=Strict; Path=/ws/game; Max-Age=30", None),
+            ("; HttpOnly=false; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30", None),
+            ("; HttpOnly; Secure=false; SameSite=Strict; Path=/ws/game; Max-Age=30", None),
+            ("; HttpOnly; Secure; SameSite=Lax; Path=/ws/game; Max-Age=30", None),
+            ("; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=30", None),
+            ("; HttpOnly; Secure; SameSite=Strict; Path=/ws/game", None),
+            ("; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=0", None),
+            ("; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=030", None),
+            ("; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=thirty", None),
+            (
+                "; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=31",
+                {"issuedAt": "2026-01-01T00:00:00Z", "expiresAt": "2026-01-01T00:00:30Z"},
+            ),
+            (
+                "; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30",
+                {"issuedAt": "bad", "expiresAt": "2026-01-01T00:00:30Z"},
+            ),
+            (
+                "; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30",
+                {"issuedAt": "2026-01-01T00:00:30Z", "expiresAt": "2026-01-01T00:00:00Z"},
+            ),
+            (
+                "; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30",
+                {"issuedAt": "2026-01-01T00:00:00Z"},
+            ),
+            ("; HttpOnly; Secure; SameSite=Strict; Path=/ws/game; Max-Age=30", {}),
+        )
+        for attributes, metadata in invalid_responses:
+            http = FakeHttp(cookie_attributes=attributes, connect_token_metadata=metadata)
+            socket_attempts = []
+            with self.subTest(attributes=attributes, metadata=metadata), self.assertRaises(
+                MODULE.HostedWebSocketPlayableSmokeError
+            ):
+                MODULE.run_smoke(
+                    self.config(),
+                    http_request=http,
+                    websocket_factory=lambda *args: socket_attempts.append(args),
+                )
+            self.assertEqual(socket_attempts, [])
+
+    def test_connect_token_cookie_accepts_full_protection_and_token_ttl(self):
+        http = FakeHttp()
+        socket_attempts = []
+        MODULE.run_smoke(
+            self.config(),
+            http_request=http,
+            websocket_factory=lambda *args: (socket_attempts.append(args) or FakeWebSocket()),
+        )
+        self.assertEqual(len(socket_attempts), 1)
 
     def test_readiness_rejects_non_2xx_and_malformed_payload(self):
         for readiness in (

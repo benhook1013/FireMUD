@@ -51,7 +51,12 @@ public class GameInstanceRepository {
     GAME_INSTANCES.SCRIPT_PATCH_PINNED_CONTROL_PLANE_REQUEST_ID,
     GAME_INSTANCES.OWNER_ACCOUNT_ID,
     GAME_INSTANCES.STATUS,
-    GAME_INSTANCES.ROW_VERSION
+    GAME_INSTANCES.ROW_VERSION,
+    GAME_INSTANCES.RUN_OWNED_START_REQUEST_ID,
+    GAME_INSTANCES.RUN_OWNED_START_REQUEST_DIGEST,
+    GAME_INSTANCES.RUN_OWNED_START_PUBLISHED_RELEASE_BUNDLE_REF,
+    GAME_INSTANCES.RUN_OWNED_START_PREPARING_EPOCH,
+    GAME_INSTANCES.RUN_OWNED_START_ACTIVE_EPOCH
   };
 
   private final DSLContext dsl;
@@ -62,6 +67,28 @@ public class GameInstanceRepository {
 
   public Optional<GameInstance> findById(Long id) {
     return selectGameInstances().where(GAME_INSTANCES.ID.eq(id)).fetchOptional(this::toEntity);
+  }
+
+  /** Serializes run-owned initial launch identity allocation within the caller's transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void lockRunOwnedStartIdentity(long tenantId, String requestId) {
+    if (dsl.dialect().family() == org.jooq.SQLDialect.POSTGRES) {
+      String key = "run-owned-initial-launch:" + tenantId + ":" + requestId;
+      dsl.fetch("select pg_advisory_xact_lock(hashtextextended(cast(? as text), 0))", key);
+    }
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Optional<GameInstance> findByTenantIdAndRunOwnedStartRequestIdForUpdate(
+      long tenantId, String requestId) {
+    return selectGameInstances()
+        .where(
+            GAME_INSTANCES
+                .TENANT_ID
+                .eq(tenantId)
+                .and(GAME_INSTANCES.RUN_OWNED_START_REQUEST_ID.eq(requestId)))
+        .forUpdate()
+        .fetchOptional(this::toEntity);
   }
 
   /**
@@ -163,6 +190,10 @@ public class GameInstanceRepository {
                 entity.getScriptPatchPinnedControlPlaneRequestId())
             .set(GAME_INSTANCES.OWNER_ACCOUNT_ID, entity.getOwnerAccountId())
             .set(GAME_INSTANCES.STATUS, entity.getStatus())
+            .set(
+                GAME_INSTANCES.RUN_OWNED_START_PREPARING_EPOCH,
+                entity.getRunOwnedStartPreparingEpoch())
+            .set(GAME_INSTANCES.RUN_OWNED_START_ACTIVE_EPOCH, entity.getRunOwnedStartActiveEpoch())
             .set(GAME_INSTANCES.ROW_VERSION, nextRowVersion)
             .where(
                 GAME_INSTANCES
@@ -858,6 +889,12 @@ public class GameInstanceRepository {
         entity.getScriptPatchPinnedControlPlaneRequestId());
     record.setOwnerAccountId(entity.getOwnerAccountId());
     record.setStatus(entity.getStatus());
+    record.setRunOwnedStartRequestId(entity.getRunOwnedStartRequestId());
+    record.setRunOwnedStartRequestDigest(entity.getRunOwnedStartRequestDigest());
+    record.setRunOwnedStartPublishedReleaseBundleRef(
+        entity.getRunOwnedStartPublishedReleaseBundleRef());
+    record.setRunOwnedStartPreparingEpoch(entity.getRunOwnedStartPreparingEpoch());
+    record.setRunOwnedStartActiveEpoch(entity.getRunOwnedStartActiveEpoch());
   }
 
   private GameInstance toEntity(Record record) {
@@ -883,6 +920,13 @@ public class GameInstanceRepository {
     entity.setOwnerAccountId(record.get(GAME_INSTANCES.OWNER_ACCOUNT_ID));
     entity.setStatus(record.get(GAME_INSTANCES.STATUS));
     entity.setRowVersion(record.get(GAME_INSTANCES.ROW_VERSION));
+    entity.setRunOwnedStartRequestId(record.get(GAME_INSTANCES.RUN_OWNED_START_REQUEST_ID));
+    entity.setRunOwnedStartRequestDigest(record.get(GAME_INSTANCES.RUN_OWNED_START_REQUEST_DIGEST));
+    entity.setRunOwnedStartPublishedReleaseBundleRef(
+        record.get(GAME_INSTANCES.RUN_OWNED_START_PUBLISHED_RELEASE_BUNDLE_REF));
+    entity.setRunOwnedStartPreparingEpoch(
+        record.get(GAME_INSTANCES.RUN_OWNED_START_PREPARING_EPOCH));
+    entity.setRunOwnedStartActiveEpoch(record.get(GAME_INSTANCES.RUN_OWNED_START_ACTIVE_EPOCH));
     return entity;
   }
 }

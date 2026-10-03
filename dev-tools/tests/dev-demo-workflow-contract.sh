@@ -158,6 +158,53 @@ if extract_source_range "$range_fixture" '^start$' '^end$' \
   exit 1
 fi
 
+# Execute the parser copied from the actual dev-demo bootstrap step. The
+# ClusterIP Service exposes port 80 but forwards to the Gateway pod on 8080.
+gateway_port_parser_test="$fixture_dir/test-gateway-port-parser.sh"
+{
+  extract_source_range "$workflow" '^          # BEGIN gateway port parser$' '^          # END gateway port parser$' \
+    | sed '1d; s/^          //'
+  cat <<'EOF'
+expect_gateway_port() {
+  local line="$1"
+  local expected="$2"
+  local output status
+  printf '%s\n' "$line" >"$PORT_FORWARD_LOG"
+  if output="$(parse_bootstrap_gateway_port "$PORT_FORWARD_LOG" 2>/dev/null)"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [[ "$expected" == reject ]]; then
+    [[ "$status" -ne 0 && -z "$output" ]] || {
+      echo "Gateway port parser accepted an invalid forwarding line: $line" >&2
+      exit 1
+    }
+  else
+    [[ "$status" -eq 0 && "$output" == "$expected" ]] || {
+      echo "Gateway port parser returned '$output' for '$line', expected '$expected'" >&2
+      exit 1
+    }
+  fi
+}
+
+expect_gateway_port 'Forwarding from 127.0.0.1:49152 -> 8080' 49152
+expect_gateway_port 'Forwarding from 127.0.0.1:1 -> 8080' 1
+expect_gateway_port 'Forwarding from 127.0.0.1:65535 -> 8080' 65535
+expect_gateway_port 'Forwarding from 127.0.0.1:00008 -> 8080' 8
+expect_gateway_port 'Forwarding from 127.0.0.1:49152 -> 80' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:49152 -> 8081' reject
+expect_gateway_port 'Forwarding from 0.0.0.0:49152 -> 8080' reject
+expect_gateway_port 'Forwarding from [::1]:49152 -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:not-a-port -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:0 -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:65536 -> 8080' reject
+expect_gateway_port 'Forwarding from 127.0.0.1:999999 -> 8080' reject
+expect_gateway_port 'arbitrary kubectl output' reject
+EOF
+} >"$gateway_port_parser_test"
+PORT_FORWARD_LOG="$fixture_dir/gateway-port-forward.log" bash "$gateway_port_parser_test"
+
 # Exercise the certificate workspace setup and EXIT cleanup directly. A caller
 # supplied root may contain unrelated files, so only the private child created
 # for this invocation may be removed.

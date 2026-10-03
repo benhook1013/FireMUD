@@ -70,30 +70,40 @@ class RedisDirectTextConnectScopeSessionStoreTest {
 
     firstInstance.replaceWorldSnapshot(
         SESSION_ID, 0L, "catalog-fingerprint-v13", List.of(target), now);
-    firstInstance.replaceWorldScopes(
+    firstInstance.replaceRealmSnapshot(
         caller,
         "1",
         22L,
         "demo-world",
+        "realm-catalog-fingerprint-v13",
+        List.of(
+            new DirectTextConnectScopeSessionStore.RealmOrdinalTarget(
+                1, "production", 22L, 9L, 1L, "realm-target-fingerprint-v13")),
         List.of(
             new DirectTextConnectScopeSessionStore.ScopedRealm(
                 "production",
                 true,
                 "account-connect-scope-17",
                 now.plusSeconds(600),
-                playerContext(caller))));
-    firstInstance.replaceWorldScopes(
+                playerContext(caller))),
+        now);
+    firstInstance.replaceRealmSnapshot(
         caller,
         "2",
         33L,
         "demo-world",
+        "tenant-33-realm-catalog-v13",
+        List.of(
+            new DirectTextConnectScopeSessionStore.RealmOrdinalTarget(
+                1, "production", 33L, 9L, 1L, "tenant-33-realm-target-v13")),
         List.of(
             new DirectTextConnectScopeSessionStore.ScopedRealm(
                 "production",
                 true,
                 "account-connect-scope-33",
                 now.plusSeconds(600),
-                playerContext(caller, 33L))));
+                playerContext(caller, 33L))),
+        now);
     assertThat(
             replacementJoinScope(newStoreInstance(), caller, "2", 33L, "demo-world", Instant.now()))
         .satisfies(
@@ -137,24 +147,29 @@ class RedisDirectTextConnectScopeSessionStoreTest {
       assertThat(requestIds).containsOnly(requestIds.getFirst());
 
       DirectTextConnectScopeSessionStore replacement = replacementInstances.getLast();
-      replacement.clearWorldScopes(caller, 22L, "demo-world");
+      replacement.clearWorldScopes(caller, 22L, "demo-world", Instant.now());
       assertThat(
               firstInstance.publicProductionScopeForJoin(
                   caller, "1", 22L, "demo-world", Instant.now()))
           .isEmpty();
 
-      replacement.replaceWorldScopes(
+      replacement.replaceRealmSnapshot(
           caller,
           "1",
           22L,
           "demo-world",
+          "realm-catalog-fingerprint-v14",
+          List.of(
+              new DirectTextConnectScopeSessionStore.RealmOrdinalTarget(
+                  1, "production", 22L, 9L, 1L, "realm-target-fingerprint-v14")),
           List.of(
               new DirectTextConnectScopeSessionStore.ScopedRealm(
                   "production",
                   true,
                   "account-connect-scope-18",
                   Instant.now().plusSeconds(600),
-                  playerContext(caller))));
+                  playerContext(caller))),
+          Instant.now());
       String freshRequestId =
           firstInstance
               .publicProductionScopeForJoin(caller, "1", 22L, "demo-world", Instant.now())

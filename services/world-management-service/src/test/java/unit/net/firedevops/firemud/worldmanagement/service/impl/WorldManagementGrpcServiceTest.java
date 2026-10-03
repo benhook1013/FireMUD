@@ -185,6 +185,16 @@ class WorldManagementGrpcServiceTest {
               wrongPeerResponse.set(
                   invokeInitialBindAcquire(service, initialBindAcquireRequest())));
       assertEquals("PERMISSION_DENIED", wrongPeerResponse.get().getError().getCode());
+
+      AtomicReference<AcquireInitialAdmissionBindHoldResponse> wrongNamespaceResponse =
+          new AtomicReference<>();
+      runWithPeer(
+          new GrpcPeerIdentity(
+              "spiffe://firemud/ns/other/sa/game-session-service", "other", "game-session-service"),
+          () ->
+              wrongNamespaceResponse.set(
+                  invokeInitialBindAcquire(service, initialBindAcquireRequest())));
+      assertEquals("PERMISSION_DENIED", wrongNamespaceResponse.get().getError().getCode());
       Mockito.verifyNoInteractions(holdService);
     }
 

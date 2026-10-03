@@ -20,11 +20,11 @@ import java.util.regex.Pattern;
 import org.flywaydb.core.api.MigrationVersion;
 import org.junit.jupiter.api.Test;
 
-class V9__enforce_tenant_public_realm_cardinalityTest {
+class V11__enforce_tenant_public_realm_cardinalityTest {
   private static final Pattern MIGRATION_FILE = Pattern.compile("^V([^_]+)__.*\\.sql$");
 
   @Test
-  void keepsAdmissionPointerMigrationsUniqueAndOrderedFromTheV7AuditThroughV10()
+  void keepsAdmissionPointerMigrationsUniqueAndOrderedFromTheV7AuditThroughV12()
       throws IOException, URISyntaxException {
     var auditMigrationUrl =
         getClass()
@@ -46,9 +46,11 @@ class V9__enforce_tenant_public_realm_cardinalityTest {
     assertThat(orderedMigrationNames)
         .containsSubsequence(
             "V7__audit_gameplay_catalog_revision.sql",
-            "V8__initial_admission_bind_owner_ledger.sql",
-            "V9__enforce_tenant_public_realm_cardinality.sql",
-            "V10__index_gameplay_admission_pointer_event_tenant_lookup.sql");
+            "V8__repair_legacy_bootstrap_public_realm.sql",
+            "V9__initial_admission_bind_owner_ledger.sql",
+            "V10__run_owned_initial_launch_identity.sql",
+            "V11__enforce_tenant_public_realm_cardinality.sql",
+            "V12__index_gameplay_admission_pointer_event_tenant_lookup.sql");
 
     String v7 = readMigration("V7__audit_gameplay_catalog_revision.sql");
     String normalizedV7 = normalizeSql(v7);
@@ -61,26 +63,48 @@ class V9__enforce_tenant_public_realm_cardinalityTest {
             "CHECK ((realm_id IS NULL) = (playable_state_namespace_id IS NULL))");
     assertNoDataRewrite(normalizedV7);
 
-    String v8 = normalizeSql(readMigration("V8__initial_admission_bind_owner_ledger.sql"));
-    assertNoDataRewrite(v8);
+    String v8Repair = normalizeSql(readMigration("V8__repair_legacy_bootstrap_public_realm.sql"));
+    // V8 repairs only a fully evidenced, unchanged bootstrap pair; it intentionally updates data.
+    assertThat(v8Repair)
+        .contains(
+            "demo.world_slug = 'demo'",
+            "demo.realm_slug = 'production'",
+            "sandbox.world_slug = 'sandbox'",
+            "sandbox.realm_slug = 'production'",
+            "demo.last_updated_by = 'system/bootstrap'",
+            "sandbox.last_updated_by = 'system/bootstrap'",
+            "public_pointer.public_production_realm = true",
+            "= 2",
+            "UPDATE gameplay_admission_pointer sandbox",
+            "SET public_production_realm = false",
+            "AND sandbox.catalog_revision = 1",
+            "migration:V8:repair-legacy-bootstrap-public-realm:");
 
-    String v9 = normalizeSql(readMigration("V9__enforce_tenant_public_realm_cardinality.sql"));
-    assertThat(v9)
+    String v9 = normalizeSql(readMigration("V9__initial_admission_bind_owner_ledger.sql"));
+    assertThat(v9).contains("CREATE TABLE gameplay_initial_admission_bind_catalog");
+    assertNoDataRewrite(v9);
+
+    String v10 = normalizeSql(readMigration("V10__run_owned_initial_launch_identity.sql"));
+    assertThat(v10).contains("run_owned_start_request_id");
+    assertNoDataRewrite(v10);
+
+    String v11 = normalizeSql(readMigration("V11__enforce_tenant_public_realm_cardinality.sql"));
+    assertThat(v11)
         .contains(
             "CREATE UNIQUE INDEX uq_gameplay_admission_pointer_visible_public_tenant",
             "ON gameplay_admission_pointer (tenant_id)",
             "WHERE visible AND public_production_realm");
-    assertNoDataRewrite(v9);
+    assertNoDataRewrite(v11);
 
-    String v10 =
+    String v12 =
         normalizeSql(
-            readMigration("V10__index_gameplay_admission_pointer_event_tenant_lookup.sql"));
-    assertThat(v10)
+            readMigration("V12__index_gameplay_admission_pointer_event_tenant_lookup.sql"));
+    assertThat(v12)
         .isEqualTo(
             "CREATE INDEX idx_gameplay_admission_pointer_event_tenant_world_realm_id "
                 + "ON gameplay_admission_pointer_event USING btree "
                 + "(tenant_id, world_slug, realm_slug, id DESC);");
-    assertNoDataRewrite(v10);
+    assertNoDataRewrite(v12);
   }
 
   private String readMigration(String name) throws IOException {
