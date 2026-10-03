@@ -287,7 +287,8 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE);
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 
@@ -310,7 +311,34 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE);
+    assertThat(result.commandResult().errorMessage())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_MESSAGE);
+    ErrorOutput errorOutput = (ErrorOutput) result.outputs().getFirst().payload();
+    assertThat(errorOutput.messageKey()).isEqualTo("error.play.admission-pointer-unavailable");
+
+    TextPlayerOutputRenderer englishRenderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "en-NZ",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+    assertThat(englishRenderer.render(result.outputs().getFirst()))
+        .isEqualTo(
+            "ERROR ADMISSION_POINTER_UNAVAILABLE Gameplay admission pointer is temporarily unavailable. Retry PLAY shortly.");
+
+    TextPlayerOutputRenderer frenchRenderer =
+        new TextPlayerOutputRenderer(
+            new PresentationProperties(
+                "fr",
+                PresentationProperties.ColorMode.NONE,
+                false,
+                new PresentationProperties.Prompt(true, true, 150L)));
+    assertThat(frenchRenderer.render(result.outputs().getFirst()))
+        .isEqualTo(
+            "ERROR ADMISSION_POINTER_UNAVAILABLE Le pointeur d’admission au jeu est temporairement indisponible. Réessayez PLAY sous peu.");
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 
@@ -370,7 +398,8 @@ class PlayCommandHandlerTest {
                 TextCommandType.PLAY, List.of("demo", "production"), "PLAY demo production"));
 
     assertThat(result.commandResult().accepted()).isFalse();
-    assertThat(result.commandResult().errorCode()).isEqualTo("ADMISSION_POINTER_UNAVAILABLE");
+    assertThat(result.commandResult().errorCode())
+        .isEqualTo(GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE);
     Mockito.verifyNoInteractions(accountClient, entityManagementClient, moderationPolicyClient);
   }
 

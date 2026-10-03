@@ -140,6 +140,108 @@ class SqliteRecordsRepairTest(unittest.TestCase):
             (capture_dir / name).write_bytes(contents)
         return files
 
+    def late_reply_checkpoint(self, *, state="ambiguous", candidate=None, repository="owner/repo", trigger_id="10"):
+        import test_pr_review_evidence_hosted as fixtures
+
+        payload, record, record_path = fixtures.archived_addressed_reply_fixture(self.common)
+        payload["data"]["repository"]["pullRequest"]["number"] = fixtures.PR
+        payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"] = []
+        record["anchor"] = {
+            "child_head": fixtures.HEAD, "parent_identity": "develop",
+            "parent_head": fixtures.BASE, "merge_base": fixtures.BASE, "patch_id": "archived-patch",
+        }
+        record["sqlite_attempt_id"] = "late-reply"
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+        self.records.start_attempt(
+            attempt_id="late-reply", source_pr=fixtures.PR, channel="hosted",
+            candidate_sha=candidate or fixtures.HEAD, started_at=record["trigger"]["created_at"],
+            metadata={"repository": repository},
+        )
+        if state != "started":
+            self.records.finish_attempt(
+                "late-reply", state=state, finished_at="2026-09-23T00:02:10Z",
+                trigger_id=trigger_id, provider_review_id="11",
+                diagnostic="initial reply has no completion proof",
+                artifacts={"metadata": '{"initial": "immutable observation"}'},
+            )
+        body = (f"Hosted: 0 found / 0 accepted / 0 routed · {fixtures.HEAD} · 1 files\n"
+                "<!-- firemud-hosted-review: 11 -->")
+        at = "2026-09-23T00:03:00Z"
+        payload["data"]["repository"]["pullRequest"]["comments"]["nodes"].append(
+            fixtures.comment(40, "owner", body, at)
+        )
+        checkpoint = evidence.parse_checkpoint_comments([{
+            "id": 40, "body": body, "created_at": at, "updated_at": at, "author_login": "owner",
+        }])[0][0]
+        return payload, checkpoint
+
+    def test_late_verified_reply_preserves_ambiguous_attempt_and_appends_exact_source(self):
+        payload, checkpoint = self.late_reply_checkpoint()
+        before = self.records.history(PR)
+        artifacts = self.records.attempt_artifacts("late-reply")
+        with patch.object(hosted, "_git_common_dir", return_value=self.common):
+            preview = repair_provider_checkpoints(
+                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
+                common=self.common, hosted_payload=payload,
+            )
+            self.assertEqual(preview["status"], "preview")
+            self.assertEqual(self.records.history(PR), before)
+            result = repair_provider_checkpoints(
+                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
+                common=self.common, hosted_payload=payload, dry_run=False,
+            )
+            after = self.records.history(PR)
+            replay = repair_provider_checkpoints(
+                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
+                common=self.common, hosted_payload=payload, dry_run=False,
+            )
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(replay["status"], "complete")
+        self.assertEqual(after["attempts"], before["attempts"])
+        self.assertEqual(self.records.attempt_artifacts("late-reply"), artifacts)
+        self.assertEqual(self.records.history(PR), after)
+        self.assertEqual(len(after["runs"]), 1)
+        self.assertEqual(after["runs"][0]["counts"], {"found": 0, "accepted": 0, "routed": 0})
+        self.assertEqual(after["provider_origins"][0]["provider_id"], "trigger:10")
+
+    def test_late_reply_retains_hold_when_provider_reply_is_still_active(self):
+        payload, checkpoint = self.late_reply_checkpoint()
+        response = next(
+            item for item in payload["data"]["repository"]["pullRequest"]["comments"]["nodes"]
+            if item.get("databaseId") == 11
+        )
+        response["body"] = "Reviewing your changes, please wait."
+        before = self.records.history(PR)
+        with (
+            patch.object(hosted, "_git_common_dir", return_value=self.common),
+            self.assertRaises(SqliteRecordsRepairError),
+        ):
+            repair_provider_checkpoints(
+                self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint], actor="operator",
+                common=self.common, hosted_payload=payload, dry_run=False,
+            )
+        self.assertEqual(self.records.history(PR), before)
+
+    def test_late_reply_rejects_wrong_immutable_attempt_identity(self):
+        for fields in ({"candidate": "c" * 40}, {"repository": "other/repo"}, {"trigger_id": "99"}):
+            with self.subTest(fields=fields), tempfile.TemporaryDirectory() as directory:
+                self.common = Path(directory)
+                self.database = self.common / "controller.sqlite3"
+                sqlite_store.SqliteStateStore(self.database).update(lambda state: state)
+                self.records = SqliteReviewRecords(self.database)
+                self.records.bootstrap()
+                payload, checkpoint = self.late_reply_checkpoint(**fields)
+                before = self.records.history(PR)
+                with (
+                    patch.object(hosted, "_git_common_dir", return_value=self.common),
+                    self.assertRaisesRegex(SqliteRecordsRepairError, "immutable ambiguous attempt"),
+                ):
+                    repair_provider_checkpoints(
+                        self.records, repo=REPO, pr_number=PR, checkpoints=[checkpoint],
+                        actor="operator", common=self.common, hosted_payload=payload, dry_run=False,
+                    )
+                self.assertEqual(self.records.history(PR), before)
+
     def record_cli_attempt(
         self,
         *,

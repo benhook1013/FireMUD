@@ -843,9 +843,9 @@ public class PlayCommandHandler {
   private PlayCommandHandlingResult admissionPointerUnavailableFailure(
       String tenantTag, String gameInstanceTag) {
     return failure(
-        "ADMISSION_POINTER_UNAVAILABLE",
-        "Gameplay admission pointer is unavailable",
-        "error.play.authority-unavailable",
+        GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_CODE,
+        GameplayStageCommandConstants.ADMISSION_POINTER_UNAVAILABLE_MESSAGE,
+        "error.play.admission-pointer-unavailable",
         Map.of(),
         tenantTag,
         gameInstanceTag,
