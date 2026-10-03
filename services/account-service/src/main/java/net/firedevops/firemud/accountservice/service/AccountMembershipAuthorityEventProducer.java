@@ -464,7 +464,7 @@ public class AccountMembershipAuthorityEventProducer {
 
   /**
    * Resolves canonical Account and tenant UUIDs to one owner-fenced runtime membership snapshot.
-   * Fresh tenants use only their immutable V38 association and never receive a numeric alias;
+   * Fresh tenants use only their immutable V38.1 association and never receive a numeric alias;
    * retained tenants must resolve through the exact approved UUID association and source digest.
    */
   @Transactional(propagation = Propagation.MANDATORY)
