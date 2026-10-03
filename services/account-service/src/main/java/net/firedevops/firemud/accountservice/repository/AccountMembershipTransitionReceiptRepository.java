@@ -127,7 +127,9 @@ public class AccountMembershipTransitionReceiptRepository {
    * Reads and validates the latest provisional receipt. Empty does not prove a canonical
    * sequence-zero stream; existing rows without a receipt fail closed.
    */
-  @Transactional(readOnly = true)
+  // A contradictory read is an expected fail-closed JOIN/reconciliation outcome. The caller
+  // records that outcome in its existing transaction; this read performs no mutation to undo.
+  @Transactional(readOnly = true, noRollbackFor = IllegalStateException.class)
   public Optional<MembershipTransitionReceipt> findLatestReceipt(long accountId, long tenantId) {
     ReceiptSnapshot snapshot = readLatestReceiptSnapshot(accountId, tenantId);
     if (snapshot == null) {
@@ -171,7 +173,10 @@ public class AccountMembershipTransitionReceiptRepository {
   }
 
   /** Requires positive retained history before reactivating an existing inactive membership. */
-  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  @Transactional(
+      propagation = Propagation.MANDATORY,
+      readOnly = true,
+      noRollbackFor = IllegalStateException.class)
   public MembershipTransitionReceipt requireInactiveMembershipHistory(
       AccountTenantMembership membership) {
     if (membership == null

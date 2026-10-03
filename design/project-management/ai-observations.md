@@ -78,6 +78,14 @@ Entry format:
   - Context: #2873's Account tenant-association PostgreSQL test passed local compilation but skipped without Docker. Its first hosted run could not find an inserted table because a new `?currentSchema=` was appended to a Testcontainers JDBC URL that already carried a query string. After preserving the existing separator, the next run reached the later saga migration and failed because the standalone Flyway invocation omitted `${serviceSchema}`.
   - Expected pattern: preserve existing JDBC URL parameters when adding a schema selector, and supply the same Flyway placeholders for both target-version setup and subsequent full migration. Treat each hosted failure as fixture evidence until the exact database case executes and passes; local compilation is not that proof.
 
+- `2026-09-26`: Indexed PostgreSQL `TEXT` migrations may fail the jOOQ/H2 schema model
+  - Context: Account's new authority-outbox stream key used an indexed `TEXT` column; PostgreSQL accepts that shape, but the configured jOOQ DDL interpreter mapped it to an H2 CLOB and rejected the primary-key index before Java compilation.
+  - Expected pattern: use an explicit bounded `VARCHAR` for indexed identity fields with matching application validation, run the owning service's `generateJooq`, and still prove the migration and concurrency behavior separately against PostgreSQL. Parser success does not establish runtime database proof.
+
+- `2026-09-27`: RFC 3339 fractional-second parsing needs all permitted precisions
+  - Context: the Account response-envelope Secret materializer emitted canonical UTC timestamps with trailing fractional zeroes removed. A broad developer-tool run intermittently failed its CLI readback although focused tests using whole-second timestamps passed.
+  - Observation: this runner's Python `datetime.fromisoformat` rejected a valid five-digit fractional-second timestamp such as `.00101Z` after offset normalization. A timestamp round-trip sweep reproduced the defect, and the parser was changed to accept the contract's one-to-six fractional digits explicitly; the full 112-test developer-tool suite then passed.
+  - Expected pattern: test exact writer-to-reader timestamp round trips across fractional precisions, including live-clock output, before treating a source-generation/freshness readback as reliable.
 - `2026-09-26`: Necessary procedural migration preflights may use jOOQ ignore markers
   - Context: Account V25's duplicate-detection preflight requires a PostgreSQL `DO` block and wraps it in `-- [jooq ignore start]` and `-- [jooq ignore stop]` markers.
   - Observation: this qualifies the 2026-09-20 expected pattern: declarative constraints remain preferred when sufficient, but a necessary procedural preflight can be excluded from jOOQ parsing while retaining separate PostgreSQL migration proof.
@@ -241,3 +249,8 @@ Entry format:
   - Context: #2873 was reconciled in a local preparation branch whose name differed from the PR head branch; an initial push mistakenly named #2880's branch as its destination.
   - Observation: Git rejected that push as non-fast-forward, so no remote branch changed. The local commit was then pushed to #2873's verified `headRefName`.
   - Expected pattern: read the live PR `headRefName` and exact remote head immediately before each push from an isolated branch; use the verified destination, and treat a non-fast-forward rejection as a stop-and-recheck signal rather than forcing it.
+
+- `2026-09-30`: Await publication readback before dispatching exact-head CI
+  - Context: a #2881 push yielded asynchronously and later returned a generic remote rejection. Dependent PR-body and CI operations were issued before consuming that result, so CI run `36703184951` targeted the old published head instead of the prepared correction.
+  - Observation: the rejection's cause was not reported. Fresh remote readback confirmed no head change; a non-force retry then published the correction. The stale-head run was explicitly cancelled and excluded from proof.
+  - Expected pattern: finish the push, verify the exact published SHA, and only then describe it as published or dispatch its CI. Independent operations may run concurrently; operations depending on publication must remain ordered even when tool calls yield.

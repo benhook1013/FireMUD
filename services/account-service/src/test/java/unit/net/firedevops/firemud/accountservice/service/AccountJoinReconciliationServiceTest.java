@@ -2,6 +2,7 @@ package net.firedevops.firemud.accountservice.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -26,6 +27,7 @@ import net.firedevops.firemud.accountservice.dto.MembershipTransitionReceiptDige
 import net.firedevops.firemud.accountservice.dto.VerifiedJoinScope;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository;
 import net.firedevops.firemud.accountservice.repository.AccountAuditOutboxRepository.JoinAuditEvidence;
+import net.firedevops.firemud.accountservice.repository.AccountAuthorityOutboxRepository.Checkpoint;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository;
 import net.firedevops.firemud.accountservice.repository.AccountConnectScopeRepository.ConnectScopeEvidence;
 import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepository;
@@ -33,6 +35,8 @@ import net.firedevops.firemud.accountservice.repository.AccountJoinOperationRepo
 import net.firedevops.firemud.accountservice.repository.AccountMembershipTransitionReceiptRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRepository.JoinMembershipProof;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -59,7 +63,7 @@ class AccountJoinReconciliationServiceTest {
   private static final UUID REALM_ID = UUID.fromString("4c4b57d8-e3a2-48fe-9977-e7df0fdce901");
 
   @Test
-  void exactReadbackCommitsEvenWhenScopeExpiredAndAuditOccurredAfterExpiry() {
+  void matchingRoleSnapshotCommitsEvenWhenScopeExpiredAndAuditOccurredAfterExpiry() {
     Fixture fixture = fixture(5);
     JoinOperation pending = pendingOperation(5, NOW.minusSeconds(1));
     stubDue(fixture, pending);
@@ -90,6 +94,11 @@ class AccountJoinReconciliationServiceTest {
         .recordReconciliationAttempt(
             anyString(), anyInt(), anyInt(), any(), any(), anyString(), any());
     verify(fixture.transitionReceipts).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.membershipAuthorityEventProducer)
+        .requireCurrentMembershipEvent(
+            any(JoinMembershipProof.class), any(RoleSnapshot.class), eq(REQUEST_ID), eq(false));
+    verify(fixture.roleSnapshots)
+        .findForUpdate(ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION);
     verify(fixture.auditOutbox).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
     assertThat(reconciliationCounter(fixture, "committed")).isEqualTo(1);
   }
@@ -118,6 +127,12 @@ class AccountJoinReconciliationServiceTest {
             MEMBERSHIP_VERSION,
             MEMBERSHIP_AUTHORITY_GENERATION);
     verify(fixture.transitionReceipts).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.membershipAuthorityEventProducer)
+        .requireCurrentMembershipEvent(
+            any(JoinMembershipProof.class),
+            any(RoleSnapshot.class),
+            eq("prior-join-request"),
+            eq(false));
     verify(fixture.auditOutbox).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
     verify(fixture.auditOutbox, never())
         .append(any(), anyString(), any(), anyString(), anyString());
@@ -155,6 +170,91 @@ class AccountJoinReconciliationServiceTest {
             NOW.minusSeconds(1),
             NOW,
             "MEMBERSHIP_TRANSITION_RECEIPT_MISMATCH",
+            NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+  }
+
+  @Test
+  void missingCanonicalEventKeepsJoinedOperationPending() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
+        .thenReturn(
+            Optional.of(
+                verifiedJoinAuditEvidence(
+                    joinAuditEnvelope(WORLD_SLUG, TENANT_ID, correctPayloadDigest()))));
+    when(fixture.membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+            any(JoinMembershipProof.class), any(RoleSnapshot.class), eq(REQUEST_ID), eq(false)))
+        .thenThrow(new IllegalStateException("canonical event absent"));
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE",
+            NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE",
+            NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+  }
+
+  @Test
+  void missingCanonicalEventKeepsAlreadyActiveOperationPending() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    stubReceiptFor(fixture, "prior-join-request", MEMBERSHIP_ID);
+    when(fixture.auditOutbox.findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID))
+        .thenReturn(Optional.empty());
+    when(fixture.membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+            any(JoinMembershipProof.class),
+            any(RoleSnapshot.class),
+            eq("prior-join-request"),
+            eq(false)))
+        .thenThrow(new IllegalStateException("canonical event absent"));
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE",
+            NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_AUTHORITY_EVENT_UNAVAILABLE",
             NOW.plusMillis(5_000));
     verify(fixture.joinOperations, never())
         .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
@@ -330,6 +430,135 @@ class AccountJoinReconciliationServiceTest {
     verifyNoInteractions(fixture.auditOutbox);
     assertThat(reconciliationCounter(fixture, "unresolved")).isEqualTo(1);
     assertThat(reconciliationCounter(fixture, "max_attempts_reached")).isZero();
+  }
+
+  @Test
+  void missingRoleSnapshotStaysPendingAndDoesNotInferRoles() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(Optional.empty());
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_ROLE_SNAPSHOT_ABSENT",
+            NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_ROLE_SNAPSHOT_ABSENT",
+            NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+    verify(fixture.transitionReceipts, never()).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.auditOutbox, never()).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
+  }
+
+  @Test
+  void mismatchedRoleSnapshotStaysPendingAndDoesNotInferRoles() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(
+            Optional.of(
+                new RoleSnapshot(
+                    ACCOUNT_ID,
+                    TENANT_ID,
+                    MEMBERSHIP_ID,
+                    MEMBERSHIP_VERSION + 1,
+                    List.of("PLAYER"))));
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH",
+            NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH",
+            NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
+    verify(fixture.transitionReceipts, never()).findLatestReceipt(ACCOUNT_ID, TENANT_ID);
+    verify(fixture.auditOutbox, never()).findJoinEnvelopeForUpdate(joinAuditEventId(), TENANT_ID);
+  }
+
+  @Test
+  void publicJoinSnapshotWithoutPlayerStaysPending() {
+    Fixture fixture = fixture(3);
+    JoinOperation pending = pendingOperation(0, NOW.minusSeconds(1));
+    stubDue(fixture, pending);
+    when(fixture.joinOperations.findForUpdate(REQUEST_ID)).thenReturn(Optional.of(pending));
+    when(fixture.connectScopes.findEvidenceByTokenHash(pending.scopeTokenHash()))
+        .thenReturn(Optional.of(scopeEvidence("PUBLIC_PRODUCTION", TENANT_ID, WORLD_SLUG)));
+    stubActiveMembership(fixture);
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(
+            Optional.of(
+                new RoleSnapshot(
+                    ACCOUNT_ID,
+                    TENANT_ID,
+                    MEMBERSHIP_ID,
+                    MEMBERSHIP_VERSION,
+                    List.of("designer"))));
+    when(fixture.joinOperations.recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH",
+            NOW.plusMillis(5_000)))
+        .thenReturn(true);
+
+    fixture.service.reconcileDueOperations(NOW);
+
+    verify(fixture.joinOperations)
+        .recordReconciliationAttempt(
+            REQUEST_ID,
+            0,
+            3,
+            NOW.minusSeconds(1),
+            NOW,
+            "MEMBERSHIP_ROLE_SNAPSHOT_MISMATCH",
+            NOW.plusMillis(5_000));
+    verify(fixture.joinOperations, never())
+        .finish(eq(REQUEST_ID), anyString(), anyString(), any(), any(), any());
   }
 
   @Test
@@ -605,9 +834,21 @@ class AccountJoinReconciliationServiceTest {
     AccountJoinOperationRepository joinOperations = mock(AccountJoinOperationRepository.class);
     AccountConnectScopeRepository connectScopes = mock(AccountConnectScopeRepository.class);
     AccountTenantMembershipRepository memberships = mock(AccountTenantMembershipRepository.class);
+    AccountTenantMembershipRoleSnapshotRepository roleSnapshots =
+        mock(AccountTenantMembershipRoleSnapshotRepository.class);
     AccountMembershipTransitionReceiptRepository transitionReceipts =
         mock(AccountMembershipTransitionReceiptRepository.class);
     AccountAuditOutboxRepository auditOutbox = mock(AccountAuditOutboxRepository.class);
+    AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer =
+        mock(AccountMembershipAuthorityEventProducer.class);
+    when(membershipAuthorityEventProducer.requireCurrentMembershipEvent(
+            any(JoinMembershipProof.class), any(RoleSnapshot.class), anyString(), anyBoolean()))
+        .thenReturn(
+            new Checkpoint(
+                "account:auth-authority:v1:membership/account-a/tenant-a",
+                1L,
+                "event-1",
+                "sha256:" + "0".repeat(64)));
     PlatformTransactionManager transactionManager = mock(PlatformTransactionManager.class);
     when(transactionManager.getTransaction(any(TransactionDefinition.class)))
         .thenAnswer(invocation -> new SimpleTransactionStatus());
@@ -617,8 +858,10 @@ class AccountJoinReconciliationServiceTest {
             joinOperations,
             connectScopes,
             memberships,
+            roleSnapshots,
             transitionReceipts,
             auditOutbox,
+            membershipAuthorityEventProducer,
             meterRegistry,
             transactionManager,
             10,
@@ -629,15 +872,25 @@ class AccountJoinReconciliationServiceTest {
         joinOperations,
         connectScopes,
         memberships,
+        roleSnapshots,
         transitionReceipts,
         auditOutbox,
+        membershipAuthorityEventProducer,
         meterRegistry);
   }
 
   private static void stubActiveMembership(Fixture fixture) {
     when(fixture.memberships.findJoinProofForUpdate(ACCOUNT_ID, TENANT_ID))
         .thenReturn(Optional.of(activeJoinMembership()));
+    when(fixture.roleSnapshots.findForUpdate(
+            ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION))
+        .thenReturn(Optional.of(activeRoleSnapshot()));
     stubReceiptFor(fixture, REQUEST_ID, MEMBERSHIP_ID);
+  }
+
+  private static RoleSnapshot activeRoleSnapshot() {
+    return new RoleSnapshot(
+        ACCOUNT_ID, TENANT_ID, MEMBERSHIP_ID, MEMBERSHIP_VERSION, List.of("player"));
   }
 
   private static void stubReceiptFor(Fixture fixture, String requestId, long membershipId) {
@@ -888,7 +1141,9 @@ class AccountJoinReconciliationServiceTest {
       AccountJoinOperationRepository joinOperations,
       AccountConnectScopeRepository connectScopes,
       AccountTenantMembershipRepository memberships,
+      AccountTenantMembershipRoleSnapshotRepository roleSnapshots,
       AccountMembershipTransitionReceiptRepository transitionReceipts,
       AccountAuditOutboxRepository auditOutbox,
+      AccountMembershipAuthorityEventProducer membershipAuthorityEventProducer,
       SimpleMeterRegistry meterRegistry) {}
 }
