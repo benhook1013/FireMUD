@@ -19,6 +19,7 @@ import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionS
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -347,7 +348,7 @@ class GameplayWorldCatalogTest {
   @Test
   void pointerReadFailureIsDistinctFromMalformedOrAmbiguousAuthority() {
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("authority down"))
+        .thenThrow(new DataAccessException("authority down"))
         .thenReturn(null);
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
 
@@ -358,9 +359,18 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
+  void unexpectedPointerReadDefectPropagates() {
+    IllegalStateException defect = new IllegalStateException("unexpected mapping defect");
+    when(authorityService.listPointers()).thenThrow(defect);
+    GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
+
+    assertThatThrownBy(catalog::readDiscoverySnapshot).isSameAs(defect);
+  }
+
+  @Test
   void authorityWorldResolutionUsesReadOutageClassificationBeforeSnapshotValidation() {
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("authority down"))
+        .thenThrow(new DataAccessException("authority down"))
         .thenReturn(null)
         .thenReturn(
             List.of(pointer("demo", "Demo World", "production", "Live Realm", 0L, 11L, 1L)));
@@ -378,7 +388,7 @@ class GameplayWorldCatalogTest {
   @Test
   void publicProductionCardinalityKeepsReadOutageDistinctFromMalformedSnapshot() {
     when(authorityService.listPointers())
-        .thenThrow(new IllegalStateException("authority down"))
+        .thenThrow(new DataAccessException("authority down"))
         .thenReturn(
             List.of(pointer("demo", "Demo World", "production", "Live Realm", 0L, 11L, 1L)));
     GameplayWorldCatalog catalog = new GameplayWorldCatalog(authorityService);
@@ -433,11 +443,22 @@ class GameplayWorldCatalogTest {
   void matchesCurrentAdmissionPointerPropagatesTenantReadOutage() {
     CurrentAdmissionTarget target = currentAdmissionTarget();
     when(authorityService.listPointersByTenant(1L))
-        .thenThrow(new IllegalStateException("authority down"));
+        .thenThrow(new DataAccessException("authority down"));
 
     assertThatThrownBy(
             () -> target.catalog().matchesCurrentAdmissionPointer(target.world(), target.realm()))
         .isInstanceOf(GameplayWorldCatalog.AuthorityPointerReadUnavailableException.class);
+  }
+
+  @Test
+  void matchesCurrentAdmissionPointerPropagatesUnexpectedTenantReadDefect() {
+    CurrentAdmissionTarget target = currentAdmissionTarget();
+    IllegalStateException defect = new IllegalStateException("unexpected mapping defect");
+    when(authorityService.listPointersByTenant(1L)).thenThrow(defect);
+
+    assertThatThrownBy(
+            () -> target.catalog().matchesCurrentAdmissionPointer(target.world(), target.realm()))
+        .isSameAs(defect);
   }
 
   @Test
@@ -1021,7 +1042,7 @@ class GameplayWorldCatalogTest {
   }
 
   @Test
-  void realmSnapshotResolvesByExactTargetIdentityAfterResponseOrdinalChanges() {
+  void realmSnapshotFingerprintsPublicCatalogAndPreservesVisibleResponseTargets() {
     GameplayWorldCatalog.RealmView production =
         new GameplayWorldCatalog.RealmView(
             "production",
@@ -1052,21 +1073,167 @@ class GameplayWorldCatalogTest {
             30L,
             UUID.fromString("a11df0f1-1b57-465e-9c4b-bb34f8153d31"),
             UUID.fromString("b2a958e0-13a2-41d0-9c39-59a96cf31412"));
+    GameplayWorldCatalog.RealmView privateChanged =
+        new GameplayWorldCatalog.RealmView(
+            "preview",
+            "Preview Realm",
+            7L,
+            99L,
+            99L,
+            true,
+            false,
+            false,
+            "ISOLATED",
+            "ALLOW_NEW",
+            99L,
+            UUID.fromString("a11df0f1-1b57-465e-9c4b-bb34f8153d31"),
+            UUID.fromString("b2a958e0-13a2-41d0-9c39-59a96cf31412"));
     GameplayWorldCatalog.WorldView original =
         new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(production, preview));
     GameplayWorldCatalog.WorldView reordered =
         new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(preview, production));
+    GameplayWorldCatalog.WorldView changedPrivateAndReordered =
+        new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(privateChanged, production));
+    GameplayWorldCatalog originalCatalog = GameplayWorldCatalog.forWorldViews(List.of(original));
     GameplayWorldCatalog catalog = GameplayWorldCatalog.forWorldViews(List.of(reordered));
     GameplayWorldCatalog.RealmDiscoverySnapshot snapshot =
-        GameplayWorldCatalog.forWorldViews(List.of(original))
-            .realmDiscoverySnapshot(original, List.of(production, preview));
+        originalCatalog.realmDiscoverySnapshot(original, List.of(production, preview));
+    GameplayWorldCatalog.RealmDiscoverySnapshot publicSnapshot =
+        originalCatalog.readRealmDiscoverySnapshot(original);
 
+    assertThat(snapshot.ordinalTargets())
+        .extracting(DirectTextConnectScopeSessionStore.RealmOrdinalTarget::realmSlug)
+        .containsExactly("production", "preview");
+    GameplayWorldCatalog.RealmDiscoverySnapshot reorderedPublicSnapshot =
+        catalog.readRealmDiscoverySnapshot(reordered);
+    assertThat(reorderedPublicSnapshot.catalogFingerprint())
+        .isEqualTo(publicSnapshot.catalogFingerprint())
+        .isNotEqualTo(snapshot.catalogFingerprint());
+    assertThat(reorderedPublicSnapshot.ordinalTargets())
+        .extracting(DirectTextConnectScopeSessionStore.RealmOrdinalTarget::realmSlug)
+        .containsExactly("production");
+    GameplayWorldCatalog.RealmDiscoverySnapshot reorderedResponseSnapshot =
+        catalog.realmDiscoverySnapshot(reordered, List.of(production, preview));
+    assertThat(reorderedResponseSnapshot.catalogFingerprint())
+        .isEqualTo(snapshot.catalogFingerprint());
+    assertThat(reorderedResponseSnapshot.ordinalTargets()).isEqualTo(snapshot.ordinalTargets());
     assertThat(
             catalog.resolveRealmSnapshotOrdinal(
                 reordered, snapshot, snapshot.ordinalTargets().get(0)))
         .contains(production);
-    assertThat(catalog.readRealmDiscoverySnapshot(reordered).catalogFingerprint())
+    assertThat(
+            catalog.resolveRealmSnapshotOrdinal(
+                reordered, snapshot, snapshot.ordinalTargets().get(1)))
+        .contains(preview);
+
+    GameplayWorldCatalog changedPrivateCatalog =
+        GameplayWorldCatalog.forWorldViews(List.of(changedPrivateAndReordered));
+    assertThat(
+            changedPrivateCatalog
+                .readRealmDiscoverySnapshot(changedPrivateAndReordered)
+                .catalogFingerprint())
+        .isEqualTo(publicSnapshot.catalogFingerprint());
+    GameplayWorldCatalog.RealmDiscoverySnapshot changedResponseSnapshot =
+        changedPrivateCatalog
+            .revalidateRealmDiscoverySnapshot(changedPrivateAndReordered, snapshot.ordinalTargets())
+            .orElseThrow();
+    assertThat(changedResponseSnapshot.catalogFingerprint())
         .isNotEqualTo(snapshot.catalogFingerprint());
+    assertThat(changedResponseSnapshot.ordinalTargets()).isNotEqualTo(snapshot.ordinalTargets());
+    assertThat(
+            changedPrivateCatalog.resolveRealmSnapshotOrdinal(
+                changedPrivateAndReordered, snapshot, snapshot.ordinalTargets().get(1)))
+        .isEmpty();
+
+    GameplayWorldCatalog.RealmView hidden =
+        new GameplayWorldCatalog.RealmView(
+            "secret",
+            "Secret Realm",
+            7L,
+            13L,
+            1L,
+            false,
+            false,
+            false,
+            "ISOLATED",
+            "ALLOW_NEW",
+            31L,
+            UUID.randomUUID(),
+            UUID.randomUUID());
+    assertThatThrownBy(() -> catalog.realmDiscoverySnapshot(original, List.of(hidden)))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("non-visible");
+
+    GameplayWorldCatalog.RealmView reroutedProduction =
+        new GameplayWorldCatalog.RealmView(
+            production.slug(),
+            production.displayName(),
+            production.tenantId(),
+            production.gameInstanceId() + 1L,
+            production.pointerVersion() + 1L,
+            production.visible(),
+            production.publicProductionRealm(),
+            production.requiresCharacterSelection(),
+            production.stateScope(),
+            production.characterCreationPolicy(),
+            production.catalogRevision() + 1L,
+            production.realmId(),
+            production.playableStateNamespaceId());
+    GameplayWorldCatalog.WorldView reroutedWorld =
+        new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(reroutedProduction, preview));
+    assertThat(
+            GameplayWorldCatalog.forWorldViews(List.of(reroutedWorld))
+                .readRealmDiscoverySnapshot(reroutedWorld)
+                .catalogFingerprint())
+        .isNotEqualTo(publicSnapshot.catalogFingerprint());
+
+    GameplayWorldCatalog.RealmView noLongerPublic =
+        new GameplayWorldCatalog.RealmView(
+            production.slug(),
+            production.displayName(),
+            production.tenantId(),
+            production.gameInstanceId(),
+            production.pointerVersion(),
+            production.visible(),
+            false,
+            production.requiresCharacterSelection(),
+            production.stateScope(),
+            production.characterCreationPolicy(),
+            production.catalogRevision() + 1L,
+            production.realmId(),
+            production.playableStateNamespaceId());
+    GameplayWorldCatalog.WorldView policyChangedWorld =
+        new GameplayWorldCatalog.WorldView("demo", "Demo", List.of(noLongerPublic, preview));
+    assertThat(
+            GameplayWorldCatalog.forWorldViews(List.of(policyChangedWorld))
+                .readRealmDiscoverySnapshot(policyChangedWorld)
+                .catalogFingerprint())
+        .isNotEqualTo(publicSnapshot.catalogFingerprint());
+
+    GameplayWorldCatalog.RealmView otherTenantProduction =
+        new GameplayWorldCatalog.RealmView(
+            "other-live",
+            "Other Live Realm",
+            8L,
+            18L,
+            2L,
+            true,
+            true,
+            false,
+            "SHARED",
+            "ALLOW_NEW",
+            31L,
+            UUID.fromString("c11df0f1-1b57-465e-9c4b-bb34f8153d31"),
+            UUID.fromString("d2a958e0-13a2-41d0-9c39-59a96cf31412"));
+    GameplayWorldCatalog.WorldView responseWorld =
+        new GameplayWorldCatalog.WorldView(
+            "demo", "Demo", List.of(production, otherTenantProduction, preview));
+    GameplayWorldCatalog.RealmDiscoverySnapshot responseSnapshot =
+        GameplayWorldCatalog.forWorldViews(List.of(responseWorld))
+            .realmDiscoverySnapshot(responseWorld, List.of(otherTenantProduction, production));
+    assertThat(responseSnapshot.ordinalTargets())
+        .extracting(DirectTextConnectScopeSessionStore.RealmOrdinalTarget::realmSlug)
+        .containsExactly("other-live", "production");
   }
 
   @Test
@@ -1182,9 +1349,29 @@ class GameplayWorldCatalogTest {
   @Test
   void propertyCatalogRealmIdsIncludeWorldAndRemainDeterministic() {
     GameplayCatalogProperties properties = new GameplayCatalogProperties();
-    properties.setWorlds(
+    GameplayCatalogProperties.World worldOne = propertyWorld("world-one", 7L, 11L, true);
+    worldOne.setRealms(
         List.of(
-            propertyWorld("world-one", 7L, 11L, true), propertyWorld("world-two", 7L, 12L, false)));
+            worldOne.getRealms().getFirst(),
+            propertyRealm(
+                "preview-one", 7L, 13L, false, GameplayCatalogProperties.RealmStateScope.ISOLATED),
+            propertyRealm(
+                "preview-two",
+                7L,
+                14L,
+                false,
+                GameplayCatalogProperties.RealmStateScope.ISOLATED)));
+    GameplayCatalogProperties.World worldTwo = propertyWorld("world-two", 7L, 12L, false);
+    worldTwo.setRealms(
+        List.of(
+            worldTwo.getRealms().getFirst(),
+            propertyRealm(
+                "preview-one",
+                7L,
+                15L,
+                false,
+                GameplayCatalogProperties.RealmStateScope.ISOLATED)));
+    properties.setWorlds(List.of(worldOne, worldTwo));
 
     GameplayWorldCatalog catalog = TestGameplayWorldCatalogs.fromProperties(properties);
     GameplayWorldCatalog.RealmView firstRealm =
@@ -1208,32 +1395,120 @@ class GameplayWorldCatalogTest {
         tenantCatalog
             .resolveRealm(tenantCatalog.resolveWorld("world-one").orElseThrow(), "shared")
             .orElseThrow();
+    GameplayWorldCatalog.RealmView firstIsolatedRealm =
+        catalog
+            .resolveRealm(catalog.resolveWorld("world-one").orElseThrow(), "preview-one")
+            .orElseThrow();
+    GameplayWorldCatalog.RealmView secondIsolatedRealm =
+        catalog
+            .resolveRealm(catalog.resolveWorld("world-one").orElseThrow(), "preview-two")
+            .orElseThrow();
+    GameplayWorldCatalog.RealmView otherWorldIsolatedRealm =
+        catalog
+            .resolveRealm(catalog.resolveWorld("world-two").orElseThrow(), "preview-one")
+            .orElseThrow();
+    GameplayCatalogProperties.World otherTenantIsolatedWorld =
+        propertyWorld("world-one", 8L, 16L, true);
+    otherTenantIsolatedWorld.getRealms().getFirst().setSlug("preview-one");
+    otherTenantIsolatedWorld
+        .getRealms()
+        .getFirst()
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    GameplayWorldCatalog otherTenantIsolatedCatalog =
+        TestGameplayWorldCatalogs.fromProperties(
+            propertiesWithWorlds(List.of(otherTenantIsolatedWorld)));
+    GameplayWorldCatalog.RealmView otherTenantIsolatedRealm =
+        otherTenantIsolatedCatalog
+            .resolveRealm(
+                otherTenantIsolatedCatalog.resolveWorld("world-one").orElseThrow(), "preview-one")
+            .orElseThrow();
+    GameplayCatalogProperties.World replacedSharedWorld =
+        propertyWorld("world-one", 7L, 111L, true);
+    GameplayWorldCatalog replacedSharedCatalog =
+        TestGameplayWorldCatalogs.fromProperties(
+            propertiesWithWorlds(List.of(replacedSharedWorld)));
+    GameplayCatalogProperties.World replacedIsolatedWorld =
+        propertyWorld("world-one", 7L, 112L, false);
+    replacedIsolatedWorld.getRealms().getFirst().setSlug("preview-one");
+    replacedIsolatedWorld
+        .getRealms()
+        .getFirst()
+        .setStateScope(GameplayCatalogProperties.RealmStateScope.ISOLATED);
+    GameplayWorldCatalog replacedIsolatedCatalog =
+        TestGameplayWorldCatalogs.fromProperties(
+            propertiesWithWorlds(List.of(replacedIsolatedWorld)));
 
     assertThat(firstRealm.realmId()).isNotEqualTo(secondRealm.realmId());
     assertThat(otherTenantRealm.realmId()).isNotEqualTo(firstRealm.realmId());
     assertThat(repeatedFirstRealm.realmId()).isEqualTo(firstRealm.realmId());
+    assertThat(firstRealm.playableStateNamespaceId())
+        .isEqualTo(secondRealm.playableStateNamespaceId());
+    assertThat(firstRealm.playableStateNamespaceId())
+        .isNotEqualTo(otherTenantRealm.playableStateNamespaceId());
     assertThat(repeatedFirstRealm.playableStateNamespaceId())
         .isEqualTo(firstRealm.playableStateNamespaceId());
+    assertThat(firstIsolatedRealm.playableStateNamespaceId())
+        .isNotEqualTo(firstRealm.playableStateNamespaceId())
+        .isNotEqualTo(secondIsolatedRealm.playableStateNamespaceId())
+        .isNotEqualTo(otherWorldIsolatedRealm.playableStateNamespaceId())
+        .isNotEqualTo(otherTenantIsolatedRealm.playableStateNamespaceId());
+    assertThat(
+            replacedSharedCatalog
+                .resolveRealm(
+                    replacedSharedCatalog.resolveWorld("world-one").orElseThrow(), "shared")
+                .orElseThrow()
+                .playableStateNamespaceId())
+        .isEqualTo(firstRealm.playableStateNamespaceId());
+    assertThat(
+            replacedIsolatedCatalog
+                .resolveRealm(
+                    replacedIsolatedCatalog.resolveWorld("world-one").orElseThrow(), "preview-one")
+                .orElseThrow()
+                .playableStateNamespaceId())
+        .isEqualTo(firstIsolatedRealm.playableStateNamespaceId());
   }
 
   private static GameplayCatalogProperties.World propertyWorld(
       String worldSlug, long tenantId, long gameInstanceId, boolean publicProductionRealm) {
-    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
-    realm.setSlug("shared");
-    realm.setDisplayName("Shared Realm");
-    realm.setTenantId(tenantId);
-    realm.setGameInstanceId(gameInstanceId);
-    realm.setPointerVersion(1L);
-    realm.setVisible(true);
-    realm.setPublicProductionRealm(publicProductionRealm);
-    realm.setStateScope(GameplayCatalogProperties.RealmStateScope.SHARED);
-    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
+    GameplayCatalogProperties.Realm realm =
+        propertyRealm(
+            "shared",
+            tenantId,
+            gameInstanceId,
+            publicProductionRealm,
+            GameplayCatalogProperties.RealmStateScope.SHARED);
 
     GameplayCatalogProperties.World world = new GameplayCatalogProperties.World();
     world.setSlug(worldSlug);
     world.setDisplayName(worldSlug);
     world.setRealms(List.of(realm));
     return world;
+  }
+
+  private static GameplayCatalogProperties.Realm propertyRealm(
+      String realmSlug,
+      long tenantId,
+      long gameInstanceId,
+      boolean publicProductionRealm,
+      GameplayCatalogProperties.RealmStateScope stateScope) {
+    GameplayCatalogProperties.Realm realm = new GameplayCatalogProperties.Realm();
+    realm.setSlug(realmSlug);
+    realm.setDisplayName(realmSlug);
+    realm.setTenantId(tenantId);
+    realm.setGameInstanceId(gameInstanceId);
+    realm.setPointerVersion(1L);
+    realm.setVisible(true);
+    realm.setPublicProductionRealm(publicProductionRealm);
+    realm.setStateScope(stateScope);
+    realm.setCharacterCreationPolicy(GameplayCatalogProperties.CharacterCreationPolicy.ALLOW_NEW);
+    return realm;
+  }
+
+  private static GameplayCatalogProperties propertiesWithWorlds(
+      List<GameplayCatalogProperties.World> worlds) {
+    GameplayCatalogProperties properties = new GameplayCatalogProperties();
+    properties.setWorlds(worlds);
+    return properties;
   }
 
   private CurrentAdmissionTarget currentAdmissionTarget() {

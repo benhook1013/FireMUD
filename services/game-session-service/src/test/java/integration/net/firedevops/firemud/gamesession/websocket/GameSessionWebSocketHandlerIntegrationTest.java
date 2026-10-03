@@ -19,7 +19,6 @@ import net.firedevops.firemud.account.AuthenticationErrorCodes;
 import net.firedevops.firemud.account.v1.AuthenticateResponse;
 import net.firedevops.firemud.account.v1.GetTenantEntitlementsForRuntimeResponse;
 import net.firedevops.firemud.account.v1.GetTenantMembershipForRuntimeResponse;
-import net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse;
 import net.firedevops.firemud.cache.LookCacheService;
 import net.firedevops.firemud.cache.ScreenBufferService;
 import net.firedevops.firemud.entitymanagement.v1.ListCharactersByAccountResponse;
@@ -291,12 +290,14 @@ class GameSessionWebSocketHandlerIntegrationTest {
         .getTenantEntitlementsForRuntime(
             org.mockito.ArgumentMatchers.anyString(),
             org.mockito.ArgumentMatchers.nullable(String.class));
-    when(accountClient.issueDirectTextConnectScope(any(), any()))
-        .thenReturn(
-            IssueDirectTextConnectScopeResponse.newBuilder()
-                .setConnectScopeId("test-public-production-connect-scope")
-                .setConnectScopeExpiresAt(java.time.Instant.now().plusSeconds(3600).toString())
-                .build());
+    org.mockito.Mockito.doAnswer(
+            invocation ->
+                net.firedevops.firemud.account.v1.IssueDirectTextConnectScopeResponse.newBuilder()
+                    .setConnectScopeId("scope-" + java.util.UUID.randomUUID())
+                    .setConnectScopeExpiresAt(java.time.Instant.now().plusSeconds(300).toString())
+                    .build())
+        .when(accountClient)
+        .issueDirectTextConnectScope(any(), any());
     org.mockito.Mockito.doReturn(
             ListCharactersByAccountResponse.newBuilder()
                 .addCharacters(

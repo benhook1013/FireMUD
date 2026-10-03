@@ -295,7 +295,7 @@ class LoggingAdminApplicationIntegrationTest {
   }
 
   @Test
-  void v3AndV4PreserveRetainedV2ReceiptsAndEnforceNewDigestFormat() {
+  void v3ThroughV5PreserveRetainedRowsAndEnforceNewReceiptAndProjectionChecks() {
     String schema = "logging_admin_migration_" + UUID.randomUUID().toString().replace("-", "");
     UUID retainedInvalidReceiptId = UUID.fromString("30000000-0000-4000-8000-000000000002");
     String retainedInvalidDigest = "sha256:" + "g".repeat(64);
@@ -375,6 +375,29 @@ class LoggingAdminApplicationIntegrationTest {
           .schemas(schema)
           .defaultSchema(schema)
           .placeholders(Map.of("serviceSchema", schema))
+          .target(MigrationVersion.fromVersion("3"))
+          .load()
+          .migrate();
+
+      dsl.execute(
+          "INSERT INTO "
+              + schema
+              + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message, timestamp) "
+              + "VALUES ('tenant', 0, 0, '90000000-0000-4000-8000-000000000001', "
+              + "'ACCOUNT_AUDIT', 'retained zero tenant projection', TIMESTAMP '2025-03-01 15:00:00'), "
+              + "('tenant', -9, -9, '90000000-0000-4000-8000-000000000002', "
+              + "'ACCOUNT_AUDIT', 'retained negative tenant projection', TIMESTAMP '2025-03-01 15:00:01'), "
+              + "('tenant', 0, 0, NULL, 'PAYMENT', 'retained zero tenant legacy row', "
+              + "TIMESTAMP '2025-03-01 15:00:02'), "
+              + "('tenant', -9, 0, NULL, 'PAYMENT', 'retained negative tenant legacy row', "
+              + "TIMESTAMP '2025-03-01 15:00:03')");
+
+      Flyway.configure()
+          .dataSource(dataSource)
+          .locations("classpath:db/migration")
+          .schemas(schema)
+          .defaultSchema(schema)
+          .placeholders(Map.of("serviceSchema", schema))
           .load()
           .migrate();
 
@@ -390,6 +413,56 @@ class LoggingAdminApplicationIntegrationTest {
                       "legacy payment log")
                   .get(0, Long.class))
           .isEqualTo(0L);
+      assertThat(
+              dsl.fetch(
+                  "SELECT tenant_id, tenant_key, audit_event_id, type, message, timestamp "
+                      + "FROM "
+                      + schema
+                      + ".log_events WHERE message IN (?, ?, ?, ?) ORDER BY message",
+                  "retained negative tenant legacy row",
+                  "retained negative tenant projection",
+                  "retained zero tenant legacy row",
+                  "retained zero tenant projection"))
+          .extracting(
+              row ->
+                  List.of(
+                      row.get("tenant_id", Long.class),
+                      row.get("tenant_key", Long.class),
+                      row.get("audit_event_id", String.class) == null
+                          ? "<null>"
+                          : row.get("audit_event_id", String.class),
+                      row.get("type", String.class),
+                      row.get("message", String.class),
+                      row.get("timestamp", LocalDateTime.class)))
+          .containsExactly(
+              List.of(
+                  -9L,
+                  0L,
+                  "<null>",
+                  "PAYMENT",
+                  "retained negative tenant legacy row",
+                  LocalDateTime.of(2025, 3, 1, 15, 0, 3)),
+              List.of(
+                  -9L,
+                  -9L,
+                  "90000000-0000-4000-8000-000000000002",
+                  "ACCOUNT_AUDIT",
+                  "retained negative tenant projection",
+                  LocalDateTime.of(2025, 3, 1, 15, 0, 1)),
+              List.of(
+                  0L,
+                  0L,
+                  "<null>",
+                  "PAYMENT",
+                  "retained zero tenant legacy row",
+                  LocalDateTime.of(2025, 3, 1, 15, 0, 2)),
+              List.of(
+                  0L,
+                  0L,
+                  "90000000-0000-4000-8000-000000000001",
+                  "ACCOUNT_AUDIT",
+                  "retained zero tenant projection",
+                  LocalDateTime.of(2025, 3, 1, 15, 0)));
       assertThat(
               dsl.fetchSingle("SELECT COUNT(*) FROM " + schema + ".account_audit_receipts")
                   .get(0, Integer.class))
@@ -459,6 +532,14 @@ class LoggingAdminApplicationIntegrationTest {
                           + "WHERE conrelid = to_regclass(?) AND conname = ?",
                       schema + ".account_audit_receipts",
                       "chk_account_audit_receipt_digest_format")
+                  .get(0, Boolean.class))
+          .isFalse();
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT convalidated FROM pg_constraint "
+                          + "WHERE conrelid = to_regclass(?) AND conname = ?",
+                      schema + ".log_events",
+                      "chk_log_events_tenant_audit_positive_tenant_id")
                   .get(0, Boolean.class))
           .isFalse();
 
@@ -588,6 +669,69 @@ class LoggingAdminApplicationIntegrationTest {
                       "60000000-0000-4000-8000-000000000001")
                   .get(0, Long.class))
           .isEqualTo(86L);
+
+      dsl.execute(
+          "INSERT INTO "
+              + schema
+              + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
+              + "VALUES ('platform', NULL, 0, '60000000-0000-4000-8000-000000000002', "
+              + "'ACCOUNT_AUDIT', 'Account audit event 60000000-0000-4000-8000-000000000002')");
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT tenant_id, tenant_key FROM "
+                          + schema
+                          + ".log_events WHERE audit_event_id = ?",
+                      "60000000-0000-4000-8000-000000000002")
+                  .intoArray())
+          .containsExactly(null, 0L);
+
+      for (long invalidTenantId : List.of(0L, -9L)) {
+        String eventId =
+            invalidTenantId == 0
+                ? "60000000-0000-4000-8000-000000000003"
+                : "60000000-0000-4000-8000-000000000004";
+        assertThatThrownBy(
+                () ->
+                    dsl.execute(
+                        "INSERT INTO "
+                            + schema
+                            + ".log_events (scope, tenant_id, tenant_key, audit_event_id, type, message) "
+                            + "VALUES ('tenant', ?, ?, ?, 'ACCOUNT_AUDIT', 'invalid tenant projection')",
+                        invalidTenantId,
+                        invalidTenantId,
+                        eventId))
+            .isInstanceOf(DataIntegrityViolationException.class)
+            .hasMessageContaining("chk_log_events_tenant_audit_positive_tenant_id");
+        assertThatThrownBy(
+                () ->
+                    dsl.execute(
+                        "UPDATE "
+                            + schema
+                            + ".log_events SET tenant_id = ?, tenant_key = ? "
+                            + "WHERE audit_event_id = ?",
+                        invalidTenantId,
+                        invalidTenantId,
+                        "60000000-0000-4000-8000-000000000001"))
+            .isInstanceOf(DataIntegrityViolationException.class)
+            .hasMessageContaining("chk_log_events_tenant_audit_positive_tenant_id");
+      }
+      assertThat(
+              dsl.fetchSingle(
+                      "SELECT tenant_id, tenant_key FROM "
+                          + schema
+                          + ".log_events WHERE audit_event_id = ?",
+                      "60000000-0000-4000-8000-000000000001")
+                  .intoArray())
+          .containsExactly(86L, 86L);
+
+      for (long legacyTenantId : List.of(0L, -9L)) {
+        dsl.execute(
+            "INSERT INTO "
+                + schema
+                + ".log_events (scope, tenant_id, tenant_key, type, message) "
+                + "VALUES ('tenant', ?, 0, 'PAYMENT', 'new non-audit legacy row')",
+            legacyTenantId);
+      }
 
       assertThatThrownBy(
               () ->

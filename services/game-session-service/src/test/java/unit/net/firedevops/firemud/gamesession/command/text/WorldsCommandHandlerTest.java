@@ -27,6 +27,7 @@ import net.firedevops.firemud.gamesession.service.SessionContext;
 import net.firedevops.firemud.gamesession.support.TestGameplayWorldCatalogs;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import org.jooq.exception.DataAccessException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -492,7 +493,7 @@ class WorldsCommandHandlerTest {
   }
 
   @Test
-  void numericRealmSelectorRetainsItsOriginalPublicTargetAfterCatalogReorder() {
+  void numericRealmSnapshotIgnoresPrivateReorderingAndRejectsPublicRoutingChanges() {
     GameplayWorldCatalog.RealmView production =
         new GameplayWorldCatalog.RealmView(
             "production",
@@ -538,22 +539,11 @@ class WorldsCommandHandlerTest {
             accountClient.getTenantMembershipForRuntime(
                 Mockito.anyString(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(activeMembership());
-    Mockito.when(
-            accountClient.getRealmAccessGrantForRuntime(
-                Mockito.anyString(),
-                Mockito.anyString(),
-                Mockito.eq("demo"),
-                Mockito.eq("preview"),
-                Mockito.anyString()))
-        .thenReturn(grant("demo", "preview", true));
-    Mockito.when(
-            accountClient.getTenantEntitlementsForRuntime(Mockito.anyString(), Mockito.anyString()))
-        .thenReturn(publicEntitlement(true));
+    DirectTextConnectScopeSessionStore scopeStore =
+        DirectTextConnectScopeSessionStore.inMemoryForTest();
     WorldsCommandHandler localHandler =
         new WorldsCommandHandler(
-            GameplayWorldCatalog.forWorldSupplier(worlds::get),
-            accountClient,
-            DirectTextConnectScopeSessionStore.inMemoryForTest());
+            GameplayWorldCatalog.forWorldSupplier(worlds::get), accountClient, scopeStore);
 
     assertThat(localHandler.browseRealms("7", authenticatedSession(), "demo"))
         .isInstanceOfSatisfying(
@@ -574,6 +564,31 @@ class WorldsCommandHandlerTest {
 
     assertThat(localHandler.browseCharacters("7", authenticatedSession(), "demo", "1"))
         .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.unavailable());
+    Mockito.verifyNoInteractions(accountClient);
+
+    Mockito.clearInvocations(accountClient);
+    GameplayWorldCatalog.RealmView reroutedProduction =
+        new GameplayWorldCatalog.RealmView(
+            production.slug(),
+            production.displayName(),
+            production.tenantId(),
+            production.gameInstanceId() + 1L,
+            production.pointerVersion() + 1L,
+            production.visible(),
+            production.publicProductionRealm(),
+            production.requiresCharacterSelection(),
+            production.stateScope(),
+            production.characterCreationPolicy(),
+            production.catalogRevision(),
+            production.realmId(),
+            production.playableStateNamespaceId());
+    worlds.set(
+        List.of(
+            new GameplayWorldCatalog.WorldView(
+                "demo", "Demo World", List.of(preview, reroutedProduction))));
+
+    assertThat(localHandler.browseCharacters("7", authenticatedSession(), "demo", "1"))
+        .isEqualTo(WorldsCommandHandler.CharacterBrowseResult.failure("CONNECT_SCOPE_MISMATCH"));
     Mockito.verifyNoInteractions(accountClient);
   }
 
@@ -743,6 +758,30 @@ class WorldsCommandHandlerTest {
   @Test
   void browseCharactersDoesNotDispatchForUnknownPublicMembershipLifecycle() {
     assertPublicMembershipDoesNotReachAccount(publicMembership(true, true, 1L, 1L, "UNKNOWN"));
+  }
+
+  @Test
+  void browseCharactersMapsMalformedRealmDiscoveryPointerToAdmissionPointerUnavailable() {
+    GameplayCatalogProperties properties = publicProductionProperties();
+    GameplayWorldCatalog baseCatalog = TestGameplayWorldCatalogs.fromProperties(properties);
+    GameplayWorldCatalog.DiscoverySnapshot snapshot = baseCatalog.readDiscoverySnapshot();
+    GameplayWorldCatalog catalog = Mockito.spy(baseCatalog);
+    Mockito.doReturn(snapshot).when(catalog).readDiscoverySnapshot();
+    Mockito.doThrow(new GameplayWorldCatalog.AuthorityPointerUnavailableException("malformed"))
+        .when(catalog)
+        .readRealmDiscoverySnapshot(Mockito.any(GameplayWorldCatalog.WorldView.class));
+    WorldsCommandHandler localHandler =
+        new WorldsCommandHandler(
+            catalog,
+            Mockito.mock(AccountClient.class),
+            DirectTextConnectScopeSessionStore.inMemoryForTest());
+
+    WorldsCommandHandler.CharacterBrowseResult result =
+        localHandler.browseCharacters(authenticatedSession(), "demo", "production");
+
+    assertThat(result)
+        .isEqualTo(
+            WorldsCommandHandler.CharacterBrowseResult.failure("ADMISSION_POINTER_UNAVAILABLE"));
   }
 
   @Test
@@ -951,7 +990,7 @@ class WorldsCommandHandlerTest {
     GameplayWorldCatalog catalog = TestGameplayWorldCatalogs.fromProperties(properties);
     GameplayWorldCatalog.WorldView selectedWorld = catalog.resolveWorld("preview").orElseThrow();
     GameplayWorldCatalog.RealmDiscoverySnapshot snapshot =
-        catalog.readRealmDiscoverySnapshot(selectedWorld);
+        catalog.realmDiscoverySnapshot(selectedWorld, catalog.visibleRealms(selectedWorld));
     DirectTextConnectScopeSessionStore scopeStore =
         DirectTextConnectScopeSessionStore.inMemoryForTest();
     WorldsCommandHandler localHandler =
@@ -1947,7 +1986,7 @@ class WorldsCommandHandlerTest {
         .thenAnswer(
             invocation -> {
               if (unavailable.get()) {
-                throw new IllegalStateException("pointer authority unavailable");
+                throw new DataAccessException("pointer authority unavailable");
               }
               return List.of(authorityPointer("demo", "production", 22L, 1L, true));
             });

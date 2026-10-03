@@ -25,6 +25,7 @@ import net.firedevops.firemud.gamesession.service.DirectTextConnectScopeSessionS
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerAuthorityService;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshot;
 import net.firedevops.firemud.gamesession.service.GameplayAdmissionPointerSnapshots;
+import org.jooq.exception.DataAccessException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -176,10 +177,10 @@ public final class GameplayWorldCatalog {
     return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
   }
 
-  /** Builds a catalog-wide snapshot when every visible realm is part of the response. */
+  /** Builds the public REALMS snapshot from the entries currently exposed in that response. */
   public RealmDiscoverySnapshot readRealmDiscoverySnapshot(WorldView world) {
     Objects.requireNonNull(world, "world must not be null");
-    return realmDiscoverySnapshot(world, visibleRealms(world));
+    return realmDiscoverySnapshot(world, publicProductionRealms(world));
   }
 
   /** Builds a REALMS snapshot and fingerprint from the exact caller-visible response entries. */
@@ -738,6 +739,10 @@ public final class GameplayWorldCatalog {
     return visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
   }
 
+  private List<RealmView> publicProductionRealms(WorldView world) {
+    return visibleRealms(world).stream().filter(RealmView::publicProductionRealm).toList();
+  }
+
   public List<WorldView> visibleWorlds() {
     return visibleWorlds(readCatalogState());
   }
@@ -979,7 +984,7 @@ public final class GameplayWorldCatalog {
       throw ex;
     } catch (AuthorityPointerUnavailableException ex) {
       throw ex;
-    } catch (RuntimeException ex) {
+    } catch (DataAccessException ex) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative tenant gameplay pointer list is unavailable", ex);
     }
@@ -1148,7 +1153,7 @@ public final class GameplayWorldCatalog {
       throw ex;
     } catch (AuthorityPointerUnavailableException ex) {
       throw ex;
-    } catch (RuntimeException ex) {
+    } catch (DataAccessException ex) {
       throw new AuthorityPointerReadUnavailableException(
           "Authoritative gameplay pointer list is unavailable", ex);
     }
