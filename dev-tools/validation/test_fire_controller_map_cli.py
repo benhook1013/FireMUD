@@ -68,6 +68,22 @@ class MapCliTest(unittest.TestCase):
                  "--phase-states", '{"Unknown phase":"active"}', success=False)
         self.assertEqual(self.cli("read", "delivery")["now"], "[explicit][missing]")
 
+    def test_long_alias_source_apply_and_repeat_keep_distinct_jobs(self):
+        status = json.loads(self.status.read_text())
+        workers = {"a" * 70 + "x", "a" * 70 + "y"}
+        status["lanes"] = [{**status["lanes"][0], "name": worker} for worker in sorted(workers)]
+        self.status.write_text(json.dumps(status))
+        preview = self.cli("import", str(self.status), str(self.progress))
+        names = {job["name"] for job in preview["lane_jobs"]}
+        self.assertEqual(len(names), 2)
+        self.cli("import", str(self.status), str(self.progress), "--apply")
+        before = self.jobs.list()
+        self.assertEqual({job["worker"] for job in before}, workers)
+        self.assertEqual({job["name"] for job in before}, names)
+        repeated = self.cli("import", str(self.status), str(self.progress), "--apply")
+        self.assertTrue(repeated["already_applied"])
+        self.assertEqual(self.jobs.list(), before)
+
     def test_combined_review_jobs_notes_lanes_inbox_and_map_restore(self):
         self.cli("import", str(self.status), str(self.progress), "--apply")
         inbox = InboxStore(self.database)

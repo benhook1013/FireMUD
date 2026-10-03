@@ -78,6 +78,29 @@ class WorkstreamStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_long_alias_names_are_distinct_and_import_reapply_is_idempotent(self):
+        status = json.loads(self.status_source.read_text())
+        first = "a" * 70 + "x"
+        second = "a" * 70 + "y"
+        status["lanes"] = [{**status["lanes"][0], "name": worker} for worker in (first, second)]
+        self.status_source.write_text(json.dumps(status))
+        self.store.bootstrap()
+        preview = self.store.import_site(self.status_source, self.progress_source)
+        names = [row["name"] for row in preview["lane_jobs"]]
+        self.assertEqual(len(set(names)), 2)
+        self.assertTrue(all(len(name) <= 80 for name in names))
+        applied = self.store.import_site(self.status_source, self.progress_source, apply=True)
+        self.assertTrue(applied["applied"])
+        repeated = self.store.import_site(self.status_source, self.progress_source, apply=True)
+        self.assertTrue(repeated["already_applied"])
+        self.assertEqual({job["worker"] for job in repeated["lane_jobs"]}, {first, second})
+        self.assertEqual({job["name"] for job in repeated["lane_jobs"]}, set(names))
+        for control in ("Build\nTeam", "Build\tTeam"):
+            status["lanes"][0]["name"] = control
+            self.status_source.write_text(json.dumps(status))
+            with self.assertRaisesRegex(ValueError, "worker alias"):
+                self.store.import_site(self.status_source, self.progress_source)
+
     def test_bootstrap_initializes_controller_and_independent_map_schema(self):
         self.store.bootstrap()
         with sqlite3.connect(self.database) as connection:

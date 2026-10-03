@@ -34,6 +34,20 @@ class InboxStoreTest(unittest.TestCase):
         self.assertEqual(self.store.list("General"), [])
         self.assertEqual(self.store.send("Build Team", "Valid")["recipient"], "Build Team")
 
+    def test_credential_screening_matches_existing_backup_without_rewriting(self) -> None:
+        from pr_review.sqlite_backup import create_snapshot
+        self.store.bootstrap()
+        ordinary = "#2840 [worker]\n\nThe password field is intentionally omitted.\n\n```text\nAuthentication uses environment configuration.\n```"
+        message = self.store.send("General", ordinary, author="Overseer")
+        self.assertEqual(message["body"], ordinary)
+        for unsafe in ("Bearer example-token", "password=example", "api_key: example-value"):
+            with self.subTest(unsafe=unsafe), self.assertRaisesRegex(InboxError, "credential"):
+                self.store.send("General", unsafe)
+        self.assertEqual([row["body"] for row in self.store.list("General")], [ordinary])
+        snapshot = self.root / "combined.sqlite3"
+        create_snapshot(self.database, snapshot)
+        self.assertTrue(snapshot.is_file())
+
     def test_unread_count_is_read_only_when_inbox_schema_is_missing(self) -> None:
         self.assertEqual(self.store.unread_count("General"), 0)
         self.assertFalse(self.database.exists())

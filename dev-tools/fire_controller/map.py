@@ -18,6 +18,7 @@ from typing import Any
 from pr_review.sqlite_store import SQLITE_SCHEMA_VERSION, WRITER_BUILD, SqliteStateStore
 from pr_review.state import ReviewState, StateError
 
+from .context import worker_alias
 from .jobs import (
     JobError,
     JobsNotBootstrapped,
@@ -249,7 +250,7 @@ def _site_job_names(workers: list[str]) -> dict[str, str]:
     slugs = {}
     for worker in workers:
         normalized = unicodedata.normalize("NFKD", worker.casefold()).encode("ascii", "ignore").decode("ascii")
-        slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-") or "worker"
+        slug = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")[:70].rstrip("-") or "worker"
         slugs[worker] = slug
     counts: dict[str, int] = {}
     for slug in slugs.values():
@@ -259,8 +260,6 @@ def _site_job_names(workers: list[str]) -> dict[str, str]:
         if counts[slug] > 1:
             suffix = hashlib.sha256(worker.encode("utf-8")).hexdigest()[:8]
             slug = f"{slug[:60].rstrip('-')}-{suffix}"
-        else:
-            slug = slug[:70].rstrip("-")
         names[worker] = f"site-{slug}"
     return names
 
@@ -276,8 +275,8 @@ def _lane_job_plan(status_data: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(lane, dict):
             raise MapError(f"status lane {index} must be an object")
         worker = _map_text(lane.get("name"), f"status lane {index} worker", maximum=100, allow_empty=False)
-        if worker != worker.strip():
-            raise MapError(f"status lane {index} worker alias must not start or end with whitespace")
+        if not worker_alias(worker):
+            raise MapError(f"status lane {index} worker alias must not have surrounding whitespace or control characters")
         if worker in workers:
             raise MapError(f"status source repeats worker lane {worker}")
         workers.add(worker)
