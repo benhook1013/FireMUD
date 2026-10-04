@@ -140,7 +140,22 @@ class PublishedRealmEntryPolicyEvidenceTest {
                 createSet(
                     identity,
                     java.util.Collections.nCopies(
-                        PublishedRealmEntryPolicySetEvidence.MAX_POLICIES + 1, main)));
+                      PublishedRealmEntryPolicySetEvidence.MAX_POLICIES + 1, main)));
+  }
+
+  @Test
+  void completeSetRejectsRealmSlugRepeatedAcrossDifferentWorlds() {
+    PublishedRealmEntryPolicyEvidence publicRealm =
+        policyEvidence("main", "earth", true, true);
+    PublishedRealmEntryPolicyEvidence duplicateRealm =
+        policyEvidence("main", "mars", false, false);
+
+    assertThatIllegalArgumentException()
+        .isThrownBy(
+            () ->
+                createSet(
+                    publicRealm.releaseBundleIdentity(), List.of(publicRealm, duplicateRealm)))
+        .withMessageContaining("realm slug more than once");
   }
 
   private static PublishedRealmEntryPolicySetEvidence createSet(
@@ -151,8 +166,17 @@ class PublishedRealmEntryPolicyEvidenceTest {
 
   private static PublishedRealmEntryPolicyEvidence policyEvidence(
       String realmSlug, boolean visible, boolean publicProduction) {
+    return policyEvidence(realmSlug, "earth", visible, publicProduction);
+  }
+
+  private static PublishedRealmEntryPolicyEvidence policyEvidence(
+      String realmSlug, String worldSlug, boolean visible, boolean publicProduction) {
     String sourceJson =
-        "{\"schemaVersion\":1,\"worldSlug\":\"earth\",\"worldDisplayName\":\"Earth\","
+        "{\"schemaVersion\":1,\"worldSlug\":\""
+            + worldSlug
+            + "\",\"worldDisplayName\":\""
+            + worldSlug
+            + "\","
             + "\"realmSlug\":\""
             + realmSlug
             + "\",\"realmDisplayName\":\""
@@ -167,7 +191,8 @@ class PublishedRealmEntryPolicyEvidenceTest {
         PublishedRealmEntryPolicyEvidence.releaseBundleIdentity(
             TENANT_ID, 7L, WORKFLOW, MANIFEST, MAPPER);
     return PublishedRealmEntryPolicyEvidence.create(
-        UUID.nameUUIDFromBytes(realmSlug.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+        UUID.nameUUIDFromBytes(
+            (worldSlug + ":" + realmSlug).getBytes(java.nio.charset.StandardCharsets.UTF_8)),
         TENANT_ID,
         "NEW_GAME_ROW",
         12L,

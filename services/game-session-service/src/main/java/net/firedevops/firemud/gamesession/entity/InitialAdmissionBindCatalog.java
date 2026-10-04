@@ -3,7 +3,12 @@ package net.firedevops.firemud.gamesession.entity;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Persisted, immutable revision-one public catalog identity used by an initial pointer bind. */
+/**
+ * Legacy run-owned fixture catalog evidence used by the initial-bind fixture path.
+ *
+ * <p>Published Game Design authority is stored and read through
+ * {@link PublishedRealmCatalogSnapshot}; this row is never promoted into that authority.
+ */
 public record InitialAdmissionBindCatalog(
     UUID realmId,
     long tenantId,

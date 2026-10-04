@@ -177,6 +177,35 @@ class GameDesignPublishedRealmPolicyClientTest {
   }
 
   @Test
+  void rejectsRealmSlugRepeatedAcrossDifferentWorlds() throws Exception {
+    PublishedRealmEntryPolicyEvidence earthMain =
+        evidence(
+            "00000000-0000-4000-8000-000000000011",
+            511L,
+            policyForWorld("earth", "main", true, true, RealmEntryPolicy.StateScope.SHARED));
+    PublishedRealmEntryPolicyEvidence marsMain =
+        evidence(
+            "00000000-0000-4000-8000-000000000012",
+            512L,
+            policyForWorld("mars", "main", false, false, RealmEntryPolicy.StateScope.SHARED));
+    ListPublishedRealmEntryPoliciesResponse duplicateSet =
+        validResponse().toBuilder()
+            .clearPolicies()
+            .addPolicies(toWire(earthMain))
+            .addPolicies(toWire(marsMain))
+            .build();
+
+    TenantIdentityServiceGrpc.TenantIdentityServiceBlockingStub stub = mockStub();
+    when(stub.listPublishedRealmEntryPolicies(any())).thenReturn(duplicateSet);
+    GameDesignPublishedRealmPolicyClient client = newClient(stub);
+
+    assertThatThrownBy(
+            () -> client.listPublishedRealmEntryPolicies(TENANT_ID.toString(), VERSION_ID))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Game Design published realm policy response is invalid");
+  }
+
+  @Test
   void rejectsResponseFromDifferentMtlSWorkloadNamespace() throws Exception {
     ManagedChannel channel = mock(ManagedChannel.class);
     SSLSession sslSession = mock(SSLSession.class);
@@ -294,6 +323,15 @@ class GameDesignPublishedRealmPolicyClientTest {
       boolean visible,
       boolean publicProduction,
       RealmEntryPolicy.StateScope scope) {
+    return policyForWorld("firemud", realmSlug, visible, publicProduction, scope);
+  }
+
+  private static RealmEntryPolicy policyForWorld(
+      String worldSlug,
+      String realmSlug,
+      boolean visible,
+      boolean publicProduction,
+      RealmEntryPolicy.StateScope scope) {
     String json =
         "{\"entryPolicy\":\"PRESEEDED_ONLY\",\"publicProduction\":"
             + publicProduction
@@ -305,7 +343,11 @@ class GameDesignPublishedRealmPolicyClientTest {
             + quote(scope.name())
             + ",\"visible\":"
             + visible
-            + ",\"worldDisplayName\":\"FireMUD\",\"worldSlug\":\"firemud\"}";
+            + ",\"worldDisplayName\":"
+            + quote(worldSlug)
+            + ",\"worldSlug\":"
+            + quote(worldSlug)
+            + "}";
     return RealmEntryPolicy.parse(json, OBJECT_MAPPER);
   }
 

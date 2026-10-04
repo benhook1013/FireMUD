@@ -3,9 +3,11 @@ package net.firedevops.firemud.common.publication;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import net.firedevops.firemud.common.json.Rfc8785CanonicalJson;
 import tools.jackson.databind.ObjectMapper;
@@ -49,6 +51,7 @@ public record PublishedRealmEntryPolicySetEvidence(
     String previousWorld = null;
     String previousRealm = null;
     int visiblePublicProductionCount = 0;
+    Set<String> realmSlugs = new HashSet<>();
     for (PublishedRealmEntryPolicyEvidence policy : policies) {
       if (policy == null
           || !canonicalTenantId.equals(policy.canonicalTenantId())
@@ -72,6 +75,10 @@ public record PublishedRealmEntryPolicySetEvidence(
       }
       String world = policy.policy().worldSlug();
       String realm = policy.policy().realmSlug();
+      if (!realmSlugs.add(realm)) {
+        throw new IllegalArgumentException(
+            "Published policy set contains a realm slug more than once within its tenant");
+      }
       if (previousWorld != null
           && (previousWorld.compareTo(world) > 0
               || (previousWorld.equals(world) && previousRealm.compareTo(realm) >= 0))) {
