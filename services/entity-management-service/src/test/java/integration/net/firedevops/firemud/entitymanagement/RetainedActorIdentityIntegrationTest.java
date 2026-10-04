@@ -7,7 +7,9 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import net.firedevops.firemud.entitymanagement.entity.ActorActiveCondition;
 import net.firedevops.firemud.entitymanagement.entity.ActorResourceState;
 import net.firedevops.firemud.entitymanagement.entity.Character;
@@ -24,8 +26,10 @@ import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.MigrationVersion;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
+import org.flywaydb.database.postgresql.PostgreSQLConfigurationExtension;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -601,6 +605,7 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   @Test
+  @Timeout(value = 3, unit = TimeUnit.MINUTES)
   void flywayV1ToLatestRetainsLegacyRowsAndValidatesConstraints() throws SQLException {
     migrateLegacySchemaToV1();
     try (Connection connection = connectToMigrationSchema()) {
@@ -916,11 +921,17 @@ class RetainedActorIdentityIntegrationTest {
   }
 
   private FluentConfiguration migrationFlyway() {
-    return Flyway.configure()
-        .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
-        .schemas(migrationSchema)
-        .defaultSchema(migrationSchema)
-        .locations("classpath:db/migration");
+    FluentConfiguration configuration =
+        Flyway.configure()
+            .dataSource(postgres.getJdbcUrl(), postgres.getUsername(), postgres.getPassword())
+            .schemas(migrationSchema)
+            .defaultSchema(migrationSchema)
+            .locations("classpath:db/migration");
+    configuration
+        .getConfigurationExtension(PostgreSQLConfigurationExtension.class)
+        .setTransactionalLock(false);
+    return configuration.jdbcProperties(
+        Map.of("options", "-c lock_timeout=30s -c statement_timeout=120s"));
   }
 
   private Connection connectToMigrationSchema() throws SQLException {
