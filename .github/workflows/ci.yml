@@ -2052,6 +2052,9 @@ jobs:
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#capturedEvidenceCannotBeReplacedByChangedIdentityDigestOrFenceValues()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#directRepositoryRejectsCaptureForAnotherPersistedAccountUuid()' \
             --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#populatedCaptureIsImmutableAndTerminalSourceCannotBeBackfilled()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#captureSourcesPreserveIndependentlyAdvancedAuthorityVersionsAndCheckpoints()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#historicalCaptureSourcesRemainUnchangedWhenCurrentMembershipAdvances()' \
+            --require-case 'net.firedevops.firemud.accountservice.AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest#existingCaptureSourcesAuthenticateAbsenceAndRejectMixedSourceOrRoleEvidence()' \
             account-service
 
       - name: Upload Account current recipient source composition PostgreSQL proof

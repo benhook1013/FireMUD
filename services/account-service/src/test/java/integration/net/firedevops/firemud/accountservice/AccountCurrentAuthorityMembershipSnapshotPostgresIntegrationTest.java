@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -42,6 +43,7 @@ import net.firedevops.firemud.accountservice.client.GameSessionClient;
 import net.firedevops.firemud.accountservice.client.LoggingAdminClient;
 import net.firedevops.firemud.accountservice.dto.AccountJoinDigest;
 import net.firedevops.firemud.accountservice.dto.AccountLogoutRequestDigest;
+import net.firedevops.firemud.accountservice.dto.AccountMembershipCaptureSources;
 import net.firedevops.firemud.accountservice.dto.DirectTextCallerContext;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinScope;
 import net.firedevops.firemud.accountservice.dto.DirectTextJoinTarget;
@@ -65,6 +67,7 @@ import net.firedevops.firemud.accountservice.repository.AccountLogoutAllOperatio
 import net.firedevops.firemud.accountservice.repository.AccountPasswordResetOperationRepository;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
 import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityResolver;
+import net.firedevops.firemud.accountservice.repository.AccountTenantMembershipRoleSnapshotRepository.RoleSnapshot;
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
@@ -480,6 +483,257 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
     assertThat(afterRollback.sourceEvent().canonicalJsonUtf8())
         .containsExactly(beforeIssuerCorruption.sourceEvent().canonicalJsonUtf8());
     assertThat(membershipEventBytes(fixture)).containsExactly(immutableMembershipBytes);
+  }
+
+  @Test
+  void captureSourcesPreserveIndependentlyAdvancedAuthorityVersionsAndCheckpoints() {
+    JoinFixture fixture = fixture();
+    assertThat(join(fixture).success()).isTrue();
+    byte[] immutableMembershipEvent = membershipEventBytes(fixture);
+    AccountMembershipCaptureSources beforeTransitions = readMembershipCaptureSources(fixture);
+    ScopeState initialIssuer = beforeTransitions.authoritySnapshot().issuer();
+    ScopeState initialAccount = beforeTransitions.authoritySnapshot().account();
+    ScopeState initialTenant = beforeTransitions.authoritySnapshot().tenants().getFirst();
+
+    UUID issuerRequestUuid = UUID.randomUUID();
+    issuerProducer()
+        .advance(
+            AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+            issuerRequestUuid,
+            initialIssuer.generation(),
+            initialIssuer.sourceVersion());
+    long tenantGeneration = initialTenant.generation();
+    long tenantSourceVersion = initialTenant.sourceVersion();
+    for (int transition = 0; transition < 2; transition++) {
+      tenantProducer()
+          .advance(fixture.tenantUuid(), UUID.randomUUID(), tenantGeneration, tenantSourceVersion);
+      tenantGeneration++;
+      tenantSourceVersion++;
+    }
+
+    AccountLogoutAllAuthorityEventProducer accountProducer = logoutProducer();
+    for (int transition = 1; transition <= 3; transition++) {
+      String tokenHash = "f".repeat(63) + Integer.toHexString(transition);
+      String tokenProfile = "control-ui";
+      String requestDigest =
+          AccountLogoutRequestDigest.accountLogoutAll(
+              fixture.accountUuid(), tokenProfile, tokenHash);
+      ScopeState expectedAccountState = readAccountAuthority(fixture.accountUuid());
+      assertThat(
+              accountProducer.commit(
+                  UUID.randomUUID(),
+                  1,
+                  requestDigest,
+                  tokenProfile,
+                  tokenHash,
+                  readAccount(fixture.accountId()),
+                  expectedAccountState))
+          .isEqualTo(AccountLogoutAllAuthorityEventProducer.LogoutAllResult.LOGOUT_ALL_COMMITTED);
+    }
+
+    List<List<String>> membershipBeforeRead = membershipAuthoritySourceFingerprint(fixture);
+    List<List<String>> accountBeforeRead = accountSourceFingerprint(fixture);
+    long receiptCountBeforeRead = countMembershipTransitionReceipts(fixture);
+    long membershipEventsBeforeRead = countStreamEvents(membershipStreamKey(fixture));
+    AccountMembershipCaptureSources sources = readMembershipCaptureSources(fixture);
+
+    assertThat(sources.authoritySnapshot().issuer().generation())
+        .isEqualTo(initialIssuer.generation() + 1L);
+    assertThat(sources.authoritySnapshot().issuer().sourceVersion())
+        .isEqualTo(initialIssuer.sourceVersion() + 1L);
+    assertThat(sources.authoritySnapshot().account().generation())
+        .isEqualTo(initialAccount.generation() + 3L);
+    assertThat(sources.authoritySnapshot().account().sourceVersion())
+        .isEqualTo(initialAccount.sourceVersion() + 3L);
+    assertThat(sources.authoritySnapshot().tenants().getFirst().generation())
+        .isEqualTo(initialTenant.generation() + 2L);
+    assertThat(sources.authoritySnapshot().tenants().getFirst().sourceVersion())
+        .isEqualTo(initialTenant.sourceVersion() + 2L);
+    assertThat(sources.authoritySnapshot().memberships().getFirst().generation()).isEqualTo(1L);
+    assertThat(sources.authoritySnapshot().memberships().getFirst().sourceVersion()).isEqualTo(1L);
+    assertThat(sources.authoritySnapshot().issuanceFence().value())
+        .isEqualTo(initialAccount.issuanceFence().value() + 3L);
+    assertThat(sources.authoritySnapshot().issuanceFence().sourceVersion())
+        .isEqualTo(initialAccount.issuanceFence().sourceVersion() + 3L);
+    assertThat(sources.membershipSnapshot().authorityTuple().issuerAuthGeneration())
+        .isEqualTo(Long.toString(initialIssuer.generation() + 1L));
+    assertThat(sources.membershipSnapshot().authorityTuple().accountAuthorityGeneration())
+        .isEqualTo(Long.toString(initialAccount.generation() + 3L));
+    assertThat(sources.membershipSnapshot().authorityTuple().tenantAuthorityGeneration())
+        .isEqualTo(
+            Map.of(
+                fixture.tenantUuid().toString(), Long.toString(initialTenant.generation() + 2L)));
+    assertThat(sources.membershipSnapshot().authorityTuple().membershipAuthorityGeneration())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "1"));
+    assertThat(sources.membershipSnapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+    assertThat(sources.membershipSnapshot().issuanceFence())
+        .isEqualTo(Long.toString(initialAccount.issuanceFence().value() + 3L));
+    long expectedAccountCheckpoint =
+        checkpoint(beforeTransitions, accountStreamKey(fixture.accountUuid())) + 3L;
+    long expectedIssuerCheckpoint = checkpoint(beforeTransitions, issuerStreamKey()) + 1L;
+    long expectedTenantCheckpoint =
+        checkpoint(beforeTransitions, tenantStreamKey(fixture.tenantUuid())) + 2L;
+    assertThat(sources.membershipSnapshot().outboxCheckpoints())
+        .containsExactly(
+            new AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry(
+                accountStreamKey(fixture.accountUuid()), Long.toString(expectedAccountCheckpoint)),
+            new AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry(
+                issuerStreamKey(), Long.toString(expectedIssuerCheckpoint)),
+            new AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry(
+                membershipStreamKey(fixture), "1"),
+            new AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry(
+                tenantStreamKey(fixture.tenantUuid()), Long.toString(expectedTenantCheckpoint)));
+    assertThat(sources.membershipSnapshot().outboxSourceEvidence())
+        .extracting(AccountMembershipAuthorityEventProducer.OutboxSourceEvidence::outboxStreamKey)
+        .containsExactly(
+            accountStreamKey(fixture.accountUuid()),
+            issuerStreamKey(),
+            membershipStreamKey(fixture),
+            tenantStreamKey(fixture.tenantUuid()));
+    assertThat(sources.membershipSnapshot().sourceEvent().canonicalJsonUtf8())
+        .containsExactly(immutableMembershipEvent);
+    assertThat(membershipEventBytes(fixture)).containsExactly(immutableMembershipEvent);
+
+    assertThat(membershipAuthoritySourceFingerprint(fixture)).isEqualTo(membershipBeforeRead);
+    assertThat(accountSourceFingerprint(fixture)).isEqualTo(accountBeforeRead);
+    assertThat(countMembershipTransitionReceipts(fixture)).isEqualTo(receiptCountBeforeRead);
+    assertThat(countStreamEvents(membershipStreamKey(fixture)))
+        .isEqualTo(membershipEventsBeforeRead);
+  }
+
+  @Test
+  void historicalCaptureSourcesRemainUnchangedWhenCurrentMembershipAdvances() {
+    JoinFixture fixture = fixture();
+    assertThat(join(fixture).success()).isTrue();
+    AccountMembershipCaptureSources historical = readMembershipCaptureSources(fixture);
+    byte[] historicalEvent = historical.membershipSnapshot().sourceEvent().canonicalJsonUtf8();
+    List<List<String>> historicalFingerprint = membershipAuthoritySourceFingerprint(fixture);
+
+    MembershipTransitionReceipt leave =
+        membershipLifecycleService.leave(
+            fixture.accountId(), fixture.tenantId(), "capture-history-leave-" + UUID.randomUUID());
+    assertThat(leave.transitionType()).isEqualTo("MEMBERSHIP_LEFT");
+    List<List<String>> inactiveFingerprint = membershipAuthoritySourceFingerprint(fixture);
+    AccountMembershipCaptureSources current = readMembershipCaptureSources(fixture);
+
+    assertThat(historical.membershipSnapshot().membershipBaseline().membershipLifecycleState())
+        .isEqualTo("ACTIVE");
+    assertThat(historical.membershipSnapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "2"));
+    assertThat(historical.authoritySnapshot().memberships().getFirst().generation()).isEqualTo(1L);
+    assertThat(historical.authoritySnapshot().memberships().getFirst().sourceVersion())
+        .isEqualTo(1L);
+    assertThat(historical.roleSource().orElseThrow().snapshotVersion()).isEqualTo(2L);
+    assertThat(historical.membershipSnapshot().sourceEvent().canonicalJsonUtf8())
+        .containsExactly(historicalEvent);
+
+    assertThat(current.membershipSnapshot().membershipBaseline().membershipLifecycleState())
+        .isEqualTo("INACTIVE");
+    assertThat(current.membershipSnapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(fixture.tenantUuid().toString(), "3"));
+    assertThat(current.authoritySnapshot().memberships().getFirst().generation()).isEqualTo(2L);
+    assertThat(current.authoritySnapshot().memberships().getFirst().sourceVersion()).isEqualTo(2L);
+    assertThat(current.roleSource().orElseThrow().snapshotVersion()).isEqualTo(3L);
+    assertThat(current.membershipSnapshot().sourceEvent().outboxSequence()).isEqualTo("2");
+    assertThat(current.membershipSnapshot().sourceEvent().membershipLifecycleState())
+        .isEqualTo("INACTIVE");
+    assertThat(membershipEventBytes(fixture, 1L)).containsExactly(historicalEvent);
+    assertThat(membershipAuthoritySourceFingerprint(fixture)).isEqualTo(inactiveFingerprint);
+    assertThat(historical.membershipSnapshot().sourceEvent().canonicalJsonUtf8())
+        .containsExactly(historicalEvent);
+    assertThat(historicalFingerprint).isNotEqualTo(inactiveFingerprint);
+  }
+
+  @Test
+  void existingCaptureSourcesAuthenticateAbsenceAndRejectMixedSourceOrRoleEvidence() {
+    JoinFixture neverJoined = fixture();
+    List<List<String>> absenceBeforeRead = membershipAuthoritySourceFingerprint(neverJoined);
+    AccountMembershipCaptureSources absence = readMembershipCaptureSources(neverJoined);
+    assertThat(absence.membershipSnapshot().membershipExists()).isFalse();
+    assertThat(absence.membershipSnapshot().gameplayAdmissionAllowed()).isFalse();
+    assertThat(absence.membershipSnapshot().membershipBaseline().membershipLifecycleState())
+        .isEqualTo("MISSING");
+    assertThat(absence.membershipSnapshot().membershipBaseline().membershipVersion())
+        .isEqualTo(Map.of(neverJoined.tenantUuid().toString(), "1"));
+    assertThat(absence.membershipSnapshot().sourceEvent()).isNull();
+    assertThat(absence.roleSource()).isEmpty();
+    assertThat(membershipAuthoritySourceFingerprint(neverJoined)).isEqualTo(absenceBeforeRead);
+
+    var authority = absence.authoritySnapshot();
+    var tenant = authority.tenants().getFirst();
+    var mixedTenant =
+        new ScopeState(tenant.scope(), tenant.generation(), tenant.sourceVersion() + 1L, null);
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipCaptureSources(
+                    neverJoined.accountUuid(),
+                    neverJoined.tenantUuid(),
+                    new AccountAuthorityGenerationRepository.CompositeSnapshot(
+                        authority.issuer(),
+                        authority.account(),
+                        List.of(mixedTenant),
+                        authority.memberships(),
+                        authority.issuanceFence()),
+                    absence.membershipSnapshot(),
+                    absence.roleSource()))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    JoinFixture active = fixture();
+    assertThat(join(active).success()).isTrue();
+    List<List<String>> activeBeforeRead = membershipAuthoritySourceFingerprint(active);
+    AccountMembershipCaptureSources existing = readMembershipCaptureSources(active);
+    RuntimeMembershipSnapshotDto existingMembership = existing.membershipSnapshot();
+    List<AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry> mixedCheckpoints =
+        existingMembership.outboxCheckpoints().stream()
+            .map(
+                checkpoint ->
+                    checkpoint.outboxStreamKey().equals(membershipStreamKey(active))
+                        ? new AccountMembershipAuthorityEventProducer.OutboxCheckpointEntry(
+                            membershipStreamKey(active),
+                            Long.toString(Long.parseLong(checkpoint.outboxSequence()) + 1L))
+                        : checkpoint)
+            .toList();
+    assertThatThrownBy(
+            () ->
+                new RuntimeMembershipSnapshotDto(
+                    existingMembership.requestAccountUuid(),
+                    existingMembership.requestTenantUuid(),
+                    existingMembership.accountUuid(),
+                    existingMembership.tenantUuid(),
+                    existingMembership.membershipExists(),
+                    existingMembership.gameplayAdmissionAllowed(),
+                    existingMembership.membershipBaseline(),
+                    existingMembership.roles(),
+                    existingMembership.authorityTuple(),
+                    existingMembership.issuanceFence(),
+                    existingMembership.evaluatedAt(),
+                    mixedCheckpoints,
+                    existingMembership.outboxSourceEvidence(),
+                    existingMembership.sourceEvent()))
+        .isInstanceOf(IllegalArgumentException.class);
+
+    RoleSnapshot role = existing.roleSource().orElseThrow();
+    RoleSnapshot mixedRoleHeader =
+        new RoleSnapshot(
+            role.accountId(),
+            role.tenantId(),
+            role.membershipId(),
+            role.snapshotVersion() + 1L,
+            role.roles(),
+            role.accountUuid(),
+            role.tenantUuid(),
+            role.tenantProvenance());
+    assertThatThrownBy(
+            () ->
+                new AccountMembershipCaptureSources(
+                    active.accountUuid(),
+                    active.tenantUuid(),
+                    existing.authoritySnapshot(),
+                    existing.membershipSnapshot(),
+                    Optional.of(mixedRoleHeader)))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(membershipAuthoritySourceFingerprint(active)).isEqualTo(activeBeforeRead);
   }
 
   @Test
@@ -2241,12 +2495,28 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
         membershipAuthorityEventProducer, authorityGenerationRepository, transactionManager);
   }
 
+  private AccountMembershipCaptureSources readMembershipCaptureSources(JoinFixture fixture) {
+    return new TransactionTemplate(transactionManager)
+        .execute(
+            status ->
+                membershipAuthorityEventProducer.readExistingRuntimeMembershipCaptureSources(
+                    fixture.accountUuid(), fixture.tenantUuid()));
+  }
+
   private RuntimeMembershipSnapshotDto readRuntimeMembershipSnapshot(JoinFixture fixture) {
     return new TransactionTemplate(transactionManager)
         .execute(
             status ->
                 membershipAuthorityEventProducer.readRuntimeMembershipSnapshot(
                     fixture.accountUuid(), fixture.tenantUuid()));
+  }
+
+  private long checkpoint(AccountMembershipCaptureSources sources, String streamKey) {
+    return sources.membershipSnapshot().outboxCheckpoints().stream()
+        .filter(checkpoint -> checkpoint.outboxStreamKey().equals(streamKey))
+        .mapToLong(checkpoint -> Long.parseLong(checkpoint.outboxSequence()))
+        .findFirst()
+        .orElseThrow(() -> new IllegalStateException("Account source checkpoint is absent"));
   }
 
   private ScopeState readAccountAuthority(UUID accountUuid) {
@@ -2276,6 +2546,20 @@ class AccountCurrentAuthorityMembershipSnapshotPostgresIntegrationTest {
             logoutAllOperationRepository),
         dsl,
         transactionManager);
+  }
+
+  private AccountIssuerAuthorityEventProducer issuerProducer() {
+    return new AccountIssuerAuthorityEventProducer(
+        AccountServiceImpl.ACCOUNT_JWT_ISSUER,
+        authorityGenerationRepository,
+        authorityOutboxRepository,
+        dsl,
+        transactionManager);
+  }
+
+  private AccountTenantAuthorityEventProducer tenantProducer() {
+    return new AccountTenantAuthorityEventProducer(
+        authorityGenerationRepository, authorityOutboxRepository, dsl, transactionManager);
   }
 
   private byte[] membershipEventBytes(JoinFixture fixture) {

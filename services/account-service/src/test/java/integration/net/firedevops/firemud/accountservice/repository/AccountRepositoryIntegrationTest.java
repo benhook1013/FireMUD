@@ -57,28 +57,42 @@ class AccountRepositoryIntegrationTest {
   @Container
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+  private DriverManagerDataSource adminDataSource;
   private DriverManagerDataSource dataSource;
   private DSLContext dsl;
   private AccountRepository repository;
 
   @BeforeAll
   void setUpRepository() {
-    dataSource = new DriverManagerDataSource();
-    dataSource.setDriverClassName(postgres.getDriverClassName());
-    dataSource.setUrl(postgres.getJdbcUrl());
-    dataSource.setUsername(postgres.getUsername());
-    dataSource.setPassword(postgres.getPassword());
-
-    Flyway.configure().dataSource(dataSource).locations(MIGRATION_LOCATION).load().migrate();
-
-    dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
-    repository = new AccountRepository(dsl);
+    adminDataSource = new DriverManagerDataSource();
+    adminDataSource.setDriverClassName(postgres.getDriverClassName());
+    adminDataSource.setUrl(postgres.getJdbcUrl());
+    adminDataSource.setUsername(postgres.getUsername());
+    adminDataSource.setPassword(postgres.getPassword());
   }
 
   @BeforeEach
-  void cleanTables() {
-    dsl.execute("TRUNCATE TABLE account_audit_outbox");
-    dsl.execute("TRUNCATE TABLE accounts RESTART IDENTITY CASCADE");
+  void setUpIsolatedSchema() {
+    String schema = "account_repository_it_" + UUID.randomUUID().toString().replace("-", "");
+    DSL.using(adminDataSource, SQLDialect.POSTGRES).execute("CREATE SCHEMA " + schema);
+
+    dataSource = new DriverManagerDataSource();
+    dataSource.setDriverClassName(postgres.getDriverClassName());
+    String jdbcUrl = postgres.getJdbcUrl();
+    dataSource.setUrl(jdbcUrl + (jdbcUrl.contains("?") ? "&" : "?") + "currentSchema=" + schema);
+    dataSource.setUsername(postgres.getUsername());
+    dataSource.setPassword(postgres.getPassword());
+
+    Flyway.configure()
+        .dataSource(dataSource)
+        .locations(MIGRATION_LOCATION)
+        .schemas(schema)
+        .defaultSchema(schema)
+        .load()
+        .migrate();
+
+    dsl = DSL.using(dataSource, SQLDialect.POSTGRES);
+    repository = new AccountRepository(dsl);
   }
 
   @Test
