@@ -15,6 +15,7 @@ import java.util.Optional;
 import java.util.UUID;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityRequest;
 import net.firedevops.firemud.gamedesign.v1.ResolveRuntimeTenantIdentityResponse;
@@ -28,8 +29,10 @@ class TenantIdentityGrpcServiceTest {
   private static final UUID REQUEST_ID = UUID.fromString("11111111-1111-4111-8111-111111111111");
 
   private final GameRepository repository = mock(GameRepository.class);
+  private final GameSessionTenantAssociationRepository associationRepository =
+      mock(GameSessionTenantAssociationRepository.class);
   private final TenantIdentityGrpcService service =
-      new TenantIdentityGrpcService(repository, "test");
+      new TenantIdentityGrpcService(repository, associationRepository, "test");
 
   @Test
   void resolvesExactOwnerIdentityForAuthenticatedGameSessionPeer() {
@@ -74,11 +77,13 @@ class TenantIdentityGrpcServiceTest {
                     "spiffe://firemud/ns/test/sa/account-service")))
         .isEqualTo(Status.Code.PERMISSION_DENIED);
     verifyNoInteractions(repository);
+    verifyNoInteractions(associationRepository);
   }
 
   @Test
   void leavesRuntimeReadInactiveWhenWorkloadNamespaceIsNotConfigured() {
-    TenantIdentityGrpcService inactiveService = new TenantIdentityGrpcService(repository, "");
+    TenantIdentityGrpcService inactiveService =
+        new TenantIdentityGrpcService(repository, associationRepository, "");
     TestObserver observer = new TestObserver();
     GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(GAME_SESSION_URI).orElseThrow();
 

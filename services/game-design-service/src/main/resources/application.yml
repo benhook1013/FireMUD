@@ -62,6 +62,7 @@ firemud:
     grpc:
       public-methods:
         - gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity
+        - gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation
     http:
       enabled: true
       role-requirement: PRIVILEGED

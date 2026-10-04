@@ -24,6 +24,7 @@ import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
 import net.firedevops.firemud.common.security.AuthTokenInterceptor;
 import net.firedevops.firemud.common.security.GrpcAuthProperties;
 import net.firedevops.firemud.gamedesign.repository.GameRepository;
+import net.firedevops.firemud.gamedesign.repository.GameSessionTenantAssociationRepository;
 import net.firedevops.firemud.gamedesign.repository.GameTenantIdentity;
 import net.firedevops.firemud.gamedesign.service.impl.TenantIdentityGrpcService;
 import net.firedevops.firemud.gamedesign.v1.PingRequest;
@@ -42,6 +43,8 @@ import org.springframework.core.io.FileSystemResource;
 class TenantIdentityGrpcAuthWiringTest {
   private static final String TENANT_METHOD =
       "gamedesign.v1.TenantIdentityService/ResolveRuntimeTenantIdentity";
+  private static final String ASSOCIATION_METHOD =
+      "gamedesign.v1.TenantIdentityService/ResolveLegacyGameSessionTenantAssociation";
   private static final String PING_METHOD = "gamedesign.v1.GameDesignService/Ping";
   private static final String TENANT_UUID = "87426bb3-a733-43f0-9c8e-2e379cbdf7ec";
   private static final String REQUEST_UUID = "11111111-1111-4111-8111-111111111111";
@@ -70,7 +73,9 @@ class TenantIdentityGrpcAuthWiringTest {
                           GameTenantIdentity.ProvenanceKind.NEW_GAME_ROW,
                           42L,
                           "legacy-owner-key-42")));
-          TenantIdentityGrpcService service = new TenantIdentityGrpcService(repository, "test");
+          TenantIdentityGrpcService service =
+              new TenantIdentityGrpcService(
+                  repository, mock(GameSessionTenantAssociationRepository.class), "test");
 
           DispatchResult result = dispatchTenantMethod(interceptor, service, GAME_SESSION_URI);
 
@@ -87,7 +92,9 @@ class TenantIdentityGrpcAuthWiringTest {
     withConfiguredInterceptor(
         interceptor -> {
           GameRepository repository = mock(GameRepository.class);
-          TenantIdentityGrpcService service = new TenantIdentityGrpcService(repository, "test");
+          TenantIdentityGrpcService service =
+              new TenantIdentityGrpcService(
+                  repository, mock(GameSessionTenantAssociationRepository.class), "test");
 
           DispatchResult absent = dispatchTenantMethod(interceptor, service, null);
           DispatchResult wrong =
@@ -200,7 +207,7 @@ class TenantIdentityGrpcAuthWiringTest {
             context -> {
               assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
               assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
-                  .containsExactly(TENANT_METHOD);
+                  .containsExactly(TENANT_METHOD, ASSOCIATION_METHOD);
               action.accept(context.getBean(AuthTokenInterceptor.class));
             });
   }
