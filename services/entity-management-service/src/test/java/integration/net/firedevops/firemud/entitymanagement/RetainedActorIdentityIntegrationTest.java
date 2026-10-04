@@ -859,6 +859,7 @@ class RetainedActorIdentityIntegrationTest {
   @Test
   void characterUpdateRequiresExactTenantAndPreservesOwnerResolvedRowOnMismatch() {
     UUID characterUuid = UUID.fromString("40000000-0000-4000-8000-000000000010");
+    insertNamespace(TENANT_UUID, NAMESPACE_UUID, PlayableStateScope.PLAYABLE_STATE_SCOPE_SHARED);
     long actorId =
         insertActor(
             "Tenant-owned actor",
