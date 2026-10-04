@@ -409,7 +409,7 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
         self.assertNotIn("/jobs/", json.dumps(self.publisher.resources(self.publisher.progress_public_html(page))[1]))
 
     def test_full_copy_render_and_public_stage_keep_private_data_out(self):
-        self.assertIn("Build the bridge", self.document)
+        self.assertIn("Keep the lane moving", self.document)
         self.assertIn("blocked", self.document)
         self.assertIn("Primary", self.document)
         self.assertIn("Finish the safe handoff.", self.document)
@@ -458,6 +458,151 @@ class IsolatedWebsiteIntegrationTest(unittest.TestCase):
         self.assertIn("Found: 1", detail)
         self.assertIn("Accepted: 1", detail)
         self.assertIn("Routed: 0", detail)
+
+    def test_controller_worker_order_and_public_job_cards_use_friendly_headings(self):
+        def lane(worker):
+            return {
+                "worker": worker, "status": "idle", "paused": False, "pause_reason": "",
+                "active_count": 0, "blocked_count": 0, "parked_count": 0,
+                "completed_count": 0, "jobs_truncated": False, "primary": None, "jobs": [],
+            }
+
+        lanes = [lane(worker) for worker in ("Zulu", "Gameplay", "Document", "Beta", "General", "Alpha")]
+        document = self.page.render(
+            self.data, self.review, self.now, self.github, jobs=self.public_jobs, lanes_snapshot=lanes,
+        )
+        worker_names = re.findall(
+            r'<article class="card controller-job-lane".*?<h3>(.*?)</h3>', document, re.DOTALL,
+        )
+        self.assertEqual(worker_names, ["Gameplay", "General", "Document", "Alpha", "Beta", "Zulu"])
+
+        paused = {**lane("Gameplay"), "status": "paused", "paused": True,
+                  "pause_reason": "Paused for FireController cutover."}
+        paused_card = self.page._render_controller_lane(paused)
+        self.assertIn('aria-label="PAUSED"', paused_card)
+        self.assertIn("Pause reason", paused_card)
+        self.assertIn("Paused for FireController cutover.", paused_card)
+        self.assertEqual(paused["pause_reason"], "Paused for FireController cutover.")
+        self.assertIn(
+            ".controller-job-lane .lane-content > .lane-blocker:first-child { border-top: 0; }",
+            document,
+        )
+
+        card = self.page.render_controller_job(public_row())
+        self.assertIn("<h4>Keep the lane moving</h4>", card)
+        self.assertNotIn("<h4>Build the bridge</h4>", card)
+        self.assertIn("<strong>Current next step</strong>", card)
+        self.assertIn("Finish the safe handoff.", card)
+
+    def test_primary_and_secondary_job_links_are_local_only_and_primary_is_not_duplicated(self):
+        primary = {**public_row(), "id": "job-primary", "primary": True}
+        secondary = {**public_row(), "id": "job-secondary", "name": "Secondary assignment", "primary": False}
+        lane = {
+            **self.public_lanes[0], "worker": "Gameplay", "primary": primary, "jobs": [primary, secondary],
+        }
+        document = self.page.render(
+            self.data, self.review, self.now, self.github,
+            jobs=web.public_jobs([primary, secondary]), lanes_snapshot=[lane],
+        )
+        self.assertIn('data-fire-controller-private-job-id="job-primary"', document)
+        self.assertNotIn('href="/jobs/', document)
+        self.assertNotIn('href="/inbox/', document)
+        public_document = self.publisher.public_html(document, "http://192.0.2.1:8877/")
+        _namespace, objects = self.publisher.resources(public_document)
+        self.assertNotIn('href="/jobs/', json.dumps(objects))
+        self.assertNotIn('href="/inbox/', json.dumps(objects))
+
+        handler = object.__new__(self.server_module.StatusHandler)
+        handler.server = types.SimpleNamespace(jobs_store=object(), inbox_store=object(), workstreams_store=None)
+        local = handler._local_private_links(document)
+        self.assertEqual(local.count('href="/jobs/job-primary"'), 1)
+        self.assertEqual(local.count('href="/jobs/job-secondary"'), 1)
+        self.assertEqual(local.count('href="/inbox/Gameplay"'), 1)
+        self.assertIn(">Private details</a>", local)
+        self.assertIn(">Worker inbox</a>", local)
+
+    def test_malformed_primary_job_markers_are_left_unlinked(self):
+        handler = object.__new__(self.server_module.StatusHandler)
+        handler.server = types.SimpleNamespace(jobs_store=object(), inbox_store=None, workstreams_store=None)
+        for token in ("", "../secret", "%2Fetc", "<script>", "x" * 129):
+            with self.subTest(token=token):
+                marker = f'<span data-fire-controller-private-job-id="{token}"></span>'
+                self.assertEqual(handler._private_job_links(marker), marker)
+                self.assertNotIn('href="/jobs/', handler._private_job_links(marker))
+        marker = '<span data-fire-controller-private-job-id="job-1" class="extra"></span>'
+        self.assertEqual(handler._private_job_links(marker), marker)
+
+    def test_private_routes_share_site_banner_styles_and_safe_http_headers(self):
+        class Inbox:
+            def list(self, recipient, *, unread, limit, offset):
+                return [{"id": "message-1", "recipient": recipient, "author": "Overseer",
+                         "body": PRIVATE_SENTINEL, "created_at": "2026-10-03T00:00:00Z"}]
+
+            def unread_count(self, worker):
+                return 1
+
+            def read(self, message_id, *, recipient):
+                return {"id": message_id, "author": "Overseer", "body": PRIVATE_SENTINEL,
+                        "created_at": "2026-10-03T00:00:00Z"}
+
+        class Workstreams:
+            def get(self, identifier, editorial):
+                return {"id": identifier, "name": "Shared Foundations", "revision": 1,
+                        "state": "ACTIVE", "now": PRIVATE_SENTINEL, "milestone": "Next",
+                        "phase_states": {}}
+
+            def history(self, record_type, identifier, **kwargs):
+                return [{"revision": 1, "created_at": "2026-10-03T00:00:00Z", "state": "ACTIVE",
+                         "now": PRIVATE_SENTINEL, "milestone": "Next", "phase_states": {}}]
+
+        class Jobs(FakeStore):
+            def notes(self, **kwargs):
+                return []
+
+        routes = (
+            "/jobs/job-1", "/jobs/job-1/history?offset=0", "/inbox/Gameplay",
+            "/workstreams/shared-foundations", "/workstreams/shared-foundations/history?offset=0",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            (Path(temporary) / "index.html").write_text(self.document, encoding="utf-8")
+            server = self.server_module.StatusServer(
+                ("127.0.0.1", 0), Path(temporary), auto_refresh_interval=1_000_000_000,
+                jobs_store=Jobs(), job_web=web, inbox_store=Inbox(),
+                workstreams_store=Workstreams(), editorial={"workstreams": {}, "return_points": {}},
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                # The live output directory contains HTML, not the source stylesheet.
+                connection.request("GET", "/shared.css")
+                stylesheet = connection.getresponse()
+                css = stylesheet.read()
+                self.assertEqual(stylesheet.status, 200)
+                self.assertEqual(stylesheet.getheader("Content-Type"), "text/css; charset=utf-8")
+                self.assertEqual(css, (SITE / "shared.css").read_bytes())
+                for route in routes:
+                    with self.subTest(route=route):
+                        connection.request("GET", route)
+                        response = connection.getresponse()
+                        body = response.read()
+                        self.assertEqual(response.status, 200, body.decode("utf-8"))
+                        self.assertEqual(response.getheader("Cache-Control"), "no-store")
+                        self.assertEqual(response.getheader("Content-Length"), str(len(body)))
+                        self.assertIn("Private page · Local only", body.decode("utf-8"))
+                        self.assertIn('id="private-site-style"', body.decode("utf-8"))
+                        self.assertIn('href="/shared.css"', body.decode("utf-8"))
+                        policy = response.getheader("Content-Security-Policy")
+                        self.assertEqual(
+                            policy,
+                            "default-src 'none'; style-src 'self' 'unsafe-inline'; base-uri 'none'; "
+                            "form-action 'none'; frame-ancestors 'none'",
+                        )
+                connection.close()
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
 
     def test_routed_finding_titles_emphasize_only_current_pr_endpoints(self):
         cases = (
