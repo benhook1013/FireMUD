@@ -47,6 +47,27 @@ if test_report_with.get("path") != expected_test_report_path:
 if test_report_with.get("if-no-files-found") != "warn":
     raise SystemExit("missing JUnit XML reports must warn without failing builds that did not reach tests")
 
+check_steps = [step for step in build_test_steps if step.get("name") == "🧪 Run Gradle Checks"]
+if len(check_steps) != 1:
+    raise SystemExit("build-and-test must contain exactly one module validation step")
+check_step = check_steps[0]
+check_run = check_step.get("run", "")
+game_session_integration = (
+    "./gradlew :game-session-service:integrationTest :game-session-service:check -PfullCheck"
+)
+other_module_check = "./gradlew :${{ matrix.module }}:check -PfullCheck"
+if '[ "${{ matrix.module }}" = "game-session-service" ]' not in check_run:
+    raise SystemExit("Game Session must use its explicit integration-test validation path")
+if game_session_integration not in check_run:
+    raise SystemExit("Game Session integrationTest must run before its full check in one Gradle invocation")
+if other_module_check not in check_run:
+    raise SystemExit("non-Game-Session modules must retain the existing full check invocation")
+if check_step.get("continue-on-error", "false").lower() == "true":
+    raise SystemExit("module validation must remain a required CI gate")
+gradle_commands = [line.strip() for line in check_run.splitlines() if line.strip().startswith("./gradlew ")]
+if gradle_commands != [game_session_integration, other_module_check]:
+    raise SystemExit("module validation must use only the ordered Game Session and unchanged module Gradle gates")
+
 job = workflow["jobs"]["validation-summary"]
 steps = job["steps"]
 summary_steps = [

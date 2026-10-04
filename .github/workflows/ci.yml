@@ -950,7 +950,11 @@ jobs:
         id: checks
         run: |
           echo "::group::Run Module Validation"
-          ./gradlew :${{ matrix.module }}:check -PfullCheck
+          if [ "${{ matrix.module }}" = "game-session-service" ]; then
+            ./gradlew :game-session-service:integrationTest :game-session-service:check -PfullCheck
+          else
+            ./gradlew :${{ matrix.module }}:check -PfullCheck
+          fi
           echo "::endgroup::"
 
       - name: 📦 Build Runtime JAR
