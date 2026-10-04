@@ -96,7 +96,8 @@ class GameDesignGrpcServiceAuthTest {
                 "genrev-1",
                 false,
                 null,
-                java.time.LocalDateTime.parse("2026-04-14T12:00:00")));
+                java.time.LocalDateTime.parse("2026-04-14T12:00:00"),
+                null));
     GameDesignGrpcService service =
         new GameDesignGrpcService(
             Mockito.mock(PingService.class),
@@ -155,6 +156,7 @@ class GameDesignGrpcServiceAuthTest {
     assertNotNull(bundleRef.get());
     assertEquals("", bundleRef.get().getError().getCode());
     assertEquals(11L, bundleRef.get().getBundle().getId());
+    assertEquals("", bundleRef.get().getBundle().getPublishedReleaseBundleRef());
     assertNotNull(descriptorRef.get());
     assertEquals("PERMISSION_DENIED", descriptorRef.get().getError().getCode());
     Mockito.verifyNoInteractions(launchDescriptorService);

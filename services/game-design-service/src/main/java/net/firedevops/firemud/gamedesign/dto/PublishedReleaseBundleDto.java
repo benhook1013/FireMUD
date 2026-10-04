@@ -17,7 +17,8 @@ public record PublishedReleaseBundleDto(
     String generationConfigRevision,
     boolean scriptOnly,
     String scriptPatchVersion,
-    LocalDateTime publishedAt) {
+    LocalDateTime publishedAt,
+    String publishedReleaseBundleRef) {
   public PublishedReleaseBundleDto {
     requiredManifestAssetKeys =
         List.copyOf(requiredManifestAssetKeys == null ? List.of() : requiredManifestAssetKeys);
@@ -38,7 +39,8 @@ public record PublishedReleaseBundleDto(
       String generationConfigRevision,
       boolean scriptOnly,
       String scriptPatchVersion,
-      LocalDateTime publishedAt) {
+      LocalDateTime publishedAt,
+      String publishedReleaseBundleRef) {
     this(
         id,
         tenantId,
@@ -53,6 +55,7 @@ public record PublishedReleaseBundleDto(
         generationConfigRevision,
         scriptOnly,
         scriptPatchVersion,
-        publishedAt);
+        publishedAt,
+        publishedReleaseBundleRef);
   }
 }

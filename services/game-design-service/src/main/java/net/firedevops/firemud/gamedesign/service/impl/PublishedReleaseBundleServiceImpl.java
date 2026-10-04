@@ -113,7 +113,8 @@ public class PublishedReleaseBundleServiceImpl implements PublishedReleaseBundle
         entity.getGenerationConfigRevision(),
         entity.isScriptOnly(),
         entity.getScriptPatchVersion(),
-        entity.getPublishedAt());
+        entity.getPublishedAt(),
+        entity.getPublishedReleaseBundleRef());
   }
 
   private String serializeKeys(List<String> keys) {

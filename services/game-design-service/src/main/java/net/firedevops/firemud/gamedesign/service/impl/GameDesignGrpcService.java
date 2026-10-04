@@ -701,7 +701,7 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
       PublishedReleaseBundleContract.requireSupportedSchemaForRead(bundle);
       TemporalVersionPublishWorkflowMetadataResolver.WorkflowMetadata workflowMetadata =
           publishWorkflowMetadataResolver.resolve(bundle.publishWorkflowId());
-      builder.setBundle(
+      var bundleBuilder =
           net.firedevops.firemud.gamedesign.v1.PublishedReleaseBundle.newBuilder()
               .setId(bundle.id())
               .setVersionId(bundle.versionId())
@@ -737,8 +737,11 @@ public class GameDesignGrpcService extends GameDesignServiceGrpc.GameDesignServi
               .setIsScriptOnly(bundle.scriptOnly())
               .setScriptPatchVersion(
                   bundle.scriptPatchVersion() == null ? "" : bundle.scriptPatchVersion())
-              .setPublishedAt(bundle.publishedAt().toString())
-              .build());
+              .setPublishedAt(bundle.publishedAt().toString());
+      if (bundle.publishedReleaseBundleRef() != null) {
+        bundleBuilder.setPublishedReleaseBundleRef(bundle.publishedReleaseBundleRef());
+      }
+      builder.setBundle(bundleBuilder.build());
     } catch (AdminAuthorizationException ex) {
       builder.setError(
           GrpcAppErrors.error(

@@ -3,7 +3,9 @@ package net.firedevops.firemud.gamedesign.repository;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.sql.Timestamp;
 import java.time.LocalDateTime;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.gamedesign.entity.PublishedReleaseBundle;
 import org.jooq.DSLContext;
 import org.jooq.Field;
@@ -19,6 +21,8 @@ import org.springframework.stereotype.Repository;
 public class PublishedReleaseBundleRepository {
   private static final Table<?> TABLE_REF = DSL.table(DSL.name("published_release_bundle"));
   private static final Field<Long> ID = DSL.field(DSL.name("id"), Long.class);
+  private static final Field<String> PUBLISHED_RELEASE_BUNDLE_REF =
+      DSL.field(DSL.name("published_release_bundle_ref"), String.class);
   private static final Field<String> TENANT_ID = DSL.field(DSL.name("tenant_id"), String.class);
   private static final Field<Long> VERSION_ID = DSL.field(DSL.name("version_id"), Long.class);
   private static final Field<Integer> VERSION_NUMBER =
@@ -60,11 +64,14 @@ public class PublishedReleaseBundleRepository {
   }
 
   public PublishedReleaseBundle save(PublishedReleaseBundle bundle) {
-    LocalDateTime publishedAt =
-        bundle.getPublishedAt() == null ? LocalDateTime.now() : bundle.getPublishedAt();
+    LocalDateTime publishedAt = bundle.getPublishedAt();
     if (bundle.getId() == null) {
+      publishedAt = publishedAt == null ? LocalDateTime.now() : publishedAt;
+      String publishedReleaseBundleRef = UUID.randomUUID().toString();
+      bundle.setPublishedReleaseBundleRef(publishedReleaseBundleRef);
       Long generatedId =
           dsl.insertInto(TABLE_REF)
+              .set(PUBLISHED_RELEASE_BUNDLE_REF, publishedReleaseBundleRef)
               .set(TENANT_ID, bundle.getTenantId())
               .set(VERSION_ID, bundle.getVersionId())
               .set(VERSION_NUMBER, bundle.getVersionNumber())
@@ -82,6 +89,16 @@ public class PublishedReleaseBundleRepository {
               .fetchOne(ID);
       return dsl.selectFrom(TABLE_REF).where(ID.eq(generatedId)).fetchOne(this::toEntity);
     }
+    PublishedReleaseBundle stored =
+        dsl.selectFrom(TABLE_REF).where(ID.eq(bundle.getId())).fetchOne(this::toEntity);
+    if (stored == null) {
+      throw new IllegalStateException("published release bundle does not exist");
+    }
+    if (!Objects.equals(
+        stored.getPublishedReleaseBundleRef(), bundle.getPublishedReleaseBundleRef())) {
+      throw new IllegalStateException("published release bundle reference is immutable");
+    }
+    publishedAt = publishedAt == null ? stored.getPublishedAt() : publishedAt;
     dsl.update(TABLE_REF)
         .set(TENANT_ID, bundle.getTenantId())
         .set(VERSION_ID, bundle.getVersionId())
@@ -98,7 +115,7 @@ public class PublishedReleaseBundleRepository {
         .set(PUBLISHED_AT, Timestamp.valueOf(publishedAt))
         .where(ID.eq(bundle.getId()))
         .execute();
-    return findByTenantIdAndVersionId(bundle.getTenantId(), bundle.getVersionId()).orElseThrow();
+    return dsl.selectFrom(TABLE_REF).where(ID.eq(bundle.getId())).fetchOne(this::toEntity);
   }
 
   private PublishedReleaseBundle toEntity(Record record) {
@@ -107,6 +124,7 @@ public class PublishedReleaseBundleRepository {
     }
     PublishedReleaseBundle bundle = new PublishedReleaseBundle();
     bundle.setId(record.get(ID));
+    bundle.setPublishedReleaseBundleRef(record.get(PUBLISHED_RELEASE_BUNDLE_REF));
     bundle.setTenantId(record.get(TENANT_ID));
     bundle.setVersionId(record.get(VERSION_ID));
     bundle.setVersionNumber(record.get(VERSION_NUMBER));

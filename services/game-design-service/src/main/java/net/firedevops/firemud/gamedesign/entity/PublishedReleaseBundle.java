@@ -6,6 +6,7 @@ import lombok.Data;
 @Data
 public class PublishedReleaseBundle {
   private Long id;
+  private String publishedReleaseBundleRef;
   private String tenantId;
   private Long versionId;
   private int versionNumber;

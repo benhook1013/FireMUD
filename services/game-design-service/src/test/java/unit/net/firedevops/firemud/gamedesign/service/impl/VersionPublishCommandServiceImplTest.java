@@ -199,7 +199,8 @@ class VersionPublishCommandServiceImplTest {
                 "genrev-tenant-1-10",
                 false,
                 null,
-                LocalDateTime.now()));
+                LocalDateTime.now(),
+                null));
     when(versionAssetArtifactService.markPublished(
             any(String.class),
             any(Long.class),
@@ -473,7 +474,8 @@ class VersionPublishCommandServiceImplTest {
             "generation-revision",
             false,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(),
+            null);
     VersionAssetArtifactStateDto driftedArtifact =
         new VersionAssetArtifactStateDto(
             "tenant-1",
@@ -546,7 +548,8 @@ class VersionPublishCommandServiceImplTest {
             "generation-revision",
             false,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(),
+            null);
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
@@ -636,7 +639,8 @@ class VersionPublishCommandServiceImplTest {
             "generation-revision",
             false,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(),
+            null);
     when(publishedReleaseBundleService.findPublishedReleaseBundle("tenant-1", 10L))
         .thenReturn(Optional.of(bundle));
 
@@ -756,7 +760,8 @@ class VersionPublishCommandServiceImplTest {
             "generation-revision",
             false,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(),
+            null);
     VersionAssetArtifactStateDto artifact =
         new VersionAssetArtifactStateDto(
             "tenant-1",
@@ -974,7 +979,8 @@ class VersionPublishCommandServiceImplTest {
             "generation-revision",
             false,
             null,
-            LocalDateTime.now());
+            LocalDateTime.now(),
+            null);
     when(publishAttemptRepository.findByPublishWorkflowId(workflowId))
         .thenReturn(Optional.of(attempt));
     when(versionRepository.findByTenantIdAndId("tenant-1", 10L)).thenReturn(Optional.of(version));

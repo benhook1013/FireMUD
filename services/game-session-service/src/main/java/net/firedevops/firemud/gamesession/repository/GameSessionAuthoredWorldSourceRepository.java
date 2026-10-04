@@ -202,6 +202,30 @@ public class GameSessionAuthoredWorldSourceRepository {
     return Optional.of(receipt);
   }
 
+  /**
+   * Resolves the one committed source for an exact canonical world selector.
+   *
+   * <p>This owner-local read does not infer source operation IDs or digests from retained numeric
+   * keys. The returned original receipt still requires exact comparison with the selected catalog
+   * and separately proved retained association before any launch use.
+   */
+  @Transactional(propagation = Propagation.NEVER, readOnly = true)
+  public Optional<IntakeReceipt> readByWorldSelector(
+      String namespace, UUID canonicalTenantId, String worldSlug) {
+    if (TransactionSynchronizationManager.isActualTransactionActive()) {
+      throw new IllegalStateException(
+          "Authored-world source intake read requires a committed-outcome owner read");
+    }
+    AuthoredWorldSourceDigest.validateReadSelector(namespace, canonicalTenantId, worldSlug);
+    Record record = findByWorldSelector(namespace, canonicalTenantId, worldSlug);
+    if (record == null) {
+      return Optional.empty();
+    }
+    IntakeReceipt receipt = toReceipt(record);
+    requireTenantBinding(receipt.source());
+    return Optional.of(receipt);
+  }
+
   /** Reads an exact committed retry by its stable intake request without allocating owner state. */
   @Transactional(propagation = Propagation.NOT_SUPPORTED, readOnly = true)
   public Optional<IntakeReceipt> readByIntakeRequest(String namespace, UUID intakeRequestId) {

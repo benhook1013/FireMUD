@@ -181,6 +181,11 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
           "unsupported published release bundle attestation schema "
               + bundle.attestationSchemaVersion());
     }
+    if (bundle.publishedReleaseBundleRef() == null
+        || bundle.publishedReleaseBundleRef().isBlank()) {
+      throw denial(
+          "RELEASE_BUNDLE_NOT_FOUND", "published release bundle has no persisted opaque reference");
+    }
 
     String descriptorId = "ld-" + UUID.randomUUID();
     AuthoredWorldLaunchDescriptorEvidence evidence =
@@ -194,7 +199,7 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
             bundle.generationConfigRevision(),
             version.versionStateEpoch(),
             bundle.id(),
-            releaseBundleRef(request.canonicalTenantId().toString(), bundle.id(), versionId),
+            bundle.publishedReleaseBundleRef(),
             remapSetId != null,
             remapSetId);
     LaunchDescriptor descriptor = new LaunchDescriptor();
@@ -579,10 +584,6 @@ public class LaunchDescriptorServiceImpl implements LaunchDescriptorService {
       throw denial(
           "RELEASE_BUNDLE_NOT_FOUND", "no published release bundle for the resolved version");
     }
-  }
-
-  private String releaseBundleRef(String canonicalTenantId, long bundleId, long versionId) {
-    return "release-bundle:" + canonicalTenantId + ":" + versionId + ":" + bundleId;
   }
 
   private static String normalizeBlank(String value) {

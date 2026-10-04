@@ -37,6 +37,9 @@ import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionProxyFactoryBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -125,6 +128,82 @@ class GameSessionAuthoredWorldSourceRepositoryIntegrationTest {
         .isEqualTo(intakeXmin);
     assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isEqualTo(1);
     assertThat(fixture.dsl.fetchCount(INTAKES)).isEqualTo(2);
+  }
+
+  @Test
+  void worldSelectorReadReturnsExactCommittedReceiptWithoutEnrollment() {
+    Fixture fixture = fixture();
+    GameSessionAuthoredWorldSourceRepository proxiedRepository =
+        transactionalRepository(fixture.repository, fixture.transactionManager);
+    UUID tenantId = uuid(301);
+    AuthoredWorldSourceEvidence original =
+        source(tenantId, uuid(302), uuid(303), "selector-tenant", "selector-world", "Selector");
+    assertThat(proxiedRepository.readByWorldSelector(NAMESPACE, tenantId, "selector-world"))
+        .isEmpty();
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isZero();
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isZero();
+    IntakeReceipt receipt = fixture.register(uuid(304), original);
+    String intakeXmin =
+        fixture.xmin(
+            "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                + "WHERE operation_id = ?",
+            receipt.operationId());
+    String bindingXmin =
+        fixture.xmin(
+            "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+            NAMESPACE,
+            tenantId);
+    assertThat(proxiedRepository.readByWorldSelector(NAMESPACE, tenantId, "selector-world"))
+        .contains(receipt);
+    assertThat(proxiedRepository.readByWorldSelector("other-space", tenantId, "selector-world"))
+        .isEmpty();
+    assertThat(proxiedRepository.readByWorldSelector(NAMESPACE, uuid(305), "selector-world"))
+        .isEmpty();
+    assertThat(proxiedRepository.readByWorldSelector(NAMESPACE, tenantId, "other-world")).isEmpty();
+    assertThat(
+            fixture.xmin(
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_source_intake "
+                    + "WHERE operation_id = ?",
+                receipt.operationId()))
+        .isEqualTo(intakeXmin);
+    assertThat(
+            fixture.xmin(
+                "SELECT xmin::text AS xmin FROM game_session_authored_world_tenant_source_binding "
+                    + "WHERE target_namespace = ? AND canonical_tenant_id = ?",
+                NAMESPACE,
+                tenantId))
+        .isEqualTo(bindingXmin);
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isEqualTo(1);
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isEqualTo(1);
+  }
+
+  @Test
+  void worldSelectorReadRejectsAmbientOwnerTransactionAndMalformedScope() {
+    Fixture fixture = fixture();
+    GameSessionAuthoredWorldSourceRepository proxiedRepository =
+        transactionalRepository(fixture.repository, fixture.transactionManager);
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        proxiedRepository.readByWorldSelector(
+                            NAMESPACE, uuid(306), "selector-world")))
+        .isInstanceOf(IllegalTransactionStateException.class);
+    assertThatThrownBy(
+            () ->
+                fixture.transactions.execute(
+                    status ->
+                        fixture.repository.readByWorldSelector(
+                            NAMESPACE, uuid(306), "selector-world")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("committed-outcome owner read");
+    assertThatThrownBy(
+            () ->
+                fixture.repository.readByWorldSelector(NAMESPACE, new UUID(0, 0), "selector-world"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(fixture.dsl.fetchCount(TENANT_BINDINGS)).isZero();
+    assertThat(fixture.dsl.fetchCount(INTAKES)).isZero();
   }
 
   @Test
@@ -742,6 +821,18 @@ class GameSessionAuthoredWorldSourceRepositoryIntegrationTest {
         DSL.using(new TransactionAwareDataSourceProxy(dataSource), SQLDialect.POSTGRES);
     return new Fixture(
         dsl, new GameSessionAuthoredWorldSourceRepository(dsl), transactionManager, transactions);
+  }
+
+  private GameSessionAuthoredWorldSourceRepository transactionalRepository(
+      GameSessionAuthoredWorldSourceRepository target,
+      DataSourceTransactionManager transactionManager) {
+    TransactionProxyFactoryBean proxyFactory = new TransactionProxyFactoryBean();
+    proxyFactory.setTransactionManager(transactionManager);
+    proxyFactory.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+    proxyFactory.setTarget(target);
+    proxyFactory.setProxyTargetClass(true);
+    proxyFactory.afterPropertiesSet();
+    return (GameSessionAuthoredWorldSourceRepository) proxyFactory.getObject();
   }
 
   private void assertConflict(Runnable registration) {

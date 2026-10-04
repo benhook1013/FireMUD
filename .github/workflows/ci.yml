@@ -962,12 +962,14 @@ jobs:
         run: |
           ./gradlew :game-design-service:integrationTest \
             --tests integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \
+            --tests net.firedevops.firemud.gamedesign.service.PublishAttemptServiceTransactionIntegrationTest \
             :game-design-service:test \
             --tests net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest \
             -PfullCheck --continue --no-build-cache --no-configuration-cache
           bash dev-tools/validation/inspect-test-results.sh \
             --strict \
             --require-suite integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest \
+            --require-suite net.firedevops.firemud.gamedesign.service.PublishAttemptServiceTransactionIntegrationTest \
             --require-suite net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#resolvesPersistedSourceAndReplaysOriginalDescriptorAfterDefaultsAndVersionChange()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#concurrentExactRetriesPersistOneOriginalDescriptor()' \
@@ -975,7 +977,8 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#corruptFailureReadbackRollsBackTheOutcomeInsert()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#concurrentSuccessAndFailureCandidatesPersistOnlyTheFirstOutcome()' \
             --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#rolledBackDescriptorInsertLeavesNoCanonicalOrPrivateRequestClaim()' \
-            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#v35MigrationPreservesRetainedUnboundDescriptorAndCanonicalResolveDeniesIt()' \
+            --require-case 'integration.net.firedevops.firemud.gamedesign.service.LaunchDescriptorServiceIntegrationTest#v35AndV36MigrationsPreserveRetainedBundleAndUnboundDescriptorWithoutBackfill()' \
+            --require-case 'net.firedevops.firemud.gamedesign.service.PublishAttemptServiceTransactionIntegrationTest#reconciledFullVersionPublicationCommitsAttemptVersionAndReleaseBundleTogether()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#exactGameSessionPeerResolvesAndEchoesTheFullCanonicalDescriptor()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#gameSessionAndWorldPeersReadExactDescriptorAndEchoReadRequestIdentity()' \
             --require-case 'net.firedevops.firemud.gamedesign.service.impl.AuthoredWorldLaunchDescriptorMtlsTest#worldPeerCannotResolveBeforeDescriptorProducerAccess()' \
@@ -998,6 +1001,7 @@ jobs:
           name: game-design-authored-source-launch-descriptor-proof-${{ github.sha }}
           path: |
             services/game-design-service/build/test-results/integrationTest/TEST-*LaunchDescriptorServiceIntegrationTest.xml
+            services/game-design-service/build/test-results/integrationTest/TEST-*PublishAttemptServiceTransactionIntegrationTest.xml
             services/game-design-service/build/test-results/test/TEST-*AuthoredWorldLaunchDescriptorMtlsTest.xml
           if-no-files-found: warn
           retention-days: 7
@@ -1192,6 +1196,8 @@ jobs:
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceCommitsReadsBackAndReplaysExactStoredRequestWithoutAnotherSourceRead()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceRollbackAndRejectedSourceLeaveNoClaims()' \
             --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#serviceLostPostCommitReadbackRetryReturnsOriginalCommittedReceiptWithoutMutation()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#worldSelectorReadReturnsExactCommittedReceiptWithoutEnrollment()' \
+            --require-case 'integration.net.firedevops.firemud.gamesession.repository.GameSessionAuthoredWorldSourceRepositoryIntegrationTest#worldSelectorReadRejectsAmbientOwnerTransactionAndMalformedScope()' \
             game-session-service
 
       - name: Upload Game Session authored-world intake PostgreSQL proof results

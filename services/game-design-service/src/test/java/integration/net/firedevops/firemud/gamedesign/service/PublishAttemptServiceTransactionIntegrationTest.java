@@ -34,6 +34,7 @@ import net.firedevops.firemud.gamedesign.service.impl.TemporalVersionPublishWork
 import net.firedevops.firemud.gamedesign.service.impl.VersionPublishCommandServiceImpl;
 import net.firedevops.firemud.test.NoGrpcServerTestConfiguration;
 import net.firedevops.firemud.test.PostgresBackedServiceTestSupport;
+import org.jooq.DSLContext;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -84,6 +85,7 @@ class PublishAttemptServiceTransactionIntegrationTest {
   @Autowired private VersionAssetArtifactRepository versionAssetArtifactRepository;
   @Autowired private VersionRepository versionRepository;
   @Autowired private VersionTemplateRemapSetRepository templateRemapSetRepository;
+  @Autowired private DSLContext dsl;
   @MockitoBean private AssetExportService assetExportService;
   @MockitoBean private PublishGateService publishGateService;
   @MockitoSpyBean private RecordedParticipantDigestService recordedParticipantDigestService;
@@ -271,6 +273,51 @@ class PublishAttemptServiceTransactionIntegrationTest {
     assertThat(storedVersion.getVersionState()).isEqualTo(VersionLifecycleState.PUBLISHED);
     assertThat(bundle.getPublishWorkflowId()).isEqualTo(publishWorkflowId);
     assertThat(bundle.getManifestHash()).isEqualTo("transaction-proof-manifest");
+    assertThat(bundle.getPublishedReleaseBundleRef()).isNotBlank();
+    assertThat(bundle.getPublishedReleaseBundleRef())
+        .isNotEqualTo(
+            "release-bundle:" + tenantId + ":" + publishedVersion.id() + ":" + bundle.getId());
+    PublishedReleaseBundle durableBundle =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .orElseThrow();
+    assertThat(durableBundle.getPublishedReleaseBundleRef())
+        .isEqualTo(bundle.getPublishedReleaseBundleRef());
+    PublishedReleaseBundle changedReference =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .orElseThrow();
+    changedReference.setPublishedReleaseBundleRef("replacement-opaque-release-reference");
+    assertThatThrownBy(() -> publishedReleaseBundleRepository.save(changedReference))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("published release bundle reference is immutable");
+    PublishedReleaseBundle changedTuple =
+        publishedReleaseBundleRepository
+            .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+            .orElseThrow();
+    changedTuple.setManifestHash("changed-manifest");
+    assertThatThrownBy(() -> publishedReleaseBundleRepository.save(changedTuple))
+        .hasStackTraceContaining("published release bundle attestation is immutable");
+    assertThatThrownBy(
+            () ->
+                dsl.execute(
+                    "UPDATE published_release_bundle "
+                        + "SET published_release_bundle_ref = ? WHERE id = ?",
+                    "replacement-opaque-release-reference",
+                    durableBundle.getId()))
+        .hasStackTraceContaining("published release bundle reference is immutable");
+    assertThat(
+            publishedReleaseBundleRepository
+                .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+                .orElseThrow()
+                .getPublishedReleaseBundleRef())
+        .isEqualTo(bundle.getPublishedReleaseBundleRef());
+    assertThat(
+            publishedReleaseBundleRepository
+                .findByTenantIdAndVersionId(tenantId, publishedVersion.id())
+                .orElseThrow()
+                .getManifestHash())
+        .isEqualTo("transaction-proof-manifest");
     assertThat(artifact.getArtifactState()).isEqualTo(VersionAssetArtifactState.PUBLISHED);
   }
 

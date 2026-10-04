@@ -190,7 +190,8 @@ class GameDesignGrpcServiceTest {
                 "genrev-1",
                 false,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                "opaque-owner-issued-release-reference"));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {
@@ -204,6 +205,9 @@ class GameDesignGrpcServiceTest {
 
     assertEquals("", ref.get().getError().getCode());
     assertEquals(11L, ref.get().getBundle().getId());
+    assertEquals(
+        "opaque-owner-issued-release-reference",
+        ref.get().getBundle().getPublishedReleaseBundleRef());
     assertEquals("abc123", ref.get().getBundle().getManifestHash());
     assertEquals("genrev-1", ref.get().getBundle().getGenerationConfigRevision());
     assertEquals(2, ref.get().getBundle().getRequiredManifestAssetKeysCount());
@@ -990,7 +994,8 @@ class GameDesignGrpcServiceTest {
                 "genrev-1",
                 false,
                 null,
-                LocalDateTime.parse("2026-04-14T12:00:00")));
+                LocalDateTime.parse("2026-04-14T12:00:00"),
+                null));
 
     AtomicReference<GetPublishedReleaseBundleResponse> ref = new AtomicReference<>();
     try (MockedStatic<AdminRoleGuard> ignored = Mockito.mockStatic(AdminRoleGuard.class)) {

@@ -80,6 +80,10 @@ for conventions on schema evolution and error handling. See each service's
     - [AccountService](#account-v1-AccountService)
 
 - [account/v1/issuer_authority_service.proto](#account_v1_issuer_authority_service-proto)
+    - [AcknowledgeIssuerProjectionForRuntimeRequest](#account-v1-AcknowledgeIssuerProjectionForRuntimeRequest)
+    - [AcknowledgeIssuerProjectionForRuntimeResponse](#account-v1-AcknowledgeIssuerProjectionForRuntimeResponse)
+    - [CaptureIssuerProjectionForRuntimeRequest](#account-v1-CaptureIssuerProjectionForRuntimeRequest)
+    - [CaptureIssuerProjectionForRuntimeResponse](#account-v1-CaptureIssuerProjectionForRuntimeResponse)
     - [IssuerAuthoritySourceSnapshot](#account-v1-IssuerAuthoritySourceSnapshot)
     - [ReadIssuerAuthorityForRuntimeRequest](#account-v1-ReadIssuerAuthorityForRuntimeRequest)
     - [ReadIssuerAuthorityForRuntimeResponse](#account-v1-ReadIssuerAuthorityForRuntimeResponse)
@@ -272,6 +276,9 @@ for conventions on schema evolution and error handling. See each service's
     - [AppliedWorldDesignMutation](#gamedesign-v1-AppliedWorldDesignMutation)
     - [ApproveTemplateRemapSetRequest](#gamedesign-v1-ApproveTemplateRemapSetRequest)
     - [ApproveTemplateRemapSetResponse](#gamedesign-v1-ApproveTemplateRemapSetResponse)
+    - [AuthoredWorldLaunchDescriptorEvidence](#gamedesign-v1-AuthoredWorldLaunchDescriptorEvidence)
+    - [AuthoredWorldSourceReceipt](#gamedesign-v1-AuthoredWorldSourceReceipt)
+    - [AuthoredWorldVersionStateEvidence](#gamedesign-v1-AuthoredWorldVersionStateEvidence)
     - [BeginPurgeVersionAssetsRequest](#gamedesign-v1-BeginPurgeVersionAssetsRequest)
     - [BeginPurgeVersionAssetsResponse](#gamedesign-v1-BeginPurgeVersionAssetsResponse)
     - [CanDeleteVersionAssetsRequest](#gamedesign-v1-CanDeleteVersionAssetsRequest)
@@ -290,8 +297,12 @@ for conventions on schema evolution and error handling. See each service's
     - [DesignControlPlaneDigest](#gamedesign-v1-DesignControlPlaneDigest)
     - [FinalizePurgeVersionAssetsRequest](#gamedesign-v1-FinalizePurgeVersionAssetsRequest)
     - [FinalizePurgeVersionAssetsResponse](#gamedesign-v1-FinalizePurgeVersionAssetsResponse)
+    - [GetAuthoredWorldVersionStateRequest](#gamedesign-v1-GetAuthoredWorldVersionStateRequest)
+    - [GetAuthoredWorldVersionStateResponse](#gamedesign-v1-GetAuthoredWorldVersionStateResponse)
     - [GetDesignControlPlaneDigestRequest](#gamedesign-v1-GetDesignControlPlaneDigestRequest)
     - [GetDesignControlPlaneDigestResponse](#gamedesign-v1-GetDesignControlPlaneDigestResponse)
+    - [GetLaunchDescriptorRequest](#gamedesign-v1-GetLaunchDescriptorRequest)
+    - [GetLaunchDescriptorResponse](#gamedesign-v1-GetLaunchDescriptorResponse)
     - [GetPublishedPluginVersionRequest](#gamedesign-v1-GetPublishedPluginVersionRequest)
     - [GetPublishedPluginVersionResponse](#gamedesign-v1-GetPublishedPluginVersionResponse)
     - [GetPublishedReleaseBundleRequest](#gamedesign-v1-GetPublishedReleaseBundleRequest)
@@ -657,12 +668,16 @@ for conventions on schema evolution and error handling. See each service's
     - [GetWorldInstanceLifecycleRequest](#world_management-v1-GetWorldInstanceLifecycleRequest)
     - [GetWorldInstanceLifecycleResponse](#world_management-v1-GetWorldInstanceLifecycleResponse)
     - [HazardAmbientState](#world_management-v1-HazardAmbientState)
+    - [IntakeAuthoredWorldSourceRequest](#world_management-v1-IntakeAuthoredWorldSourceRequest)
+    - [IntakeAuthoredWorldSourceResponse](#world_management-v1-IntakeAuthoredWorldSourceResponse)
     - [ListRoomOccupantsRequest](#world_management-v1-ListRoomOccupantsRequest)
     - [ListRoomOccupantsResponse](#world_management-v1-ListRoomOccupantsResponse)
     - [PingRequest](#world_management-v1-PingRequest)
     - [PingResponse](#world_management-v1-PingResponse)
     - [PrepareWorldInstanceRequest](#world_management-v1-PrepareWorldInstanceRequest)
     - [PrepareWorldInstanceResponse](#world_management-v1-PrepareWorldInstanceResponse)
+    - [ReadAuthoredWorldSourceIntakeRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeRequest)
+    - [ReadAuthoredWorldSourceIntakeResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeResponse)
     - [RegionDesignMutation](#world_management-v1-RegionDesignMutation)
     - [RoomAmbientState](#world_management-v1-RoomAmbientState)
     - [RoomAmbientStatePatch](#world_management-v1-RoomAmbientStatePatch)
@@ -693,6 +708,7 @@ for conventions on schema evolution and error handling. See each service's
     - [WorldDesignScopeType](#world_management-v1-WorldDesignScopeType)
     - [WorldInstanceLifecycleStatus](#world_management-v1-WorldInstanceLifecycleStatus)
 
+    - [WorldAuthoredSourceIntakeService](#world_management-v1-WorldAuthoredSourceIntakeService)
     - [WorldManagementService](#world_management-v1-WorldManagementService)
 
 - [Scalar Value Types](#scalar-value-types)
@@ -1690,6 +1706,95 @@ Basic ping response containing a greeting and optional error details.
 
 
 
+<a name="account-v1-AcknowledgeIssuerProjectionForRuntimeRequest"></a>
+
+### AcknowledgeIssuerProjectionForRuntimeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| issuer_id | [string](#string) |  |  |
+| capture_operation_id | [string](#string) |  |  |
+| capture_request_id | [string](#string) |  |  |
+| capture_request_digest_version | [uint32](#uint32) |  |  |
+| capture_request_digest | [string](#string) |  |  |
+| projection_key | [string](#string) |  |  |
+| installed_projection_json | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-AcknowledgeIssuerProjectionForRuntimeResponse"></a>
+
+### AcknowledgeIssuerProjectionForRuntimeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| acknowledgment_id | [string](#string) |  |  |
+| issuer_id | [string](#string) |  |  |
+| caller_workload_identity | [string](#string) |  |  |
+| projection_key | [string](#string) |  |  |
+| capture_operation_id | [string](#string) |  |  |
+| capture_request_id | [string](#string) |  |  |
+| capture_request_digest_version | [uint32](#uint32) |  |  |
+| capture_request_digest | [string](#string) |  |  |
+| request_digest_version | [uint32](#uint32) |  |  |
+| request_digest | [string](#string) |  |  |
+| installed_projection_json | [string](#string) |  |  |
+| installed_projection_sha256 | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-CaptureIssuerProjectionForRuntimeRequest"></a>
+
+### CaptureIssuerProjectionForRuntimeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| issuer_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="account-v1-CaptureIssuerProjectionForRuntimeResponse"></a>
+
+### CaptureIssuerProjectionForRuntimeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [string](#string) |  |  |
+| target_namespace | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| issuer_id | [string](#string) |  |  |
+| caller_workload_identity | [string](#string) |  |  |
+| projection_key | [string](#string) |  |  |
+| request_digest_version | [uint32](#uint32) |  |  |
+| request_digest | [string](#string) |  |  |
+| captured_source_snapshot | [IssuerAuthoritySourceSnapshot](#account-v1-IssuerAuthoritySourceSnapshot) |  |  |
+
+
+
+
+
+
 <a name="account-v1-IssuerAuthoritySourceSnapshot"></a>
 
 ### IssuerAuthoritySourceSnapshot
@@ -1756,12 +1861,14 @@ Basic ping response containing a greeting and optional error details.
 <a name="account-v1-IssuerAuthorityService"></a>
 
 ### IssuerAuthorityService
-Owner-local source evidence only; this service is not wired for runtime use.
+Owner-local issuer evidence handoffs only; this service is not wired for runtime use.
 Caller and response workload identities must both be verified from mTLS.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | ReadIssuerAuthorityForRuntime | [ReadIssuerAuthorityForRuntimeRequest](#account-v1-ReadIssuerAuthorityForRuntimeRequest) | [ReadIssuerAuthorityForRuntimeResponse](#account-v1-ReadIssuerAuthorityForRuntimeResponse) |  |
+| CaptureIssuerProjectionForRuntime | [CaptureIssuerProjectionForRuntimeRequest](#account-v1-CaptureIssuerProjectionForRuntimeRequest) | [CaptureIssuerProjectionForRuntimeResponse](#account-v1-CaptureIssuerProjectionForRuntimeResponse) |  |
+| AcknowledgeIssuerProjectionForRuntime | [AcknowledgeIssuerProjectionForRuntimeRequest](#account-v1-AcknowledgeIssuerProjectionForRuntimeRequest) | [AcknowledgeIssuerProjectionForRuntimeResponse](#account-v1-AcknowledgeIssuerProjectionForRuntimeResponse) |  |
 
 
 
@@ -5205,6 +5312,96 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="gamedesign-v1-AuthoredWorldLaunchDescriptorEvidence"></a>
+
+### AuthoredWorldLaunchDescriptorEvidence
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| authored_world_source_operation_id | [string](#string) |  |  |
+| authored_world_source_evidence_digest | [string](#string) |  |  |
+| game_template_id | [int64](#int64) |  |  |
+| requested_script_patch_version | [string](#string) | optional |  |
+| source_version_id | [int64](#int64) | optional |  |
+| target_version_id | [int64](#int64) | optional |  |
+| requested_runtime_flags_json | [string](#string) | optional |  |
+| request_digest | [string](#string) |  |  |
+| launch_descriptor_id | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| script_patch_version | [string](#string) | optional |  |
+| runtime_flags_json | [string](#string) |  |  |
+| generation_config_revision | [string](#string) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| release_bundle_id | [int64](#int64) |  |  |
+| published_release_bundle_ref | [string](#string) |  |  |
+| remap_set_id | [string](#string) | optional |  |
+| result_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-AuthoredWorldSourceReceipt"></a>
+
+### AuthoredWorldSourceReceipt
+Complete immutable registration receipt, without another RPC&#39;s transient read request ID.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| registration_request_id | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| tenant_slug | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| world_display_name | [string](#string) |  |  |
+| source_game_row_id | [int64](#int64) |  |  |
+| source_game_tenant_key | [string](#string) |  |  |
+| provenance_kind | [string](#string) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-AuthoredWorldVersionStateEvidence"></a>
+
+### AuthoredWorldVersionStateEvidence
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+| source_evidence | [AuthoredWorldSourceReceipt](#gamedesign-v1-AuthoredWorldSourceReceipt) |  |  |
+| version_state | [VersionLifecycleState](#gamedesign-v1-VersionLifecycleState) |  |  |
+| version_state_epoch | [int64](#int64) |  |  |
+| evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-BeginPurgeVersionAssetsRequest"></a>
 
 ### BeginPurgeVersionAssetsRequest
@@ -5508,6 +5705,43 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 
 
+<a name="gamedesign-v1-GetAuthoredWorldVersionStateRequest"></a>
+
+### GetAuthoredWorldVersionStateRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| read_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| version_id | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetAuthoredWorldVersionStateResponse"></a>
+
+### GetAuthoredWorldVersionStateResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| evidence | [AuthoredWorldVersionStateEvidence](#gamedesign-v1-AuthoredWorldVersionStateEvidence) |  |  |
+
+
+
+
+
+
 <a name="gamedesign-v1-GetDesignControlPlaneDigestRequest"></a>
 
 ### GetDesignControlPlaneDigestRequest
@@ -5535,6 +5769,43 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | digest | [DesignControlPlaneDigest](#gamedesign-v1-DesignControlPlaneDigest) |  |  |
+| error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetLaunchDescriptorRequest"></a>
+
+### GetLaunchDescriptorRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| control_plane_request_id | [string](#string) |  |  |
+| expected_request_digest | [string](#string) |  |  |
+| expected_result_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="gamedesign-v1-GetLaunchDescriptorResponse"></a>
+
+### GetLaunchDescriptorResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request_id | [string](#string) |  |  |
+| launch_descriptor | [LaunchDescriptor](#gamedesign-v1-LaunchDescriptor) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
 
 
@@ -5847,7 +6118,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | launch_descriptor_id | [string](#string) |  |  |
-| tenant_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
 | game_template_id | [int64](#int64) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
 | version_id | [int64](#int64) |  |  |
@@ -5858,6 +6129,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | release_bundle_id | [int64](#int64) |  |  |
 | published_release_bundle_ref | [string](#string) |  |  |
 | remap_set_id | [string](#string) |  |  |
+| authored_world_binding | [AuthoredWorldLaunchDescriptorEvidence](#gamedesign-v1-AuthoredWorldLaunchDescriptorEvidence) |  |  |
 
 
 
@@ -6281,6 +6553,7 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | workflow_status | [string](#string) |  |  |
 | workflow_family | [string](#string) |  |  |
 | command_definitions | [string](#string) | repeated |  |
+| published_release_bundle_ref | [string](#string) |  |  |
 
 
 
@@ -6500,13 +6773,16 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
-| tenant_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
 | game_template_id | [int64](#int64) |  |  |
 | control_plane_request_id | [string](#string) |  |  |
 | requested_script_patch_version | [string](#string) | optional |  |
 | source_version_id | [int64](#int64) | optional |  |
 | target_version_id | [int64](#int64) | optional |  |
 | requested_runtime_flags_json | [string](#string) | optional |  |
+| world_slug | [string](#string) |  |  |
+| authored_world_source_operation_id | [string](#string) |  |  |
+| expected_authored_world_source_evidence_digest | [string](#string) |  |  |
 
 
 
@@ -7026,8 +7302,10 @@ Operator/control-plane surface for patch lifecycle visibility and rollback suppo
 | GetDesignControlPlaneDigest | [GetDesignControlPlaneDigestRequest](#gamedesign-v1-GetDesignControlPlaneDigestRequest) | [GetDesignControlPlaneDigestResponse](#gamedesign-v1-GetDesignControlPlaneDigestResponse) |  |
 | GetPublishedReleaseBundle | [GetPublishedReleaseBundleRequest](#gamedesign-v1-GetPublishedReleaseBundleRequest) | [GetPublishedReleaseBundleResponse](#gamedesign-v1-GetPublishedReleaseBundleResponse) |  |
 | GetVersionState | [GetVersionStateRequest](#gamedesign-v1-GetVersionStateRequest) | [GetVersionStateResponse](#gamedesign-v1-GetVersionStateResponse) |  |
+| GetAuthoredWorldVersionState | [GetAuthoredWorldVersionStateRequest](#gamedesign-v1-GetAuthoredWorldVersionStateRequest) | [GetAuthoredWorldVersionStateResponse](#gamedesign-v1-GetAuthoredWorldVersionStateResponse) | Exact current version state for one already-registered authored-world source. |
 | CompareAndSetVersionState | [CompareAndSetVersionStateRequest](#gamedesign-v1-CompareAndSetVersionStateRequest) | [CompareAndSetVersionStateResponse](#gamedesign-v1-CompareAndSetVersionStateResponse) |  |
 | ResolveLaunchDescriptor | [ResolveLaunchDescriptorRequest](#gamedesign-v1-ResolveLaunchDescriptorRequest) | [ResolveLaunchDescriptorResponse](#gamedesign-v1-ResolveLaunchDescriptorResponse) |  |
+| GetLaunchDescriptor | [GetLaunchDescriptorRequest](#gamedesign-v1-GetLaunchDescriptorRequest) | [GetLaunchDescriptorResponse](#gamedesign-v1-GetLaunchDescriptorResponse) |  |
 | CreateTemplateRemapSet | [CreateTemplateRemapSetRequest](#gamedesign-v1-CreateTemplateRemapSetRequest) | [CreateTemplateRemapSetResponse](#gamedesign-v1-CreateTemplateRemapSetResponse) |  |
 | ApproveTemplateRemapSet | [ApproveTemplateRemapSetRequest](#gamedesign-v1-ApproveTemplateRemapSetRequest) | [ApproveTemplateRemapSetResponse](#gamedesign-v1-ApproveTemplateRemapSetResponse) |  |
 | GetTemplateRemapSet | [GetTemplateRemapSetRequest](#gamedesign-v1-GetTemplateRemapSetRequest) | [GetTemplateRemapSetResponse](#gamedesign-v1-GetTemplateRemapSetResponse) |  |
@@ -10358,6 +10636,8 @@ plus scoped tick pause/resume used for rollback safety.
 | payload | [bytes](#bytes) |  |  |
 | payload_digest_version | [int32](#int32) |  |  |
 | payload_digest | [string](#string) |  |  |
+| tenant_identity_version | [int32](#int32) |  |  |
+| tenant_uuid | [string](#string) |  |  |
 
 
 
@@ -10382,6 +10662,8 @@ plus scoped tick pause/resume used for rollback safety.
 | payload_digest | [string](#string) |  |  |
 | status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
 | outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+| tenant_identity_version | [int32](#int32) |  |  |
+| tenant_uuid | [string](#string) |  |  |
 
 
 
@@ -10500,6 +10782,8 @@ plus scoped tick pause/resume used for rollback safety.
 | payload | [bytes](#bytes) |  |  |
 | payload_digest_version | [int32](#int32) |  |  |
 | payload_digest | [string](#string) |  |  |
+| tenant_identity_version | [int32](#int32) |  |  |
+| tenant_uuid | [string](#string) |  |  |
 
 
 
@@ -10524,6 +10808,8 @@ plus scoped tick pause/resume used for rollback safety.
 | payload_digest | [string](#string) |  |  |
 | status | [AccountAuditReceiptStatus](#logging_admin-v1-AccountAuditReceiptStatus) |  |  |
 | outcome | [AccountAuditReceiptOutcome](#logging_admin-v1-AccountAuditReceiptOutcome) |  |  |
+| tenant_identity_version | [int32](#int32) |  |  |
+| tenant_uuid | [string](#string) |  |  |
 
 
 
@@ -12128,6 +12414,51 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+<a name="world_management-v1-IntakeAuthoredWorldSourceRequest"></a>
+
+### IntakeAuthoredWorldSourceRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-IntakeAuthoredWorldSourceResponse"></a>
+
+### IntakeAuthoredWorldSourceResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  | Recomputable from the echoed intake binding using the World request digest contract. |
+| receipt_digest | [string](#string) |  | Opaque authenticated World attestation; it binds private World state and is not client-recomputable. |
+
+
+
+
+
+
 <a name="world_management-v1-ListRoomOccupantsRequest"></a>
 
 ### ListRoomOccupantsRequest
@@ -12225,6 +12556,53 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 | ----- | ---- | ----- | ----------- |
 | world_instance | [WorldInstanceLifecycleSnapshot](#world_management-v1-WorldInstanceLifecycleSnapshot) |  |  |
 | error | [shared.v1.ErrorDetail](#shared-v1-ErrorDetail) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadAuthoredWorldSourceIntakeRequest"></a>
+
+### ReadAuthoredWorldSourceIntakeRequest
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  | A distinct nonnil identity for this read; intake_request_id remains the stored receipt key. |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="world_management-v1-ReadAuthoredWorldSourceIntakeResponse"></a>
+
+### ReadAuthoredWorldSourceIntakeResponse
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| schema_version | [int32](#int32) |  |  |
+| target_namespace | [string](#string) |  |  |
+| request_id | [string](#string) |  |  |
+| intake_request_id | [string](#string) |  |  |
+| canonical_tenant_id | [string](#string) |  |  |
+| world_slug | [string](#string) |  |  |
+| source_operation_id | [string](#string) |  |  |
+| expected_source_evidence_digest | [string](#string) |  |  |
+| operation_id | [string](#string) |  |  |
+| request_digest | [string](#string) |  | Recomputable from the echoed intake binding using the World request digest contract. |
+| receipt_digest | [string](#string) |  | Opaque authenticated World attestation; it binds private World state and is not client-recomputable. |
 
 
 
@@ -12724,6 +13102,18 @@ Semantics and failure expectations: - Events may be delivered more than once; th
 
 
 
+
+
+<a name="world_management-v1-WorldAuthoredSourceIntakeService"></a>
+
+### WorldAuthoredSourceIntakeService
+Explicitly unwired authenticated authored-source intake boundary. This service remains separate
+from the runtime WorldManagementService until its caller and deployment path are authorized.
+
+| Method Name | Request Type | Response Type | Description |
+| ----------- | ------------ | ------------- | ------------|
+| IntakeAuthoredWorldSource | [IntakeAuthoredWorldSourceRequest](#world_management-v1-IntakeAuthoredWorldSourceRequest) | [IntakeAuthoredWorldSourceResponse](#world_management-v1-IntakeAuthoredWorldSourceResponse) |  |
+| ReadAuthoredWorldSourceIntake | [ReadAuthoredWorldSourceIntakeRequest](#world_management-v1-ReadAuthoredWorldSourceIntakeRequest) | [ReadAuthoredWorldSourceIntakeResponse](#world_management-v1-ReadAuthoredWorldSourceIntakeResponse) |  |
 
 
 <a name="world_management-v1-WorldManagementService"></a>

@@ -116,6 +116,15 @@ class LaunchDescriptorServiceIntegrationTest {
     ResolvedLaunchDescriptorDto original =
         launchDescriptorService.resolveLaunchDescriptor(fixture.request());
     assertThat(original.canonicalTenantId()).isEqualTo(fixture.canonicalTenantId().toString());
+    assertThat(original.publishedReleaseBundleRef())
+        .isEqualTo(fixture.bundle().getPublishedReleaseBundleRef());
+    assertThat(
+            publishedReleaseBundleRepository
+                .findByTenantIdAndVersionId(
+                    fixture.privateSourceTenantKey(), fixture.version().getId())
+                .orElseThrow()
+                .getPublishedReleaseBundleRef())
+        .isEqualTo(original.publishedReleaseBundleRef());
     assertThat(original.authoredWorldBinding()).isNotNull();
     assertThat(original.authoredWorldBinding().authoredWorldSourceOperationId())
         .isEqualTo(fixture.source().operationId());
@@ -152,6 +161,8 @@ class LaunchDescriptorServiceIntegrationTest {
         .isEqualTo(original.authoredWorldBinding().requestDigest());
     assertThat(persisted.getResultDigest())
         .isEqualTo(original.authoredWorldBinding().resultDigest());
+    assertThat(persisted.getPublishedReleaseBundleRef())
+        .isEqualTo(original.publishedReleaseBundleRef());
     assertThat(
             dsl.fetchCount(
                 LAUNCH_DESCRIPTOR,
@@ -433,7 +444,7 @@ class LaunchDescriptorServiceIntegrationTest {
   }
 
   @Test
-  void v35MigrationPreservesRetainedUnboundDescriptorAndCanonicalResolveDeniesIt() {
+  void v35AndV36MigrationsPreserveRetainedBundleAndUnboundDescriptorWithoutBackfill() {
     String schema = "game_design_launch_history_" + UUID.randomUUID().toString().replace("-", "");
     DriverManagerDataSource dataSource = isolatedDataSource(schema);
     migrate(dataSource, schema, MigrationVersion.fromVersion("34"));
@@ -495,6 +506,9 @@ class LaunchDescriptorServiceIntegrationTest {
                 "sha256:" + "d".repeat(64),
                 "gen-rev:" + suffix)
             .fetchOne(0, Long.class);
+    if (bundleId == null) {
+      throw new IllegalStateException("Retained V34 release bundle insertion returned no identity");
+    }
     String requestId = "retained-cp-" + suffix;
     String legacyDescriptorId = "ld-retained-" + suffix;
     isolatedDsl.execute(
@@ -514,9 +528,27 @@ class LaunchDescriptorServiceIntegrationTest {
         "legacy-release-ref-" + suffix);
     Map<String, Object> retainedV34Snapshot =
         legacyLaunchDescriptorSnapshot(isolatedDsl, privateTenantKey, requestId);
+    Map<String, Object> retainedBundleSnapshot =
+        retainedReleaseBundleSnapshot(isolatedDsl, bundleId);
 
     migrate(dataSource, schema, null);
     LaunchDescriptorRepository launchRepository = new LaunchDescriptorRepository(isolatedDsl);
+    var retainedBundleReference =
+        isolatedDsl.fetchOne(
+            "SELECT published_release_bundle_ref FROM published_release_bundle WHERE id = ?",
+            bundleId);
+    if (retainedBundleReference == null) {
+      throw new IllegalStateException("Retained V34 release bundle reference row is missing");
+    }
+    assertThat(retainedBundleReference.get("published_release_bundle_ref", String.class)).isNull();
+    assertThat(retainedReleaseBundleSnapshot(isolatedDsl, bundleId))
+        .isEqualTo(retainedBundleSnapshot);
+    assertThat(
+            new PublishedReleaseBundleRepository(isolatedDsl)
+                .findByTenantIdAndVersionId(privateTenantKey, versionId)
+                .orElseThrow()
+                .getPublishedReleaseBundleRef())
+        .isNull();
     assertThat(legacyLaunchDescriptorSnapshot(isolatedDsl, privateTenantKey, requestId))
         .isEqualTo(retainedV34Snapshot);
     LaunchDescriptor before =
@@ -871,6 +903,21 @@ class LaunchDescriptorServiceIntegrationTest {
             controlPlaneRequestId);
     if (record == null) {
       throw new IllegalStateException("Retained V34 launch descriptor fixture is missing");
+    }
+    return record.intoMap();
+  }
+
+  private Map<String, Object> retainedReleaseBundleSnapshot(DSLContext isolatedDsl, long bundleId) {
+    var record =
+        isolatedDsl.fetchOne(
+            "SELECT id, tenant_id, version_id, version_number, attestation_schema_version, "
+                + "publish_workflow_id, manifest_hash, generation_config_revision, "
+                + "required_manifest_asset_keys_json, participant_digests_json, "
+                + "command_definitions_json, script_only, script_patch_version, published_at "
+                + "FROM published_release_bundle WHERE id = ?",
+            bundleId);
+    if (record == null) {
+      throw new IllegalStateException("Retained V34 release bundle fixture is missing");
     }
     return record.intoMap();
   }
