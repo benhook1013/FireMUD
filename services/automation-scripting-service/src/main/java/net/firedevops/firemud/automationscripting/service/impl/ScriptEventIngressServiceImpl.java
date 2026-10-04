@@ -1611,9 +1611,9 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String dryRunPrincipalKey() {
-    Long accountId = SessionContext.currentAccountIdOrNull();
-    if (accountId != null) {
-      return "account:" + accountId;
+    String accountUuid = SessionContext.currentAccountUuidOrNull();
+    if (accountUuid != null) {
+      return "account:" + accountUuid;
     }
     String serviceName = SessionContext.getServiceName();
     if (serviceName != null && !serviceName.isBlank()) {

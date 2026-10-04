@@ -23,11 +23,17 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeRequest;
 import net.firedevops.firemud.account.v1.GetRealmAccessGrantForRuntimeResponse;
+import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesRequest;
+import net.firedevops.firemud.account.v1.ListPresenceVisibilityPoliciesResponse;
 import net.firedevops.firemud.account.v1.ResolveRuntimeAccountIdentityRequest;
 import net.firedevops.firemud.account.v1.ResolveRuntimeAccountIdentityResponse;
 import net.firedevops.firemud.accountservice.entity.Account;
 import net.firedevops.firemud.accountservice.entity.AccountIdentityProvenance;
+import net.firedevops.firemud.accountservice.entity.ProfilePresenceVisibilityPolicy;
 import net.firedevops.firemud.accountservice.repository.AccountRepository;
+import net.firedevops.firemud.accountservice.service.AccountService;
+import net.firedevops.firemud.accountservice.service.PingService;
+import net.firedevops.firemud.accountservice.service.impl.AccountGrpcService;
 import net.firedevops.firemud.accountservice.service.impl.RuntimeAccountIdentityGrpcService;
 import net.firedevops.firemud.common.config.CommonSecurityAutoConfiguration;
 import net.firedevops.firemud.common.grpc.GrpcPeerIdentity;
@@ -50,9 +56,13 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
       "account.v1.RuntimeAccountIdentityService/ResolveRuntimeAccountIdentity";
   private static final String NONPUBLIC_METHOD =
       "account.v1.AccountService/GetRealmAccessGrantForRuntime";
+  private static final String PRESENCE_METHOD =
+      "account.v1.AccountService/ListPresenceVisibilityPolicies";
   private static final String ACCOUNT_UUID = "87426bb3-a733-43f0-9c8e-2e379cbdf7ec";
   private static final String REQUEST_UUID = "11111111-1111-4111-8111-111111111111";
   private static final String GAME_SESSION_URI = "spiffe://firemud/ns/test/sa/game-session-service";
+  private static final String SOCIAL_GROUPS_URI =
+      "spiffe://firemud/ns/test/sa/social-groups-service";
   private static final String ENTITY_MANAGEMENT_URI =
       "spiffe://firemud/ns/test/sa/entity-management-service";
   private static final MethodDescriptor<
@@ -69,6 +79,13 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
               NONPUBLIC_METHOD,
               GetRealmAccessGrantForRuntimeRequest.getDefaultInstance(),
               GetRealmAccessGrantForRuntimeResponse.getDefaultInstance());
+  private static final MethodDescriptor<
+          ListPresenceVisibilityPoliciesRequest, ListPresenceVisibilityPoliciesResponse>
+      PRESENCE_METHOD_DESCRIPTOR =
+          unaryMethod(
+              PRESENCE_METHOD,
+              ListPresenceVisibilityPoliciesRequest.getDefaultInstance(),
+              ListPresenceVisibilityPoliciesResponse.getDefaultInstance());
 
   @Test
   void exactSameNamespaceRuntimePeersReachReadOnlyHandlerUnderBaseAndProdYaml() {
@@ -176,6 +193,67 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
     }
   }
 
+  @Test
+  void exactSocialPeerReachesPresencePolicyHandlerWithoutBearerUnderBothYamlLayers() {
+    for (boolean productionLayer : List.of(false, true)) {
+      withConfiguredInterceptor(
+          productionLayer,
+          (interceptor, ignored) -> {
+            AccountService accountService = mock(AccountService.class);
+            when(accountService.resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID)))
+                .thenReturn(42L);
+            when(accountService.listPresenceVisibilityPolicies(1L, List.of(42L)))
+                .thenReturn(Map.of(42L, ProfilePresenceVisibilityPolicy.PRIVATE));
+            AccountGrpcService service =
+                new AccountGrpcService(mock(PingService.class), accountService, null, "test");
+
+            PresenceDispatchResult result =
+                dispatchPresenceMethod(interceptor, service, SOCIAL_GROUPS_URI, null);
+
+            assertThat(result.handlerDispatched()).isTrue();
+            assertThat(result.observer().completed).isTrue();
+            assertThat(result.observer().response.getPoliciesCount()).isEqualTo(1);
+            assertThat(result.observer().response.getPolicies(0).getAccountId())
+                .isEqualTo(ACCOUNT_UUID);
+            assertThat(result.observer().response.getPolicies(0).getPolicy()).isEqualTo("PRIVATE");
+            verify(accountService).resolveAccountStorageId(UUID.fromString(ACCOUNT_UUID));
+            verify(accountService).listPresenceVisibilityPolicies(1L, List.of(42L));
+          });
+    }
+  }
+
+  @Test
+  void bearerOnlyPresenceRequestReachesHandlerButIsDeniedWithoutSocialPeerUnderBothYamlLayers() {
+    for (boolean productionLayer : List.of(false, true)) {
+      withConfiguredInterceptor(
+          productionLayer,
+          (interceptor, jwtUtil) -> {
+            AccountService accountService = mock(AccountService.class);
+            AccountGrpcService service =
+                new AccountGrpcService(mock(PingService.class), accountService, null, "test");
+            String bearer =
+                jwtUtil.generateToken(
+                    ACCOUNT_UUID,
+                    Map.of(
+                        "accountId",
+                        ACCOUNT_UUID,
+                        "globalRoles",
+                        List.of("platformAdmin"),
+                        "scopedRoles",
+                        Map.of()));
+
+            PresenceDispatchResult result =
+                dispatchPresenceMethod(interceptor, service, null, bearer);
+
+            assertThat(result.handlerDispatched()).isTrue();
+            assertThat(result.observer().completed).isTrue();
+            assertThat(result.observer().response.getError().getCode())
+                .isEqualTo("PERMISSION_DENIED");
+            verifyNoInteractions(accountService);
+          });
+    }
+  }
+
   private static Account persistedAccount() {
     Account account = new Account();
     account.setId(42L);
@@ -242,6 +320,63 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
     return new DispatchResult(observer, handlerDispatched.get());
   }
 
+  private static PresenceDispatchResult dispatchPresenceMethod(
+      AuthTokenInterceptor interceptor,
+      AccountGrpcService service,
+      String peerUri,
+      String bearerToken) {
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    ServerCall<ListPresenceVisibilityPoliciesRequest, ListPresenceVisibilityPoliciesResponse> call =
+        mock(ServerCall.class);
+    when(call.getMethodDescriptor()).thenReturn(PRESENCE_METHOD_DESCRIPTOR);
+    AtomicBoolean handlerDispatched = new AtomicBoolean();
+    PresenceTestObserver observer = new PresenceTestObserver();
+    ServerCallHandler<ListPresenceVisibilityPoliciesRequest, ListPresenceVisibilityPoliciesResponse>
+        next =
+            new ServerCallHandler<>() {
+              @Override
+              public ServerCall.Listener<ListPresenceVisibilityPoliciesRequest> startCall(
+                  ServerCall<
+                          ListPresenceVisibilityPoliciesRequest,
+                          ListPresenceVisibilityPoliciesResponse>
+                      serverCall,
+                  Metadata headers) {
+                handlerDispatched.set(true);
+                return new ServerCall.Listener<>() {
+                  @Override
+                  public void onMessage(ListPresenceVisibilityPoliciesRequest request) {
+                    service.listPresenceVisibilityPolicies(request, observer);
+                  }
+                };
+              }
+            };
+    ListPresenceVisibilityPoliciesRequest request =
+        ListPresenceVisibilityPoliciesRequest.newBuilder()
+            .setTenantId("1")
+            .addAccountIds(ACCOUNT_UUID)
+            .build();
+    Metadata headers = new Metadata();
+    if (bearerToken != null) {
+      headers.put(
+          Metadata.Key.of("Authorization", Metadata.ASCII_STRING_MARSHALLER),
+          "Bearer " + bearerToken);
+    }
+    Runnable dispatch =
+        () -> {
+          ServerCall.Listener<ListPresenceVisibilityPoliciesRequest> listener =
+              interceptor.interceptCall(call, headers, next);
+          listener.onMessage(request);
+        };
+
+    if (peerUri == null) {
+      Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, null).run(dispatch);
+    } else {
+      GrpcPeerIdentity peer = GrpcPeerIdentity.parseUri(peerUri).orElseThrow();
+      Context.current().withValue(GrpcPeerIdentity.CONTEXT_KEY, peer).run(dispatch);
+    }
+    return new PresenceDispatchResult(observer, handlerDispatched.get());
+  }
+
   private static void withConfiguredInterceptor(
       boolean productionLayer,
       java.util.function.BiConsumer<AuthTokenInterceptor, JwtUtil> action) {
@@ -281,6 +416,7 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
               assertThat(context).hasSingleBean(AuthTokenInterceptor.class);
               assertThat(context.getBean(GrpcAuthProperties.class).getPublicMethods())
                   .contains(IDENTITY_METHOD)
+                  .contains(PRESENCE_METHOD)
                   .doesNotContain(NONPUBLIC_METHOD);
               action.accept(
                   context.getBean(AuthTokenInterceptor.class), context.getBean(JwtUtil.class));
@@ -301,6 +437,8 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
 
   private record DispatchResult(TestObserver observer, boolean handlerDispatched) {}
 
+  private record PresenceDispatchResult(PresenceTestObserver observer, boolean handlerDispatched) {}
+
   private static final class TestObserver
       implements StreamObserver<ResolveRuntimeAccountIdentityResponse> {
     private ResolveRuntimeAccountIdentityResponse response;
@@ -317,6 +455,27 @@ class RuntimeAccountIdentityGrpcAuthWiringTest {
     public void onError(Throwable throwable) {
       failure = true;
       statusCode = Status.fromThrowable(throwable).getCode();
+    }
+
+    @Override
+    public void onCompleted() {
+      completed = true;
+    }
+  }
+
+  private static final class PresenceTestObserver
+      implements StreamObserver<ListPresenceVisibilityPoliciesResponse> {
+    private ListPresenceVisibilityPoliciesResponse response;
+    private boolean completed;
+
+    @Override
+    public void onNext(ListPresenceVisibilityPoliciesResponse value) {
+      response = value;
+    }
+
+    @Override
+    public void onError(Throwable throwable) {
+      throw new AssertionError("Expected Account application response", throwable);
     }
 
     @Override

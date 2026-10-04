@@ -68,28 +68,32 @@ class SessionContextTenantAccessTest {
   }
 
   @Test
-  void currentAccountIdOrNullReturnsParsedAccountId() {
-    SessionContext.setContext("42", List.of(), Map.of());
+  void currentAccountUuidOrNullReturnsCanonicalAccountUuid() {
+    String accountUuid = "11111111-1111-1111-1111-111111111111";
+    SessionContext.setContext(accountUuid, List.of(), Map.of());
 
-    assertTrue(SessionContext.currentAccountIdOrNull() == 42L);
+    assertTrue(accountUuid.equals(SessionContext.currentAccountUuidOrNull()));
   }
 
   @Test
-  void currentAccountIdOrNullReturnsNullWhenClaimMissing() {
+  void currentAccountUuidOrNullReturnsNullWhenClaimMissing() {
     SessionContext.clear();
-    assertNull(SessionContext.currentAccountIdOrNull());
+    assertNull(SessionContext.currentAccountUuidOrNull());
 
     SessionContext.setContext("   ", List.of(), Map.of());
-    assertNull(SessionContext.currentAccountIdOrNull());
+    assertNull(SessionContext.currentAccountUuidOrNull());
   }
 
   @Test
-  void currentAccountIdOrNullRejectsMalformedOrNonPositiveClaim() {
+  void currentAccountUuidOrNullRejectsMalformedNumericAndNilClaims() {
     SessionContext.setContext("not-a-long", List.of(), Map.of());
-    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
+    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountUuidOrNull);
 
-    SessionContext.setContext("0", List.of(), Map.of());
-    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountIdOrNull);
+    SessionContext.setContext("42", List.of(), Map.of());
+    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountUuidOrNull);
+
+    SessionContext.setContext("00000000-0000-0000-0000-000000000000", List.of(), Map.of());
+    assertThrows(IllegalArgumentException.class, SessionContext::currentAccountUuidOrNull);
   }
 
   @Test
