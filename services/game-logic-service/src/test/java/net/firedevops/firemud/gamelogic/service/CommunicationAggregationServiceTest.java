@@ -130,10 +130,12 @@ class CommunicationAggregationServiceTest {
         new String[][] {
           {"empty", ""},
           {"whitespace-only", "   "},
-          {"malformed", "not-a-number"},
+          {"malformed", "not-a-uuid"},
           {"numeric", "42"},
+          {"zero", "0"},
+          {"negative", "-1"},
           {"nil", "00000000-0000-0000-0000-000000000000"},
-          {"uppercase", "C91FB96E-5AD8-4E4E-A12D-2838640093B2"},
+          {"uppercase", VALID_ACCOUNT_ID.toUpperCase(java.util.Locale.ROOT)},
           {"padded", " " + VALID_ACCOUNT_ID + " "},
         }) {
       String accountIdCaseDescription = accountIdCase[0];
@@ -156,7 +158,7 @@ class CommunicationAggregationServiceTest {
           .isEqualTo("INVALID_ARGUMENT");
       assertThat(resp.getError().getMessage())
           .as(accountIdCaseDescription)
-          .isEqualTo("account_id must be a canonical non-nil UUID");
+          .isEqualTo("account_id must be a canonical non-nil Account UUID");
     }
 
     verify(entityStub, never()).listRoomEntities(any());
@@ -164,7 +166,7 @@ class CommunicationAggregationServiceTest {
   }
 
   @Test
-  void preservesCanonicalAccountUuidForSocialSenderWithoutCharacterFallback() {
+  void preservesCanonicalAccountUuidForSocialSenderWithoutUsingCharacterIdentity() {
     when(socialStub.sendMessage(any()))
         .thenReturn(SendMessageResponse.newBuilder().setSuccess(true).build());
 
@@ -185,6 +187,7 @@ class CommunicationAggregationServiceTest {
     ArgumentCaptor<SendMessageRequest> captor = ArgumentCaptor.forClass(SendMessageRequest.class);
     verify(socialStub).sendMessage(captor.capture());
     assertThat(captor.getValue().getSenderId()).isEqualTo(VALID_ACCOUNT_ID);
+    assertThat(captor.getValue().getSenderId()).isNotEqualTo("player-0");
   }
 
   @Test

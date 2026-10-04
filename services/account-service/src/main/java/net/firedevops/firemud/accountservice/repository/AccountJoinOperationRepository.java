@@ -80,16 +80,13 @@ public class AccountJoinOperationRepository {
         .fetchOptional(AccountJoinOperationRepository::toJoinOperation);
   }
 
-  /** Returns a stable, bounded page of due PENDING operations below the caller's attempt cap. */
-  public List<JoinOperation> findDuePendingReconciliation(Instant now, int limit, int maxAttempts) {
+  /** Returns a stable, bounded page of all due PENDING operations. */
+  public List<JoinOperation> findDuePendingReconciliation(Instant now, int limit) {
     if (now == null) {
       throw new IllegalArgumentException("JOIN reconciliation time is required");
     }
     if (limit < 1 || limit > MAX_RECONCILIATION_PAGE_SIZE) {
       throw new IllegalArgumentException("JOIN reconciliation page size must be between 1 and 100");
-    }
-    if (maxAttempts < 1) {
-      throw new IllegalArgumentException("JOIN reconciliation attempt limit must be positive");
     }
     return dsl.selectFrom(ACCOUNT_JOIN_OPERATIONS)
         .where(
@@ -97,7 +94,6 @@ public class AccountJoinOperationRepository {
                 .STATUS
                 .eq("PENDING")
                 .and(retainedV1Representation())
-                .and(ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.lt(maxAttempts))
                 .and(
                     ACCOUNT_JOIN_OPERATIONS.NEXT_RECONCILIATION_ATTEMPT_AT.le(
                         toLocalDateTime(now))))
@@ -111,19 +107,21 @@ public class AccountJoinOperationRepository {
 
   /**
    * Records one reconciliation attempt only if the pending row still has the observed attempt count
-   * and remains below the caller's cap. A false result means another worker changed it.
+   * and due time. The count saturates at the configured diagnostic threshold. A false result means
+   * another worker changed or rescheduled the row.
    */
   public boolean recordReconciliationAttempt(
       String requestId,
       int expectedAttemptCount,
       int maxAttempts,
+      Instant expectedNextAttemptAt,
       Instant attemptedAt,
       String reason,
       Instant nextAttemptAt) {
     if (requestId == null || requestId.isBlank()) {
       throw new IllegalArgumentException("JOIN request ID is required");
     }
-    if (expectedAttemptCount < 0 || maxAttempts < 1 || expectedAttemptCount >= maxAttempts) {
+    if (expectedAttemptCount < 0 || maxAttempts < 1 || expectedNextAttemptAt == null) {
       throw new IllegalArgumentException("JOIN reconciliation attempt count is outside its limit");
     }
     if (attemptedAt == null || nextAttemptAt == null || nextAttemptAt.isBefore(attemptedAt)) {
@@ -137,7 +135,13 @@ public class AccountJoinOperationRepository {
         dsl.update(ACCOUNT_JOIN_OPERATIONS)
             .set(
                 ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT,
-                ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.plus(1))
+                org.jooq
+                    .impl
+                    .DSL
+                    .when(
+                        ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.lt(maxAttempts),
+                        ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.plus(1))
+                    .otherwise(ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT))
             .set(
                 ACCOUNT_JOIN_OPERATIONS.LAST_RECONCILIATION_ATTEMPT_AT,
                 toLocalDateTime(attemptedAt))
@@ -155,7 +159,9 @@ public class AccountJoinOperationRepository {
                     .and(
                         ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.eq(
                             expectedAttemptCount))
-                    .and(ACCOUNT_JOIN_OPERATIONS.RECONCILIATION_ATTEMPT_COUNT.lt(maxAttempts)))
+                    .and(
+                        ACCOUNT_JOIN_OPERATIONS.NEXT_RECONCILIATION_ATTEMPT_AT.eq(
+                            toLocalDateTime(expectedNextAttemptAt))))
             .execute();
     return updated == 1;
   }

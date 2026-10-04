@@ -36,7 +36,7 @@ class GameplayCommandAccountUuidMigrationIntegrationTest {
       Flyway.configure()
           .dataSource(dataSource)
           .locations(MIGRATION_LOCATION)
-          .target(MigrationVersion.fromVersion("8"))
+          .target(MigrationVersion.fromVersion("9"))
           .load()
           .migrate();
 

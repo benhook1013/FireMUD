@@ -1,6 +1,7 @@
 package net.firedevops.firemud.common.security;
 
 import io.jsonwebtoken.Claims;
+import java.util.UUID;
 import org.springframework.util.StringUtils;
 
 /** Shared helpers for canonical JWT claim extraction and normalization. */
@@ -33,10 +34,32 @@ public final class JwtClaims {
     return parsed;
   }
 
-  public static long requireSignedActorAccountId(Claims claims, String mismatchMessage) {
-    long subjectAccountId = requireLong(claims.getSubject(), "sub", false);
-    long claimedAccountId = requireLong(claims.get("accountId"), "accountId", false);
-    if (subjectAccountId != claimedAccountId) {
+  /** Returns a canonical, non-nil Account UUID claim without changing its identity. */
+  public static String requireAccountId(Object value, String claimName) {
+    if (!(value instanceof String text)) {
+      throw new IllegalArgumentException(
+          value == null ? "Missing claim: " + claimName : "Malformed claim: " + claimName);
+    }
+    if (!StringUtils.hasText(text) || "null".equalsIgnoreCase(text)) {
+      throw new IllegalArgumentException("Missing claim: " + claimName);
+    }
+    UUID parsed;
+    try {
+      parsed = UUID.fromString(text);
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalArgumentException("Malformed claim: " + claimName);
+    }
+    if (!parsed.toString().equals(text)
+        || (parsed.getMostSignificantBits() == 0L && parsed.getLeastSignificantBits() == 0L)) {
+      throw new IllegalArgumentException("Invalid claim: " + claimName);
+    }
+    return text;
+  }
+
+  public static String requireSignedActorAccountId(Claims claims, String mismatchMessage) {
+    String subjectAccountId = requireAccountId(claims.getSubject(), "sub");
+    String claimedAccountId = requireAccountId(claims.get("accountId"), "accountId");
+    if (!subjectAccountId.equals(claimedAccountId)) {
       throw new IllegalArgumentException(mismatchMessage);
     }
     return claimedAccountId;
@@ -80,7 +103,7 @@ public final class JwtClaims {
   }
 
   public record SignedGameplayRoutingClaims(
-      long accountId,
+      String accountId,
       long tenantId,
       String worldSlug,
       String realmSlug,

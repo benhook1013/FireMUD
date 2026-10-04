@@ -161,7 +161,12 @@ class FixtureEvidence:
     """Fixture evidence plus atomically persisted, isolated simulated discoveries."""
 
     def __init__(
-        self, fixture: Mapping[str, Any], state_path: Path, repository: str, github: FixtureGitHub
+        self,
+        fixture: Mapping[str, Any],
+        state_path: Path,
+        repository: str,
+        github: FixtureGitHub,
+        git: FixtureGit,
     ) -> None:
         values = _mapping(fixture.get("evidence", {}), "evidence")
         self._values: dict[tuple[int, str], tuple[Any, ...]] = {}
@@ -169,6 +174,7 @@ class FixtureEvidence:
         self._results: dict[tuple[int, str], tuple[Mapping[str, Any], ...]] = {}
         self.repository = repository
         self.github = github
+        self.git = git
         self.path = state_path.with_name(f"{state_path.name}.fixture-evidence.json")
         self.lock_path = state_path.with_name(f".{state_path.name}.fixture-evidence.lock")
         for pr_key, channels in values.items():
@@ -469,7 +475,14 @@ class FixtureEvidence:
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
-    def record_result(self, target: ReviewTarget, channel: str, result: Mapping[str, Any]) -> str | None:
+    def record_result(
+        self,
+        target: ReviewTarget,
+        channel: str,
+        result: Mapping[str, Any],
+        *,
+        force: bool = False,
+    ) -> str | None:
         """Persist only explicitly requested terminal evidence from a fixture result."""
 
         if not result.get("record_evidence", False):
@@ -507,14 +520,35 @@ class FixtureEvidence:
             raise AcceptanceFixtureError("simulated review result accepted count must be non-negative")
         if isinstance(raw, bool) or not isinstance(raw, int) or raw < accepted:
             raise AcceptanceFixtureError("simulated review result raw count must be >= accepted")
+        if force:
+            actual_base_ref = target.snapshot.base_ref_name
+            actual_base_head = _sha(target.snapshot.base_sha, "actual pull request base")
+            actual_head = _sha(target.snapshot.head_sha, "actual pull request head")
+            if self.git.branch_head(actual_base_ref) != actual_base_head:
+                raise AcceptanceFixtureError("fixture cannot anchor the forced result to a moved actual base")
+            actual_merge_base = self.git.merge_base(actual_base_head, actual_head)
+            actual_patch_id = self.git.patch_identity(actual_merge_base, actual_head)
+            actual_parent_identity = (
+                str(target.parent.pr_number or target.parent.ref_name)
+                if actual_base_ref == target.parent.ref_name
+                else actual_base_ref
+            )
+        else:
+            actual_base_ref = target.parent.ref_name
+            actual_base_head = target.parent.head_sha
+            actual_head = target.snapshot.head_sha
+            actual_merge_base = target.merge_base
+            actual_patch_id = target.patch_identity
+            actual_parent_identity = str(target.parent.pr_number or target.parent.ref_name)
         evidence = {
             "pr": target.snapshot.number,
-            "head": target.snapshot.head_sha,
-            "child_head": target.snapshot.head_sha,
-            "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
-            "parent_head": target.parent.head_sha,
-            "merge_base": target.merge_base,
-            "patch_id": target.patch_identity,
+            "head": actual_head,
+            "child_head": actual_head,
+            "parent_identity": actual_parent_identity,
+            "parent_ref": actual_base_ref,
+            "parent_head": actual_base_head,
+            "merge_base": actual_merge_base,
+            "patch_id": actual_patch_id,
             "checkpoint": checkpoint,
             "completed": completed,
             "attributable": attributable,
@@ -556,59 +590,6 @@ class FixtureEvidence:
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
         return checkpoint
-    def record_provisional(self, target: ReviewTarget, reason: str) -> None:
-        """Atomically reserve one synthetic child/parent discovery identity."""
-
-        pr = target.snapshot.number
-        head = target.snapshot.head_sha
-        parent_head = target.parent.head_sha
-        with self.lock_path.open("a+", encoding="utf-8") as lock:
-            os.fchmod(lock.fileno(), 0o600)
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            try:
-                recorded = self._recorded()
-                existing = (
-                    *self._values.get((pr, "cli"), ()),
-                    *(item for item in recorded if item.get("channel", "cli") == "cli"),
-                )
-                if any(
-                    item.get("provisional") is True
-                    and item.get("pr") == pr
-                    and item.get("head") == head
-                    and item.get("parent_head") == parent_head
-                    for item in existing
-                ):
-                    raise AcceptanceFixtureError(
-                        "one provisional CLI discovery is already recorded for this exact child/parent identity"
-                    )
-                recorded.append(
-                    {
-                        "pr": pr,
-                        "channel": "cli",
-                        "head": head,
-                        "child_head": head,
-                        "parent_head": parent_head,
-                        "parent_identity": str(target.parent.pr_number or target.parent.ref_name),
-                        "merge_base": target.merge_base,
-                        "patch_id": target.patch_identity,
-                        "checkpoint": f"fixture-provisional-{pr}-{head[:12]}-{parent_head[:12]}",
-                        "completed": False,
-                        "attributable": False,
-                        "anchored": True,
-                        "corrected_state": False,
-                        "provisional": True,
-                        "accepted": 0,
-                        "raw": 0,
-                        "reason": reason,
-                    }
-                )
-                payload = self._sidecar()
-                payload["evidence"] = recorded
-                self._write_sidecar(payload)
-            finally:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
-
-
 class FixtureReviewAdapter:
     """Return deterministic review results without posting or consuming quota."""
 
@@ -621,9 +602,12 @@ class FixtureReviewAdapter:
     def __call__(self, target: ReviewTarget, **kwargs: Any) -> dict[str, Any]:
         configured = self.evidence.next_result(target, self.channel)
         result = dict(configured) if configured is not None else {"status": "dry"}
-        checkpoint = self.evidence.record_result(target, self.channel, result)
-        if self.channel == "cli" and kwargs.get("allow_unreconciled"):
-            self.evidence.record_provisional(target, str(kwargs.get("reason", "")))
+        checkpoint = self.evidence.record_result(
+            target,
+            self.channel,
+            result,
+            force=bool(kwargs.get("force", False)),
+        )
         return {
             "acceptance_fixture": True,
             "simulated": True,
@@ -632,7 +616,10 @@ class FixtureReviewAdapter:
             "head": target.snapshot.head_sha,
             "parent": target.parent.pr_number or target.parent.ref_name,
             "parent_head": target.parent.head_sha,
-            "provisional": bool(kwargs.get("allow_unreconciled", False)),
+            "provisional": False,
+            "force_acknowledged": bool(kwargs.get("force", False)),
+            "force_reason": kwargs.get("reason"),
+            "candidate_warnings": list(target.candidate_warnings),
             "review_started": False,
             "quota_consumed": False,
             "result": result["status"],
@@ -745,7 +732,7 @@ class AcceptanceFixture:
         payload["default_base_tip"] = default_tip
         self.github = FixtureGitHub(pull_requests)
         self.git = FixtureGit(payload)
-        self.evidence = FixtureEvidence(payload, self.state_path, self.repository, self.github)
+        self.evidence = FixtureEvidence(payload, self.state_path, self.repository, self.github, self.git)
         self.pull_requests = pull_requests
         self.initial_stack = tuple(ordered)
 

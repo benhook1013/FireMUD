@@ -113,40 +113,6 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
       AutomationAdmissionStateService automationAdmissionStateService,
       ScriptPatchPinProjectionService scriptPatchPinProjectionService,
       ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
-      PluginRuntimeStateService pluginRuntimeStateService,
-      ScriptQuotaService quotaService,
-      ScriptDryRunQuotaService dryRunQuotaService) {
-    this(
-        repository,
-        bindingRepository,
-        workItemRepository,
-        eventAuditRepository,
-        eventRegistryService,
-        automationQueueService,
-        outputProperties,
-        gameSessionControlPlaneClient,
-        automationAdmissionStateService,
-        scriptPatchPinProjectionService,
-        rolloutProjectionService,
-        null,
-        pluginRuntimeStateService,
-        quotaService,
-        dryRunQuotaService,
-        new ScriptRuntimeProperties());
-  }
-
-  public ScriptEventIngressServiceImpl(
-      ScriptEventIngressAuditRepository repository,
-      ScriptEventBindingRepository bindingRepository,
-      ScriptWorkItemRepository workItemRepository,
-      ScriptEventAuditRepository eventAuditRepository,
-      ScriptEventRegistryService eventRegistryService,
-      AutomationQueueService automationQueueService,
-      ScriptOutputProperties outputProperties,
-      GameSessionControlPlaneClient gameSessionControlPlaneClient,
-      AutomationAdmissionStateService automationAdmissionStateService,
-      ScriptPatchPinProjectionService scriptPatchPinProjectionService,
-      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
       ScriptDefinitionRepository scriptDefinitionRepository,
       PluginRuntimeStateService pluginRuntimeStateService,
       ScriptQuotaService quotaService,
@@ -1645,7 +1611,7 @@ public class ScriptEventIngressServiceImpl implements ScriptEventIngressService 
   }
 
   private static String dryRunPrincipalKey() {
-    Long accountId = SessionContext.currentAccountIdOrNull();
+    String accountId = SessionContext.currentAccountIdOrNull();
     if (accountId != null) {
       return "account:" + accountId;
     }

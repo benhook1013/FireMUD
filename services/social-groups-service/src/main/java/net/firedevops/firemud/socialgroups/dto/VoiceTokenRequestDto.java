@@ -6,6 +6,4 @@ import jakarta.validation.constraints.Positive;
 
 /** Request to obtain a temporary WebRTC token for voice chat. */
 public record VoiceTokenRequestDto(
-    @NotNull @Positive Long tenantId,
-    @NotNull @Positive Long accountId,
-    @NotBlank String channelId) {}
+    @NotNull @Positive Long tenantId, @NotBlank String accountId, @NotBlank String channelId) {}

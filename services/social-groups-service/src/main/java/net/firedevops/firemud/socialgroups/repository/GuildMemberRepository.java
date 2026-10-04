@@ -4,6 +4,7 @@ import static net.firedevops.firemud.socialgroups.jooq.tables.GuildMembers.GUILD
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import java.util.Optional;
+import java.util.UUID;
 import net.firedevops.firemud.socialgroups.entity.GuildMember;
 import net.firedevops.firemud.socialgroups.jooq.tables.records.GuildMembersRecord;
 import org.jooq.DSLContext;
@@ -22,7 +23,7 @@ public class GuildMemberRepository {
   }
 
   public Optional<GuildMember> findFirstByTenantIdAndGuildIdAndAccountId(
-      Long tenantId, Long guildId, Long accountId) {
+      Long tenantId, Long guildId, UUID accountId) {
     return dsl.selectFrom(GUILD_MEMBERS)
         .where(
             GUILD_MEMBERS

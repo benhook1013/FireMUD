@@ -159,6 +159,7 @@ if [[ "${1:-}" == "--projections" ]]; then
   projections+=(
     "firemud-grpc-account-service|grpc-account-service|tls.crt,tls.key,ca.crt"
     "firemud-grpc-game-session-service|grpc-game-session-service|tls.crt,tls.key,ca.crt"
+    "firemud-grpc-social-groups-service|grpc-social-groups-service|tls.crt,tls.key,ca.crt"
   )
   initialize_wait_state "$timeout_seconds"
   all_projections_ready=true

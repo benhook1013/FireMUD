@@ -113,6 +113,17 @@ public class ScriptEventBindingRepository {
         .fetch(this::toEntity);
   }
 
+  public boolean existsByTenantIdAndScriptPatchVersionWithNullOrMismatchedBaseVersionId(
+      Long tenantId, String scriptPatchVersion, long baseVersionId) {
+    return dsl.fetchExists(
+        SCRIPT_EVENT_BINDINGS,
+        SCRIPT_EVENT_BINDINGS
+            .TENANT_ID
+            .eq(tenantId)
+            .and(SCRIPT_EVENT_BINDINGS.SCRIPT_PATCH_VERSION.eq(scriptPatchVersion))
+            .and(SCRIPT_EVENT_BINDINGS.BASE_VERSION_ID.isDistinctFrom(baseVersionId)));
+  }
+
   public List<ScriptEventBinding> saveAll(Collection<ScriptEventBinding> entities) {
     if (entities == null || entities.isEmpty()) {
       return List.of();

@@ -80,8 +80,9 @@ public interface AccountService {
   /** Reads a tenant profile with an Account-local storage selector after owner-side UUID proof. */
   ProfileDto getProfile(Long tenantId, Long accountId);
 
-  java.util.Map<Long, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
-      Long tenantId, java.util.List<Long> accountIds);
+  /** Reads policies by canonical Account UUID; private numeric row keys remain Account-local. */
+  java.util.Map<String, ProfilePresenceVisibilityPolicy> listPresenceVisibilityPolicies(
+      Long tenantId, java.util.List<String> accountUuids);
 
   /** Updates a profile using an Account-local selector and the request's canonical Account UUID. */
   ProfileDto updateProfile(Long accountStorageId, UpdateProfileRequest request);

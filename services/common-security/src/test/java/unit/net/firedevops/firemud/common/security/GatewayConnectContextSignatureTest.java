@@ -42,6 +42,17 @@ class GatewayConnectContextSignatureTest {
   }
 
   @Test
+  void rejectsEmptyAndNullPayloadsBeforeSigning() {
+    assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            GatewayConnectContextSignature.sign(new byte[0], CURRENT_KID, currentKey.getPrivate()));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> GatewayConnectContextSignature.sign(null, CURRENT_KID, currentKey.getPrivate()));
+  }
+
+  @Test
   void acceptsCurrentAndPreviousKeysDuringRotation() {
     byte[] payload = "rotation-safe context".getBytes(StandardCharsets.UTF_8);
     String envelope =

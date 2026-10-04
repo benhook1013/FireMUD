@@ -26,8 +26,9 @@ class CanonicalAuditIdentityMigrationIntegrationTest {
   static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
   @Test
-  void versionThreePreservesRetainedVersionOneReceiptAndProjectionBytes() throws SQLException {
-    migrateThrough("2");
+  void versionThreePointOnePreservesRetainedVersionOneReceiptAndProjectionBytes()
+      throws SQLException {
+    migrateThrough("3");
     String eventId = "6ca11f0d-72e3-4c3f-b745-679775108404";
     UUID receiptId = UUID.fromString("ef23c682-65f9-4b4d-9ed8-071f8b29aa4f");
     byte[] payload =
@@ -41,7 +42,7 @@ class CanonicalAuditIdentityMigrationIntegrationTest {
       receiptBefore = readReceipt(connection, eventId);
     }
 
-    migrateThrough("3");
+    migrateThrough("3.1");
 
     try (Connection connection = connection()) {
       assertThat(readProjection(connection, eventId)).containsExactlyElementsOf(projectionBefore);

@@ -8,6 +8,8 @@ final class PlatformAdminJwtTestSupport {
   private PlatformAdminJwtTestSupport() {}
 
   static String privilegedToken(JwtUtil jwtUtil) {
-    return jwtUtil.generateToken("user", Map.of("globalRoles", List.of("platformAdmin")));
+    String accountId = "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a";
+    return jwtUtil.generateToken(
+        accountId, Map.of("accountId", accountId, "globalRoles", List.of("platformAdmin")));
   }
 }

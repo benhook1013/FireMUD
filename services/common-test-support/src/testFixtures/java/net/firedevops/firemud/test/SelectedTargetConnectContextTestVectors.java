@@ -40,7 +40,7 @@ public final class SelectedTargetConnectContextTestVectors {
     claims.put("connectScopeId", "connect-scope-17");
     claims.put("requestId", "connect-request-42");
     claims.put("authorityTuple", authorityTuple());
-    claims.put("membershipVersion", Map.of(TENANT_ID, LARGE_COUNTER));
+    claims.put("membershipVersion", Map.of(TENANT_ID, LARGE_COUNTER.toString()));
     claims.put("replayAdmissionFence", LARGE_COUNTER);
     claims.put("jti", "connect-token-jti-42");
     claims.put("iat", BigInteger.valueOf(SOURCE_ISSUED_AT));

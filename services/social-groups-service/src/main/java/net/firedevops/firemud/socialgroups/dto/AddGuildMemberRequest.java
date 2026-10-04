@@ -7,5 +7,5 @@ import jakarta.validation.constraints.Positive;
 public record AddGuildMemberRequest(
     @NotNull @Positive Long tenantId,
     @NotNull @Positive Long guildId,
-    @NotNull @Positive Long accountId,
+    @NotNull String accountId,
     @NotBlank String role) {}

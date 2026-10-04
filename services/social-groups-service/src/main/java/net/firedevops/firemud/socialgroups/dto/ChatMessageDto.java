@@ -5,11 +5,11 @@ import java.time.Instant;
 public record ChatMessageDto(
     Long id,
     Long tenantId,
-    Long senderAccountId,
+    String senderAccountId,
     String content,
     Instant timestamp,
     Long guildId,
     Long cityId,
-    Long recipientAccountId,
+    String recipientAccountId,
     net.firedevops.firemud.socialgroups.enums.ChatType type,
     String effectId) {}

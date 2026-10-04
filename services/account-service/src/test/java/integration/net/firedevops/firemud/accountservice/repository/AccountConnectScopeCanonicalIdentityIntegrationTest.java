@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Objects;
@@ -30,6 +31,7 @@ import net.firedevops.firemud.accountservice.repository.AccountTenantIdentityRes
 import net.firedevops.firemud.accountservice.repository.ApprovedLegacyTenantAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.FreshTenantIdentityAssociationRepository;
 import net.firedevops.firemud.accountservice.repository.LegacyTenantSourceEvidence;
+import net.firedevops.firemud.common.persistence.jooq.JooqPersistenceSupport;
 import net.firedevops.firemud.common.tenant.FreshTenantCreationEvidence;
 import net.firedevops.firemud.common.tenant.GameTenantCreationDigest;
 import org.flywaydb.core.Flyway;
@@ -854,15 +856,43 @@ class AccountConnectScopeCanonicalIdentityIntegrationTest {
                     .executeWithoutResult(
                         status -> operations.recordCallerBoundAuthorityInvalidation(requestId)))
         .hasMessage("JOIN operation changed concurrently");
+    Record v2OperationBefore =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne("SELECT * FROM account_join_operations WHERE request_id = ?", requestId),
+            "Canonical JOIN operation row must remain readable");
+    int expectedAttemptCount =
+        Objects.requireNonNull(
+            v2OperationBefore.get("reconciliation_attempt_count", Integer.class),
+            "Canonical JOIN operation attempt count must be persisted");
+    Instant expectedNextAttemptAt =
+        JooqPersistenceSupport.toInstant(
+            Objects.requireNonNull(
+                v2OperationBefore.get("next_reconciliation_attempt_at", LocalDateTime.class),
+                "Canonical JOIN operation due time must be persisted"));
     Instant attemptedAt = Instant.now();
     assertThat(
             operations.recordReconciliationAttempt(
-                requestId, 0, 1, attemptedAt, "legacy selector guard", attemptedAt.plusSeconds(1)))
+                requestId,
+                expectedAttemptCount,
+                1,
+                expectedNextAttemptAt,
+                attemptedAt,
+                "legacy selector guard",
+                attemptedAt.plusSeconds(1)))
         .isFalse();
     assertThat(operations.find(requestId)).isEmpty();
     assertThat(operations.findForUpdate(requestId)).isEmpty();
-    assertThat(operations.findDuePendingReconciliation(attemptedAt.plusSeconds(1), 100, 1))
+    assertThat(operations.findDuePendingReconciliation(expectedNextAttemptAt, 100))
         .noneMatch(operation -> operation.requestId().equals(requestId));
+    Record v2OperationAfter =
+        Objects.requireNonNull(
+            fixture
+                .setupDsl()
+                .fetchOne("SELECT * FROM account_join_operations WHERE request_id = ?", requestId),
+            "Canonical JOIN operation row must remain readable after rejected V1 mutations");
+    assertThat(v2OperationAfter.intoMap()).containsExactlyEntriesOf(v2OperationBefore.intoMap());
   }
 
   @Test

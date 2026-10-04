@@ -1,5 +1,6 @@
 package net.firedevops.firemud.automationscripting.service.impl;
 
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.net.ConnectException;
@@ -10,10 +11,12 @@ import java.sql.SQLTransientException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import net.firedevops.firemud.automationscripting.client.GameSessionControlPlaneClient;
 import net.firedevops.firemud.automationscripting.config.ScriptOutputProperties;
 import net.firedevops.firemud.automationscripting.entity.PluginRuntimeState;
@@ -40,7 +43,13 @@ import net.firedevops.firemud.gamesession.v1.GetGameInstanceRuntimeStateResponse
 import org.jooq.exception.DataAccessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.RecoverableDataAccessException;
+import org.springframework.dao.TransientDataAccessException;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -53,12 +62,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final Logger LOGGER =
       LoggerFactory.getLogger(ScriptWorkItemExecutionServiceImpl.class);
   private static final String STATUS_HANDED_OFF = "HANDED_OFF";
+  private static final String STATUS_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
+  private static final String STATUS_PENDING_EVALUATION = "PENDING_EVALUATION";
   private static final String STATUS_CANCELED = "CANCELED";
   private static final String STATUS_DEAD_LETTERED = "DEAD_LETTERED";
   private static final String STAGE_ADMISSION = "ADMISSION";
   private static final String STAGE_DSL_EVAL = "DSL_EVAL";
   private static final String OUTCOME_HANDOFF_ACCEPTED = "handoff_accepted";
   private static final String OUTCOME_HANDOFF_IN_FLIGHT = "HANDOFF_IN_FLIGHT";
+  private static final String REASON_HANDOFF_IN_FLIGHT = "handoff_in_flight";
+  private static final String REASON_HANDOFF_PREPARATION_UNAVAILABLE =
+      "handoff_preparation_unavailable";
   private static final String OUTCOME_INFRASTRUCTURE_ERROR = "infrastructure_error";
   private static final String OUTCOME_SANDBOX_ERROR = "sandbox_error";
   private static final String OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED =
@@ -72,6 +86,10 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private static final String PRIORITY_UNKNOWN = "unknown";
   private static final String EVENT_ON_LOAD = "onLoad";
   private static final String SERVICE_NAME = "automation-scripting-service";
+  private static final String PROCESSING_FAILURE_AFTER_CLAIM_METRIC =
+      "script_outbox_processing_failure_after_claim_total";
+  private static final String POST_EVALUATION_RECONCILIATION_METRIC =
+      "automation_script_post_evaluation_reconciliation_required_total";
   private static final String REASON_AUTHORITY_UNAVAILABLE = "authority_unavailable";
   // Only authority-unavailable plugin-fence reads get three durable retries, spaced 15, 30, and
   // 60 seconds apart. This keeps a missing authority from cycling with the five-second poll.
@@ -91,10 +109,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private final ScriptReadinessCapacityService readinessCapacityService;
   private final ObjectMapper objectMapper;
   private final MeterRegistry meterRegistry;
+  private final Counter processingFailureAfterClaimCounter;
   private final AutomationQueueService automationQueueService;
   private final GameSessionControlPlaneClient gameSessionControlPlaneClient;
   private final PluginRuntimeStateRepository pluginRuntimeStateRepository;
   private final TransactionTemplate transactionTemplate;
+  private final TransactionTemplate pluginFenceReadTransactionTemplate;
 
   private record EvaluationResult(
       boolean requiresHandoff,
@@ -113,9 +133,28 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private record HandoffExecutionResult(
       String terminalFenceFailure,
       PluginFenceValidation retryableFence,
-      ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff) {}
+      ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff,
+      boolean childHandoffAttempted) {}
 
-  private record EvaluationFencePrecheck(boolean checked, String failure) {}
+  private record AuthorityUnavailableRetryState(
+      Instant since, int count, Instant nextEligibleAt, int rowVersion) {
+    private static AuthorityUnavailableRetryState capture(ScriptWorkItem workItem) {
+      return new AuthorityUnavailableRetryState(
+          workItem.getAuthorityUnavailableSince(),
+          workItem.getAuthorityUnavailableCount(),
+          workItem.getNextEligibleAt(),
+          workItem.getRowVersion());
+    }
+
+    private void restore(ScriptWorkItem workItem) {
+      workItem.setAuthorityUnavailableSince(since);
+      workItem.setAuthorityUnavailableCount(count);
+      workItem.setNextEligibleAt(nextEligibleAt);
+      workItem.setRowVersion(rowVersion);
+    }
+  }
+
+  private record EvaluationFencePrecheck(String failure) {}
 
   /** Compatibility constructor for focused plugin-fence tests. */
   public ScriptWorkItemExecutionServiceImpl(
@@ -271,7 +310,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       MeterRegistry meterRegistry,
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       PluginRuntimeStateRepository pluginRuntimeStateRepository,
-      org.springframework.transaction.PlatformTransactionManager transactionManager) {
+      PlatformTransactionManager transactionManager) {
     this(
         workItemService,
         scriptDefinitionRepository,
@@ -289,7 +328,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         readinessCapacityService,
         gameSessionControlPlaneClient,
         pluginRuntimeStateRepository,
-        transactionManager == null ? null : new TransactionTemplate(transactionManager));
+        transactionManager == null ? null : new TransactionTemplate(transactionManager),
+        newPluginFenceReadTransactionTemplate(transactionManager));
   }
 
   public ScriptWorkItemExecutionServiceImpl(
@@ -410,6 +450,46 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       GameSessionControlPlaneClient gameSessionControlPlaneClient,
       PluginRuntimeStateRepository pluginRuntimeStateRepository,
       TransactionTemplate transactionTemplate) {
+    this(
+        workItemService,
+        scriptDefinitionRepository,
+        handoffService,
+        workItemRepository,
+        auditRepository,
+        rolloutProjectionService,
+        outputProperties,
+        tenantBudgetService,
+        dryRunCapacityService,
+        objectMapper,
+        meterRegistry,
+        automationQueueService,
+        readinessProjectionService,
+        readinessCapacityService,
+        gameSessionControlPlaneClient,
+        pluginRuntimeStateRepository,
+        transactionTemplate,
+        null);
+  }
+
+  private ScriptWorkItemExecutionServiceImpl(
+      ScriptWorkItemService workItemService,
+      ScriptDefinitionRepository scriptDefinitionRepository,
+      ScriptGameplayCommandHandoffService handoffService,
+      ScriptWorkItemRepository workItemRepository,
+      ScriptEventAuditRepository auditRepository,
+      ScriptPatchInstanceRolloutProjectionService rolloutProjectionService,
+      ScriptOutputProperties outputProperties,
+      ScriptTenantBudgetService tenantBudgetService,
+      ScriptDryRunCapacityService dryRunCapacityService,
+      ObjectMapper objectMapper,
+      MeterRegistry meterRegistry,
+      AutomationQueueService automationQueueService,
+      ScriptPatchReadinessProjectionService readinessProjectionService,
+      ScriptReadinessCapacityService readinessCapacityService,
+      GameSessionControlPlaneClient gameSessionControlPlaneClient,
+      PluginRuntimeStateRepository pluginRuntimeStateRepository,
+      TransactionTemplate transactionTemplate,
+      TransactionTemplate pluginFenceReadTransactionTemplate) {
     this.workItemService = workItemService;
     this.scriptDefinitionRepository = scriptDefinitionRepository;
     this.handoffService = handoffService;
@@ -422,15 +502,35 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     this.readinessCapacityService = readinessCapacityService;
     this.objectMapper = objectMapper;
     this.meterRegistry = meterRegistry;
+    this.processingFailureAfterClaimCounter =
+        meterRegistry.counter(PROCESSING_FAILURE_AFTER_CLAIM_METRIC);
     this.automationQueueService = automationQueueService;
     this.readinessProjectionService = readinessProjectionService;
     this.gameSessionControlPlaneClient = gameSessionControlPlaneClient;
     this.pluginRuntimeStateRepository = pluginRuntimeStateRepository;
     this.transactionTemplate = transactionTemplate;
+    this.pluginFenceReadTransactionTemplate = pluginFenceReadTransactionTemplate;
+  }
+
+  private static TransactionTemplate newPluginFenceReadTransactionTemplate(
+      PlatformTransactionManager transactionManager) {
+    if (transactionManager == null) {
+      return null;
+    }
+    TransactionTemplate template = new TransactionTemplate(transactionManager);
+    template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    template.setReadOnly(true);
+    return template;
   }
 
   @Override
   public ExecutionBatchResult processPendingWorkItems(int maxItems) {
+    if (transactionTemplate != null) {
+      return processPendingWorkItemsWithTransactionalClaims(maxItems);
+    }
+
+    // Compatibility constructors used by focused unit tests do not have a transaction manager.
+    // Keep their existing batch-claim shape; the production constructor always supplies one.
     List<ScriptWorkItem> claimed = claimWorkItems(maxItems);
     int completedCount = 0;
     int failedCount = 0;
@@ -470,16 +570,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (postEvaluationFenceFailure != null) {
       return executePostEvaluationFenceDisposition(workItem, postEvaluationFenceFailure);
     }
-    commitPostEvaluationFenceState(workItem);
     HandoffExecutionResult handoffResult = executeHandoffLoop(workItem, evaluation.commands());
     return executeHandoffFinalization(workItem, handoffResult);
   }
 
   private EvaluationFencePrecheck precheckEvaluationFences(ScriptWorkItem workItem) {
-    if (authorityUnavailableRetryExpired(workItem, Instant.now())) {
-      return new EvaluationFencePrecheck(false, null);
-    }
-    return new EvaluationFencePrecheck(true, validateCurrentExecutionFences(workItem));
+    return new EvaluationFencePrecheck(validateCurrentExecutionFences(workItem));
   }
 
   private EvaluationResult executeEvaluationTransaction(
@@ -509,6 +605,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void commitPostEvaluationFenceState(ScriptWorkItem workItem) {
+    if (!hasAuthorityUnavailableRetryState(workItem)) {
+      return;
+    }
     if (transactionTemplate == null) {
       clearAuthorityUnavailableRetryState(workItem);
       return;
@@ -523,10 +622,26 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private void applyPostEvaluationFenceDisposition(ScriptWorkItem workItem, String fenceFailure) {
     Instant now = Instant.now();
     if (isTerminalFenceFailure(fenceFailure)) {
-      cancel(workItem, STAGE_ADMISSION, "stale_execution_fenced", fenceFailure, now);
+      cancel(workItem, STAGE_DSL_EVAL, "canceled", fenceFailure, now);
     } else {
-      requeueAfterAuthorityUnavailable(workItem, fenceFailure, now);
+      markPostEvaluationReconciliationRequired(workItem, fenceFailure, now, STAGE_DSL_EVAL);
     }
+    // Evaluation has already emitted output, but there is no durable descriptor/child ledger
+    // from which to resume handoff. Keep retryable fence failures unresolved for reconciliation;
+    // requeueing would rerun the DSL after an uncertain evaluated-output boundary.
+  }
+
+  private void markPostEvaluationReconciliationRequired(
+      ScriptWorkItem workItem, String reason, Instant now, String stage) {
+    if (!"EVALUATING".equals(workItem.getStatus())
+        && !STATUS_HANDOFF_IN_FLIGHT.equals(workItem.getStatus())) {
+      return;
+    }
+    workItem.setCancelReason("post_evaluation_reconciliation_required:" + reason);
+    workItem.setUpdatedAt(now);
+    ScriptWorkItem persistedWorkItem = workItemRepository.save(workItem);
+    rolloutProjectionService.refreshForWorkItem(persistedWorkItem);
+    recordPostEvaluationReconciliationRequired(persistedWorkItem, stage);
   }
 
   private HandoffExecutionResult executeHandoffLoop(
@@ -534,15 +649,16 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     ScriptGameplayCommandHandoffService.HandoffResult firstRejectedHandoff = null;
     String terminalFenceFailure = null;
     PluginFenceValidation retryableFence = null;
+    boolean childHandoffAttempted = false;
     try {
       try {
         handoffService.beginAggregateFanout(workItem);
       } catch (RuntimeException ex) {
         LOGGER.warn(
-            "Unable to preflight script handoff fanout for workItemId={}; scheduling retry",
+            "Unable to preflight script handoff fanout for workItemId={}; retaining unresolved parent",
             workItem.getId(),
             ex);
-        return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult());
+        return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult(), false);
       }
       for (int commandIndex = 0; commandIndex < commands.size(); commandIndex++) {
         ScriptGameplayCommandHandoffService.EmittedCommand command = commands.get(commandIndex);
@@ -561,6 +677,23 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
           }
           break;
         }
+        if (commandIndex == 0) {
+          // Clear the outage window only after the post-evaluation runtime check and this fresh
+          // plugin-fence check have both passed, immediately before the first dispatch.
+          AuthorityUnavailableRetryState retryState =
+              AuthorityUnavailableRetryState.capture(workItem);
+          try {
+            commitPostEvaluationFenceState(workItem);
+          } catch (RuntimeException ex) {
+            retryState.restore(workItem);
+            LOGGER.warn(
+                "Unable to commit post-evaluation handoff fence state for workItemId={}; retaining unresolved",
+                workItem.getId(),
+                ex);
+            return new HandoffExecutionResult(null, null, retryableHandoffPreflightResult(), false);
+          }
+        }
+        childHandoffAttempted = true;
         ScriptGameplayCommandHandoffService.HandoffResult result =
             handoffService.handoff(workItem, command);
         if (!result.accepted()
@@ -568,16 +701,30 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
                 || isHandoffReconciliationRequired(result)
                 || (ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)
                     && !ScriptHandoffOutcomeSupport.isRetryable(result)))) {
-          // Continue through the complete emitted set. The handoff owner records one durable
-          // attempted child per call; returning here would leave later siblings without either an
-          // attempted disposition or an explicit unattempted terminal record.
+          // Continue through the complete emitted set when the child outcome is definite. An
+          // ambiguous child below is the exception: preserve its in-flight evidence and stop.
           firstRejectedHandoff = result;
+        }
+        if (isHandoffPreparationUnavailableWithoutIntent(result)) {
+          for (int unattemptedIndex = commandIndex;
+              unattemptedIndex < commands.size();
+              unattemptedIndex++) {
+            handoffService.recordUnattempted(
+                workItem, commands.get(unattemptedIndex), REASON_HANDOFF_PREPARATION_UNAVAILABLE);
+          }
+          break;
+        }
+        if (isHandoffReconciliationRequired(result)) {
+          // This child may already have been accepted remotely. Preserve that in-flight evidence
+          // and defer all later siblings until this exact child has been reconciled.
+          break;
         }
       }
     } finally {
       handoffService.endAggregateFanout(workItem);
     }
-    return new HandoffExecutionResult(terminalFenceFailure, retryableFence, firstRejectedHandoff);
+    return new HandoffExecutionResult(
+        terminalFenceFailure, retryableFence, firstRejectedHandoff, childHandoffAttempted);
   }
 
   private static ScriptGameplayCommandHandoffService.HandoffResult
@@ -602,14 +749,125 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return Boolean.TRUE.equals(result);
   }
 
+  /** Commits each candidate claim before processing it in a separate transaction. */
+  private ExecutionBatchResult processPendingWorkItemsWithTransactionalClaims(int maxItems) {
+    if (maxItems <= 0) {
+      throw new IllegalArgumentException("max_items must be positive");
+    }
+
+    int indexedCapacity = Math.max(0, maxItems - 1);
+    List<ScriptWorkItem> indexedCandidates = findIndexedCandidates(maxItems, indexedCapacity);
+    Set<Long> attemptedWorkItemIds = new HashSet<>();
+    BatchCounts counts = new BatchCounts();
+    processCandidates(indexedCandidates, indexedCapacity, attemptedWorkItemIds, counts);
+
+    if (counts.claimedCount < maxItems) {
+      int scanLimit =
+          (int) Math.min(Integer.MAX_VALUE, (long) maxItems + attemptedWorkItemIds.size());
+      List<ScriptWorkItem> fallbackCandidates =
+          workItemRepository.findByStatusOrderByCreatedAtAscIdAsc(
+              STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, scanLimit));
+      processCandidates(fallbackCandidates, maxItems, attemptedWorkItemIds, counts);
+    }
+
+    return new ExecutionBatchResult(counts.claimedCount, counts.completedCount, counts.failedCount);
+  }
+
+  private List<ScriptWorkItem> findIndexedCandidates(int maxItems, int indexedCapacity) {
+    if (automationQueueService == null || indexedCapacity <= 0) {
+      return List.of();
+    }
+
+    List<AutomationQueueWorkItemPointer> pointers;
+    try {
+      pointers =
+          automationQueueService.drainIndexedWorkItemPointers(
+              Math.max(1, maxItems * 2), indexedCapacity);
+    } catch (RuntimeException ex) {
+      LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
+      meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
+      return List.of();
+    }
+    List<Long> workItemIds =
+        pointers.stream().map(AutomationQueueWorkItemPointer::outboxWorkItemId).distinct().toList();
+    if (workItemIds.isEmpty()) {
+      return List.of();
+    }
+    return workItemRepository.findByIdInAndStatusOrderByCreatedAtAscIdAsc(
+        workItemIds, STATUS_PENDING_EVALUATION, Instant.now(), PageRequest.of(0, indexedCapacity));
+  }
+
+  private void processCandidates(
+      List<ScriptWorkItem> candidates,
+      int maxItems,
+      Set<Long> attemptedWorkItemIds,
+      BatchCounts counts) {
+    for (ScriptWorkItem candidate : candidates) {
+      if (counts.claimedCount >= maxItems) {
+        return;
+      }
+      Long workItemId = candidate.getId();
+      if (workItemId == null || !attemptedWorkItemIds.add(workItemId)) {
+        continue;
+      }
+
+      WorkItemAttempt attempt = claimThenProcessWorkItem(workItemId);
+      if (!attempt.claimed()) {
+        continue;
+      }
+      counts.claimedCount++;
+      if (attempt.failure() != null) {
+        // Claim and processing use separate transactions, so a processing rollback cannot erase
+        // the durable EVALUATING claim. Without an owner/recovery contract, leave it unresolved.
+        LOGGER.error(
+            "Unexpected exception processing claimed script work item id={}; leaving unresolved",
+            workItemId,
+            attempt.failure());
+        counts.failedCount++;
+      } else if (attempt.completed()) {
+        counts.completedCount++;
+      } else {
+        counts.failedCount++;
+      }
+    }
+  }
+
+  private WorkItemAttempt claimThenProcessWorkItem(long workItemId) {
+    List<ScriptWorkItem> claimed =
+        transactionTemplate.execute(
+            status -> workItemService.claimPendingForEvaluation(List.of(workItemId), 1));
+    if (claimed == null || claimed.isEmpty()) {
+      return WorkItemAttempt.notClaimed();
+    }
+
+    // TransactionTemplate commits the claim before returning. A worker stop here can leave an
+    // EVALUATING row without a processing attempt; that recovery gap is intentionally unresolved.
+    ScriptWorkItem workItem = claimed.getFirst();
+    try {
+      // Evaluation and parent convergence use their own local transactions. Remote handoff
+      // execution runs between them, after the evaluation result has committed.
+      return WorkItemAttempt.claimed(processOneWorkItemInTransaction(workItem));
+    } catch (RuntimeException ex) {
+      // Catch outside the phase transaction wrappers so a failed processing commit cannot undo
+      // the already committed EVALUATING claim or abort the remaining batch.
+      processingFailureAfterClaimCounter.increment();
+      return WorkItemAttempt.failedAfterClaim(ex);
+    }
+  }
+
   private List<ScriptWorkItem> claimWorkItems(int maxItems) {
     if (automationQueueService == null) {
+      return workItemService.claimPendingForEvaluation(maxItems);
+    }
+    int indexedCapacity = Math.max(0, maxItems - 1);
+    if (indexedCapacity <= 0) {
       return workItemService.claimPendingForEvaluation(maxItems);
     }
     List<AutomationQueueWorkItemPointer> pointers;
     try {
       pointers =
-          automationQueueService.drainIndexedWorkItemPointers(Math.max(1, maxItems * 2), maxItems);
+          automationQueueService.drainIndexedWorkItemPointers(
+              Math.max(1, maxItems * 2), indexedCapacity);
     } catch (RuntimeException ex) {
       LOGGER.warn("Automation queue pointer discovery failed; falling back to durable scan", ex);
       meterRegistry.counter("script_outbox_queue_pointer_discovery_failed_total").increment();
@@ -618,10 +876,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     List<ScriptWorkItem> queueClaimed =
         workItemService.claimPendingForEvaluation(
             pointers.stream().map(AutomationQueueWorkItemPointer::outboxWorkItemId).toList(),
-            maxItems);
-    if (queueClaimed.size() >= maxItems) {
-      return queueClaimed;
-    }
+            indexedCapacity);
     List<ScriptWorkItem> fallbackClaimed =
         workItemService.claimPendingForEvaluation(maxItems - queueClaimed.size());
     if (fallbackClaimed.isEmpty()) {
@@ -636,25 +891,15 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   private EvaluationResult evaluateClaimedWorkItemTransaction(
       ScriptWorkItem workItem, EvaluationFencePrecheck precheck) {
     Instant now = Instant.now();
-    if (authorityUnavailableRetryExpired(workItem, now)) {
-      deadLetter(
-          workItem,
-          STAGE_ADMISSION,
-          OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
-          OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
-          now);
-      return EvaluationResult.terminal(false);
-    }
-    String fenceFailure = precheck.checked() ? precheck.failure() : null;
+    String fenceFailure = precheck.failure();
     if (fenceFailure != null) {
       if (isTerminalFenceFailure(fenceFailure)) {
-        cancel(workItem, STAGE_ADMISSION, "stale_execution_fenced", fenceFailure, now);
+        cancel(workItem, STAGE_ADMISSION, "canceled", fenceFailure, now);
       } else {
-        requeueAfterAuthorityUnavailable(workItem, fenceFailure, now);
+        requeueAfterAuthorityUnavailable(workItem, fenceFailure, STAGE_ADMISSION, now);
       }
       return EvaluationResult.terminal(false);
     }
-    clearAuthorityUnavailableRetryState(workItem);
     PluginFenceValidation pluginFence = validateCurrentPluginFence(workItem);
     if (pluginFence != null) {
       if (pluginFence.retryable()) {
@@ -704,9 +949,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   /**
-   * Final Automation-side admission fence. Queue claims are intentionally not authority: the exact
-   * owner tuple is reread immediately before definition evaluation and any gameplay handoff.
-   * Missing pre-fence evidence is rejected, which keeps legacy rows fail closed.
+   * Final Automation-side runtime/pin fence. Queue claims are intentionally not authority: the
+   * runtime/pin tuple is reread immediately before definition evaluation and any gameplay handoff.
+   * Plugin lifecycle is an independent fence checked at its own boundaries below.
    */
   private String validateCurrentExecutionFences(ScriptWorkItem workItem) {
     if (isOnLoad(workItem)) {
@@ -725,56 +970,25 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return null;
     }
     final GetGameInstanceRuntimeStateResponse runtime;
-    runtime =
-        gameSessionControlPlaneClient.getGameInstanceRuntimeState(
-            workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
+    try {
+      runtime =
+          gameSessionControlPlaneClient.getGameInstanceRuntimeState(
+              workItem.getTenantId(), workItem.getGameInstanceId(), workItem.getRegionId());
+    } catch (RuntimeException ex) {
+      LOGGER.warn(
+          "Game-session runtime authority read failed for script work item id={}",
+          workItem.getId(),
+          ex);
+      return "script_pin_authority_unavailable";
+    }
     String runtimeFailure =
         ScriptWorkItemFenceEvaluationSupport.validateRuntimeState(workItem, runtime);
     if (runtimeFailure != null) {
       return runtimeFailure;
     }
-    String pluginFailure =
-        ScriptWorkItemFenceEvaluationSupport.validateCapturedPluginFence(workItem);
-    if (pluginFailure != null) {
-      return pluginFailure;
-    }
-    if (ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()).isBlank()) {
-      return null;
-    }
-    if (pluginRuntimeStateRepository == null) {
-      return "plugin_lifecycle_collaborator_unavailable";
-    }
-    String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId());
-    Optional<PluginRuntimeState> plugin;
-    try {
-      plugin =
-          pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
-              workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
-    } catch (DataAccessException ex) {
-      if (isRepositoryUnavailable(ex)) {
-        return "plugin_lifecycle_collaborator_unavailable";
-      }
-      return "plugin_lifecycle_evidence_unavailable";
-    }
-    PluginState pluginState = null;
-    String activePluginVersionId = "";
-    long pluginActivationEpoch = 0L;
-    long lifecycleRevision = 0L;
-    if (plugin.isPresent()) {
-      var state = plugin.orElseThrow();
-      activePluginVersionId = state.getActivePluginVersionId();
-      if (state.getPluginState() != null) {
-        try {
-          pluginState = PluginState.valueOf(state.getPluginState());
-        } catch (IllegalArgumentException ex) {
-          pluginState = null;
-        }
-      }
-      pluginActivationEpoch = state.getPluginActivationEpoch();
-      lifecycleRevision = state.getLifecycleRevision();
-    }
-    return ScriptWorkItemFenceEvaluationSupport.validateCurrentPluginFence(
-        workItem, activePluginVersionId, pluginState, pluginActivationEpoch, lifecycleRevision);
+    // Plugin lifecycle is an independent fence with its own bounded retry budget. It is checked
+    // by validateCurrentPluginFence at each plugin-owned boundary below.
+    return null;
   }
 
   private EvaluationResult evaluateClaimedWorkItem(ScriptWorkItem workItem, Instant now) {
@@ -860,6 +1074,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     }
 
     if (commands.isEmpty() || workItem.isDryRun()) {
+      clearAuthorityUnavailableRetryState(workItem);
       markTerminalSuccess(
           workItem,
           STAGE_DSL_EVAL,
@@ -884,6 +1099,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (isHandoffReconciliationRequired(firstRejectedHandoff)) {
       // An earlier child may already have been accepted. Keep the parent active until that
       // exact-identity handoff is reconciled, even if a later sibling hits a terminal fence.
+      markPostEvaluationReconciliationRequired(
+          workItem, REASON_HANDOFF_IN_FLIGHT, now, ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     if (firstRejectedHandoff != null
@@ -896,12 +1113,25 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       return false;
     }
     if (handoffResult.retryableFence() != null) {
-      retryOrDeadLetterPluginFence(workItem, handoffResult.retryableFence(), STAGE_DSL_EVAL);
+      // Evaluation has already emitted output, but there is no durable descriptor/child ledger
+      // from which to resume all commands. Keep the parent unresolved for explicit reconciliation;
+      // retrying it would re-enter the DSL after an uncertain partial fanout.
+      markPostEvaluationReconciliationRequired(
+          workItem,
+          handoffResult.retryableFence().reason(),
+          now,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     if (firstRejectedHandoff != null
         && ScriptHandoffOutcomeSupport.isRetryable(firstRejectedHandoff)) {
-      requeueAfterRetryableFailure(workItem);
+      // The child attempt may have rolled back after a remote uncertainty. Keep the evaluated
+      // parent unresolved instead of re-entering the DSL.
+      markPostEvaluationReconciliationRequired(
+          workItem,
+          postEvaluationHandoffReconciliationReason(firstRejectedHandoff),
+          now,
+          ScriptHandoffOutcomeSupport.STAGE_TICK_HANDOFF);
       return false;
     }
     markTerminalSuccess(
@@ -922,7 +1152,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void requeueAfterAuthorityUnavailable(
-      ScriptWorkItem workItem, String reason, Instant now) {
+      ScriptWorkItem workItem, String reason, String stage, Instant now) {
     Instant firstUnavailableAt = workItem.getAuthorityUnavailableSince();
     if (firstUnavailableAt == null) {
       firstUnavailableAt = now;
@@ -938,7 +1168,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
         || !now.isBefore(firstUnavailableAt.plus(AUTHORITY_UNAVAILABLE_MAX_AGE))) {
       deadLetter(
           workItem,
-          STAGE_ADMISSION,
+          stage,
           OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
           OUTCOME_AUTHORITY_UNAVAILABLE_EXHAUSTED,
           now);
@@ -957,9 +1187,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
   /** Clears an outage budget after a fresh fence read succeeds. */
   private void clearAuthorityUnavailableRetryState(ScriptWorkItem workItem) {
-    if (workItem.getAuthorityUnavailableSince() == null
-        && workItem.getAuthorityUnavailableCount() == 0
-        && workItem.getNextEligibleAt() == null) {
+    if (!hasAuthorityUnavailableRetryState(workItem)) {
       return;
     }
     workItem.setAuthorityUnavailableSince(null);
@@ -968,30 +1196,30 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     workItemRepository.save(workItem);
   }
 
-  private static boolean isRepositoryUnavailable(DataAccessException exception) {
+  private static boolean hasAuthorityUnavailableRetryState(ScriptWorkItem workItem) {
+    return workItem.getAuthorityUnavailableSince() != null
+        || workItem.getAuthorityUnavailableCount() != 0
+        || workItem.getNextEligibleAt() != null;
+  }
+
+  private static boolean isRepositoryUnavailable(Throwable exception) {
     Throwable cause = exception;
     while (cause != null) {
       if (cause instanceof SQLTransientException
           || cause instanceof SQLRecoverableException
+          || cause instanceof TransientDataAccessException
+          || cause instanceof RecoverableDataAccessException
           || cause instanceof ConnectException
           || cause instanceof SocketTimeoutException) {
         return true;
       }
-      if (cause instanceof SQLException sqlException) {
-        String sqlState = sqlException.getSQLState();
-        if (sqlState != null && sqlState.startsWith("08")) {
-          return true;
-        }
+      if (cause instanceof SQLException sqlException
+          && AutomationControlPlaneSupport.isRetryableSqlState(sqlException)) {
+        return true;
       }
       cause = cause.getCause();
     }
     return false;
-  }
-
-  private static boolean authorityUnavailableRetryExpired(ScriptWorkItem workItem, Instant now) {
-    Instant firstUnavailableAt = workItem.getAuthorityUnavailableSince();
-    return firstUnavailableAt != null
-        && !now.isBefore(firstUnavailableAt.plus(AUTHORITY_UNAVAILABLE_MAX_AGE));
   }
 
   private static boolean isTerminalFenceFailure(String reason) {
@@ -999,8 +1227,12 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       case "script_patch_version_mismatch",
           "script_patch_base_version_unavailable",
           "script_patch_base_version_mismatch",
+          "playable_state_scope_mismatch",
+          "routing_bundle_changed",
           "script_pin_epoch_mismatch",
           "script_pin_epoch_unavailable",
+          "script_pin_owner_request_unavailable",
+          "script_pin_owner_request_mismatch",
           "runtime_scope_missing",
           "runtime_scope_changed",
           "plugin_disabled",
@@ -1031,6 +1263,7 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
 
     Duration delay = AUTHORITY_UNAVAILABLE_RETRY_DELAYS.get(retryCount);
     workItem.setAuthorityUnavailableRetryCount(retryCount + 1);
+    workItem.setCancelReason(pluginFence.reason());
     workItem.setNextEligibleAt(retryAt.plus(delay));
     persistDelayedRetry(workItem);
   }
@@ -1440,6 +1673,8 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
       ScriptWorkItem workItem, String stage, String outcome, String reason, Instant now) {
     workItem.setStatus(STATUS_HANDED_OFF);
     workItem.setCancelReason(null);
+    workItem.setAuthorityUnavailableSince(null);
+    workItem.setAuthorityUnavailableCount(0);
     workItem.setNextEligibleAt(null);
     workItem.setUpdatedAt(now);
     workItemRepository.save(workItem);
@@ -1509,12 +1744,58 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
                 normalizeHandoffToken(result.errorCode())));
   }
 
+  private static boolean isHandoffPreparationUnavailableWithoutIntent(
+      ScriptGameplayCommandHandoffService.HandoffResult result) {
+    return result != null
+        && !result.accepted()
+        && ScriptGameplayCommandHandoffService.OUTCOME_PREPARATION_UNAVAILABLE.equalsIgnoreCase(
+            normalizeHandoffToken(result.outcome()))
+        && "UNAVAILABLE".equalsIgnoreCase(normalizeHandoffToken(result.errorCode()))
+        && normalizeHandoffToken(result.commandId()).isEmpty()
+        && normalizeHandoffToken(result.remoteCoordinatorId()).isEmpty()
+        && normalizeHandoffToken(result.remoteFollowupId()).isEmpty();
+  }
+
+  private static String postEvaluationHandoffReconciliationReason(
+      ScriptGameplayCommandHandoffService.HandoffResult result) {
+    String errorCode =
+        normalizeHandoffToken(result.errorCode())
+            .replace('-', '_')
+            .toUpperCase(java.util.Locale.ROOT);
+    return switch (errorCode) {
+      case "AUTH_UNAVAILABLE",
+          "AUTHORITY_UNAVAILABLE",
+          "GAME_SESSION_UNAVAILABLE",
+          "UNAVAILABLE",
+          "QUEUE_UNAVAILABLE" ->
+          errorCode.toLowerCase(java.util.Locale.ROOT);
+      default -> ScriptHandoffOutcomeSupport.canonicalInfrastructureReason(result);
+    };
+  }
+
   private static String normalizeHandoffToken(String value) {
     return value == null ? "" : value.trim();
   }
 
   private static long parseTenantId(ScriptWorkItem workItem) {
     return RequestIdValidation.requirePositiveLong(workItem.getTenantId(), "tenant_id");
+  }
+
+  private Optional<PluginRuntimeState> readCurrentPluginRuntimeState(ScriptWorkItem workItem) {
+    if (pluginRuntimeStateRepository == null) {
+      return Optional.empty();
+    }
+    String pluginId = ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId());
+    if (pluginFenceReadTransactionTemplate == null) {
+      return pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+          workItem.getTenantId(), workItem.getGameInstanceId(), pluginId);
+    }
+    Optional<PluginRuntimeState> state =
+        pluginFenceReadTransactionTemplate.execute(
+            ignored ->
+                pluginRuntimeStateRepository.findByTenantIdAndGameInstanceIdAndPluginId(
+                    workItem.getTenantId(), workItem.getGameInstanceId(), pluginId));
+    return state == null ? Optional.empty() : state;
   }
 
   private PluginFenceValidation validateCurrentPluginFence(ScriptWorkItem workItem) {
@@ -1530,13 +1811,17 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     if (pluginRuntimeStateRepository == null) {
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
-    PluginRuntimeState state =
-        pluginRuntimeStateRepository
-            .findByTenantIdAndGameInstanceIdAndPluginId(
-                workItem.getTenantId(),
-                workItem.getGameInstanceId(),
-                ScriptWorkItemFenceEvaluationSupport.normalize(workItem.getPluginId()))
-            .orElse(null);
+    final PluginRuntimeState state;
+    try {
+      state = readCurrentPluginRuntimeState(workItem).orElse(null);
+    } catch (DataAccessException
+        | org.springframework.dao.DataAccessException
+        | TransactionException ex) {
+      if (isRepositoryUnavailable(ex)) {
+        return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
+      }
+      return new PluginFenceValidation("plugin_lifecycle_evidence_unavailable", false);
+    }
     if (state == null) {
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
@@ -1547,6 +1832,9 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     try {
       pluginState = PluginState.valueOf(state.getPluginState());
     } catch (IllegalArgumentException ex) {
+      if ("REVOKED".equals(state.getPluginState().trim().toUpperCase(java.util.Locale.ROOT))) {
+        return new PluginFenceValidation("plugin_disabled", false);
+      }
       return new PluginFenceValidation(REASON_AUTHORITY_UNAVAILABLE, true);
     }
     if (pluginState == PluginState.PLUGIN_STATE_UNSPECIFIED) {
@@ -1574,6 +1862,26 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
     return null;
   }
 
+  private static final class BatchCounts {
+    private int claimedCount;
+    private int completedCount;
+    private int failedCount;
+  }
+
+  private record WorkItemAttempt(boolean claimed, boolean completed, RuntimeException failure) {
+    private static WorkItemAttempt notClaimed() {
+      return new WorkItemAttempt(false, false, null);
+    }
+
+    private static WorkItemAttempt claimed(boolean completed) {
+      return new WorkItemAttempt(true, completed, null);
+    }
+
+    private static WorkItemAttempt failedAfterClaim(RuntimeException failure) {
+      return new WorkItemAttempt(true, false, failure);
+    }
+  }
+
   private record PluginFenceValidation(String reason, boolean retryable) {}
 
   private static boolean isOnLoad(ScriptWorkItem workItem) {
@@ -1588,27 +1896,33 @@ public class ScriptWorkItemExecutionServiceImpl implements ScriptWorkItemExecuti
   }
 
   private void recordOutcome(ScriptWorkItem workItem, String stage, String outcome) {
+    recordWorkItemCounterAfterCommit(
+        workItem, "automation_script_work_item_outcomes_total", stage, "outcome", outcome);
+  }
+
+  private void recordPostEvaluationReconciliationRequired(ScriptWorkItem workItem, String stage) {
+    recordWorkItemCounterAfterCommit(workItem, POST_EVALUATION_RECONCILIATION_METRIC, stage);
+  }
+
+  private void recordWorkItemCounterAfterCommit(
+      ScriptWorkItem workItem, String metricName, String stage, String... extraTags) {
     if (workItem.isDryRun()) {
       return;
     }
     String priority = normalizePriorityTag(workItem.getPriorityTag());
     String sourceClass = normalizeSourceClass(workItem.getEventType());
-    Runnable increment =
-        () ->
-            meterRegistry
-                .counter(
-                    "automation_script_work_item_outcomes_total",
-                    "service",
-                    SERVICE_NAME,
-                    "stage",
-                    stage,
-                    "outcome",
-                    outcome,
-                    "priority",
-                    priority,
-                    "source_class",
-                    sourceClass)
-                .increment();
+    String[] tags = new String[8 + extraTags.length];
+    tags[0] = "service";
+    tags[1] = SERVICE_NAME;
+    tags[2] = "stage";
+    tags[3] = stage;
+    System.arraycopy(extraTags, 0, tags, 4, extraTags.length);
+    int remainingTagsIndex = 4 + extraTags.length;
+    tags[remainingTagsIndex] = "priority";
+    tags[remainingTagsIndex + 1] = priority;
+    tags[remainingTagsIndex + 2] = "source_class";
+    tags[remainingTagsIndex + 3] = sourceClass;
+    Runnable increment = () -> meterRegistry.counter(metricName, tags).increment();
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       increment.run();
       return;

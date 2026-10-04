@@ -296,6 +296,11 @@ class ScriptScheduleInstanceServiceImplTest {
 
   @Test
   void reconcileObservedRuntimeStateFailsClosedWhenPinnedBaseIsUnknown() {
+    ScriptScheduleInstance retained = wallClockTimerInstance();
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of(retained));
     GameInstanceRuntimeState runtimeState =
         runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
             .setPinnedScriptPatchBaseVersionId(0L)
@@ -305,10 +310,18 @@ class ScriptScheduleInstanceServiceImplTest {
 
     verifyNoInteractions(scheduleDefinitionRepository, bindingRepository);
     verify(readinessProjectionService).getProjection("1", "patch-1");
+    verify(scheduleInstanceRepository).saveAll(List.of(retained));
+    verify(scheduleInstanceRepository, never()).deleteByTenantIdAndGameInstanceId("1", "game-1");
+    assertThat(retained.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
   }
 
   @Test
   void reconcileObservedRuntimeStateFailsClosedWhenReadinessBaseDiffersFromPinBase() {
+    ScriptScheduleInstance retained = wallClockTimerInstance();
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1"))
+        .thenReturn(List.of(retained));
     when(readinessProjectionService.getProjection("1", "patch-1"))
         .thenReturn(
             Optional.of(
@@ -326,6 +339,9 @@ class ScriptScheduleInstanceServiceImplTest {
 
     verifyNoInteractions(scheduleDefinitionRepository, bindingRepository);
     verify(readinessProjectionService).getProjection("1", "patch-1");
+    verify(scheduleInstanceRepository).saveAll(List.of(retained));
+    verify(scheduleInstanceRepository, never()).deleteByTenantIdAndGameInstanceId("1", "game-1");
+    assertThat(retained.getMaterializationStatus()).isEqualTo("PENDING_RUNTIME_PROGRESS");
   }
 
   @Test
@@ -3041,6 +3057,71 @@ class ScriptScheduleInstanceServiceImplTest {
   }
 
   @Test
+  void missingRuntimeBaseRetainsDueTimerWithoutAuditOrWork() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    stubScheduleObservation(timerInstance);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
+                        .setPinnedScriptPatchBaseVersionId(0L)
+                        .build())
+                .build());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("READY");
+    assertThat(timerInstance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(5_000L));
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+  }
+
+  @Test
+  void missingRetainedInstanceBaseRetainsDueTimerWithoutAuditOrWork() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    timerInstance.setScriptPatchBaseVersionId(null);
+    stubScheduleObservation(timerInstance);
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("READY");
+    assertThat(timerInstance.getNextDueAt()).isEqualTo(Instant.ofEpochMilli(5_000L));
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+    verify(eventAuditRepository, never()).insertIfAbsentByHandlerIdentity(any());
+  }
+
+  @Test
+  void unequalPositiveBasesRemainAProvenMismatch() {
+    ScriptScheduleInstance timerInstance = wallClockTimerInstance();
+    stubScheduleObservation(timerInstance);
+    when(gameSessionControlPlaneClient.getGameInstanceRuntimeState("1", "game-1"))
+        .thenReturn(
+            GetGameInstanceRuntimeStateResponse.newBuilder()
+                .setRuntimeState(
+                    runtimeStateResponse("patch-1").getRuntimeState().toBuilder()
+                        .setPinnedScriptPatchBaseVersionId(8L)
+                        .build())
+                .build());
+
+    ScriptScheduleInstanceService.RuntimeTickProgressResult result =
+        service.observeRuntimeTickProgress(observation(131L, 6_000L));
+
+    assertThat(result.firedScheduleCount()).isZero();
+    assertThat(timerInstance.getMaterializationStatus()).isEqualTo("FENCED");
+    assertThat(timerInstance.getNextDueAt()).isNull();
+    ArgumentCaptor<ScriptEventAudit> auditCaptor = ArgumentCaptor.forClass(ScriptEventAudit.class);
+    verify(eventAuditRepository).insertIfAbsentByHandlerIdentity(auditCaptor.capture());
+    assertThat(auditCaptor.getValue().getFinalReason())
+        .isEqualTo("script_patch_base_version_mismatch");
+    verify(workItemRepository, never()).insertIfAbsentByTriggerIdentity(any());
+  }
+
+  @Test
   void matchingPatchWithDifferentEpochPersistsDistinctSkipReason() {
     ScriptScheduleInstance timerInstance = wallClockTimerInstance();
     stubScheduleObservation(timerInstance);
@@ -3855,7 +3936,8 @@ class ScriptScheduleInstanceServiceImplTest {
             summary -> {
               assertThat(summary.scriptPatchBaseVersionId()).isZero();
               assertThat(summary.publication().baseVersionId()).isZero();
-              assertThat(summary.publication().lookupErrorCode()).isEqualTo("INVALID_ARGUMENT");
+              assertThat(summary.publication().lookupErrorCode())
+                  .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
             });
     verify(gameDesignControlPlaneClient, never())
         .getPublishedScriptPatchVersion(any(), anyLong(), any());
@@ -3919,6 +4001,34 @@ class ScriptScheduleInstanceServiceImplTest {
               assertThat(summary.publication().versionId()).isEqualTo(17L);
             });
     verify(gameDesignControlPlaneClient).getPublishedScriptPatchVersion("1", 7L, "patch-1");
+  }
+
+  @Test
+  void listInstancesReportsUnavailablePublicationScopeWhenPersistedBaseIsUnknown() {
+    ScriptScheduleInstance instance = wallClockTimerInstance();
+    instance.setScriptPatchBaseVersionId(null);
+    instance.setObservedRuntimeVersionId("7");
+    instance.setPluginId("plugin-1");
+    instance.setPluginVersionId("plugin-v1");
+    setPluginFence(instance);
+    when(scheduleInstanceRepository
+            .findByTenantIdAndGameInstanceIdAndScriptPatchVersionOrderByUpdatedAtDescScheduleDefinitionIdAsc(
+                "1", "game-1", "patch-1"))
+        .thenReturn(List.of(instance));
+
+    List<ScriptScheduleInstanceService.ScheduleInstanceSummary> result =
+        service.listInstances("1", "game-1", "patch-1", 25);
+
+    assertThat(result)
+        .singleElement()
+        .satisfies(
+            summary -> {
+              assertThat(summary.publication().lookupErrorCode())
+                  .isEqualTo("PUBLICATION_SCOPE_UNAVAILABLE");
+              assertThat(summary.publication().lookupErrorMessage()).contains("base_version_id");
+            });
+    verify(gameDesignControlPlaneClient, never())
+        .getPublishedScriptPatchVersion(any(), anyLong(), any());
   }
 
   @Test

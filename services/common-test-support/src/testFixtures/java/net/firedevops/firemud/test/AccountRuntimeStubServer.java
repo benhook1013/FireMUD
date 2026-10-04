@@ -43,6 +43,10 @@ import net.firedevops.firemud.common.account.AccountProfileJson;
 import net.firedevops.firemud.common.account.authority.MembershipAuthorityEventV1Codec;
 import net.firedevops.firemud.shared.v1.ErrorDetail;
 import net.firedevops.firemud.shared.v1.PlayerExecutionContext;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.json.JsonMapper;
+import tools.jackson.databind.node.ObjectNode;
 
 /** Shared fake Account runtime authority for cross-service gameplay tests. */
 public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountServiceImplBase
@@ -52,6 +56,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   private static final String DEFAULT_ACCOUNT_UUID = "a7e0feac-60ab-4fd1-9002-0ad38d585db0";
   private static final String MEMBERSHIP_EVENT_ID = "00000000-0000-0000-0000-000000000099";
   private static final String MEMBERSHIP_EVENT_REQUEST_ID = "runtime-membership-request";
+  private static final ObjectMapper PROFILE_JSON_MAPPER = JsonMapper.builder().build();
   private static final Set<String> IMPLEMENTED_RUNTIME_METHODS =
       Set.of(
           "Ping",
@@ -131,6 +136,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   public void denyGameplayAdmission() {
     setMembershipExists(true);
     setGameplayAdmissionAllowed(false);
+  }
+
+  public void setMembershipInactive() {
+    setMembershipExists(true);
+    setGameplayAdmissionAllowed(false);
     membershipLifecycleState.set("INACTIVE");
   }
 
@@ -155,6 +165,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     allowPublicJoin.set(true);
     realmAccessGranted.set(true);
     profilesByAccountUuid.clear();
+    connectScopesById.clear();
   }
 
   @Override
@@ -203,18 +214,22 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     String lifecycle = membershipLifecycleState.get();
     boolean admitted = gameplayAdmissionAllowed.get();
     GetTenantMembershipForRuntimeResponse response;
-    if (exists && admitted && "ACTIVE".equals(lifecycle)) {
+    if (exists && "ACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid,
+              tenantUuid,
+              request.getPlayerContext().getRequestId(),
+              lifecycle,
+              admitted);
     } else if (exists && !admitted && "INACTIVE".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle, false);
     } else if (!exists && !admitted && "MISSING".equals(lifecycle)) {
       response =
           completeMembershipSnapshot(
-              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle);
+              accountUuid, tenantUuid, request.getPlayerContext().getRequestId(), lifecycle, false);
     } else {
       response =
           GetTenantMembershipForRuntimeResponse.newBuilder()
@@ -234,9 +249,9 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
   }
 
   private static GetTenantMembershipForRuntimeResponse completeMembershipSnapshot(
-      String accountUuid, String tenantUuid, String requestId, String lifecycle) {
+      String accountUuid, String tenantUuid, String requestId, String lifecycle, boolean admitted) {
     boolean exists = !"MISSING".equals(lifecycle);
-    boolean admitted = "ACTIVE".equals(lifecycle);
+    List<String> roles = "ACTIVE".equals(lifecycle) ? List.of("player") : List.of();
     String membershipStream =
         AUTHORITY_STREAM_PREFIX + "membership/" + accountUuid + "/" + tenantUuid;
     List<RuntimeOutboxCheckpoint> checkpoints =
@@ -279,9 +294,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
             .setIssuanceFence("1")
             .addAllOutboxCheckpoints(checkpoints)
             .setEvaluatedAt(Instant.now().toString());
-    if (admitted) {
-      response.addRoles("player");
-    }
+    response.addAllRoles(roles);
     if (exists) {
       MembershipAuthorityEventV1Codec.MembershipEvent event =
           MembershipAuthorityEventV1Codec.seal(
@@ -308,7 +321,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
                           "membershipAuthorityGeneration", Map.of(tenantUuid, "1"),
                           "privateRealmGrantVersions", List.of())),
                   Map.entry("issuanceFence", "1"),
-                  Map.entry("roles", admitted ? List.of("player") : List.of()),
+                  Map.entry("roles", roles),
                   Map.entry("gameplayAdmissionAllowed", admitted),
                   Map.entry("callerBoundAuthorityInvalidated", false)));
       response.addOutboxSourceEvidence(
@@ -401,9 +414,11 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       IssueDirectTextConnectScopeRequest request,
       StreamObserver<IssueDirectTextConnectScopeResponse> responseObserver) {
     PlayerExecutionContext caller = request.getPlayerContext();
-    if (caller.getAccountId().isBlank()
+    if (!isCanonicalNonNilUuid(caller.getAccountId())
         || caller.getTenantId().isBlank()
         || caller.getRealmId().isBlank()
+        || caller.getSessionId().isBlank()
+        || caller.getRequestId().isBlank()
         || caller.getGameInstanceId().isBlank()
         || caller.getPlayableStateNamespaceId().isBlank()
         || caller.getPlayableStateScope().isBlank()
@@ -414,6 +429,12 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
         || request.getRealmSlug().isBlank()
         || request.getPlayableStateNamespaceId().isBlank()
         || request.getPlayableStateScope().isBlank()
+        || request.getCatalogRevision() <= 0
+        || request.getPointerVersion() <= 0
+        || !isCanonicalUuid(caller.getRealmId())
+        || !isCanonicalUuid(request.getRealmId())
+        || !isCanonicalUuid(caller.getPlayableStateNamespaceId())
+        || !isCanonicalUuid(request.getPlayableStateNamespaceId())
         || !caller.getTenantId().equals(request.getTenantId())
         || !caller.getRealmId().equals(request.getRealmId())
         || !caller.getGameInstanceId().equals(request.getGameInstanceId())
@@ -433,6 +454,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
           scopeId,
           new StubConnectScope(
               caller.getAccountId(),
+              caller.getSessionId(),
               request.getTenantId(),
               request.getRealmId(),
               request.getGameInstanceId(),
@@ -448,6 +470,25 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     responseObserver.onCompleted();
   }
 
+  private static boolean isCanonicalUuid(String value) {
+    if (value == null || value.isBlank()) {
+      return false;
+    }
+    try {
+      return UUID.fromString(value).toString().equals(value);
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
+  }
+
+  private static boolean isCanonicalNonNilUuid(String value) {
+    if (!isCanonicalUuid(value)) {
+      return false;
+    }
+    UUID parsed = UUID.fromString(value);
+    return parsed.getMostSignificantBits() != 0L || parsed.getLeastSignificantBits() != 0L;
+  }
+
   @Override
   public void joinPublicProductionMembership(
       JoinPublicProductionMembershipRequest request,
@@ -457,11 +498,13 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     if (request.getConnectScopeId().isBlank()
         || request.getRequestId().isBlank()
         || !request.getRequestId().equals(caller.getRequestId())
-        || caller.getAccountId().isBlank()
+        || !isCanonicalNonNilUuid(caller.getAccountId())
         || caller.getTenantId().isBlank()
+        || caller.getSessionId().isBlank()
         || scope == null
         || !scope.expiresAt().isAfter(Instant.now())
         || !scope.accountId().equals(caller.getAccountId())
+        || !scope.sessionId().equals(caller.getSessionId())
         || !scope.tenantId().equals(caller.getTenantId())
         || !scope.realmId().equals(caller.getRealmId())
         || !scope.gameInstanceId().equals(caller.getGameInstanceId())
@@ -484,6 +527,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     } else {
       membershipExists.set(true);
       gameplayAdmissionAllowed.set(true);
+      membershipLifecycleState.set("ACTIVE");
       responseObserver.onNext(
           JoinPublicProductionMembershipResponse.newBuilder()
               .setSuccess(true)
@@ -504,15 +548,15 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       GetProfileRequest request, StreamObserver<GetProfileResponse> responseObserver) {
     try {
       String accountUuid = requireCanonicalAccountUuid(request.getAccountId());
-      StubProfile profile =
-          profilesByAccountUuid.computeIfAbsent(accountUuid, StubProfile::defaultFor);
+      long tenantId = requirePositiveTenantId(request.getTenantId());
+      StubProfile profile = bindProfileToTenant(accountUuid, tenantId);
+      if (!profile.belongsToTenant(tenantId)) {
+        responseObserver.onNext(GetProfileResponse.newBuilder().build());
+        responseObserver.onCompleted();
+        return;
+      }
       responseObserver.onNext(
-          GetProfileResponse.newBuilder()
-              .setProfileJson(
-                  new AccountProfileJson(
-                          profile.displayName(), profile.bio(), profile.presenceVisibilityPolicy())
-                      .toJson())
-              .build());
+          GetProfileResponse.newBuilder().setProfileJson(profileJson(profile)).build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       responseObserver.onNext(GetProfileResponse.newBuilder().build());
@@ -525,19 +569,31 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
       UpdateProfileRequest request, StreamObserver<UpdateProfileResponse> responseObserver) {
     try {
       String accountUuid = requireCanonicalAccountUuid(request.getAccountId());
+      long tenantId = requirePositiveTenantId(request.getTenantId());
       AccountProfileJson profile =
           AccountProfileJson.parse(request.getProfileJson(), StubProfile.DEFAULT_VISIBILITY_POLICY);
-      StubProfile existing =
-          profilesByAccountUuid.computeIfAbsent(accountUuid, StubProfile::defaultFor);
-      profilesByAccountUuid.put(
-          accountUuid,
+      StubProfile existing = bindProfileToTenant(accountUuid, tenantId);
+      if (!existing.belongsToTenant(tenantId)) {
+        responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());
+        responseObserver.onCompleted();
+        return;
+      }
+      StubProfile updated =
           new StubProfile(
+              existing.accountUuid(),
+              existing.tenantId(),
               profile.displayName(),
               profile.bio(),
               profile.presenceVisibilityPolicy() == null
                   ? existing.presenceVisibilityPolicy()
-                  : profile.presenceVisibilityPolicy()));
-      responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(true).build());
+                  : profile.presenceVisibilityPolicy());
+      profilesByAccountUuid.put(accountUuid, updated);
+      responseObserver.onNext(
+          UpdateProfileResponse.newBuilder()
+              .setSuccess(true)
+              .setAccountId(updated.accountUuid())
+              .setTenantId(Long.toString(updated.tenantId()))
+              .build());
       responseObserver.onCompleted();
     } catch (Exception ex) {
       responseObserver.onNext(UpdateProfileResponse.newBuilder().setSuccess(false).build());
@@ -550,15 +606,85 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
     server.shutdownNow();
   }
 
-  private record StubProfile(String displayName, String bio, String presenceVisibilityPolicy) {
+  private StubProfile bindProfileToTenant(String accountUuid, long tenantId) {
+    return profilesByAccountUuid.compute(
+        accountUuid,
+        (ignored, profile) -> {
+          if (profile == null) {
+            return StubProfile.defaultFor(accountUuid, tenantId);
+          }
+          return profile.bindTo(tenantId);
+        });
+  }
+
+  private static long requirePositiveTenantId(String tenantId) {
+    try {
+      long parsed = Long.parseLong(tenantId);
+      if (parsed <= 0L) {
+        throw new IllegalArgumentException("tenantId must be positive");
+      }
+      return parsed;
+    } catch (NumberFormatException ex) {
+      throw new IllegalArgumentException("tenantId must be numeric", ex);
+    }
+  }
+
+  private static String profileJson(StubProfile profile) {
+    ObjectNode json = PROFILE_JSON_MAPPER.createObjectNode();
+    json.put("accountId", profile.accountUuid());
+    json.put("tenantId", profile.tenantId());
+    putNullableText(json, "displayName", profile.displayName());
+    putNullableText(json, "bio", profile.bio());
+    putNullableText(json, "presenceVisibilityPolicy", profile.presenceVisibilityPolicy());
+    try {
+      return PROFILE_JSON_MAPPER.writeValueAsString(json);
+    } catch (JacksonException ex) {
+      throw new IllegalStateException("Could not serialize stub Account profile", ex);
+    }
+  }
+
+  private static void putNullableText(ObjectNode json, String fieldName, String value) {
+    if (value == null) {
+      json.putNull(fieldName);
+    } else {
+      json.put(fieldName, value);
+    }
+  }
+
+  private record StubProfile(
+      String accountUuid,
+      Long tenantId,
+      String displayName,
+      String bio,
+      String presenceVisibilityPolicy) {
     private static final String DEFAULT_VISIBILITY_POLICY = "FRIENDS_ONLY";
 
     private static StubProfile defaultFor(String accountUuid) {
-      return new StubProfile("Demo-" + accountUuid, null, DEFAULT_VISIBILITY_POLICY);
+      return new StubProfile(
+          accountUuid, null, "Demo-" + accountUuid, null, DEFAULT_VISIBILITY_POLICY);
+    }
+
+    private static StubProfile defaultFor(String accountUuid, long tenantId) {
+      return new StubProfile(
+          accountUuid, tenantId, "Demo-" + accountUuid, null, DEFAULT_VISIBILITY_POLICY);
+    }
+
+    private StubProfile bindTo(long tenantId) {
+      if (tenantId() != null) {
+        return this;
+      }
+      return new StubProfile(
+          accountUuid(), tenantId, displayName(), bio(), presenceVisibilityPolicy());
+    }
+
+    private boolean belongsToTenant(long requestedTenantId) {
+      return tenantId() != null && tenantId() == requestedTenantId;
     }
 
     private StubProfile withPresenceVisibilityPolicy(String visibilityPolicy) {
       return new StubProfile(
+          accountUuid,
+          tenantId,
           displayName,
           bio,
           visibilityPolicy == null ? DEFAULT_VISIBILITY_POLICY : visibilityPolicy);
@@ -567,6 +693,7 @@ public final class AccountRuntimeStubServer extends AccountServiceGrpc.AccountSe
 
   private record StubConnectScope(
       String accountId,
+      String sessionId,
       String tenantId,
       String realmId,
       String gameInstanceId,

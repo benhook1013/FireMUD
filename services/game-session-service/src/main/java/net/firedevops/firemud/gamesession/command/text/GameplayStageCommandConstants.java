@@ -23,7 +23,7 @@ public final class GameplayStageCommandConstants {
       "You are not allowed to enter that world.";
   public static final String JOIN_REQUIRED_CODE = "JOIN_REQUIRED";
   public static final String JOIN_REQUIRED_MESSAGE =
-      "Membership is required before PLAY. Use JOIN <world> or choose Join & Play.";
+      "Membership is required before PLAY. Run REALMS <world> first, then JOIN <world>.";
   public static final String NON_PUBLIC_ENROLLMENT_REQUIRED_CODE = "NON_PUBLIC_ENROLLMENT_REQUIRED";
   public static final String NON_PUBLIC_ENROLLMENT_REQUIRED_MESSAGE =
       "Existing game membership is required for this non-public realm.";
@@ -40,6 +40,9 @@ public final class GameplayStageCommandConstants {
   public static final String AUTH_UNAVAILABLE_CODE = AuthenticationErrorCodes.UNAVAILABLE;
   public static final String AUTH_UNAVAILABLE_MESSAGE =
       "Gameplay authority is temporarily unavailable. Retry PLAY shortly.";
+  public static final String ADMISSION_POINTER_UNAVAILABLE_CODE = "ADMISSION_POINTER_UNAVAILABLE";
+  public static final String ADMISSION_POINTER_UNAVAILABLE_MESSAGE =
+      "Gameplay admission pointer is temporarily unavailable. Retry PLAY shortly.";
   public static final String ENTITLEMENT_UNAVAILABLE_CODE = "ENTITLEMENT_UNAVAILABLE";
   public static final String ENTITLEMENT_UNAVAILABLE_MESSAGE =
       "Gameplay entitlement is temporarily unavailable. Retry PLAY shortly.";

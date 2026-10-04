@@ -2,7 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE_FILES=(-f "$ROOT_DIR/docker/docker-compose.yml" -f "$ROOT_DIR/docker/docker-compose.override.yml")
+COMPOSE_FILES=(
+  -f "$ROOT_DIR/docker/docker-compose.yml"
+  -f "$ROOT_DIR/docker/docker-compose.override.yml"
+  -f "$ROOT_DIR/docker/docker-compose.grpc-mtls.override.yml"
+)
 TCP_SMOKE_SCRIPT="$ROOT_DIR/services/tcp-proxy-service/telnet-login-look-smoke.sh"
 WS_SMOKE_SCRIPT="$ROOT_DIR/services/game-session-service/websocket-login-look-smoke.sh"
 HEALTH_SCRIPT="$ROOT_DIR/dev-tools/verify-compose-health.sh"
@@ -11,6 +15,9 @@ ENSURE_CERTS_SCRIPT="$ROOT_DIR/dev-tools/certs/ensure-dev-certs.sh"
 ENSURE_ENV_SCRIPT="$ROOT_DIR/dev-tools/ensure-local-compose-env.sh"
 # shellcheck disable=SC1091 # The repository root is resolved at runtime.
 source "$ROOT_DIR/dev-tools/smoke/run-owned-compose.sh"
+export FIREMUD_SMOKE_INITIAL_ADMISSION_FIXTURE_ENABLED=false
+export FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_PATH=/app/run-owned-initial-admission-capability.json
+unset FIREMUD_SMOKE_INITIAL_ADMISSION_CAPABILITY_HOST_PATH
 
 # Prefer noninteractive compose output for AI/automation callers. PTY-backed runs
 # under Docker Desktop/WSL can hang in compose teardown even when the same command
@@ -45,7 +52,7 @@ if [[ -n "$FIREMUD_SMOKE_COMPOSE_SERVICES" ]]; then
     fi
   done <<<"$FIREMUD_SMOKE_COMPOSE_SERVICES"
 else
-  if ! compose_services_output="$(docker compose "${COMPOSE_FILES[@]}" config --services)"; then
+  if ! compose_services_output="$(FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT=/tmp/firemud-compose-grpc-mtls-config-only docker compose "${COMPOSE_FILES[@]}" config --services)"; then
     echo "Docker Compose service discovery failed." >&2
     exit 1
   fi
@@ -90,8 +97,10 @@ if [[ "$FIREMUD_SMOKE_VALIDATE_ONLY" == "1" ]]; then
 fi
 
 claim_run_owned_compose_project
+export FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT="$FIREMUD_SMOKE_OWNERSHIP_DIR_RESOLVED/$FIREMUD_SMOKE_PROJECT_KEY.grpc-mtls"
+bash "$ENSURE_CERTS_SCRIPT" --compose-mtls "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT"
+ensure_run_owned_initial_admission_capability "$FIREMUD_COMPOSE_GRPC_MTLS_CERT_ROOT" create-or-verify
 docker compose "${COMPOSE_FILES[@]}" down -v --remove-orphans
-bash "$ENSURE_CERTS_SCRIPT"
 bash "$BUILD_JARS_SCRIPT"
 if [[ "$FIREMUD_SMOKE_SERIAL_BUILD" == "1" ]]; then
   for service in "${COMPOSE_SERVICES[@]}"; do
@@ -117,7 +126,7 @@ else
 fi
 docker compose "${COMPOSE_FILES[@]}" up -d --remove-orphans
 
-bash "$HEALTH_SCRIPT"
+bash "$HEALTH_SCRIPT" "${COMPOSE_FILES[@]}"
 # Both transport legs are baseline-only; mutation parity requires independent
 # transport identities/state and is rejected by this wrapper above.
 bash "$WS_SMOKE_SCRIPT"

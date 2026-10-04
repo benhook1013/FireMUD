@@ -48,13 +48,20 @@ class SessionRoleControllerTest {
                     HttpHeaders.AUTHORIZATION,
                     "Bearer " + PlatformAdminJwtTestSupport.privilegedToken(jwtUtil)))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.data").value("refreshed"));
+        .andExpect(jsonPath("$.data").value("refreshed"))
+        .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.nullValue()));
   }
 
   @Test
   void refreshRolesRejectsScopedTenantAdmin() throws Exception {
     String token =
-        jwtUtil.generateToken("user", Map.of("scopedRoles", Map.of("1", List.of("tenantAdmin"))));
+        jwtUtil.generateToken(
+            "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+            Map.of(
+                "accountId",
+                "018f8f0a-1a6b-7b13-8d04-5f6e7d8c9b0a",
+                "scopedRoles",
+                Map.of("1", List.of("tenantAdmin"))));
 
     mockMvc
         .perform(
