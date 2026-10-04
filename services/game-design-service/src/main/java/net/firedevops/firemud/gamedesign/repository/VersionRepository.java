@@ -193,8 +193,7 @@ public class VersionRepository {
                                             GAME_TENANT_PROVENANCE_KIND.eq(
                                                 VERSION_IDENTITY_SOURCE_PROVENANCE_KIND))
                                         .and(GAME_TENANT_SOURCE_GAME_ID.eq(GAME_ID))
-                                        .and(
-                                            GAME_TENANT_SOURCE_LEGACY_KEY.eq(GAME_TENANT_ID)))))))
+                                        .and(GAME_TENANT_SOURCE_LEGACY_KEY.eq(GAME_TENANT_ID))))))
             .fetchOne(this::toEntity));
   }
 
@@ -396,8 +395,7 @@ public class VersionRepository {
         || canonicalTenantId == null
         || canonicalTenantId.equals(NIL_UUID)
         || provenanceKind == null
-        || !("NEW_GAME_ROW".equals(provenanceKind)
-            || "RETAINED_GAME_V30".equals(provenanceKind))
+        || !("NEW_GAME_ROW".equals(provenanceKind) || "RETAINED_GAME_V30".equals(provenanceKind))
         || !sourceGameRowId.equals(tenantSourceGameRowId)
         || !tenantId.equals(tenantSourceGameTenantKey)) {
       throw new IllegalStateException(

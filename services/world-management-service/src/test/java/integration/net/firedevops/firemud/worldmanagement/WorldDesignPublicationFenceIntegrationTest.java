@@ -75,6 +75,7 @@ class WorldDesignPublicationFenceIntegrationTest {
   @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GrpcServerLifecycle grpcServerLifecycle;
+
   @MockitoBean(enforceOverride = true)
   private GrpcGameSessionInitialAdmissionBindProofClient bindProofClient;
 
